@@ -1166,6 +1166,14 @@ is near (without that wait it added 3-5 s to the 16:9 first run: 25.9 s twice). 
 (2,623 of the 3,755 made ahead in its 4 minutes; the exit line says how many); 21:9 after it 7.0 s (the 1,132 not
 reached), against 29.5 s. Stages read from an older cache are queued too, so a 16:9 player's cache gets them over time.
 
+**Movies** (1600x900 VP9, e.g. the opening `ev0000.webm`): drawn by one full-screen pass into the window texture that samples the
+frame's Y plane (R8, 1600x900) and UV plane (RG8, 800x450); the game's draw call (`0x7100cd88a0`: x 0, y 0, the screen's
+width and height to `0x7100cbbe50/60/70`) goes to empty functions. At 21:9 the picture was stretched (the moon an oval).
+Now (`nvn_vk_draw.c` `g_movie_draw`) a draw that samples an R8 texture of the game's 16:9 screen size into a window texture
+of another shape keeps a centred 16:9 box and the rest is cleared to black. Checked on the opening movie (a new game,
+`SSBU_USERDATA` empty): 21:9 pillarboxed, the moon round, subtitles inside the picture; 9:10 letterboxed, the subtitles in
+the black band below (they are placed by the screen's height, not by the interface's 16:9 area).
+
 **Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
 at those seconds through the game's own start, `0x71007a2894(manager *0x710249c470, 0, 0, 0, 0, 0, speed 0.02, 180
 frames, 0)` (the arguments of the dodge at `0x710039d86c`; found by the sound events `core_Mov_WitchtimeIn` and
@@ -1210,7 +1218,7 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 - Measured at 16:9 without the key: the same pictures as before (two runs differ by 0.1 % of pixels, stars); the overrides
   only pass through.
 
-Next: movies (1600x900 WebM: placed as 16:9?), the dither pattern (round to whole game pixels, or the dither in image
+Next: the dither pattern (round to whole game pixels, or the dither in image
 pixels), a run on a 21:9 monitor.
 
 ## Next blockers (most urgent first)

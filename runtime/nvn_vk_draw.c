@@ -1830,6 +1830,11 @@ static int framelog_on(void) {                     /* [witchtime] TEST ONLY: SSB
     return a >= 0 && f >= a && f <= b;
 }
 /* The image view and sampler of one declared sampler of stage s. May end the pass (upload, layout change). */
+/* [witchtime] aspect ratios: the movies (1600x900 VP9) are drawn by one full-screen pass into the window texture, which
+ * samples the frame's Y plane (R8, the game's 16:9 screen size: 1600x900) and UV plane. Wider or taller than 16:9 that pass
+ * keeps a centred 16:9 box (pillar- or letterboxed) and the rest of the window texture is cleared to black, as on a TV;
+ * the game's subtitles are drawn after it by the interface (its 16:9 area). */
+static int g_movie_y, g_movie_draw, g_movie_box[4];      /* box: x, y, w, h in the pass's pixels */
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
     Tex *t = NULL;
@@ -1838,6 +1843,7 @@ static void resolve_sampler(int s, VStage *v, int i) {
     LONG64 rt0 = g_ptm_on > 0 ? tk() : 0;
     int r = u < 32 ? nvn_front_handle(R.tpool, R.spool, R.nvn_tex[s][u], &t, &view, &sp) : 0;
     if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[0] += x - rt0; rt0 = x; }
+    if ((r & 1) && s == 1 && t->b.format == 0x1 && t->b.target == 1 && t->b.height == g_rs_bh && t->b.width * 9 == t->b.height * 16) g_movie_y = 1;      /* [witchtime] a movie's Y plane */
     g_dtex[g_ndtex].view = g_dummy.v[v->smp[i].dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if (r & 1) {
         VTex *vt = vt_get(t);
@@ -1914,6 +1920,13 @@ static void set_dynamic_state(void) {
     if (sx > R.pass_w) sx = R.pass_w; if (sy > R.pass_h) sy = R.pass_h;
     if (sw > R.pass_w - sx) sw = R.pass_w - sx; if (sh > R.pass_h - sy) sh = R.pass_h - sy;
     n.sc.offset.x = sx; n.sc.offset.y = sy; n.sc.extent.width = (uint32_t)(sw > 0 ? sw : 0); n.sc.extent.height = (uint32_t)(sh > 0 ? sh : 0);
+    if (g_movie_draw && R.pass_w > 0 && R.pass_h > 0) {      /* [witchtime] the movie in a centred 16:9 box (resolve_sampler) */
+        int bw = R.pass_w, bh = R.pass_h;
+        if ((double)R.pass_w * 9 > (double)R.pass_h * 16) bw = (int)((double)R.pass_h * 16 / 9 + 0.5); else bh = (int)((double)R.pass_w * 9 / 16 + 0.5);
+        g_movie_box[0] = (R.pass_w - bw) / 2; g_movie_box[1] = (R.pass_h - bh) / 2; g_movie_box[2] = bw; g_movie_box[3] = bh;
+        n.vp.x = (float)g_movie_box[0]; n.vp.width = (float)bw; n.vp.y = (float)(g_movie_box[1] + bh); n.vp.height = -(float)bh;
+        n.sc.offset.x = g_movie_box[0]; n.sc.offset.y = g_movie_box[1]; n.sc.extent.width = (uint32_t)bw; n.sc.extent.height = (uint32_t)bh;
+    }
     if (R.pass_rs && D.f2.features.wideLines) { float lw = R.line_width * R.pass_sx; n.lw = lw < V.props.limits.lineWidthRange[0] ? V.props.limits.lineWidthRange[0] : lw; }
     else n.lw = D.f2.features.wideLines ? R.line_width : 1.0f;
     {   /* session 13, TEST ONLY (the missing stage pieces on zelda_temple): SSBU_VK_TEST bits: 1 no culling, 2 depth clamp always on, 4 no depth bias */
@@ -3100,7 +3113,10 @@ static int draw_prepare(unsigned prim) {
     PT(0);
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
+    g_movie_y = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
+    {   int m = g_movie_y && g_rs_bw * 9 != g_rs_bh * 16 && R.ncol > 0 && R.col[0].tex && wintex_is(R.col[0].tex);      /* [witchtime] a movie in a window texture not of 16:9 */
+        if (m != g_movie_draw) { g_movie_draw = m; R.dyn_dirty = 1; } }
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: SSBU_VK_WATCHFS */
     int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
@@ -3192,6 +3208,18 @@ static int draw_prepare(unsigned prim) {
     if (R.pipe_bound != p) { vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->p); R.pipe_bound = p; }
     PT(5);
     if (R.dyn_dirty) { set_dynamic_state(); R.dyn_dirty = 0; }
+    if (g_movie_draw) {                            /* [witchtime] the bars beside (or above and below) the movie: black */
+        const int *b = g_movie_box;
+        VkClearRect cr[2]; int nr = 0;
+        VkClearAttachment ca; memset(&ca, 0, sizeof ca); memset(cr, 0, sizeof cr);
+        ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ca.colorAttachment = 0; ca.clearValue.color.float32[3] = 1.0f;
+        if (b[0] > 0) { cr[0].rect.extent.width = (uint32_t)b[0]; cr[0].rect.extent.height = (uint32_t)R.pass_h;
+                        cr[1].rect.offset.x = b[0] + b[2]; cr[1].rect.extent.width = (uint32_t)(R.pass_w - b[0] - b[2]); cr[1].rect.extent.height = (uint32_t)R.pass_h; nr = 2; }
+        else if (b[1] > 0) { cr[0].rect.extent.width = (uint32_t)R.pass_w; cr[0].rect.extent.height = (uint32_t)b[1];
+                             cr[1].rect.offset.y = b[1] + b[3]; cr[1].rect.extent.width = (uint32_t)R.pass_w; cr[1].rect.extent.height = (uint32_t)(R.pass_h - b[1] - b[3]); nr = 2; }
+        for (int i = 0; i < nr; i++) cr[i].layerCount = 1;
+        if (nr && cr[1].rect.extent.width && cr[1].rect.extent.height) vkCmdClearAttachments(R.cmd, 1, &ca, (uint32_t)nr, cr);
+    }
     if (D.has_eds3 && (R.dyn3_dirty || R.dyn3_samples != k.samples)) { set_dynamic_state3(k.samples); R.dyn3_dirty = 0; }
     {   int rst = R.restart && ((D.has_plr && !(g_vk_test & 16)) || prim == 3 || prim == 5 || prim == 6);      /* SSBU_VK_TEST bit 16 (session 14, test): no restart in list topologies */
         if ((int)vtopo != g_dsh_topo || !dsh_on()) { vkCmdSetPrimitiveTopology(R.cmd, vtopo); g_dsh_topo = (int)vtopo; g_dsh_sent++; } else g_dsh_kept++;
