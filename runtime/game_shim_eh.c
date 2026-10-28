@@ -447,3 +447,23 @@ void h_camera_fov(Ctx *c) {
     if (a > 0.0f && a < 16.0f / 9.0f && ca == ca && ca - a < 0.001f && a - ca < 0.001f) c->v[0].f[0] = vert_plus(c->v[0].f[0], a);
     f_7100cba97c(c);
 }
+/* f_7100c0ef04(layout x0, state out x1, element w2, time s0): one element of a UI layout (a .uid of ui/*.dat: elements of 0x1b4
+ * bytes from layout + [layout + 0xc]) at this frame: its base position (+0, +4), turn, scale and colours into out + 0x10 ..,
+ * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the
+ * centre. Wider than 16:9 the cameras keep that space in the middle (h_camera_perspective); a layout's root (element 0)
+ * placed 200 or more from the centre (the HUD's corners: health -492, 269; the gauges -572, -316; the score 260, 297 ...)
+ * moves out by half the extra width, so it sits at the screen's edge as at 16:9. Centred layouts (prompts, subtitles) stay.
+ * hud_area = 16:9 (graphics.ini; RECOMPS_HUD_CENTRE=1) keeps them in the middle. */
+void f_7100c0ef04(Ctx *c);
+void h_ui_element(Ctx *c) {
+    uint64_t out = c->x[1]; uint32_t el = (uint32_t)c->x[2];
+    f_7100c0ef04(c);
+    float a = aspect_want();
+    static int centre = -1;
+    if (centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); centre = e && atoi(e); }
+    if (el != 0 || centre || !(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    float x; memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
+    float extra = (720.0f * a - 1280.0f) * 0.5f;
+    if (x >= 200.0f) x += extra; else if (x <= -200.0f) x -= extra; else return;
+    memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+}

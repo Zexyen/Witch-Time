@@ -128,6 +128,10 @@ static const char *const k_default_ini =
 ";   monitor's shape (with aspect = keep the rest is black bars).\r\n"
 "aspect_ratio = 16:9\r\n"
 "\r\n"
+"; hud_area = screen | 16:9      (with aspect_ratio wider than 16:9; at the next start)\r\n"
+";   screen: the HUD's corners (health, gauges, score) at the screen's edges. 16:9: kept in a 16:9 area in the middle.\r\n"
+"hud_area = screen\r\n"
+"\r\n"
 "; frame_time_overlay = off | on\r\n"
 ";   on: the average frame time of the last second in the window title ('.. fps - 16.67 ms per frame') and as a\r\n"
 ";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
@@ -262,6 +266,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
+        else if (!_stricmp(key, "hud_area")) o->hud_centre = !strcmp(val, "16:9");      /* [witchtime] */
         else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
         else unknown++;
     }
@@ -288,6 +293,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
     if (!(o->aspect_ratio >= 0.25f && o->aspect_ratio <= 8.0f) || fabsf(o->aspect_ratio - 16.0f / 9.0f) < 0.001f) o->aspect_ratio = 0.0f;
     if (o->aspect_ratio > 0.0f && !getenv("RECOMPS_ASPECT")) { char n[32]; snprintf(n, sizeof n, "%.6f", o->aspect_ratio); _putenv_s("RECOMPS_ASPECT", n); }
+    if (o->hud_centre && !getenv("RECOMPS_HUD_CENTRE")) _putenv_s("RECOMPS_HUD_CENTRE", "1");
     if (getenv("RECOMPS_ASPECT")) printf("graphics options: aspect_ratio %s (the game's screen width / height; experimental, docs/STATUS.md \"Aspect ratios\")\n", getenv("RECOMPS_ASPECT"));
     /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
      * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).

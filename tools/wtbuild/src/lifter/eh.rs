@@ -27,6 +27,7 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100d01380, "gfx_setup"),
     (0x7100cba90c, "camera_perspective"),
     (0x7100cba97c, "camera_fov"),
+    (0x7100c0ef04, "ui_element"),
 ];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image

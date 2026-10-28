@@ -1130,9 +1130,15 @@ a 16:9 block in the middle (it is drawn with the same cameras). Checked on the t
 **In game** (the save, `SSBU_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
 the fight with the HUD; 16:9, 21:9, 32:9, 9:10; muted, frames every 600 saved): no crash, 10,177-10,282 frames presented
 in each (the same as 16:9); the 3D view is Hor+ (32:9: much more of the street at the sides) or Vert+ (9:10: more sky
-and street); the HUD (health, demon gauge, score, Verse, combo points), the subtitles and "Break Free" prompts stay in a
-16:9 area in the middle (at 32:9 the health bar is near the centre, not at the screen's edge); the cutscene fills the
-screen (no bars). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
+and street); the cutscene fills the screen (no bars); subtitles, "Break Free" prompts and the boss's bar stay centred.
+**The HUD at the screen's edges** (`hud_area = screen`, the default; `16:9` keeps it in the middle): the UI layouts
+(`ui/ui_hud.dat`, 90 .uid) are in a 1280x720 space around the centre; each layout's root (element 0) has its place
+(health -492, 269; gauges -572, -316; score 260, 297 ...). `0x7100c0ef04(layout, state, element, time)` evaluates an
+element every frame (elements of 0x1b4 bytes: position +0, +4 into state + 0x10; then its animation tracks; found with
+a read watchpoint on hud0020's root in memory); override `ui_element` moves a root 200 or more from the centre out by
+(720 * ratio - 1280) / 2. Checked at 21:9 and 32:9 (health and gauges at the left edge, score, Verse and combo points at
+the right) and with `hud_area = 16:9` (as before). Elements placed by code (lock-on markers, damage numbers) are not
+roots of this kind and were not seen to move; the pause menu was not looked at. **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
 pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
 pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies, the pause menu and
 Options, the HUD at the screen's edges (an option), a real ultrawide monitor. No Options row or PC-panel row yet.
@@ -1172,7 +1178,7 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 
 Next: movies (1600x900 WebM: placed as 16:9?), the pause menu, the dither pattern (round to whole game pixels, or the
 dither in image pixels), a run on a 21:9 monitor; then the key in the PC panel and an Options row ("applies at the next
-start"); the HUD at the screen's edges as an option.
+start").
 
 ## Next blockers (most urgent first)
 
