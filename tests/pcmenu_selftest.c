@@ -8,6 +8,7 @@
 
 volatile LONG g_guest_frozen, g_display_close;
 volatile int game_cutscene_fps;
+volatile int game_hud_centre;
 static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly) { *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }

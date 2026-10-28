@@ -59,6 +59,7 @@ static const PcRow k_pc[] = {
     {"anisotropic_filtering", "MENU_OPTION_LIST_PC_ANISO", {"game", "2", "4", "8", "16"}, {"CORE_PC_DEFAULT", "CORE_PC_AF_2", "CORE_PC_AF_4", "CORE_PC_AF_8", "CORE_PC_AF_16"}, 0},
     {"texture_lod_bias", "MENU_OPTION_LIST_PC_TEXTURE", {"-1", "-0.5", "0", "0.5", "1"}, {"CORE_PC_LOD_M1", "CORE_PC_LOD_M05", "CORE_PC_LOD_0", "CORE_PC_LOD_P05", "CORE_PC_LOD_P1"}, 2},
     {"aspect", "MENU_OPTION_LIST_PC_ASPECT", {"keep", "stretch"}, {"CORE_PC_KEEP", "CORE_PC_STRETCH"}, 0},
+    {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */
 };
 #define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
 static uint32_t g_label[NPC], g_text[NPC][6], g_custom;

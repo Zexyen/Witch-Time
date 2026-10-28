@@ -1144,6 +1144,11 @@ screen places itself, off the left edge.) Checked at 21:9 and 32:9: health and g
 combo points and the halo counter at the right; the pause menu and Options (Controller, Camera, Sound, Screen Display)
 whole, no row cut; `hud_area = 16:9` as before. Elements placed by code (lock-on markers, damage numbers) were not seen
 to move.
+**In-game option**: "HUD Layout" (Full Screen / Centered) is a row of the Options screen's Screen Display page (after
+Aspect Ratio; label and values in the text mod, all 13 languages: `text_strings.rs`, `pc_settings_mod.py`) and of the PC
+settings panel. It writes `hud_area` and applies at once (`game_hud_centre`, exported by the game library like
+`game_cutscene_fps`). Checked at 21:9 with the virtual pad: the row shows Full Screen, right makes it Centered
+(`pcmenu: hud_area = 16:9 (applied)`), and after leaving the menus the HUD is in the 16:9 area in the middle.
 
 **Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
 at those seconds through the game's own start, `0x71007a2894(manager *0x710249c470, 0, 0, 0, 0, 0, speed 0.02, 180
@@ -1153,8 +1158,8 @@ and darkening for about 3 s at 16:9, 21:9 and 32:9, over the whole width (no unl
 size and shape at all three (not stretched); a few of them show the small crosses of the fractional pixel mapping (see
 the dither above). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
 pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
-pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies, the pause menu and
-Options, the HUD at the screen's edges (an option), a real ultrawide monitor. No Options row or PC-panel row yet.
+pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies,
+a real ultrawide monitor. No Options or PC-panel row for aspect_ratio itself yet (the HUD's has one, below).
 
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
 - **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
@@ -1191,7 +1196,7 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 
 Next: movies (1600x900 WebM: placed as 16:9?), the pause menu, the dither pattern (round to whole game pixels, or the
 dither in image pixels), a run on a 21:9 monitor; then the key in the PC panel and an Options row ("applies at the next
-start").
+start") for aspect_ratio itself.
 
 ## Next blockers (most urgent first)
 

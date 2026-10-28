@@ -63,6 +63,8 @@ MENU = [
                                       ('Dettaglio texture', 'Livello di dettaglio'), 'Детализация текстур', 'LOD调整', 'LOD設定', 'LOD 조정')),
     ('MENU_OPTION_LIST_PC_ASPECT', T(ASPECT, ASPECT, 'Seitenverhältnis', "Format d'image", 'Relación de aspecto', 'Proporzioni',
                                      'Соотношение сторон', ASPECT, ASPECT, ASPECT)),
+    ('MENU_OPTION_LIST_PC_HUD', T('HUD Layout', ('HUDの配置', 'HUD'), 'HUD-Anordnung', 'Disposition du HUD', 'Disposición del HUD',
+                                  'Layout HUD', 'Расположение HUD', ('HUD布局', 'HUD'), ('HUD佈局', 'HUD'), ('HUD 배치', 'HUD'))),
     ('MENU_OPTION_LIST_PC_FPS', T('Experimental Frame Rate (next start)',      # frame_rate: experimental above 60, at the next start; no commas
                                   # (no menu file has one) and no 'x' in the ja / cn / tw files: 'beta' there
                                   ('フレームレート 実験的 (スタート時に変更)', 'FPS ベータ版 (スタート時に変更)', 'FPS Beta (スタート時に変更)'),
@@ -87,6 +89,10 @@ CORE = [
     ('CORE_PC_DEFAULT', T('Default', '初期値', 'Standard', 'Par défaut', 'Estándar', 'Predefinito', 'Стандарт', '标准', '標準', '기본')),
     ('CORE_PC_KEEP', T('Original', 'オリジナル', 'Original', 'Original', 'Original', 'Originale', 'Исходное', '固定', '固定', '고정')),
     ('CORE_PC_STRETCH', T('Stretch', 'ストレッチ', 'Strecken', 'Étirer', 'Estirar', 'Allunga', 'Растянуть', '缩放', '縮放', '확대')),
+    ('CORE_PC_HUD_FULL', T('Full Screen', ('全画面', 'Full Screen'), 'Vollbild', 'Plein écran', 'Completa', 'Intero', 'Весь экран',
+                           ('全屏', 'Full Screen'), ('全螢幕', 'Full Screen'), ('전체 화면', 'Full Screen'))),       # hud_area = screen
+    ('CORE_PC_HUD_CENTER', T('Centered', ('中央', 'Centered'), 'Zentriert', 'Centré', 'Centrado', 'Centrato', 'По центру',
+                             ('居中', 'Centered'), ('置中', 'Centered'), ('가운데', 'Centered'))),               # hud_area = 16:9
     ('CORE_PC_CUSTOM', T('Custom', 'カスタム', 'Eigene', 'Autre', 'Otro', 'Altro', 'Свой', '其他', '其他', '사용자 지정')),
     ('CORE_PC_FPS_30', ALL('30')), ('CORE_PC_FPS_60', ALL('60')),
     ('CORE_PC_AF_2', ALL('2x', '2')), ('CORE_PC_AF_4', ALL('4x', '4')), ('CORE_PC_AF_8', ALL('8x', '8')), ('CORE_PC_AF_16', ALL('16x', '16')),

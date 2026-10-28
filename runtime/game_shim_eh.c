@@ -480,7 +480,7 @@ void h_camera_fov(Ctx *c) {
  * of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
  * the file (health -492, 269; the gauges -572, -316; the score 260, 297 ...) moves out by half the extra width, to the
  * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
- * RECOMPS_HUD_CENTRE=1) keeps them in the middle. */
+ * RECOMPS_HUD_CENTRE=1; "Centered" in the PC menu and the Options screen, at once: game_hud_centre) keeps them in the middle. */
 void f_7100c0ef04(Ctx *c);
 /* Is the layout at lay an entry named hud* of a DAT archive in memory? The archive ("DAT\0", file count, offset table at
  * +8, name table at +0x10: u32 name size, then the names) starts before it, 4-aligned, within 16 MB (the UI archives are
@@ -509,13 +509,13 @@ found:
     if (!t[h].lay) { t[h].lay = lay; t[h].hud = hud; }
     return hud;
 }
+__declspec(dllexport) volatile int game_hud_centre = -1;      /* -1 = not read yet; 0 / 1; the PC menu and the Options row (pcmenu.c) change it while the game runs */
 void h_ui_element(Ctx *c) {
     uint64_t lay = c->x[0], out = c->x[1]; uint32_t el = (uint32_t)c->x[2];
     f_7100c0ef04(c);
     float a = aspect_want();
-    static int centre = -1;
-    if (centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); centre = e && atoi(e); }
-    if (el != 0 || centre || !(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    if (game_hud_centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); game_hud_centre = e && atoi(e); }
+    if (el != 0 || game_hud_centre || !(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
     uint32_t first; float x0, x; memcpy(&first, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&x0, (void *)(uintptr_t)(lay + first), 4);
     if (!(x0 >= 200.0f || x0 <= -200.0f) || !ui_is_hud(lay)) return;
     memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);

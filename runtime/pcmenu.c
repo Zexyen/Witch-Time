@@ -38,6 +38,7 @@ static const unsigned char k_font[] = {
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
 extern volatile LONG g_display_close;                      /* display.c: the window is being closed (the game must run to exit) */
 __declspec(dllimport) extern volatile int game_cutscene_fps;      /* game_shim_eh.c (the game library) */
+__declspec(dllimport) extern volatile int game_hud_centre;        /* [witchtime] game_shim_eh.c h_ui_element */
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly);       /* nnhid.c */
 int nnhid_menu_key(int vk);
 int nvn_front_post_pcmenu(void);                           /* nvn_gl.c: 0 = not the Vulkan renderer */
@@ -48,7 +49,7 @@ int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
 const char *nnpad_prompts_setting(void);
 int nnpad_prompts_set(const char *val);
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART, A_HUD, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -77,6 +78,8 @@ static const Row k_rows[] = {
      {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
     {"aspect", "Aspect ratio", "Keep: the 16:9 picture keeps its shape, with black bars on a wider or taller window. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep 16:9", "Stretch"}},
+    {"hud_area", "HUD layout", "With an aspect ratio wider than 16:9 (aspect_ratio in graphics.ini). Full Screen: health, gauges and score at the screen's edges. Centered: in a 16:9 area in the middle.", NULL, "screen", A_HUD, 0,
+     {"screen", "16:9"}, {"Full Screen", "Centered"}},
     {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
      {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
 };
@@ -368,6 +371,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     g_cur[i] = k;
     switch (r->apply) {
     case A_CUT: game_cutscene_fps = atoi(r->val[k]) == 60 ? 60 : 30; break;
+    case A_HUD: game_hud_centre = !strcmp(r->val[k], "16:9"); break;
     case A_VSYNC: display_vsync_apply(); add_work(2); break;
     case A_WINDOW: case A_SIZE: if (!display_window_apply()) g_nowin = 1; break;
     case A_SAMPLER: add_work(1); break;
