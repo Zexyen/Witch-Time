@@ -1156,6 +1156,16 @@ settings panel. It writes `hud_area` and applies at once (`game_hud_centre`, exp
 `game_cutscene_fps`). Checked at 21:9 with the virtual pad: the row shows Full Screen, right makes it Centered
 (`pcmenu: hud_area = 16:9 (applied)`), and after leaving the menus the HUD is in the 16:9 area in the middle.
 
+**Shaders for another scale or ratio, made ahead**: a run at 16:9 and resolution_scale 1.0 translates its fragment stages
+without the screen scale; every other scale or ratio uses one other set (the factors are push constants), which the first
+such run translated behind held loading screens. Measured on the 4-minute route (title, Shibuya, a fight; empty cache):
+16:9 20.9 / 22.7 s of holds; 21:9 after that 29.5 s more (3,755 fragment stages; the driver's pipelines are a few ms of
+it). Now (`nvn_vk_m4.c` `rs_pre_*`, `SSBU_VK_RS_PREP=0` off) each fragment stage of an unscaled run is copied and its scaled
+translation written to the cache by one thread at the lowest priority, which waits while the workers have jobs or a fight
+is near (without that wait it added 3-5 s to the 16:9 first run: 25.9 s twice). Measured: 16:9 first run 21.4 s of holds
+(2,623 of the 3,755 made ahead in its 4 minutes; the exit line says how many); 21:9 after it 7.0 s (the 1,132 not
+reached), against 29.5 s. Stages read from an older cache are queued too, so a 16:9 player's cache gets them over time.
+
 **Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
 at those seconds through the game's own start, `0x71007a2894(manager *0x710249c470, 0, 0, 0, 0, 0, speed 0.02, 180
 frames, 0)` (the arguments of the dodge at `0x710039d86c`; found by the sound events `core_Mov_WitchtimeIn` and

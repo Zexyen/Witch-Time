@@ -5345,6 +5345,8 @@ static void vkd_shutdown(void) {
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
     if (RS_ON) printf("nvn_vk_scale: the scaled images made took %.0f MB of device memory in all\n", (double)g_rs_bytes / 1048576.0);      /* PR #8 review */
+    if (g_rs_pre_queued) printf("nvn_vk_scale: scaled translations made ahead (for another scale or aspect ratio; SSBU_VK_RS_PREP=0 off): %lld made, %lld in the cache already, %lld not reached (of %lld fragment stages)\n",
+                                (long long)g_rs_pre_made, (long long)g_rs_pre_had, (long long)(g_rs_pre_queued - g_rs_pre_made - g_rs_pre_had), (long long)g_rs_pre_queued);      /* [witchtime] */
     if (RS_ON && rs_scale() > 1.0f) printf("nvn_vk_scale: supersampling: %lld 2:1 reduction steps at the present (rs_reduce, PR #8), %lld presents without them (format cannot be blitted linearly)\n", (long long)g_rs_reduce_steps, (long long)g_rs_reduce_skipped);
     m4_stop();
     pcache_save();

@@ -17,7 +17,7 @@ typedef struct { uint8_t unit, dim, shadow; uint16_t binding; } VSmp;
 typedef struct VStage {
     uint64_t h, hb;                                /* h: this variant (code, constants, canonical key, forced outputs); hb: code and constants only */
     int stage, code_len, ok; volatile LONG state, cp_state;      /* state: 1 being made, 2 made (ok says how it went); cp_state: compute pipeline 0 none, 1 being made, 2 made */
-    uint32_t key[4], fo, in_attr, out_attr, id, cbufs, ssbos, ssbo_w, images, dep, tex_units; int uses_alpha, nsmp, cp_recorded, from_rec, fragonly, temp;      /* fragonly (session 9): handed over by a program without a vertex stage */
+    uint32_t key[4], fo, in_attr, out_attr, id, cbufs, ssbos, ssbo_w, images, dep, tex_units; int uses_alpha, nsmp, cp_recorded, from_rec, fragonly, temp, scaled;      /* fragonly (session 9): handed over by a program without a vertex stage; scaled ([witchtime]): the translation for a scaled run, made ahead (rs_pre) */
     VkPipeline cp; VkPipelineLayout cl; VkDescriptorSetLayout cdl[2];      /* compute stage: its pipeline */
     uint32_t local[3];
     VSmp smp[64];
@@ -119,7 +119,7 @@ static unsigned vk_loopdebug(void) {
     if (v < 0) { const char *e = getenv("SSBU_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: SSBU_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
     return (unsigned)v;
 }
-static uint64_t ssrc_hb(const SSrc *o) {
+static uint64_t ssrc_hb_rs(const SSrc *o, int rs) {
     uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
@@ -127,9 +127,10 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
-    if (o->stage == 1 && RS_ON) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
+    if (o->stage == 1 && rs) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
+static uint64_t ssrc_hb(const SSrc *o) { return ssrc_hb_rs(o, RS_ON); }
 static VkShaderModule module_from_spv(uint64_t h) {              /* any thread; NULL when the file is not there */
     char path[128];
     VkShaderModule mod = NULL;
@@ -215,6 +216,73 @@ static void module_name(VkShaderModule mod, const SSrc *src) {
     vkSetDebugUtilsObjectNameEXT(V.device, &ni);
     printf("nvn_vk: shader module 0x%llx = %s\n", (unsigned long long)ni.objectHandle, nm);      /* GPU-AV names the module by handle only */
 }
+/* [witchtime] The scaled translations, made ahead (docs/STATUS.md "Aspect ratios"). A run at resolution_scale 1.0 and 16:9
+ * translates its fragment stages without the screen scale; a run at any other scale or aspect ratio needs them translated
+ * with it (one set for every scale and ratio: the factors are push constants), 3,755 of them on the route measured: 29.5 s
+ * of held loading screens the first time. So each fragment stage translated (not read from its record) in an unscaled run
+ * (or read from its record) is copied and its scaled translation made by one thread at the lowest priority and written to the cache as a scaled run
+ * writes it (spv, the stage record, the variants list under the scaled code hash), unless it is there; its module is not
+ * kept. It waits while the workers have jobs or a fight is near: measured, without that it added 3-5 s to the first run's
+ * held loading screens (20.9 / 22.7 s off, 25.9 / 25.9 s on). SSBU_VK_RS_PREP=0: off. The driver's pipelines (they need a draw's state) are not made ahead. */
+typedef struct RsJob { struct RsJob *next; SSrc src; uint32_t key[4], fo; uint8_t data[1]; } RsJob;
+static RsJob *g_rs_head, **g_rs_tail = &g_rs_head;
+static CRITICAL_SECTION g_rs_lock; static CONDITION_VARIABLE g_rs_cv; static volatile LONG g_rs_started;
+static LONG64 g_rs_pre_made, g_rs_pre_had, g_rs_pre_queued;
+static void vstage_build(VStage *v, const SSrc *src);
+static int rs_pre_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("SSBU_VK_RS_PREP"); on = !(e && !atoi(e)) && !g_offline; } return on; }
+static int rs_pre_have(const SSrc *src, uint64_t hb, const uint32_t *key, uint32_t fo) {      /* a scaled variant serving key is on disk */
+    char path[128]; VarRec e; StageRec r; int have = 0;
+    snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), src->stage, (unsigned long long)hb);
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return 0;
+    while (!have && fread(&e, 1, sizeof e, fp) == sizeof e)
+        have = e.magic == STAGEREC_MAGIC && e.fo == fo && key_fits(src->stage, key, e.key, e.dep, e.tex) && stage_rec_read(src->stage, e.vh, &r);
+    fclose(fp);
+    return have;
+}
+static int rs_pre_idle(void);
+static DWORD WINAPI rs_pre_thread(LPVOID arg) {
+    (void)arg;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    for (;;) {
+        EnterCriticalSection(&g_rs_lock);
+        while (!g_rs_head) SleepConditionVariableCS(&g_rs_cv, &g_rs_lock, INFINITE);
+        RsJob *j = g_rs_head; g_rs_head = j->next; if (!g_rs_head) g_rs_tail = &g_rs_head;
+        LeaveCriticalSection(&g_rs_lock);
+        while (!rs_pre_idle()) Sleep(50);          /* the workers' own jobs (a loading screen waits for them) and fights first */
+        uint64_t hb = ssrc_hb_rs(&j->src, 1);
+        if (rs_pre_have(&j->src, hb, j->key, j->fo)) InterlockedIncrement64(&g_rs_pre_had);
+        else {
+            VStage *v = calloc(1, sizeof *v);
+            v->hb = hb; v->stage = j->src.stage; v->code_len = j->src.code_len; memcpy(v->key, j->key, 16); v->fo = j->fo; v->state = 1; v->temp = 1; v->scaled = 1;
+            vstage_build(v, &j->src);
+            if (v->mod) vkDestroyShaderModule(V.device, v->mod, NULL);
+            free(v);
+            InterlockedIncrement64(&g_rs_pre_made);
+        }
+        free(j);
+    }
+    return 0;
+}
+static void rs_pre_queue(const SSrc *src, const uint32_t *key, uint32_t fo) {      /* any thread: a copy of the code (the program's may go) */
+    if (!rs_pre_on()) return;
+    if (InterlockedCompareExchange(&g_rs_started, 1, 0) == 0) {
+        InitializeCriticalSection(&g_rs_lock); InitializeConditionVariable(&g_rs_cv);
+        CloseHandle(CreateThread(NULL, 0, rs_pre_thread, NULL, 0, NULL));
+        InterlockedExchange(&g_rs_started, 2);
+    }
+    while (g_rs_started != 2) Sleep(0);
+    RsJob *j = malloc(sizeof *j + (size_t)src->code_len + src->cdata_size);
+    if (!j) return;
+    j->next = NULL; j->src = *src; memcpy(j->key, key, 16); j->fo = fo;
+    memcpy(j->data, src->code, (size_t)src->code_len); j->src.code = j->data;
+    if (src->cdata && src->cdata_size) { memcpy(j->data + src->code_len, src->cdata, src->cdata_size); j->src.cdata = j->data + src->code_len; }
+    EnterCriticalSection(&g_rs_lock);
+    *g_rs_tail = j; g_rs_tail = &j->next;
+    WakeConditionVariable(&g_rs_cv);
+    LeaveCriticalSection(&g_rs_lock);
+    InterlockedIncrement64(&g_rs_pre_queued);
+}
 static void vstage_build(VStage *v, const SSrc *src) {
     int s = v->stage, done = 0;
     char path[128];
@@ -244,7 +312,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         }
         if (s == 4) { in.tess_prim = src->tess[0]; in.tess_spacing = src->tess[1]; in.tess_point = src->tess[2]; in.tess_order = src->tess[3]; }
         snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
-        if (s == 1 && RS_ON) in.screen_scale = 1;
+        if (s == 1 && (RS_ON || v->scaled)) in.screen_scale = 1;
         if (s != 5) in.loopdebug = vk_loopdebug();
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
@@ -285,6 +353,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
             }
         }
     }
+    if (s == 1 && v->ok && !v->temp && !v->scaled && !RS_ON) rs_pre_queue(src, v->key, v->fo);      /* [witchtime] its scaled translation, ahead (also for a stage read from its record: a cache from before) */
     EnterCriticalSection(&g_sh_lock);
     if (v->ok && !v->temp) { v->next_h = g_vh[v->h & 4095]; g_vh[v->h & 4095] = v; }      /* temp (session 10): a stage of the preparation that is in no table */
     v->state = 2;
@@ -1056,6 +1125,7 @@ static LONG64 g_jq_queued, g_jq_done, g_bq_queued, g_bq_done;
  * caller of nvnProgramSetShaders). */
 static Job *g_pq_head, *g_pq_tail;
 static LONG64 g_pq_queued, g_pq_done, g_pq_running;
+static int rs_pre_idle(void) { return g_jq_queued == g_jq_done && !fight_recent(); }      /* [witchtime] rs_pre_thread */
 static int g_prep_state, g_prep_fight_cap = 0 /* run s10n2: 4 workers at the lowest priority compiling libraries during the fight = 35 frames per second (the render thread in "present": the driver), so the preparation PAUSES near a fight */, g_prep_cap = 8, g_prep_keep = 0;     /* state: 0 not started, 1 running, 2 finished, 3 no container source, 4 done by an earlier run; caps: workers on this queue at a time (in a fight / otherwise: the others stay free, at normal priority, for what the game hands over; run s10n1 had all 16 on it at low priority on a busy PC and the game's own programs waited 101 s); keep: the first n containers are made INTO MEMORY (stage + library stay), the rest into the cache only */
 static HANDLE g_prep_thread;
 static LONG64 g_pk_queued, g_pk_done, g_bar_keep_n, g_bar_keep_tk;      /* the jobs of the containers made into memory (prep == 1) */
