@@ -331,10 +331,35 @@ static void keep_movie_flag(Ctx *c) {
         return;
     }
 }
+/* TEST ONLY: RECOMPS_TEST_WITCHTIME=<s>[,<s>...]: Witch Time starts at those seconds after the first frame, as a dodge at the
+ * last moment starts it: 0x71007a2894(manager *0x710249c470, w1..w5 0, speed s0 0.02, length s1 180 frames, s2 0; the
+ * dodge's caller 0x710039d86c), called from the main loop's clock (the game's thread, between frames) with the guest's
+ * registers kept. The start routine leaves it alone when the manager is busy or off (+0x9c, +0x168). */
+void f_71007a2894(Ctx *c);
+static void test_witch_time(Ctx *c) {
+    static int n = -1; static double at[16], t0; static int next;
+    struct timespec ts; timespec_get(&ts, TIME_UTC);
+    double now = (double)ts.tv_sec + ts.tv_nsec / 1e9;
+    if (n < 0) {
+        const char *e = getenv("RECOMPS_TEST_WITCHTIME"); n = 0; t0 = now;
+        while (e && *e && n < 16) { at[n++] = atof(e); e = strchr(e, ','); if (e) e++; else break; }
+    }
+    if (next >= n || now - t0 < at[next]) return;
+    next++;
+    uint64_t mgr; memcpy(&mgr, (void *)(uintptr_t)0x710249c470ull, 8);
+    Ctx keep = *c;
+    c->x[0] = mgr; c->x[1] = c->x[2] = c->x[3] = c->x[4] = c->x[5] = 0;
+    memset(&c->v[0], 0, sizeof c->v[0]); memset(&c->v[1], 0, sizeof c->v[1]); memset(&c->v[2], 0, sizeof c->v[2]);
+    c->v[0].f[0] = 0.02f; c->v[1].f[0] = 180.0f;
+    f_71007a2894(c);
+    *c = keep;
+    printf("test: Witch Time started at %.1f s (RECOMPS_TEST_WITCHTIME; manager %llx)\n", now - t0, (unsigned long long)mgr); fflush(stdout);
+}
 void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     g_clock_ctx = c;
     keep_movie_flag(c);
+    test_witch_time(c);
     int fixed = (uint32_t)c->x[1] == 0;
     /* s0 is 4.0 in the game's mode 2 */
     g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on());
@@ -450,20 +475,51 @@ void h_camera_fov(Ctx *c) {
 /* f_7100c0ef04(layout x0, state out x1, element w2, time s0): one element of a UI layout (a .uid of ui/*.dat: elements of 0x1b4
  * bytes from layout + [layout + 0xc]) at this frame: its base position (+0, +4), turn, scale and colours into out + 0x10 ..,
  * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the
- * centre. Wider than 16:9 the cameras keep that space in the middle (h_camera_perspective); a layout's root (element 0)
- * placed 200 or more from the centre (the HUD's corners: health -492, 269; the gauges -572, -316; the score 260, 297 ...)
- * moves out by half the extra width, so it sits at the screen's edge as at 16:9. Centred layouts (prompts, subtitles) stay.
- * hud_area = 16:9 (graphics.ini; RECOMPS_HUD_CENTRE=1) keeps them in the middle. */
+ * centre. Wider than 16:9 the cameras keep that space in the middle (h_camera_perspective). The menus place themselves
+ * by the screen's width already (the pause menu and Options span 21:9 as they are); the HUD does not: a root (element 0)
+ * of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
+ * the file (health -492, 269; the gauges -572, -316; the score 260, 297 ...) moves out by half the extra width, to the
+ * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
+ * RECOMPS_HUD_CENTRE=1) keeps them in the middle. */
 void f_7100c0ef04(Ctx *c);
+/* Is the layout at lay an entry named hud* of a DAT archive in memory? The archive ("DAT\0", file count, offset table at
+ * +8, name table at +0x10: u32 name size, then the names) starts before it, 4-aligned, within 16 MB (the UI archives are
+ * a few MB); its offset table holds lay - archive. Asked once per layout (a table of 1024). */
+static int ui_is_hud(uint64_t lay) {
+    static struct { uint64_t lay; int hud; } t[1024];
+    uint32_t h = (uint32_t)((lay >> 2) * 0x9E3779B1u) >> 22;
+    for (uint32_t i = 0; i < 1024; i++, h = (h + 1) & 1023) {
+        if (t[h].lay == lay) return t[h].hud;
+        if (!t[h].lay) break;
+    }
+    int hud = 0;
+    for (uint64_t p = lay & ~3ull; p + (16u << 20) > lay && p >= 0x1000; p -= 4) {
+        uint32_t w; memcpy(&w, (void *)(uintptr_t)p, 4);
+        if (w != 0x00544144u) continue;      /* "DAT\0" */
+        uint32_t n, po, no, nl; memcpy(&n, (void *)(uintptr_t)(p + 4), 4); memcpy(&po, (void *)(uintptr_t)(p + 8), 4); memcpy(&no, (void *)(uintptr_t)(p + 0x10), 4);
+        if (n == 0 || n > 4096 || po > (16u << 20) || no > (16u << 20)) continue;
+        memcpy(&nl, (void *)(uintptr_t)(p + no), 4);
+        if (nl == 0 || nl > 256) continue;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t o; memcpy(&o, (void *)(uintptr_t)(p + po + 4 * i), 4);
+            if (p + o == lay) { hud = !memcmp((void *)(uintptr_t)(p + no + 4 + (uint64_t)i * nl), "hud", 3); goto found; }
+        }
+    }
+found:
+    if (!t[h].lay) { t[h].lay = lay; t[h].hud = hud; }
+    return hud;
+}
 void h_ui_element(Ctx *c) {
-    uint64_t out = c->x[1]; uint32_t el = (uint32_t)c->x[2];
+    uint64_t lay = c->x[0], out = c->x[1]; uint32_t el = (uint32_t)c->x[2];
     f_7100c0ef04(c);
     float a = aspect_want();
     static int centre = -1;
     if (centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); centre = e && atoi(e); }
     if (el != 0 || centre || !(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
-    float x; memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
+    uint32_t first; float x0, x; memcpy(&first, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&x0, (void *)(uintptr_t)(lay + first), 4);
+    if (!(x0 >= 200.0f || x0 <= -200.0f) || !ui_is_hud(lay)) return;
+    memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
     float extra = (720.0f * a - 1280.0f) * 0.5f;
-    if (x >= 200.0f) x += extra; else if (x <= -200.0f) x -= extra; else return;
+    x += x0 > 0.0f ? extra : -extra;
     memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
 }

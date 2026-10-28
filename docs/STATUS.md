@@ -1132,13 +1132,26 @@ the fight with the HUD; 16:9, 21:9, 32:9, 9:10; muted, frames every 600 saved): 
 in each (the same as 16:9); the 3D view is Hor+ (32:9: much more of the street at the sides) or Vert+ (9:10: more sky
 and street); the cutscene fills the screen (no bars); subtitles, "Break Free" prompts and the boss's bar stay centred.
 **The HUD at the screen's edges** (`hud_area = screen`, the default; `16:9` keeps it in the middle): the UI layouts
-(`ui/ui_hud.dat`, 90 .uid) are in a 1280x720 space around the centre; each layout's root (element 0) has its place
-(health -492, 269; gauges -572, -316; score 260, 297 ...). `0x7100c0ef04(layout, state, element, time)` evaluates an
-element every frame (elements of 0x1b4 bytes: position +0, +4 into state + 0x10; then its animation tracks; found with
-a read watchpoint on hud0020's root in memory); override `ui_element` moves a root 200 or more from the centre out by
-(720 * ratio - 1280) / 2. Checked at 21:9 and 32:9 (health and gauges at the left edge, score, Verse and combo points at
-the right) and with `hud_area = 16:9` (as before). Elements placed by code (lock-on markers, damage numbers) are not
-roots of this kind and were not seen to move; the pause menu was not looked at. **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
+(`ui/*.dat`, .uid) are in a 1280x720 space around the centre; each layout's root (element 0) has its place (health
+-492, 269; gauges -572, -316; score 260, 297 ...). `0x7100c0ef04(layout, state, element, time)` evaluates an element
+every frame (elements of 0x1b4 bytes from layout + [layout + 0xc]: position +0, +4 into state + 0x10; then its animation
+tracks; found with a read watchpoint on hud0020's root in memory). **The menus place themselves by the screen's width
+already** (with the shift off, the pause menu and Options span 21:9: "OPTIONS" and the info panel at the left edge, the
+button guide and the currencies at the right); the HUD does not. So override `ui_element` moves only a root of a layout
+named `hud*` (its DAT archive found backwards from the layout in memory, once per layout) placed 200 or more from the
+centre in the file, out by (720 * ratio - 1280) / 2. (Moving every such root pushed the Options rows, which their
+screen places itself, off the left edge.) Checked at 21:9 and 32:9: health and gauges at the left edge, score, Verse,
+combo points and the halo counter at the right; the pause menu and Options (Controller, Camera, Sound, Screen Display)
+whole, no row cut; `hud_area = 16:9` as before. Elements placed by code (lock-on markers, damage numbers) were not seen
+to move.
+
+**Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
+at those seconds through the game's own start, `0x71007a2894(manager *0x710249c470, 0, 0, 0, 0, 0, speed 0.02, 180
+frames, 0)` (the arguments of the dodge at `0x710039d86c`; found by the sound events `core_Mov_WitchtimeIn` and
+`BGM_Witchtime_On` it plays), called from the main loop's clock between frames. In Shibuya at 70 s: the blue starfield
+and darkening for about 3 s at 16:9, 21:9 and 32:9, over the whole width (no unlit band at the sides), its stars the same
+size and shape at all three (not stretched); a few of them show the small crosses of the fractional pixel mapping (see
+the dither above). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
 pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
 pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies, the pause menu and
 Options, the HUD at the screen's edges (an option), a real ultrawide monitor. No Options row or PC-panel row yet.
