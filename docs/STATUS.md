@@ -1123,8 +1123,14 @@ where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bou
 
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
-`aspect_ratio = 16:9 | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own picture
-at any shape. Wider than 16:9 shows more at the sides (Hor+), narrower more above and below (Vert+); the interface stays
+`aspect_ratio = 16:9 | auto | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own
+picture at any shape. `auto` takes the window's shape at the start (its client size in pixels; borderless and fullscreen:
+the monitor's desktop mode), told before the game starts (`gfx_aspect_window`, from `display.c` before the game's thread
+runs). In game: **Aspect Ratio (next start): Fixed / Unlocked** (16:9 / auto), a row of the Options screen's Screen
+Display page (it was the Original / Stretch row of `aspect`) and of the PC panel; `aspect` (Keep shape / Stretch) is the
+PC panel's "Picture fit" now. Checked at 21:9: a 2100x900 window (2625x1125 pixels at 125 %) with `auto` gave the game a
+2100x900 screen; the row showed Unlocked, left made it Fixed and wrote `aspect_ratio = 16:9` ("applies at the next
+start"). Wider than 16:9 shows more at the sides (Hor+), narrower more above and below (Vert+); the interface stays
 a 16:9 block in the middle (it is drawn with the same cameras). Checked on the title screen at 9:10, 1.85, 2.0, 21:9
 (2100x900) and 32:9 (3200x900), resolution_scale 1.0 and 1.2; `aspect = keep` puts the result in the window.
 **In game** (the save, `SSBU_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
@@ -1159,7 +1165,7 @@ size and shape at all three (not stretched); a few of them show the small crosse
 the dither above). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
 pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
 pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies,
-a real ultrawide monitor. No Options or PC-panel row for aspect_ratio itself yet (the HUD's has one, below).
+a real ultrawide monitor. 
 
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
 - **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
@@ -1194,9 +1200,8 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 - Measured at 16:9 without the key: the same pictures as before (two runs differ by 0.1 % of pixels, stars); the overrides
   only pass through.
 
-Next: movies (1600x900 WebM: placed as 16:9?), the pause menu, the dither pattern (round to whole game pixels, or the
-dither in image pixels), a run on a 21:9 monitor; then the key in the PC panel and an Options row ("applies at the next
-start") for aspect_ratio itself.
+Next: movies (1600x900 WebM: placed as 16:9?), the dither pattern (round to whole game pixels, or the dither in image
+pixels), a run on a 21:9 monitor.
 
 ## Next blockers (most urgent first)
 

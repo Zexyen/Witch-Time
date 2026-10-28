@@ -61,8 +61,10 @@ MENU = [
                                     'Анизотропная фильтрация', LA, LA, LA)),
     ('MENU_OPTION_LIST_PC_TEXTURE', T('Texture Detail', 'テクスチャ調整', 'Texturdetails', 'Détail des textures', 'Nivel de detalle',
                                       ('Dettaglio texture', 'Livello di dettaglio'), 'Детализация текстур', 'LOD调整', 'LOD設定', 'LOD 조정')),
-    ('MENU_OPTION_LIST_PC_ASPECT', T(ASPECT, ASPECT, 'Seitenverhältnis', "Format d'image", 'Relación de aspecto', 'Proporzioni',
-                                     'Соотношение сторон', ASPECT, ASPECT, ASPECT)),
+    ('MENU_OPTION_LIST_PC_ASPECT', T('Aspect Ratio (next start)', (ASPECT + ' (スタート時に変更)', ASPECT), 'Seitenverhältnis (nach Neustart)',
+                                     "Format d'image (au redémarrage)", 'Relación de aspecto (al reiniciar)', 'Proporzioni (al riavvio)',
+                                     ('Формат экрана (после перезапуска)', 'Формат экрана'), ASPECT + ' (Restart)', ASPECT + ' (Restart)',
+                                     (ASPECT + ' (다음 시작 시)', ASPECT))),     # aspect_ratio: applies at the next start
     ('MENU_OPTION_LIST_PC_HUD', T('HUD Layout', ('HUDの配置', 'HUD'), 'HUD-Anordnung', 'Disposition du HUD', 'Disposición del HUD',
                                   'Layout HUD', 'Расположение HUD', ('HUD布局', 'HUD'), ('HUD佈局', 'HUD'), ('HUD 배치', 'HUD'))),
     ('MENU_OPTION_LIST_PC_FPS', T('Experimental Frame Rate (next start)',      # frame_rate: experimental above 60, at the next start; no commas
@@ -87,8 +89,10 @@ CORE = [
     ('CORE_PC_FULLSCREEN', T('Fullscreen', 'Fullscreen', 'Vollbild', 'Plein écran', 'Completa', 'Intero', 'Полный',
                              'Fullscreen', 'Fullscreen', '전체 화면')),
     ('CORE_PC_DEFAULT', T('Default', '初期値', 'Standard', 'Par défaut', 'Estándar', 'Predefinito', 'Стандарт', '标准', '標準', '기본')),
-    ('CORE_PC_KEEP', T('Original', 'オリジナル', 'Original', 'Original', 'Original', 'Originale', 'Исходное', '固定', '固定', '고정')),
-    ('CORE_PC_STRETCH', T('Stretch', 'ストレッチ', 'Strecken', 'Étirer', 'Estirar', 'Allunga', 'Растянуть', '缩放', '縮放', '확대')),
+    ('CORE_PC_FIXED', T('Fixed', ('固定', 'Fixed'), 'Fest', 'Fixe', 'Fijo', 'Fisso', 'Фиксир.', ('固定', 'Fixed'), ('固定', 'Fixed'),
+                        ('고정', 'Fixed'))),                                        # aspect_ratio = 16:9
+    ('CORE_PC_UNLOCKED', T('Unlocked', ('自由', 'Unlocked'), 'Frei', 'Libre', 'Libre', 'Libero', 'Свободно', ('自由', 'Unlocked'),
+                           ('自由', 'Unlocked'), ('자유', 'Unlocked'))),                # aspect_ratio = auto: the window's shape
     ('CORE_PC_HUD_FULL', T('Full Screen', ('全画面', 'Full Screen'), 'Vollbild', 'Plein écran', 'Completa', 'Intero', 'Весь экран',
                            ('全屏', 'Full Screen'), ('全螢幕', 'Full Screen'), ('전체 화면', 'Full Screen'))),       # hud_area = screen
     ('CORE_PC_HUD_CENTER', T('Centered', ('中央', 'Centered'), 'Zentriert', 'Centré', 'Centrado', 'Centrato', 'По центру',
