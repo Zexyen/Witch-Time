@@ -30,6 +30,8 @@ typedef struct {
                              * mip maps (nvn_vk_draw.c sampler_get); env SSBU_TEXTURE_LOD_BIAS wins */
     int model_lod_high;     /* [witchtime] model_lod = game (0) | highest (1); game_shim_eh.c h_model_lod through SSBU_MODEL_LOD */
     int no_film_grain;      /* [witchtime] film_grain = on (the game's own) | off; nvn_vk_m4.c stage_fx */
+    float aspect_ratio;     /* [witchtime] aspect_ratio = 16:9 (0: the game's own) | <w>:<h>: the shape of the game's screen, at the next start; handed on as
+                             * RECOMPS_ASPECT (game_shim_eh.c, r2_imports.c, nvn_vk_draw.c rs_xstretch), which wins when set */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */
