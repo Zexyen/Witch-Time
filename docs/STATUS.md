@@ -1180,9 +1180,13 @@ frames, 0)` (the arguments of the dodge at `0x710039d86c`; found by the sound ev
 `BGM_Witchtime_On` it plays), called from the main loop's clock between frames. In Shibuya at 70 s: the blue starfield
 and darkening for about 3 s at 16:9, 21:9 and 32:9, over the whole width (no unlit band at the sides), its stars the same
 size and shape at all three (not stretched); a few of them show the small crosses of the fractional pixel mapping (see
-the dither above). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
-pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
-pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies,
+the dither above). **The dither** of objects near the camera (a fine checkerboard at 16:9) became a coarser pattern of crosses at 21:9: the
+fragment stage samples a small tiled texture at gl_FragCoord / its size and discards against it, and gl_FragCoord was given
+in the game's pixels, 1600 of them over 2100 image pixels. Now (`nvn_vk_draw.c` `g_fs_screen` / `g_fs_small`) a draw
+whose fragment stage samples no screen-class image (scaled or kept at the game's size) and samples a texture of 64 x 64 or
+less gets the image's own pixels (`mx_fcs` 1): the faded demon in Shibuya shows an even checkerboard again, at the
+image's resolution (also at a resolution_scale that is not a whole number). Pause menu, Options and Witch Time
+unchanged; the few X-shaped Witch Time stars are the game's own (the same at 16:9). **Not checked yet**: movies,
 a real ultrawide monitor. 
 
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
@@ -1218,8 +1222,7 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 - Measured at 16:9 without the key: the same pictures as before (two runs differ by 0.1 % of pixels, stars); the overrides
   only pass through.
 
-Next: the dither pattern (round to whole game pixels, or the dither in image
-pixels), a run on a 21:9 monitor.
+Next: a run on a 21:9 monitor.
 
 ## Next blockers (most urgent first)
 

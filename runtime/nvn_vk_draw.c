@@ -1835,6 +1835,13 @@ static int framelog_on(void) {                     /* [witchtime] TEST ONLY: SSB
  * keeps a centred 16:9 box (pillar- or letterboxed) and the rest of the window texture is cleared to black, as on a TV;
  * the game's subtitles are drawn after it by the interface (its 16:9 area). */
 static int g_movie_y, g_movie_draw, g_movie_box[4];      /* box: x, y, w, h in the pass's pixels */
+/* [witchtime] The game's dither (objects near the camera fade through a screen-door pattern): the fragment stage samples a
+ * small tiled texture at gl_FragCoord / its size and discards against it. On a scaled image gl_FragCoord is given in the
+ * game's pixels (mx_fcs), so at a ratio that is not a whole number (21:9: 1600 game pixels over 2100) neighbouring pixels
+ * read the pattern unevenly and it shows as a coarser grid of crosses. A draw whose fragment stage samples no screen-class
+ * image (scaled, or kept at the game's size: those are read by screen position) and samples a small texture (64 x 64 or
+ * less: a pattern) gets the image's own pixels instead (mx_fcs 1): the pattern is even, at the image's resolution. */
+static int g_fs_screen, g_fs_small;
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
     Tex *t = NULL;
@@ -1848,6 +1855,7 @@ static void resolve_sampler(int s, VStage *v, int i) {
     if (r & 1) {
         VTex *vt = vt_get(t);
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
+        if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
         EView e;
         int attached = R.depth.tex == t, dim = v->smp[i].dim;
         for (int k = 0; k < R.ncol; k++) attached |= R.col[k].tex == t;
@@ -3113,7 +3121,7 @@ static int draw_prepare(unsigned prim) {
     PT(0);
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
-    g_movie_y = 0;
+    g_movie_y = 0; g_fs_screen = g_fs_small = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
     {   int m = g_movie_y && g_rs_bw * 9 != g_rs_bh * 16 && R.ncol > 0 && R.col[0].tex && wintex_is(R.col[0].tex);      /* [witchtime] a movie in a window texture not of 16:9 */
         if (m != g_movie_draw) { g_movie_draw = m; R.dyn_dirty = 1; } }
@@ -3317,7 +3325,8 @@ static int draw_prepare(unsigned prim) {
     {   uint32_t pc[5] = {(uint32_t)R.alpha_func, 0, 0, 0, 0};
         memcpy(&pc[1], &R.alpha_ref, 4); memcpy(&pc[2], &R.point_size, 4);
         if (RS_ON) {                               /* track O: mx_fcs = game pixels per image pixel of this pass (fragment stages translated with screen_scale); points shrink with the image */
-            float fcs = R.pass_rs ? 1.0f / R.pass_sx : 1.0f, fcy = R.pass_rs ? 1.0f / R.pass_sy : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
+            int own = g_fs_small && !g_fs_screen;      /* [witchtime] a pattern, no screen image: the image's own pixels (the dither, above) */
+            float fcs = R.pass_rs && !own ? 1.0f / R.pass_sx : 1.0f, fcy = R.pass_rs && !own ? 1.0f / R.pass_sy : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
             memcpy(&pc[3], &fcs, 4); memcpy(&pc[4], &fcy, 4); memcpy(&pc[2], &ps, 4);
         }
         vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20, pc);
