@@ -492,7 +492,7 @@ int gfx_option_set(const char *key, const char *val) {
     /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
-    g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale;
+    g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain;
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);

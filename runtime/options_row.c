@@ -72,6 +72,7 @@ static const PcRow k_pc[] = {
     {"model_lod", "MENU_OPTION_LIST_PC_MODEL", {"game", "highest"}, {"CORE_PC_DEFAULT", "CORE_PC_HIGHEST"}, 0},
     {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
     {"aspect", "MENU_OPTION_LIST_PC_ASPECT", {"keep", "stretch"}, {"CORE_PC_KEEP", "CORE_PC_STRETCH"}, 0},
+    {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */
 };
 #define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
 static uint32_t g_label[NPC], g_text[NPC][6], g_custom;
