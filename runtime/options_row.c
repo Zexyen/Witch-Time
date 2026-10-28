@@ -71,7 +71,7 @@ static const PcRow k_pc[] = {
     {"texture_lod_bias", "MENU_OPTION_LIST_PC_TEXTURE", {"-1", "-0.5", "0", "0.5", "1"}, {"CORE_PC_LOD_M1", "CORE_PC_LOD_M05", "CORE_PC_LOD_0", "CORE_PC_LOD_P05", "CORE_PC_LOD_P1"}, 2},
     {"model_lod", "MENU_OPTION_LIST_PC_MODEL", {"game", "highest"}, {"CORE_PC_DEFAULT", "CORE_PC_HIGHEST"}, 0},
     {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
-    {"aspect", "MENU_OPTION_LIST_PC_ASPECT", {"keep", "stretch"}, {"CORE_PC_KEEP", "CORE_PC_STRETCH"}, 0},
+    {"aspect_ratio", "MENU_OPTION_LIST_PC_ASPECT", {"16:9", "auto"}, {"CORE_PC_FIXED", "CORE_PC_UNLOCKED"}, 0},      /* [witchtime] aspect ratios: Fixed / Unlocked */
     {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */
 };
 #define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
