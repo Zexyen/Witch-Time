@@ -385,3 +385,65 @@ void h_frame_clock(Ctx *c) {
     if (fc_on > 0) { while (__atomic_exchange_n(&fc_lock, 1, __ATOMIC_ACQUIRE)) {} g_upd++; if (g_upd % 1200 == 0) fc_dump(); __atomic_store_n(&fc_lock, 0, __ATOMIC_RELEASE); }
     else __atomic_store_n(&g_upd, g_upd + 1, __ATOMIC_RELEASE);
 }
+
+/* [witchtime] aspect ratios (graphics.ini aspect_ratio; gfx_options.c hands it on as RECOMPS_ASPECT = width / height;
+ * docs/STATUS.md "Aspect ratios"). f_710070a740(int *w x0, int *h x1) answers the docked screen size, 1600x900;
+ * f_710070a760 the handheld one, 1280x720. Their callers (the NVN window textures, 0x7100d0c990; the docked / handheld
+ * switch, 0x7100cfdc50) take it as the window's size. The height stays, the width follows the ratio (even). The scene's
+ * targets keep their 16:9 sizes in the game (nvn_vk_draw.c makes them wider: rs_xstretch); the cameras follow below.
+ * shortcut: checked on the title screen and 4 minutes of Shibuya (movies, menus and a real ultrawide monitor not yet). */
+void f_710070a740(Ctx *c);
+void f_710070a760(Ctx *c);
+static float aspect_want(void) { static float v = -1; if (v < 0) { const char *e = getenv("RECOMPS_ASPECT"); v = e ? (float)atof(e) : 0.0f; if (!(v >= 0.25f && v <= 8.0f)) v = 0.0f; } return v; }
+static void screen_size_aspect(Ctx *c) {
+    float a = aspect_want();
+    if (a <= 0.0f) return;
+    int32_t w, h; memcpy(&w, (void *)(uintptr_t)c->x[0], 4); memcpy(&h, (void *)(uintptr_t)c->x[1], 4);
+    w = 2 * (int32_t)((float)h * a / 2.0f + 0.5f);
+    memcpy((void *)(uintptr_t)c->x[0], &w, 4);
+}
+void h_screen_docked(Ctx *c) { f_710070a740(c); screen_size_aspect(c); }      /* the originals only store: x0, x1 stay */
+void h_screen_handheld(Ctx *c) { f_710070a760(c); screen_size_aspect(c); }
+/* f_7100d01380(config x0): the graphics set-up (one caller, 0x710069d1ec). config + 0x90 is the size of the heap the
+ * render targets and the window textures are placed in, 0x10400000 (260 MB; the game's last memory block, 0x10600000).
+ * Wider than 16:9 it grows with the width (r2_imports.c adds as much to the memory the game is told it has): at 21:9
+ * the 84th render target, 1600x896, did not fit. */
+void f_7100d01380(Ctx *c);
+void h_gfx_setup(Ctx *c) {
+    float a = aspect_want();
+    if (a > 16.0f / 9.0f) {
+        uint64_t sz; memcpy(&sz, (void *)(uintptr_t)(c->x[0] + 0x90), 8);
+        uint64_t extra = ((uint64_t)((double)sz * (a * 9.0 / 16.0 - 1.0)) + 0x1fffff) & ~0x1fffffull;      /* same as r2_imports.c */
+        sz += extra;
+        memcpy((void *)(uintptr_t)(c->x[0] + 0x90), &sz, 8);
+        printf("aspect: the render-target heap is 0x%llx bytes (RECOMPS_ASPECT)\n", (unsigned long long)sz);
+    }
+    f_7100d01380(c);
+}
+/* f_7100cba90c(camera x0, fov s0, near s1, far s2, width w1, height w2): a camera's perspective (fov: vertical, radians);
+ * its aspect (camera + 0x3d8, read by the projection 0x7100cb9920) is width / height. Its callers give fixed sizes:
+ * 1280x720 (0x7100624e10, 0x7100c04b00), 256 high (0x7100646b64, not 16:9), the caller's own (0x710063fe50). A 16:9 size
+ * (within 1 %) gets the screen's shape: wider, the same vertical view and more at the sides (Hor+); narrower, the same
+ * horizontal view and more above and below (Vert+: the vertical angle grows). */
+void f_7100cba90c(Ctx *c);
+float tanf(float); float atanf(float);
+static float vert_plus(float fov, float a) { return 2.0f * atanf(tanf(fov * 0.5f) * (16.0f / 9.0f) / a); }
+void h_camera_perspective(Ctx *c) {
+    float a = aspect_want();
+    int32_t w = (int32_t)c->x[1], h = (int32_t)c->x[2];
+    float d = h > 0 ? (float)w / (float)h - 16.0f / 9.0f : 1.0f;
+    if (a > 0.0f && d < 0.018f && d > -0.018f) {
+        c->x[1] = (uint32_t)(int32_t)((float)h * a + 0.5f);
+        if (a < 16.0f / 9.0f) c->v[0].f[0] = vert_plus(c->v[0].f[0], a);
+    }
+    f_7100cba90c(c);
+}
+/* f_7100cba97c(camera x0, fov s0): the vertical angle alone (3 callers: the scenes' cameras move it every frame). On a camera
+ * whose aspect is the screen's (set above), narrower than 16:9, it grows as above. */
+void f_7100cba97c(Ctx *c);
+void h_camera_fov(Ctx *c) {
+    float a = aspect_want(), ca;
+    uint64_t cam; memcpy(&cam, (void *)(uintptr_t)c->x[0], 8); memcpy(&ca, (void *)(uintptr_t)(cam + 0x3d8), 4);
+    if (a > 0.0f && a < 16.0f / 9.0f && ca == ca && ca - a < 0.001f && a - ca < 0.001f) c->v[0].f[0] = vert_plus(c->v[0].f[0], a);
+    f_7100cba97c(c);
+}

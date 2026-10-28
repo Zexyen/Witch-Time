@@ -28,6 +28,8 @@ typedef struct {
                              * env SSBU_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
     float texture_lod_bias; /* [witchtime] texture_lod_bias = 0 (the game's own) .. -3 (sharper: finer mip levels) .. +3; added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env SSBU_TEXTURE_LOD_BIAS wins */
+    float aspect_ratio;     /* [witchtime] aspect_ratio = 16:9 (0: the game's own) | <w>:<h>: the shape of the game's screen, at the next start; handed on as
+                             * RECOMPS_ASPECT (game_shim_eh.c, r2_imports.c, nvn_vk_draw.c rs_xstretch), which wins when set */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */

@@ -8,6 +8,7 @@
  * The controllers.ini reader of nnpad_sdl.c is built around its device sections and is not reusable here: this file has
  * its own 30-line reader (key = value, ';' or '#' comments, section headers ignored). */
 #include <windows.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,6 +121,12 @@ static const char *const k_default_ini =
 ";   borderless or fullscreen mode) gets black bars at the sides or at the top and bottom. stretch: the picture fills\r\n"
 ";   the window whatever its shape.\r\n"
 "aspect = keep\r\n"
+"\r\n"
+"; aspect_ratio = 16:9 | <width>:<height>      (Vulkan; experimental; applies at the next start)\r\n"
+";   The shape of the game's own picture: 21:9, 32:9, 16:10, 9:10 ... (or a number, 2.37). Wider than 16:9 shows more\r\n"
+";   at the sides, narrower more above and below; the interface stays 16:9 in the middle. Set it to your window's or\r\n"
+";   monitor's shape (with aspect = keep the rest is black bars).\r\n"
+"aspect_ratio = 16:9\r\n"
 "\r\n"
 "; frame_time_overlay = off | on\r\n"
 ";   on: the average frame time of the last second in the window title ('.. fps - 16.67 ms per frame') and as a\r\n"
@@ -255,6 +262,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
+        else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
         else unknown++;
     }
     if (f) fclose(f);
@@ -277,6 +285,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "SSBU_CUTSCENE_FPS" : "graphics.ini",
                o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
     }
+    /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
+    if (!(o->aspect_ratio >= 0.25f && o->aspect_ratio <= 8.0f) || fabsf(o->aspect_ratio - 16.0f / 9.0f) < 0.001f) o->aspect_ratio = 0.0f;
+    if (o->aspect_ratio > 0.0f && !getenv("RECOMPS_ASPECT")) { char n[32]; snprintf(n, sizeof n, "%.6f", o->aspect_ratio); _putenv_s("RECOMPS_ASPECT", n); }
+    if (getenv("RECOMPS_ASPECT")) printf("graphics options: aspect_ratio %s (the game's screen width / height; experimental, docs/STATUS.md \"Aspect ratios\")\n", getenv("RECOMPS_ASPECT"));
     /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
      * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).
      * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */

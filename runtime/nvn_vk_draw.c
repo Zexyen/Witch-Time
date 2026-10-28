@@ -758,7 +758,15 @@ static float rs_scale(void) {
     }
     return g_rs;
 }
-#define RS_ON (rs_scale() != 1.0f)
+/* [witchtime] aspect ratios (RECOMPS_ASPECT, game_shim_eh.c; docs/STATUS.md "Aspect ratios"): wider than 16:9 the game's
+ * window is wider, but its scene targets keep 16:9 sizes (1600x896 ...) and are stretched into it: such a target (of
+ * the 16:9 class, not of the window's) is made this much wider again, so the scene has the window's pixels across */
+static float rs_xstretch(void) {
+    static float v = -1;
+    if (v < 0) { const char *e = getenv("RECOMPS_ASPECT"); float a = e ? (float)atof(e) : 0.0f; v = a > 16.0f / 9.0f && a <= 8.0f ? a * 9.0f / 16.0f : 1.0f; }
+    return v;
+}
+#define RS_ON (rs_scale() != 1.0f || rs_xstretch() != 1.0f)
 /* [Recomps#1] the screen size the classes derive from is the game's window texture (Bayonetta 2: 1280x720, the size it
  * renders at; Smash: 1920x1080): nvn_gl.c win_initialize tells it (nvn_vk_rs_base); 1280x720 before that. With Smash's
  * fixed 1920x1080 no image of ours was ever scaled (finding 82). */
@@ -780,13 +788,17 @@ static float rs_extra_scale(void) {                 /* SSBU_VK_CLOUD_SCALE=<cap>
     if (v < 0) { const char *e = getenv("SSBU_VK_CLOUD_SCALE"); float cap = e ? (float)atof(e) : RS_MAX; v = rs_scale() < cap ? rs_scale() : cap; if (v < 1.0f && rs_scale() >= 1.0f) v = 1.0f; }
     return v;
 }
-static int rs_screen_class(int w, int h) {
-    if (rs_extra_class(w, h)) return 1;
+static int rs_window_class(int w, int h) {
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
     if (w < 40 || h < 22) return 0;
     double a = (double)w / h, b = (double)g_rs_bw / g_rs_bh;
     return a > b * 0.985 && a < b * 1.015;
 }
+static int rs_169_class(int w, int h) {                  /* [witchtime] a scene target of 16:9 in a window of another shape (rs_xstretch) */
+    double a = (double)w / h, b = 16.0 / 9.0;
+    return rs_xstretch() != 1.0f && !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
+}
+static int rs_screen_class(int w, int h) { return rs_extra_class(w, h) || rs_window_class(w, h) || rs_169_class(w, h); }
 /* A coordinate of the game's grid on a scaled image (nearest image texel edge, inside 0..max). */
 static int rs_edge(int v, float s, int max) { double r = floor((double)v * s + 0.5); return r < 0 ? 0 : r > max ? max : (int)r; }      /* [Recomps#1] clamped before the conversion (finding 83: rs_rect) */
 /* Session 9: the textures of the game's window (nvn_gl.c win_initialize keeps the list; also noted here at every present).
@@ -1036,8 +1048,8 @@ static VTex *vt_get2(Tex *t, int sync) {
         if (RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(vt->w, vt->h))) && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
             (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
-            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale();
-            vt->w = (int)((float)gw * sc + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
+            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale(), xs = rs_169_class(gw, gh) ? rs_xstretch() : 1.0f;
+            vt->w = (int)((float)gw * sc * xs + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
             if (vt->w < 1) vt->w = 1; if (vt->h < 1) vt->h = 1;
             vt->rs = 1; vt->sx = (float)vt->w / (float)gw; vt->sy = (float)vt->h / (float)gh;
             while ((vt->w >> lv) || (vt->h >> lv)) lv++;
@@ -1556,7 +1568,7 @@ static Pipe *pipe_make(const PKey *k, VStage *vs, VStage *fs, double *took) {
         if (i == 0 && D.has_push && p->nb[0] <= 32) { li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; p->push0 = 1; }      /* 32: the smallest maxPushDescriptors a device may have */
         VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &p->dl[i]));
     }
-    VkPushConstantRange pc = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16};
+    VkPushConstantRange pc = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20};
     VkPipelineLayoutCreateInfo pl = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pl.setLayoutCount = 2; pl.pSetLayouts = p->dl; pl.pushConstantRangeCount = 1; pl.pPushConstantRanges = &pc;
     VKC(vkCreatePipelineLayout(V.device, &pl, NULL, &p->layout));
@@ -3274,13 +3286,13 @@ static int draw_prepare(unsigned prim) {
         }
         PT(9);
     }
-    {   uint32_t pc[4] = {(uint32_t)R.alpha_func, 0, 0, 0};
+    {   uint32_t pc[5] = {(uint32_t)R.alpha_func, 0, 0, 0, 0};
         memcpy(&pc[1], &R.alpha_ref, 4); memcpy(&pc[2], &R.point_size, 4);
         if (RS_ON) {                               /* track O: mx_fcs = game pixels per image pixel of this pass (fragment stages translated with screen_scale); points shrink with the image */
-            float fcs = R.pass_rs ? 1.0f / R.pass_sx : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
-            memcpy(&pc[3], &fcs, 4); memcpy(&pc[2], &ps, 4);
+            float fcs = R.pass_rs ? 1.0f / R.pass_sx : 1.0f, fcy = R.pass_rs ? 1.0f / R.pass_sy : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
+            memcpy(&pc[3], &fcs, 4); memcpy(&pc[4], &fcy, 4); memcpy(&pc[2], &ps, 4);
         }
-        vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, pc);
+        vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20, pc);
     }
     PT(10);
     if (drawlog_on()) {                            /* TEST ONLY: SSBU_VK_DRAWLOG */

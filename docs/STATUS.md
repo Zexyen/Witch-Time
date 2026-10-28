@@ -1121,6 +1121,59 @@ where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bou
   49 frames over 50 ms in three Tokyo 1.0 runs of the same build). Not fixed.
 - No other hot spot stood out: render(host) is the top thread at 4.3-6.5 ms a frame.
 
+## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
+
+`aspect_ratio = 16:9 | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own picture
+at any shape. Wider than 16:9 shows more at the sides (Hor+), narrower more above and below (Vert+); the interface stays
+a 16:9 block in the middle (it is drawn with the same cameras). Checked on the title screen at 9:10, 1.85, 2.0, 21:9
+(2100x900) and 32:9 (3200x900), resolution_scale 1.0 and 1.2; `aspect = keep` puts the result in the window.
+**In game** (the save, `SSBU_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
+the fight with the HUD; 16:9, 21:9, 32:9, 9:10; muted, frames every 600 saved): no crash, 10,177-10,282 frames presented
+in each (the same as 16:9); the 3D view is Hor+ (32:9: much more of the street at the sides) or Vert+ (9:10: more sky
+and street); the HUD (health, demon gauge, score, Verse, combo points), the subtitles and "Break Free" prompts stay in a
+16:9 area in the middle (at 32:9 the health bar is near the centre, not at the screen's edge); the cutscene fills the
+screen (no bars). **Seen**: the game's dither of objects near the camera (a fine checkerboard at 16:9) becomes a coarser
+pattern of crosses at 21:9: its grid is in the game's pixels (`gl_FragCoord * mx_fcs`), 1600 of them over 2100 image
+pixels (any resolution_scale that is not a whole number does the same). **Not checked yet**: movies, the pause menu and
+Options, the HUD at the screen's edges (an option), a real ultrawide monitor. No Options row or PC-panel row yet.
+
+What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
+- **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
+  callers: the NVN window set-up `0x7100d0c990` (the window textures) and the per-frame docked / handheld check
+  `0x7100cfdc50`. Host overrides `screen_docked` / `screen_handheld` (`runtime/game_shim_eh.c`): the height stays,
+  the width follows the ratio. Alone, this squeezes or stretches the picture: the scene is still drawn at 1600x896 and
+  put into the window texture.
+- **The render-target heap**: from 1944x900 up the start-up failed (`HOST SIGNAL 11` at address 8 in `f_7100b845a0`:
+  the main loop's object list was never made). The renderer set-up `0x710069c698` gave up when its 84th render target
+  (`0x7100cfa5c8`, 1600x896) did not fit the heap the targets and the window textures share: 0x10400000 bytes, an
+  immediate at `0x710069d164`, in the config passed to the graphics set-up `0x7100d01380` (+0x90). Override
+  `gfx_setup` makes it grow with the width (21:9: 0x15600000, 32:9: 0x20a00000), and `r2_imports.c` tells the game it
+  has as much more memory (it sizes its heap from that; the blocks it takes are fixed).
+- **The cameras**: `0x7100cba90c(camera, fov, near, far, width, height)` sets a perspective with aspect = width / height
+  (camera + 0x3d8; the projection is `0x7100cb9920`; +0x3d0 near, +0x3d4 far, +0x3dc vertical angle). Its callers give
+  fixed 1280x720 (`0x7100624e10`, `0x7100c04b00`), 256 high (`0x7100646b64`), or their own. Override
+  `camera_perspective`: a 16:9 size gets the screen's shape; narrower than 16:9 the vertical angle grows too
+  (2 atan(tan(fov / 2) * (16/9) / ratio)), as in `camera_fov` for `0x7100cba97c`, the angle alone, which the scenes'
+  cameras call every frame. All cameras seen on the title had aspect 16/9 exactly before.
+- **The scene's resolution**: the game keeps making its scene targets at 16:9 sizes (1600x896, 1440x816 and their halves
+  are immediates in `0x710069c698` and the dynamic resolution's code). The Vulkan backend makes those (a 16:9 shape,
+  not the window's) `ratio * 9/16` times wider (`nvn_vk_draw.c` `rs_xstretch`, `rs_169_class`), on top of
+  resolution_scale; scaling is on at 1.0 then too. `gl_FragCoord` takes an x and a y factor now (`mx_fcs`, `mx_fcs_y`;
+  push constants 20 bytes; the fragment stages' hash key `rs1` became `rs2`, so a run with a scale translates its
+  fragment stages once again: about two minutes of held loading screens, once). 21:9 at 1.0: 47 images scaled, 138 MB;
+  at 1.2: 196 MB.
+- **16/9 as a constant**: `mov/movk 0x3fe38e39` at 8 places (`0x7100706b70`, a getter; `774b4c`, `c2abe8`, `c30668`,
+  `c81288`, `c826e8`, `ca8dd4`, `ca921c`; most divide it by a width / height). Reading all eight from the screen's
+  ratio changed nothing on the title; they are left as they are (candidates if gameplay shows a screen-space effect or
+  a pointer out of place). theboy181's 21:9 patch for 1.1.0 (one `fmov s1, #2.375`, made for emulators that stretch the
+  picture) is at one of these.
+- Measured at 16:9 without the key: the same pictures as before (two runs differ by 0.1 % of pixels, stars); the overrides
+  only pass through.
+
+Next: movies (1600x900 WebM: placed as 16:9?), the pause menu, the dither pattern (round to whole game pixels, or the
+dither in image pixels), a run on a 21:9 monitor; then the key in the PC panel and an Options row ("applies at the next
+start"); the HUD at the screen's edges as an option.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
@@ -1153,6 +1206,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - `nvnCommandBufferDispatchComputeIndirect` (Vulkan) reads the group counts from guest memory after a sync.
 - `nn::os` ReaderWriterLock has no writer preference.
 - Preparation adds one integer key (attribute 2, `job_prep`): another key in a later chapter still compiles at its first draw.
+- `aspect_ratio` (`game_shim_eh.c`): checked on the title screen and 4 minutes of Shibuya (section "Aspect ratios").
 - The device fields the sdk's texture code reads are modelled (`nvn_sdk.c`); "compression supported" (+0x1b34 = 1) is
   inferred, its writer was not found.
 - Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel
