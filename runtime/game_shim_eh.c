@@ -429,6 +429,54 @@ static void screen_size_aspect(Ctx *c) {
 }
 void h_screen_docked(Ctx *c) { f_710070a740(c); screen_size_aspect(c); }      /* the originals only store: x0, x1 stay */
 void h_screen_handheld(Ctx *c) { f_710070a760(c); screen_size_aspect(c); }
+/* The chapter select's aim (0x7100920570) is a point on the map moved by the stick. It is projected with the camera's
+ * viewport, which has the screen getters' width (h_screen_*), and kept on screen by the screen's corners mapped back with
+ * 0x7100d02d70's width (+304 of the graphics object, 1280 whatever the window): wider than 16:9 the aim could not reach
+ * the right part of the screen. Only that call gets the screen's width: the getter's other 50 callers are not checked.
+ * f_7100a6f5a0(x s0, y s1) stores the aim's position on screen (one caller, 0x710091c298, by the same projection) for
+ * the ring drawn there, which takes it as 1280 wide: at 21:9 the ring was 290 units right of the aim. The ring itself
+ * is still drawn 1280 wide (stretched with the screen). */
+void f_7100d02d70(Ctx *c);
+void h_screen_w(Ctx *c) {
+    f_7100d02d70(c);
+    float a = aspect_want();
+    if (a <= 0.0f || c->x[30] != 0x71009207fcull) return;
+    uint64_t g; int32_t h; memcpy(&g, (void *)(uintptr_t)0x71024accc0ull, 8); memcpy(&h, (void *)(uintptr_t)(g + 308), 4);
+    c->x[0] = (uint32_t)(2 * (int32_t)((float)h * a / 2.0f + 0.5f));
+}
+/* f_7100c1dfe8: a UI clip element (the HUD's gauges: health, magic, the enemy bars; their fill is the scissor) turns its
+ * rectangle into the target's pixels as (x + 640) * the target's width (0x7100d02d90) / 1280: the UI's 1280 x 720 with
+ * its centre at 640. Wider than 16:9 the UI is 720 * ratio wide with its centre in the middle, so the fill was cut
+ * short (74 % of a full health bar at 21:9 with the HUD at the edges, 20 % centred). The width it reads is scaled to
+ * 1280 / (720 * ratio) (target_w), and the rectangle is moved right by half the extra width (clip_cmd: the command it
+ * is copied into is allocated at 0x7100c1e388, then the rectangle is read back from [sp]).
+ * shortcut: wider than 16:9 only; a taller screen keeps the console's mapping (not seen on screen). */
+static float g_clip_off;
+void f_7100d02d90(Ctx *c);
+void h_target_w(Ctx *c) {
+    f_7100d02d90(c);
+    float a = aspect_want();
+    if (a > 16.0f / 9.0f && (c->x[30] == 0x7100c1e044ull || c->x[30] == 0x7100c1e110ull)) {
+        double ui = (double)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f)), w = (double)(uint32_t)c->x[0];
+        g_clip_off = (float)((ui - 1280.0) / 2.0 * w / ui);
+        c->x[0] = (uint32_t)(w * 1280.0 / ui + 0.5);
+    }
+}
+void f_7100d04414(Ctx *c);
+void h_clip_cmd(Ctx *c) {
+    int ours = c->x[30] == 0x7100c1e38cull && aspect_want() > 16.0f / 9.0f;
+    f_7100d04414(c);
+    if (!ours) return;
+    float r[4]; memcpy(r, (void *)(uintptr_t)c->x[31], 16);      /* x0 y0 x1 y1 */
+    r[0] += g_clip_off; r[2] += g_clip_off;
+    memcpy((void *)(uintptr_t)c->x[31], r, 16);
+}
+void f_7100a6f5a0(Ctx *c);
+void h_aim_pos(Ctx *c) {
+    float a = aspect_want();
+    if (a > 0.0f) c->v[0].f[0] *= 1280.0f / (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f));
+    f_7100a6f5a0(c);
+}
 /* f_7100d01380(config x0): the graphics set-up (one caller, 0x710069d1ec). config + 0x90 is the size of the heap the
  * render targets and the window textures are placed in, 0x10400000 (260 MB; the game's last memory block, 0x10600000).
  * Wider than 16:9 it grows with the width (r2_imports.c adds as much to the memory the game is told it has): at 21:9

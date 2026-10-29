@@ -1189,6 +1189,29 @@ image's resolution (also at a resolution_scale that is not a whole number). Paus
 unchanged; the few X-shaped Witch Time stars are the game's own (the same at 16:9). **Not checked yet**: movies,
 a real ultrawide monitor. 
 
+**The chapter select's aim** (seen by hand on a 3440x1440 monitor, borderless, Unlocked): the aim ring sat right of where
+the dart lands (290 units at 21:9, on the wall instead of the chapter's disc). The aim (`0x7100920570`) is a point on the
+map moved by the stick, projected with the camera's viewport (1720x720 at 21:9: the screen getters' width), and kept on
+screen by the screen's corners mapped back with `0x7100d02d70` / `0x7100d02d80`, which stay 1280x720 (+304 / +308 of the
+graphics object; found with gdb on a run it starts, counting calls of the projection's users while the chapter select
+is up). `0x710091c298` stores the aim's position on screen through `0x7100a6f5a0` for the ring, whose drawing takes it as
+1280 wide. Overrides `screen_w` (only for the call at `0x71009207f8`: the getter's other 50 callers are not checked) and
+`aim_pos` (x times 1280 / the viewport's width). Checked at 21:9 (scripted pad, the save's chapter select): the ring on
+the disc at the start, at the right and top edges when pushed there, the dart lands at the ring (as at 16:9). The ring is
+still drawn 1280 wide (an oval at 21:9, its drawing not found). `774b4c` (below) read from the screen's ratio did not
+move or round it.
+
+**The HUD's gauges** (health, Demon Slave, enemy bars; seen by hand): their fill is a scissor, made by the UI's clip
+element `0x7100c1dfe8` as (x + 640) * the target's width (`0x7100d02d90`) / 1280. Wider than 16:9 the UI is 720 * ratio
+wide around the middle, so a full health bar showed 74 % (HUD at the edges) or 20 % (centred) at 21:9. Found by logging
+the scissors per draw (16:9: `107 43 200 10`; 21:9: `0 43 268 10`), then gdb up from the game's scissor setter
+`0x7100cf0e08` through its callback `0x7100c03880` (a pointer at `0x71024abb98`, taken at `0x7100c1e3b0`). Overrides
+`target_w` (that width times 1280 / (720 * ratio), only for its two calls there) and `clip_cmd` (`0x7100d04414`, only for
+its call at `0x7100c1e388`: the rectangle on the stack moved right by half the extra width before it is copied). Checked
+at 21:9 in a Verse 3 fight: the scissors equal 16:9's, the three bars full, with the HUD at the edges and centred.
+Wider than 16:9 only. **Verse results screen**: reported not reaching the right edge; not reproduced yet (a scripted
+run does not finish a verse).
+
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
 - **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
   callers: the NVN window set-up `0x7100d0c990` (the window textures) and the per-frame docked / handheld check
