@@ -29,6 +29,11 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100cba97c, "camera_fov"),
 pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100c0ef04, "ui_element"),
+pub const HOST_OVERRIDES: &[(i64, &str)] = &[
+    (0x7100d02d70, "screen_w"),
+    (0x7100a6f5a0, "aim_pos"),
+    (0x7100d02d90, "target_w"),
+    (0x7100d04414, "clip_cmd"),
     (0x7100983610, "rebind_pads"),
     (0x710095f464, "rebind_menu_pads"),
     (0x7100b22cc0, "prompt_number"),
