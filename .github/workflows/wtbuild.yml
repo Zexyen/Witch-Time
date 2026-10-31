@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -50,6 +50,11 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_loop_guard_test"
           "$RUNNER_TEMP/mx_loop_guard_test"
+
+      - name: Fragment stages work on quads, not lane numbers (runtime/mx_translate.c, issue 66)
+        run: |
+          clang -O2 -Wall -I runtime tests/mx_quad_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_quad_test"
+          "$RUNNER_TEMP/mx_quad_test"
 
       - name: The step of cutscenes and menus (runtime/scene_step.h, issue 47)
         run: |
