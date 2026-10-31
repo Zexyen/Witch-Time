@@ -92,9 +92,15 @@ const LIBS: &[&str] = &[
     "-lswresample",
     "-lavutil",
 ];
-/// Windows (build_runtime.py's mingw LIBS): SDL3, and the system's libraries (Media Foundation for the movies, waveOut)
+/// Windows (build_runtime.py's mingw LIBS): SDL3, FFmpeg (movies), and the system's libraries (Media Foundation for the
+/// album's clips, waveOut)
 const WIN_LIBS: &[&str] = &[
     "-lSDL3",
+    "-lavformat",
+    "-lavcodec",
+    "-lswscale",
+    "-lswresample",
+    "-lavutil",
     "-luser32",
     "-lgdi32",
     "-lwinmm",

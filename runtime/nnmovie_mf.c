@@ -1,4 +1,4 @@
-/* movie:: (the SDK's video player library) on Windows Media Foundation, and on FFmpeg on Linux ([witchtime], see the FFmpeg section).
+/* movie:: (the SDK's video player library) on FFmpeg ([witchtime], see the FFmpeg section).
  *
  * The SDK library is a port of Android's stagefright (NuMediaExtractor / MediaCodec); the game's own
  * copy lives in subsdk0, whose exported symbols (movie::NnExtractor, movie::DecoderImpl, movie::NnMediaData,
@@ -53,49 +53,30 @@
  * movie::MediaData is one pointer to a key/value store [subsdk 0x23d70]; here that is a host structure.
  * movie::SetAllocator(alloc(size, align, user), free(p, user), realloc(p, size, user), user) [game 0x71036e66b4].
  * The opening movie is stream:/movie/... in data.arc: WebM, VP9 1280x720, two Vorbis 48 kHz stereo tracks, 420 s
- * (extracted copy in movie_samples\, decoded offline by mftest.exe).  Media Foundation on this PC decodes VP9
- * (VP9VideoExtensionDecoder), Vorbis (FFmpegAudioDecoder MFT) and Opus; the MKV/WebM source is mfmkvsrcsnk.dll.
+ * (extracted copy in movie_samples\).  FFmpeg decodes in software, so no codec of the system's and no GPU is needed. A movie
+ * that cannot start must not happen: the game gives up on it, and without the opening New Game falls for ever (#68).
  *
- * How this file maps the protocol onto IMFSourceReader: the extractor reads the whole file through the game's
- * ClientStreamReader into memory and opens it as an MF byte stream.  ReadSample(ANY_STREAM) demuxes AND decodes, so
- * the "compressed sample" handed to the game in Extractor::Read is only a token {magic, IMFSample*, time} written into
- * the decoder's input slot; Decoder::SendInputBufferForDecode moves that sample to the output queue, GetOutputBuffer
- * copies the decoded NV12 / PCM data into the game's buffer and ReleaseOutputBufferIndex frees the slot.
+ * How this file maps the protocol onto FFmpeg: the extractor reads the whole file through the game's ClientStreamReader into
+ * memory and opens it there.  src_read demuxes AND decodes, so the "compressed sample" handed to the game in Extractor::Read
+ * is only a token {magic, Sample*, time} written into the decoder's input slot; Decoder::SendInputBufferForDecode moves that
+ * sample to the output queue, GetOutputBuffer copies the decoded NV12 / PCM data into the game's buffer and
+ * ReleaseOutputBufferIndex frees the slot.
  *
  * Environment: SSBU_MOVIE=0 keeps the failing placeholder (nnmovie.c); SSBU_MOVIE_SAVE=<file> saves what the game's
  * reader returned; SSBU_MOVIE_LOG=1 logs every decoder call; SSBU_MOVIE_TEST_RESYNC=<flag>,<n> makes the game
  * re-synchronise (pause, seek, resume) the movie at the n-th video sample, see dec_SendInputBufferForDecode. */
 #ifdef _WIN32
-#define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <mfapi.h>
-#include <mfidl.h>
-#include <mfreadwrite.h>
-#include <mferror.h>
-#ifdef __MINGW32__
-/* [Recomps#1] mingw-w64's mfidl.h lacks this prototype; libmfplat.a exports the function (the Windows SDK's declaration). */
-STDAPI MFCreateMFByteStreamOnStream(IStream *pStream, IMFByteStream **ppByteStream);
 #endif
-#include <shlwapi.h>
-#define MOVIE_BACKEND "Media Foundation"
-#else
-#define MOVIE_BACKEND "FFmpeg"
-/* [witchtime] Linux: the same protocol on FFmpeg (libavformat demuxes, libavcodec decodes, swscale / swresample make the
- * NV12 frames and 16-bit PCM the game takes). A "sample" is a decoded block in host memory; see the FFmpeg section below. */
 #include <windows.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavutil/channel_layout.h>
-struct IMFSample { unsigned char *data; size_t len; };      /* (declared by win32_absent.h) a decoded frame: tight NV12 or interleaved s16 */
-static void hs_free(IMFSample *s) { if (s) { free(s->data); free(s); } }
-#undef IMFSample_Release
-#define IMFSample_Release(s) hs_free(s)
-#define IMFSourceReader struct AvSrc                /* the FFmpeg source of an extractor (Ext::rd) */
-#define IMFByteStream void
-#endif
+struct AvSrc;                                               /* the FFmpeg source of an extractor (Ext::rd) */
+typedef struct Sample { unsigned char *data; size_t len; } Sample;   /* a decoded frame: tight NV12 or interleaved s16 */
+static void hs_free(Sample *s) { if (s) { free(s->data); free(s); } }
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -134,20 +115,6 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 static int g_log;                                     /* SSBU_MOVIE_LOG */
 static int g_test_resync_flag, g_test_resync_at;      /* SSBU_MOVIE_TEST_RESYNC */
 static uint64_t g_alloc_fn, g_free_fn, g_alloc_user;  /* movie::SetAllocator */
-static volatile LONG g_mf_started;
-static _Thread_local int t_com_init;
-
-#ifndef _WIN32
-static void com_init(void) {}
-#else
-static void com_init(void) {
-    if (!t_com_init) { CoInitializeEx(NULL, COINIT_MULTITHREADED); t_com_init = 1; }
-    if (!g_mf_started && InterlockedCompareExchange(&g_mf_started, 1, 0) == 0) {
-        HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
-        printf("movie: MFStartup %08lx\n", hr);
-    }
-}
-#endif
 
 /* Call a guest function with up to five arguments; the caller's registers are preserved. */
 static uint64_t gcall(Ctx *c, uint64_t fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -319,27 +286,25 @@ static void buf_SetNvnSync(Ctx *c) { wr64(A0 + B_SYNC, A1); }
 static void buf_GetNvnSync(Ctx *c) { RET(rd64(A0 + B_SYNC)); }
 static void buf_Swap(Ctx *c) { unsigned char t[0x40]; memcpy(t, (void *)(uintptr_t)A0, 0x40); memcpy((void *)(uintptr_t)A0, (void *)(uintptr_t)A1, 0x40); memcpy((void *)(uintptr_t)A1, t, 0x40); }
 
-/* ---------------------------------------------------------------- Media Foundation plumbing */
+/* ---------------------------------------------------------------- plumbing */
 typedef struct {
     int kind;                                         /* 0 video, 1 audio, 2 other */
     char mime[48];
     int w, h, rate, ch, selected, eos;
     double fps;
-    uint32_t fourcc;
-    int failed;                                       /* close4: the source reader's decoder reported an error for this track */
+    int failed;                                       /* close4: the decoder reported an error for this track */
 } Track;
 
 typedef struct Ext {
     CRITICAL_SECTION cs;
-    IMFSourceReader *rd;
-    IMFByteStream *bs;
+    struct AvSrc *rd;
     int ntracks;
     Track tr[MAX_TRACKS];
     int64_t duration_us;
     int have_pending, pend_track, pend_consumed, eos;
-    IMFSample *pending;
+    Sample *pending;
     int64_t pend_us;
-    struct { int have; IMFSample *s; int64_t us; } ahead[MAX_TRACKS];    /* next decoded sample of each selected track */
+    struct { int have; Sample *s; int64_t us; } ahead[MAX_TRACKS];    /* next decoded sample of each selected track */
     char path[260];
     unsigned long long samples_read;
     volatile uint64_t gen;                            /* bumped by SeekTo: samples read before it are refused by the decoders */
@@ -362,7 +327,7 @@ typedef struct Ext {
 #define MAX_OUT 64
 enum { IN_CODEC = 0, IN_OFFERED, IN_CLIENT, IN_DECODING };
 enum { OUT_FREE = 0, OUT_READY, OUT_CLIENT };
-typedef struct { int state; IMFSample *s; int64_t ts; uint32_t flags; } OutBuf;
+typedef struct { int state; Sample *s; int64_t ts; uint32_t flags; } OutBuf;
 
 typedef struct {
     CRITICAL_SECTION cs;
@@ -374,7 +339,7 @@ typedef struct {
     int nin, nout;
     unsigned char in_state[MAX_IN];
     int in_list[MAX_IN], in_n;                        /* offered input indices, oldest first */
-    struct { IMFSample *s; int64_t ts; uint32_t flags; } in_data[MAX_IN];   /* what an IN_DECODING buffer holds */
+    struct { Sample *s; int64_t ts; uint32_t flags; } in_data[MAX_IN];   /* what an IN_DECODING buffer holds */
     int dec_list[MAX_IN], dec_n;                      /* inputs waiting for a free output buffer, oldest first */
     OutBuf out[MAX_OUT];
     int out_list[MAX_OUT], out_n;                     /* decoded frames ready for the client, oldest first */
@@ -385,17 +350,8 @@ typedef struct {
     uint32_t last_error;                              /* DecoderImpl +0xd8 [subsdk 0x1fc80] */
 } Dec;
 
-typedef struct { uint64_t magic; IMFSample *s; int64_t ts; uint64_t gen; } Token;   /* gen = Ext::gen when it was read */
+typedef struct { uint64_t magic; Sample *s; int64_t ts; uint64_t gen; } Token;   /* gen = Ext::gen when it was read */
 
-#ifdef _WIN32
-static const GUID GUID_Vorbis = {0x8D2FD10B, 0x5841, 0x4a6b, {0x89, 0x05, 0x58, 0x8F, 0xEC, 0x1A, 0xDE, 0xD9}};
-static int is_mf_fourcc_guid(const GUID *g) {         /* {xxxxxxxx-0000-0010-8000-00AA00389B71} */
-    static const unsigned char tail[8] = {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
-    return g->Data2 == 0 && g->Data3 == 0x10 && memcmp(g->Data4, tail, 8) == 0;
-}
-#define FCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
-
-#endif
 static void signal_event(Dec *d, int which) {
     if (!d->events) return;
     uint64_t ev = rd64(d->events + (uint64_t)which * 8);
@@ -409,7 +365,7 @@ static Ext *ext_of(uint64_t guest) { return guest ? (Ext *)(uintptr_t)rd64(guest
 static Dec *dec_of(uint64_t guest) { return guest ? (Dec *)(uintptr_t)rd64(guest + 8) : NULL; }
 
 static void release_pending(Ext *e) {                 /* the current sample is done with (Advance) */
-    if (e->have_pending && !e->pend_consumed && e->pending) IMFSample_Release(e->pending);
+    if (e->have_pending && !e->pend_consumed && e->pending) hs_free(e->pending);
     if (e->have_pending) { e->ahead[e->pend_track].have = 0; e->ahead[e->pend_track].s = NULL; }
     e->have_pending = 0; e->pending = NULL; e->pend_consumed = 0;
 }
@@ -417,154 +373,15 @@ static void release_ahead(Ext *e, int track) {        /* track < 0: all */
     for (int i = 0; i < MAX_TRACKS; i++) {
         if (track >= 0 && i != track) continue;
         if (e->have_pending && e->pend_track == i) continue;                  /* owned by release_pending */
-        if (e->ahead[i].have && e->ahead[i].s) IMFSample_Release(e->ahead[i].s);
+        if (e->ahead[i].have && e->ahead[i].s) hs_free(e->ahead[i].s);
         e->ahead[i].have = 0; e->ahead[i].s = NULL;
     }
 }
 
-#ifdef _WIN32
-static int ext_open_bytes(Ext *e, unsigned char *data, size_t size) {
-    com_init();
-    HRESULT hr;
-    IStream *st = SHCreateMemStream(data, (UINT)size);
-    if (!st) { printf("movie: SHCreateMemStream failed (%zu bytes)\n", size); return 0; }
-    hr = MFCreateMFByteStreamOnStream(st, &e->bs);
-    IStream_Release(st);
-    if (FAILED(hr)) { printf("movie: MFCreateMFByteStreamOnStream %08lx\n", hr); return 0; }
-    IMFAttributes *ba = NULL;
-    if (SUCCEEDED(IMFByteStream_QueryInterface(e->bs, &IID_IMFAttributes, (void **)&ba))) {
-        const char *ext = strrchr(e->path, '.');
-        const WCHAR *ctype = ext && _stricmp(ext, ".mp4") == 0 ? L"video/mp4" : ext && _stricmp(ext, ".mkv") == 0 ? L"video/x-matroska" : L"video/webm";
-        IMFAttributes_SetString(ba, &MF_BYTESTREAM_CONTENT_TYPE, ctype);
-        WCHAR name[64]; swprintf(name, 64, L"movie%hs", ext ? ext : ".webm");
-        IMFAttributes_SetString(ba, &MF_BYTESTREAM_ORIGIN_NAME, name);
-        IMFAttributes_Release(ba);
-    }
-    hr = MFCreateSourceReaderFromByteStream(e->bs, NULL, &e->rd);
-    if (FAILED(hr)) { printf("movie: MFCreateSourceReaderFromByteStream %08lx\n", hr); return 0; }
-
-    PROPVARIANT var; PropVariantInit(&var);
-    if (SUCCEEDED(IMFSourceReader_GetPresentationAttribute(e->rd, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_PD_DURATION, &var)) && var.vt == VT_UI8)
-        e->duration_us = (int64_t)(var.uhVal.QuadPart / 10);
-    PropVariantClear(&var);
-    IMFSourceReader_SetStreamSelection(e->rd, (DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE);   /* the game selects what it decodes */
-    e->ntracks = 0;
-    for (DWORD i = 0; i < MAX_TRACKS; i++) {
-        IMFMediaType *t = NULL;
-        if (FAILED(IMFSourceReader_GetNativeMediaType(e->rd, i, 0, &t))) break;
-        Track *tr = &e->tr[e->ntracks++];
-        memset(tr, 0, sizeof *tr);
-        GUID major, sub;
-        IMFMediaType_GetGUID(t, &MF_MT_MAJOR_TYPE, &major);
-        IMFMediaType_GetGUID(t, &MF_MT_SUBTYPE, &sub);
-        uint32_t fcc = is_mf_fourcc_guid(&sub) ? sub.Data1 : 0;
-        tr->fourcc = fcc;
-        if (IsEqualGUID(&major, &MFMediaType_Video)) {
-            UINT64 fs = 0, fr = 0;
-            tr->kind = 0;
-            IMFMediaType_GetUINT64(t, &MF_MT_FRAME_SIZE, &fs);
-            IMFMediaType_GetUINT64(t, &MF_MT_FRAME_RATE, &fr);
-            tr->w = (int)(fs >> 32); tr->h = (int)(uint32_t)fs;
-            tr->fps = (uint32_t)fr ? (double)(fr >> 32) / (double)(uint32_t)fr : 0.0;
-            strcpy(tr->mime, fcc == FCC('V', 'P', '9', '0') ? "video/x-vnd.on2.vp9" : fcc == FCC('V', 'P', '8', '0') ? "video/x-vnd.on2.vp8" :
-                             fcc == FCC('H', '2', '6', '4') || fcc == FCC('A', 'V', 'C', '1') ? "video/avc" : fcc == FCC('H', 'E', 'V', 'C') ? "video/hevc" : "video/unknown");
-        } else if (IsEqualGUID(&major, &MFMediaType_Audio)) {
-            UINT32 rate = 0, ch = 0;
-            tr->kind = 1;
-            IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate);
-            IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, &ch);
-            tr->rate = (int)rate; tr->ch = (int)ch;
-            strcpy(tr->mime, IsEqualGUID(&sub, &GUID_Vorbis) ? "audio/vorbis" : fcc == 0x704F ? "audio/opus" : fcc == 0x1610 ? "audio/mp4a-latm" :
-                             fcc == 0x55 ? "audio/mpeg" : fcc == 1 ? "audio/raw" : "audio/unknown");
-        } else {
-            tr->kind = 2;
-            strcpy(tr->mime, "application/octet-stream");
-        }
-        IMFMediaType_Release(t);
-    }
-    printf("movie: opened %s: %zu bytes, %.1f s, %d tracks:", e->path, size, e->duration_us / 1e6, e->ntracks);
-    for (int i = 0; i < e->ntracks; i++) {
-        Track *tr = &e->tr[i];
-        if (tr->kind == 0) printf("  [%d] %s %dx%d %.2f fps", i, tr->mime, tr->w, tr->h, tr->fps);
-        else if (tr->kind == 1) printf("  [%d] %s %d Hz %d ch", i, tr->mime, tr->rate, tr->ch);
-        else printf("  [%d] %s", i, tr->mime);
-    }
-    printf("\n");
-    return 1;
-}
-
-static int ext_select(Ext *e, int i, int on) {
-    if (!e->rd || i < 0 || i >= e->ntracks) return ST_INVALID;
-    Track *tr = &e->tr[i];
-    HRESULT hr = IMFSourceReader_SetStreamSelection(e->rd, (DWORD)i, on ? TRUE : FALSE);
-    if (on && SUCCEEDED(hr) && tr->kind != 2) {
-        IMFMediaType *t = NULL;
-        MFCreateMediaType(&t);
-        if (tr->kind == 0) {
-            IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
-            IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFVideoFormat_NV12);
-        } else {
-            IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
-            IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
-            IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-            IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, (UINT32)tr->rate);
-            IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, (UINT32)tr->ch);
-        }
-        hr = IMFSourceReader_SetCurrentMediaType(e->rd, (DWORD)i, NULL, t);
-        IMFMediaType_Release(t);
-        if (FAILED(hr) && tr->kind == 1) {            /* let the reader pick the PCM layout */
-            MFCreateMediaType(&t);
-            IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
-            IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
-            hr = IMFSourceReader_SetCurrentMediaType(e->rd, (DWORD)i, NULL, t);
-            IMFMediaType_Release(t);
-        }
-        if (SUCCEEDED(hr)) {
-            IMFMediaType *cur = NULL;
-            if (SUCCEEDED(IMFSourceReader_GetCurrentMediaType(e->rd, (DWORD)i, &cur))) {
-                if (tr->kind == 0) { UINT64 fs = 0; IMFMediaType_GetUINT64(cur, &MF_MT_FRAME_SIZE, &fs); if (fs) { tr->w = (int)(fs >> 32); tr->h = (int)(uint32_t)fs; } }
-                else { UINT32 v = 0; if (SUCCEEDED(IMFMediaType_GetUINT32(cur, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &v))) tr->rate = (int)v; if (SUCCEEDED(IMFMediaType_GetUINT32(cur, &MF_MT_AUDIO_NUM_CHANNELS, &v))) tr->ch = (int)v; }
-                IMFMediaType_Release(cur);
-            }
-        } else {
-            printf("movie: track %d (%s): no Media Foundation decoder path to %s (%08lx); track left unselected\n", i, tr->mime, tr->kind == 0 ? "NV12" : "PCM", hr);
-            IMFSourceReader_SetStreamSelection(e->rd, (DWORD)i, FALSE);
-            return ST_UNSUPPORTED;
-        }
-    }
-    if (e->have_pending && e->pend_track == i) release_pending(e);
-    release_ahead(e, i);
-    tr->selected = on && SUCCEEDED(hr);
-    tr->eos = 0;
-    printf("movie: %s track %d (%s)%s\n", on ? "selected" : "unselected", i, tr->mime, SUCCEEDED(hr) ? "" : " FAILED");
-    return SUCCEEDED(hr) ? ST_OK : ST_FAILED;
-}
-/* One decoded sample of track i (s = NULL: a tick without data). 0 = a sample, 1 = the track's end, -1 = an error. */
-static int src_read(Ext *e, int i, IMFSample **out, int64_t *us) {
-    DWORD idx = 0, flags = 0; LONGLONG ts = 0; IMFSample *s = NULL;
-    HRESULT hr = IMFSourceReader_ReadSample(e->rd, (DWORD)i, 0, &idx, &flags, &ts, &s);
-    *out = NULL;
-    if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) { printf("movie: ReadSample(track %d) failed (%08lx, flags %lx)\n", i, hr, flags); if (s) IMFSample_Release(s); return -1; }
-    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) { if (s) IMFSample_Release(s); return 1; }
-    *out = s; *us = ts / 10;
-    return 0;
-}
-static int src_seek(Ext *e, int64_t us) {
-    PROPVARIANT var; PropVariantInit(&var);
-    var.vt = VT_I8; var.hVal.QuadPart = (LONGLONG)us * 10;
-    HRESULT hr = IMFSourceReader_SetCurrentPosition(e->rd, &GUID_NULL, &var);
-    return SUCCEEDED(hr);
-}
-static void src_close(Ext *e) {
-    if (e->rd) IMFSourceReader_Release(e->rd);
-    if (e->bs) IMFByteStream_Release(e->bs);
-    e->rd = NULL; e->bs = NULL;
-}
-#else
-/* ---------------------------------------------------------------- FFmpeg (Linux)
+/* ---------------------------------------------------------------- FFmpeg
  * The whole file the game's reader returned stays in memory and is read through an AVIOContext. Each selected track has its
  * own decoder; packets of a selected track read while another track's sample was wanted wait in that track's queue, so each
- * track is read ahead by one decoded sample as on Media Foundation (see ext_fill). */
+ * track is read ahead by one decoded sample (see ext_fill). */
 #define QMAX 512
 struct AvSrc {
     unsigned char *data; size_t size, pos;
@@ -676,8 +493,8 @@ static int ext_select(Ext *e, int i, int on) {
     return ok ? ST_OK : ST_UNSUPPORTED;
 }
 /* A decoded frame as the sample the game's buffers take: video tightly packed NV12 (rows of w), audio interleaved s16. */
-static IMFSample *av_sample(struct AvSrc *a, int i, AVFrame *f) {
-    IMFSample *s = calloc(1, sizeof *s);
+static Sample *av_sample(struct AvSrc *a, int i, AVFrame *f) {
+    Sample *s = calloc(1, sizeof *s);
     if (a->dec[i]->codec_type == AVMEDIA_TYPE_VIDEO) {
         int w = f->width, h = f->height;
         a->sws[i] = sws_getCachedContext(a->sws[i], w, h, (enum AVPixelFormat)f->format, w, h, AV_PIX_FMT_NV12, SWS_BILINEAR, NULL, NULL, NULL);
@@ -700,7 +517,7 @@ static IMFSample *av_sample(struct AvSrc *a, int i, AVFrame *f) {
     }
     return s;
 }
-static int src_read(Ext *e, int i, IMFSample **out, int64_t *us) {
+static int src_read(Ext *e, int i, Sample **out, int64_t *us) {
     struct AvSrc *a = e->rd;
     AVCodecContext *cc = a->dec[i];
     *out = NULL;
@@ -750,11 +567,10 @@ static void src_close(Ext *e) {
     free(a->data); free(a);
     e->rd = NULL;
 }
-#endif
 
 /* The current sample of the extractor, as NuMediaExtractor defines it: the one with the SMALLEST TIMESTAMP among the
  * next samples of the selected tracks (file order). Each selected track is read ahead by one decoded sample with its
- * own ReadSample(stream) call; reading "any stream" instead hands samples out in the order the decoders finish them,
+ * own src_read call; reading "any stream" instead hands samples out in the order the decoders finish them,
  * which changes from run to run - and the game's two feed threads each wait for THEIR track to be the current one, so
  * a burst of one track fills that decoder's buffers and starves the other (the start-up stall).
  * Returns 0 with a pending sample, or ST_END. Caller holds the lock. */
@@ -773,12 +589,12 @@ static int ext_fill(Ext *e) {
         Track *tr = &e->tr[i];
         if (!tr->selected) continue;
         for (int guard = 0; !e->ahead[i].have && !tr->eos && guard < 256; guard++) {
-            IMFSample *s = NULL; int64_t us = 0;
-            int r = src_read(e, i, &s, &us);              /* [witchtime] Media Foundation or FFmpeg (above) */
+            Sample *s = NULL; int64_t us = 0;
+            int r = src_read(e, i, &s, &us);              /* [witchtime] FFmpeg (above) */
             {   /* test: SSBU_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
                 static int fail_at = -1;
                 if (fail_at < 0) { const char *v = getenv("SSBU_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
-                if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { IMFSample_Release(s); s = NULL; } r = -1; }
+                if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { hs_free(s); s = NULL; } r = -1; }
             }
             if (r < 0) {
                 tr->failed = 1;                           /* the decoder of this track reports it: dec_error_check */
@@ -821,9 +637,6 @@ static int ext_set_source_bytes(Ext *e, unsigned char *data, size_t size) {
     const char *save = getenv("SSBU_MOVIE_SAVE");
     if (save) { FILE *f = fopen(save, "wb"); if (f) { fwrite(data, 1, size, f); fclose(f); printf("movie: saved %zu bytes to %s\n", size, save); } }
     int ok = ext_open_bytes(e, data, size);
-#ifdef _WIN32
-    free(data);                                   /* Media Foundation's memory stream holds a copy; FFmpeg keeps this one (src_close frees it) */
-#endif
     return ok ? ST_OK : ST_FAILED;
 }
 
@@ -1015,12 +828,12 @@ static void dlog(Dec *d, const char *fmt, ...) {      /* SSBU_MOVIE_LOG: one lin
 
 /* Frees every sample the decoder holds and empties all lists (caller holds the lock). */
 static void dec_release_all(Dec *d) {
-    for (int i = 0; i < d->nout; i++) { if (d->out[i].s) IMFSample_Release(d->out[i].s); memset(&d->out[i], 0, sizeof d->out[i]); }
+    for (int i = 0; i < d->nout; i++) { if (d->out[i].s) hs_free(d->out[i].s); memset(&d->out[i], 0, sizeof d->out[i]); }
     for (int i = 0; i < d->nin; i++) {
-        if (d->in_state[i] == IN_DECODING && d->in_data[i].s) IMFSample_Release(d->in_data[i].s);
+        if (d->in_state[i] == IN_DECODING && d->in_data[i].s) hs_free(d->in_data[i].s);
         Token t;                                      /* a sample read into the buffer but not sent yet */
         memcpy(&t, d->mem + (size_t)i * SLOT_BYTES, sizeof t);
-        if (t.magic == TOKEN_MAGIC && t.s) IMFSample_Release(t.s);
+        if (t.magic == TOKEN_MAGIC && t.s) hs_free(t.s);
         memset(d->mem + (size_t)i * SLOT_BYTES, 0, SLOT_BYTES);
         memset(&d->in_data[i], 0, sizeof d->in_data[i]);
         d->in_state[i] = IN_CODEC;
@@ -1176,8 +989,8 @@ static void dec_Flush(Ctx *c) { dec_halt(c, "Flush", 0); }
 static void dec_Reset(Ctx *c) { dec_halt(c, "Reset", 1); }
 /* [subsdk 0x21090] Decoder::GetLastError: 0x1000 without an implementation object, else DecoderImpl +0xd8 [0x1fc80]. That field is
  * written by the codec's message receiver [0x203a8..0x20410]: on an error message the status (0x1000 unless the codec's own code
- * converts to another one [0x35e140]) is stored and the client's error event (+0x18) is signalled [0x20428]. Here the codec is Media
- * Foundation's, inside the source reader: a failed read of the track is that error; its HRESULT has no movie::Status, so 0x1000. */
+ * converts to another one [0x35e140]) is stored and the client's error event (+0x18) is signalled [0x20428]. Here the codec is
+ * FFmpeg's, inside src_read: a failed read of the track is that error; its code has no movie::Status, so 0x1000. */
 static void dec_error_check(Dec *d) {                 /* called with the decoder locked */
     if (d->last_error || !d->ext || d->track < 0 || d->track >= d->ext->ntracks || !d->ext->tr[d->track].failed) return;
     d->last_error = ST_FAILED;
@@ -1224,7 +1037,7 @@ static void dec_SendInputBufferForDecode(Ctx *c) {    /* (int index, int offset,
     if (!d || i < 0 || i >= d->nin) { RET(ST_INVALID); return; }
     dec_lock(d);
     dec_error_check(d);
-    IMFSample *sample = NULL;
+    Sample *sample = NULL;
     int stale = 0;
     Token t;
     memcpy(&t, d->mem + (size_t)i * SLOT_BYTES, sizeof t);
@@ -1238,7 +1051,7 @@ static void dec_SendInputBufferForDecode(Ctx *c) {    /* (int index, int offset,
         printf("movie: Decoder(%s): input buffer %d holds no sample token (size %d): dropped\n", d->is_video ? "video" : "audio", i, size);
     }
     if (d->in_state[i] != IN_CLIENT || stale) {       /* an index voided by Flush, or data from before the seek: the codec refuses it */
-        if (sample) IMFSample_Release(sample);
+        if (sample) hs_free(sample);
         d->dropped++;
         int was = d->in_state[i];
         int ev = 0;
@@ -1310,8 +1123,7 @@ static void dec_AcquireOutputBufferIndex(Ctx *c) {    /* (int *index, int64 *tim
 }
 
 /* Copies the decoded sample of slot i into the game's buffer; returns the number of bytes written. */
-#ifndef _WIN32
-static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {      /* [witchtime] FFmpeg: already in the game's layout */
+static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {      /* [witchtime] already in the game's layout */
     if (!s->s || !s->s->data) return 0;
     size_t n = s->s->len < cap ? s->s->len : cap;
     if (s->s->len > cap && !d->warned_small) { d->warned_small = 1; printf("movie: game buffer of %zu bytes is smaller than a decoded %s (%zu)\n", cap, d->is_video ? "frame" : "block", s->s->len); }
@@ -1319,45 +1131,6 @@ static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {  
     memcpy(dst, s->s->data, n);
     return n;
 }
-#else
-static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {
-    if (!s->s) return 0;
-    IMFMediaBuffer *mb = NULL;
-    if (FAILED(IMFSample_ConvertToContiguousBuffer(s->s, &mb)) || !mb) return 0;
-    BYTE *data = NULL; DWORD len = 0;
-    size_t written = 0;
-    if (SUCCEEDED(IMFMediaBuffer_Lock(mb, &data, NULL, &len)) && data) {
-        if (d->is_video) {
-            int w = d->w, h = d->h;
-            size_t ysize = (size_t)w * (size_t)h, uvrows = (size_t)((h + 1) / 2), need = ysize + (size_t)w * uvrows;
-            long pitch = w;
-            IMF2DBuffer *b2 = NULL; BYTE *scan = NULL; LONG p2 = 0;
-            if (len != need && h > 0 && SUCCEEDED(IMFMediaBuffer_QueryInterface(mb, &IID_IMF2DBuffer, (void **)&b2))) {
-                if (SUCCEEDED(IMF2DBuffer_Lock2D(b2, &scan, &p2)) && scan && p2 > 0) { data = scan; pitch = p2; }
-                else { IMF2DBuffer_Release(b2); b2 = NULL; }
-            }
-            if (!b2 && len != need && h > 0) pitch = (long)((len * 2 / 3) / (size_t)h);    /* tightly packed rows of another stride */
-            if (pitch < w) pitch = w;
-            if (cap < need) { if (!d->warned_small) { d->warned_small = 1; printf("movie: game buffer of %zu bytes is smaller than a %dx%d NV12 frame (%zu)\n", cap, w, h, need); } }
-            else {
-                const unsigned char *src = data;
-                for (int y = 0; y < h; y++) memcpy(dst + (size_t)y * w, src + (size_t)y * pitch, (size_t)w);
-                const unsigned char *uv = src + (size_t)pitch * h;
-                for (size_t y = 0; y < uvrows; y++) memcpy(dst + ysize + y * (size_t)w, uv + y * (size_t)pitch, (size_t)w);
-                written = need;
-            }
-            if (b2) { IMF2DBuffer_Unlock2D(b2); IMF2DBuffer_Release(b2); }
-        } else {
-            written = len < cap ? len : cap;
-            memcpy(dst, data, written);
-            if (len > cap && !d->warned_small) { d->warned_small = 1; printf("movie: game audio buffer of %zu bytes is smaller than a decoded block (%lu)\n", cap, len); }
-        }
-        IMFMediaBuffer_Unlock(mb);
-    }
-    IMFMediaBuffer_Release(mb);
-    return written;
-}
-#endif
 
 static void dec_GetOutputBuffer(Ctx *c) {             /* (int index, Buffer *out[, MediaData *format]) */
     Dec *d = dec_of(A0);
@@ -1410,7 +1183,7 @@ static void dec_ReleaseOutputBufferIndex(Ctx *c) {    /* (int index) */
     OutBuf *s = &d->out[i];
     int ev = 0, ok = s->state == OUT_CLIENT;
     if (ok) {
-        if (s->s) IMFSample_Release(s->s);
+        if (s->s) hs_free(s->s);
         memset(s, 0, sizeof *s);
         ev = dec_pump(d);                             /* a waiting input can now be decoded into this buffer */
     }
@@ -1462,7 +1235,7 @@ static void extractor_ctor(Ctx *c) {                  /* Extractor(ContainerType
     wr64(A0, (uint64_t)(uintptr_t)g_ext_vtable);
     wr64(A0 + 8, (uint64_t)(uintptr_t)e);
     input_mark("movie");
-    printf("movie: Extractor created (container type %u: %s) on %s\n", (unsigned)A1, A1 == 1 ? "mp4" : A1 == 2 ? "mkv" : A1 == 3 ? "webm" : "?", MOVIE_BACKEND);
+    printf("movie: Extractor created (container type %u: %s) on %s\n", (unsigned)A1, A1 == 1 ? "mp4" : A1 == 2 ? "mkv" : A1 == 3 ? "webm" : "?", "FFmpeg");
 }
 
 static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, DecoderOutputFormat, DecoderMode, int) */

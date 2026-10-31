@@ -139,6 +139,13 @@ console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no
   the tight NV12 the game uploads, swresample to s16 for audio tracks); Windows keeps Media Foundation (only its calls moved
   into `src_read` / `src_seek` / `src_close`; **the Windows build was not rebuilt**). B3's movies are VP9 1600x900 30 fps
   without an audio track (the soundtrack comes through Wwise).
+- **Movies on Windows (2026-10-31, #68)**: now FFmpeg too, in software, from DLLs in `prebuilt\`; Media Foundation is left to the
+  album's clips. A movie that cannot start is not a cosmetic loss: the game gives up on it, and without `ev0000` New Game drops
+  Bayonetta into the empty sky of the stage for ever. Reproduced frame for frame on Linux with `avcodec_find_decoder` returning
+  NULL, and with `SSBU_MOVIE=0`; a movie that fails after its first sample does not do it. Media Foundation's VP9 depends on what
+  the PC has installed, so that report's PC probably lacked it (it sent no game log, so not proven). The Windows build of this
+  change under Wine, which has no such codec: New Game plays `ev0000` with its subtitles. `ev0000` decoded with the Windows DLLs:
+  803 fps on 16 threads, 188 fps on one core (`--disable-autodetect`, so no GPU decoding; nasm is required, CI checks it).
 - Two things kept them from playing: `nn::os::TryWaitEvent` had no handler (B3's player polls its decoder events with it:
   87,778 stub calls), and B3 allocates the Extractor / Decoder objects with its heap-aware operator new, so their deleting
   destructors must call the game's `operator delete` (free() refused the block: a guest trap at the end of the first movie).
@@ -1005,7 +1012,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
    80-86 ms frame at the game-over retry reload. Fights and Tokyo otherwise hold 60 (98 % of frames); the 4K cutscene at
    60 is partly GPU-bound (57 fps).
 3. **Picture correctness**: no reference images to compare with.
-4. **Windows build** of the movie changes and of the witch-time-game rename (not compiled here).
+4. **Windows build** of the witch-time-game rename (not compiled here).
 5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
 6. **First-run warm-up**: minutes of held loading screens after a translator change.

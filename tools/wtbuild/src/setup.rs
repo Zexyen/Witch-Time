@@ -71,8 +71,8 @@ const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
     ("OpenGL", "", "-lGL"),
 ];
-/// the same on Windows (llvm-mingw has the system's own; SDL3, the Vulkan headers and glslang come with the developer's)
-const WINDOWS_LIBS: [(&str, &str, &str); 3] = [
+/// the same on Windows (llvm-mingw has the system's own; SDL3, the Vulkan headers, glslang and FFmpeg come with the developer's)
+const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
     ("SDL3", "SDL3/SDL.h", "-lSDL3"),
     ("Vulkan headers", "vulkan/vulkan.h", ""),
     (
@@ -80,6 +80,7 @@ const WINDOWS_LIBS: [(&str, &str, &str); 3] = [
         "glslang/Include/glslang_c_interface.h",
         "-lglslang -lglslang-default-resource-limits",
     ),
+    ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
 ];
 
 const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]

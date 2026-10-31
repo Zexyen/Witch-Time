@@ -19,8 +19,8 @@
 #   build/witch-time.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
 #   build/wtbuild.exe                the build tool
 #   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), ssbu_glslang.dll (static glslang),
-#                                    game_shim_eh.o and libucrtbase.a (game.dll's C functions come from the UCRT, part of
-#                                    Windows 10 and 11); the movies use Windows' own Media Foundation, so no FFmpeg
+#                                    game_shim_eh.o, libucrtbase.a (game.dll's C functions come from the UCRT, part of
+#                                    Windows 10 and 11) and the FFmpeg DLLs: movies must not depend on the PC's codecs (#68)
 #   deps/llvm/                       clang.exe and ld.lld.exe (LLVM_VERSION, trimmed from LLVM's release), clang's headers
 #                                    and llvm-mingw's compiler-rt builtins: the player's PC compiles the game's code and
 #                                    links game.dll with these alone (tools/wtbuild/src/link.rs)
@@ -239,7 +239,7 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build zip
+          sudo apt-get install -y --no-install-recommends ninja-build nasm zip
 
       # the cross compiler for everything built here: clang, lld and mingw-w64 for the UCRT
       - name: llvm-mingw cache
@@ -360,12 +360,37 @@ jobs:
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml --target x86_64-pc-windows-gnullvm
 
-      # the runtime, with llvm-mingw, against the SDL3, Vulkan headers and glslang above
+      # FFmpeg for the movies, as in the Linux job: shared and LGPL, nothing found on the runner (--disable-autodetect), so
+      # its decoders are the software ones (nasm: their assembly) and the DLLs need only Windows
+      - name: FFmpeg cache
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-${{ env.LLVM_MINGW_TAG }}-mingw-1
+      - name: FFmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FFMPEG_TAG" https://github.com/FFmpeg/FFmpeg.git "$RUNNER_TEMP/ffmpeg-src"
+          cd "$RUNNER_TEMP/ffmpeg-src"
+          ./configure --prefix="$RUNNER_TEMP/ffmpeg" --target-os=mingw32 --arch=x86_64 --enable-cross-compile \
+            --cross-prefix=x86_64-w64-mingw32- --cc=x86_64-w64-mingw32-clang --enable-shared --disable-static --disable-autodetect \
+            --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-network --disable-encoders \
+            --disable-muxers --disable-debug
+          grep -q 'HAVE_X86ASM 1' config.h
+          make -j"$(nproc)"
+          make install
+          cp COPYING.LGPLv2.1 "$RUNNER_TEMP/ffmpeg/"
+
+      # the runtime, with llvm-mingw, against the SDL3, FFmpeg, Vulkan headers and glslang above
       - name: Runtime
         run: |
+          # the libraries it ships with, listed in its manifest
+          mkdir -p prebuilt
+          cp "$RUNNER_TEMP"/ffmpeg/bin/*.dll prebuilt/
           export LLVM_ROOT="$RUNNER_TEMP/llvm-mingw"
-          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
-          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
+          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
           export WT_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
           tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
           llvm-strip prebuilt/ssbu_glslang.dll
@@ -387,6 +412,7 @@ jobs:
           cp -a "$RUNNER_TEMP/llvm-win" "$p/deps/llvm"
           cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "$p/licenses/SDL3.txt"
           cp "$RUNNER_TEMP/glslang/LICENSE.txt" "$p/licenses/glslang.txt"
+          cp "$RUNNER_TEMP/ffmpeg/COPYING.LGPLv2.1" "$p/licenses/FFmpeg-LGPL-2.1.txt"
           cp "$RUNNER_TEMP/llvm-win/LICENSE.TXT" "$p/licenses/LLVM.txt"
           cp "$RUNNER_TEMP/freetype/FTL.TXT" "$p/licenses/FreeType-FTL.txt"
           cp build/launcher/_deps/rmlui-src/LICENSE.txt "$p/licenses/RmlUi.txt"

@@ -33,7 +33,7 @@ workflow by hand only builds the archive and keeps it as a workflow artifact.
 
 The same tag also publishes `WitchTime-<tag>-windows-x86_64.zip`, cross-built on Ubuntu with llvm-mingw and then tested
 on a Windows runner (`smoke_link.py` against the runtime it ships): `witch-time.exe`, `build\witch-time.exe`, `SDL3.dll`,
-`build\wtbuild.exe`, the runtime (`prebuilt\`) and LLVM's Windows clang + lld (`deps\llvm`). It needs only a Vulkan
+`build\wtbuild.exe`, the runtime (`prebuilt\`, with FFmpeg) and LLVM's Windows clang + lld (`deps\llvm`). It needs only a Vulkan
 driver ("Build (Windows)" in the main README).
 
 ## How it works

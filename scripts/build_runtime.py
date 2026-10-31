@@ -55,7 +55,8 @@ HOST_FLAGS = ['-O1', '-g', '-gcodeview', '-w', '-fno-strict-aliasing', '-mcx16',
               '-Dfn_table=(*game_fn_table_p)', '-Dfn_table_count=(*game_fn_table_count_p)',
               '-Ddyn_syms=(*game_dyn_syms_p)', '-Ddyn_sym_count=(*game_dyn_sym_count_p)',
               ] + ([] if LINUX else ['-I', os.path.join(SDL3, 'include'), '-I', os.path.join(VKH, 'include')])
-LIBS = ['-luser32', '-lgdi32', '-lwinmm', '-lmfplat', '-lmfreadwrite', '-lmfuuid', '-lole32', '-lshlwapi']
+LIBS = ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil',   # [witchtime] movies (nnmovie_mf.c)
+        '-luser32', '-lgdi32', '-lwinmm', '-lmfplat', '-lmfreadwrite', '-lmfuuid', '-lole32', '-lshlwapi']
 if LINUX:
     # runtime/posix/ comes first on the include path: its windows.h is plat.h (the Win32 subset, plat_posix.c) plus
     # win32_absent.h (what Linux does not have, failing cleanly); the same warning guard as mingw (below)
@@ -65,7 +66,7 @@ if LINUX:
     HOST_FLAGS = ['-I', os.path.join(RT, 'posix')] + HOST_FLAGS + ['-D_GNU_SOURCE', '-fPIC', '-D__declspec(x)=', '-D__stdcall=', '-D__cdecl=',
                   '-Werror=implicit-function-declaration', '-Werror=incompatible-function-pointer-types', '-Werror=int-conversion']
     LIBS = ['-lSDL3', '-lGL', '-ldl', '-lpthread', '-lm']   # [witchtime] no -lcrypto: plat_hash.h
-    LIBS += ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil']   # [witchtime] movies (nnmovie_mf.c's FFmpeg path)   # GL: the OpenGL back end is linked but Linux renders with Vulkan
+    LIBS += ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil']   # [witchtime] movies (nnmovie_mf.c)   # GL: the OpenGL back end is linked but Linux renders with Vulkan
 if MINGW:
     HOST_FLAGS += ['-D_WIN32_WINNT=0x0A00']               # mingw-w64 defaults to 0x601 (Windows 7); the Windows SDK to 0x0A00
     # warning guard instead of a blanket -w (finding 100): -w hid "unknown attribute 'thread' ignored" (mingw-w64 turns
