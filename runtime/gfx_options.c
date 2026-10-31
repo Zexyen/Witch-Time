@@ -2,7 +2,8 @@
  *
  * Path: SSBU_GRAPHICS_CONFIG=<file> when set; else graphics.ini beside the file SSBU_CONFIG names (SSBU_CONFIG is the
  * path of controllers.ini, nnpad_sdl.c); else <exe folder>\..\config\graphics.ini. Written with the defaults and their
- * documentation when it does not exist. Read ONCE at start (the window, the device and the swapchain are made from it).
+ * documentation when it does not exist, brought up to a new version's by gfx_ini_refresh when it does.
+ * Read ONCE at start (the window, the device and the swapchain are made from it).
  * Environment switches of the test scripts (SSBU_RENDERER, SSBU_VK_DEVICE, SSBU_VK_PRESENT) win over the file.
  * The controllers.ini reader of nnpad_sdl.c is built around its device sections and is not reusable here: this file has
  * its own 30-line reader (key = value, ';' or '#' comments, section headers ignored). */
@@ -22,6 +23,8 @@ int gfx_runahead(void) { gfx_options(); return g_gfx_runahead; }
 static const char *const k_default_ini =
 "; graphics.ini: display and rendering options of the native build (read once at start by gfx_options.c).\r\n"
 "; Delete the file to get it written again with these defaults. A line starting with ';' is a comment.\r\n"
+"; A new version updates these comments and adds its new keys when the game starts. Your values stay; the file as it was\r\n"
+"; goes to graphics.ini.bak, which is where your own comments are then.\r\n"
 "; Every value below is the default; the defaults draw exactly what the game draws on the console.\r\n"
 "\r\n"
 "; renderer = vulkan | opengl\r\n"
@@ -124,7 +127,7 @@ static const char *const k_default_ini =
 "frame_time_overlay = off\r\n"
 "\r\n"
 "; pause_hint = first | always | off\r\n"
-";   The small \"PC SETTINGS  F1 \xC2\xB7 L3 + R3\" note at the bottom right when the game's pause menu opens. first: only at the\r\n"
+";   The small \"PC SETTINGS  F1 \xC2\xB7 Start + Select\" note at the bottom right when the game's pause menu opens. first: only at the\r\n"
 ";   first pause after each start. always: at every pause. off: never.\r\n"
 "pause_hint = first\r\n"
 "\r\n"
@@ -203,6 +206,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     memset(o, 0, sizeof *o);
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
     opt_path(o->path);
+    if (!arg && !getenv("SSBU_GRAPHICS_CONFIG") && !getenv("SSBU_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
     FILE *f = fopen(o->path, "rb");
     if (!f) {
         char b[MAX_PATH];
@@ -317,21 +321,35 @@ int gfx_pace_rate(void) {
  * above sees it (the last line with the key wins); gfx_option_set rewrites the value of every line with that key and keeps
  * everything else of the file byte for byte (comments, unknown keys, line endings), appends the key when it is missing,
  * writes through a temporary file, then reads the file again into a copy and takes over the keys that apply live. */
-static int ini_line_kv(const char *l, size_t n, const char *key, size_t *vs, size_t *ve) {      /* l[*vs, *ve): the value */
-    size_t i = 0, k0, k1;
+static int ini_line_split(const char *l, size_t n, size_t *k0, size_t *k1, size_t *vs, size_t *ve) {      /* a key line: l[*k0, *k1) the key, l[*vs, *ve) the value */
+    size_t i = 0;
     while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
     if (i == n || l[i] == ';' || l[i] == '#' || l[i] == '[') return 0;
-    k0 = i;
+    *k0 = i;
     while (i < n && l[i] != '=') i++;
     if (i == n) return 0;
-    k1 = i++;
-    while (k1 > k0 && (l[k1 - 1] == ' ' || l[k1 - 1] == '\t')) k1--;
-    if (k1 - k0 != strlen(key) || _strnicmp(l + k0, key, k1 - k0)) return 0;
+    *k1 = i++;
+    while (*k1 > *k0 && (l[*k1 - 1] == ' ' || l[*k1 - 1] == '\t')) --*k1;
     while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
     *vs = i;
     while (n > i && (l[n - 1] == ' ' || l[n - 1] == '\t' || l[n - 1] == '\r' || l[n - 1] == '\n')) n--;
     *ve = n;
     return 1;
+}
+static int ini_line_kv(const char *l, size_t n, const char *key, size_t *vs, size_t *ve) {      /* l[*vs, *ve): the value */
+    size_t k0, k1;
+    return ini_line_split(l, n, &k0, &k1, vs, ve) && k1 - k0 == strlen(key) && !_strnicmp(l + k0, key, k1 - k0);
+}
+static int ini_find(const char *b, size_t len, const char *key, size_t *vs, size_t *ve) {      /* b[*vs, *ve): the value; the last line with the key wins */
+    size_t a, z;
+    int found = 0;
+    for (size_t s = 0; s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (ini_line_kv(b + s, e - s, key, &a, &z)) { *vs = s + a; *ve = s + z; found = 1; }
+        s = e + 1;
+    }
+    return found;
 }
 static char *ini_read_all(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -344,16 +362,64 @@ static char *ini_read_all(const char *path, size_t *len) {
     return b;
 }
 int gfx_ini_get(const char *key, char *out, size_t on) {
-    size_t len, vs, ve, found = 0;
+    size_t len, vs, ve;
     char *b = ini_read_all(gfx_options()->path, &len);
-    for (size_t s = 0; b && s < len; ) {
+    int found = b && ini_find(b, len, key, &vs, &ve);
+    if (found) { size_t n = ve - vs < on - 1 ? ve - vs : on - 1; memcpy(out, b + vs, n); out[n] = 0; }
+    free(b);
+    return found;
+}
+static int ini_write(const char *path, const char *s, size_t n) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(s, 1, n, f);
+    return !fclose(f) && w == n;
+}
+/* [witchtime] An update leaves config/ alone (launcher/src/update.cpp), and it is the old launcher that installs it, so the new
+ * version's text arrives here: when a comment or a key of the defaults is missing from the file, the file becomes the defaults
+ * with the player's values (filling in a key changes nothing: the reader's default for a missing key is the same), then the
+ * keys the defaults do not have. Its line endings stay; the old file goes to <file>.bak first. A file that has every line is
+ * not touched, so the player's own comments last until a version changes the defaults. 1 = rewritten. */
+int gfx_ini_refresh(const char *path) {
+    size_t len, tl = strlen(k_default_ini), n = 0, k0, k1, vs, ve, fs, fe;
+    char *b = ini_read_all(path, &len), *out = b ? malloc(tl + 3 * len + 8) : NULL, key[128], line[512], tmp[MAX_PATH + 8], bak[MAX_PATH + 8];
+    const char *nl = b && strstr(b, "\r\n") ? "\r\n" : "\n";
+    int stale = 0, tail = 0, ok = 0;
+    if (!out) { free(b); return 0; }
+    for (const char *t = k_default_ini, *e; *t; t = e + 2) {      /* every line of the defaults ends in CRLF */
+        e = strchr(t, '\r');
+        const char *v = "";
+        size_t tn = (size_t)(e - t), vn = 0;
+        if (ini_line_split(t, tn, &k0, &k1, &vs, &ve)) {
+            snprintf(key, sizeof key, "%.*s", (int)(k1 - k0), t + k0);
+            if (ini_find(b, len, key, &fs, &fe)) { v = b + fs; vn = fe - fs; } else { v = t + vs; vn = ve - vs; stale = 1; }
+            tn = vs;
+        } else if (tn) {
+            snprintf(line, sizeof line, "%.*s", (int)tn, t);
+            if (!strstr(b, line)) stale = 1;
+        }
+        n += (size_t)sprintf(out + n, "%.*s%.*s%s", (int)tn, t, (int)vn, v, nl);
+    }
+    for (size_t s = 0; stale && s < len; ) {
         size_t e = s;
         while (e < len && b[e] != '\n') e++;
-        if (ini_line_kv(b + s, e - s, key, &vs, &ve)) { size_t n = ve - vs < on - 1 ? ve - vs : on - 1; memcpy(out, b + s + vs, n); out[n] = 0; found = 1; }
+        if (ini_line_split(b + s, e - s, &k0, &k1, &vs, &ve)) {
+            snprintf(key, sizeof key, "%.*s", (int)(k1 - k0), b + s + k0);
+            if (!ini_find(k_default_ini, tl, key, &fs, &fe)) n += (size_t)sprintf(out + n, "%s%.*s%s", tail++ ? "" : nl, (int)ve, b + s, nl);
+        }
         s = e + 1;
     }
+    if (stale) {
+        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        snprintf(bak, sizeof bak, "%s.bak", path);
+        ok = ini_write(bak, b, len) && ini_write(tmp, out, n) && MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING);
+        if (!ok) DeleteFileA(tmp);
+        printf(ok ? "graphics options: %s has this version's comments and keys now, your values kept (the old file: %s)\n"
+                  : "graphics options: %s NOT brought up to this version (%s)\n", path, bak);
+    }
+    free(out);
     free(b);
-    return (int)found;
+    return ok;
 }
 int gfx_option_set(const char *key, const char *val) {
     const char *path = gfx_options()->path;

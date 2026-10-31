@@ -22,7 +22,7 @@ int nnpad_prompts_set(const char *val) { g_prompts = val; return 1; }
 int display_mouse_pixels(int *x, int *y) { *x = *y = -1; return 0; }
 SHORT GetAsyncKeyState(int vk) { (void)vk; return 0; }
 
-static char *slurp(const char *path) { FILE *f = fopen(path, "rb"); static char b[4096]; size_t n = fread(b, 1, sizeof b - 1, f); fclose(f); b[n] = 0; return strdup(b); }
+static char *slurp(const char *path) { FILE *f = fopen(path, "rb"); static char b[16384]; size_t n = fread(b, 1, sizeof b - 1, f); fclose(f); b[n] = 0; return strdup(b); }
 static void spit(const char *path, const char *s) { FILE *f = fopen(path, "wb"); fputs(s, f); fclose(f); }
 static void save_bmp(const char *path, const uint8_t *px, int w, int h) {
     FILE *f = fopen(path, "wb");
@@ -71,18 +71,22 @@ int main(int argc, char **argv) {
     s = slurp(ini);
     assert(!strcmp(s, "window = windowed\nwidth = 1920\nheight = 1080\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n"));
     free(s);
+    /* opening from the pad: Start + Select together, not one of them and not the sticks */
+    assert(pcmenu_gate(0, 0x30) == 0 && pcmenu_gate(0, 0) == 0 && pcmenu_gate(0, 1u << 10) == 0 && pcmenu_gate(0, 1u << 11) == 0 && !g_open);
+    assert(pcmenu_gate(0, 0) == 0 && pcmenu_gate(0, 0xc00) == 1 && g_open);
+    InterlockedExchange(&g_open, 0); Sleep(200);
     /* the menu's rows from that file; changes through the menu */
     menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
-    assert(g_cur[4] == 4 && !strcmp(val_name(4), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
-    assert(g_shown[6] && g_cur[6] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
-    change(6, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(6));
+    assert(g_cur[5] == 7 && !strcmp(val_name(5), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
+    assert(g_shown[7] && g_cur[7] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
+    change(7, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(7));
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
-    change(4, 1, 0); assert(row_restart(4));                  /* 1.6 -> 2.0: applies at the next start */
-    change(5, -1, 0); assert(gfx_options()->aniso == 4 && (g_work & 1));
-    change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); assert(g_cur[4] == 7);      /* 3.0, the last: right stops there */
-    change(4, 1, 1); assert(g_cur[4] == 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0);      /* A goes round */
-    g_sel = 4; g_ver++;
+    change(5, 1, 0); assert(row_restart(5));                  /* 1.6 -> 2.0: applies at the next start */
+    change(6, -1, 0); assert(gfx_options()->aniso == 4 && (g_work & 1));
+    change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); assert(g_cur[5] == 10);      /* 3.0, the last: right stops there */
+    change(5, 1, 1); assert(g_cur[5] == 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0);      /* A goes round */
+    g_sel = 5; g_ver++;
     panel(dir, "pcmenu_1280x720", 1280, 720);
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
     g_sel = 2; g_ver++;
@@ -104,6 +108,28 @@ int main(int argc, char **argv) {
     pcmenu_key_set("resolution_scale", "7"); assert(!strcmp(pcmenu_key_get("resolution_scale", NULL), "2.4"));      /* none of the row's */
     s = slurp(ini); assert(strstr(s, "resolution_scale = 2.4\n") && strstr(s, "anisotropic_filtering = 16\n")); free(s);
     assert(!strcmp(pcmenu_key_get("no_such_key", NULL), ""));
+    /* a new version over a player's file: its comments and keys, the player's values and keys, the old file kept */
+    char old[320], bak[330];
+    snprintf(old, sizeof old, "%s/graphics_old.ini", dir); snprintf(bak, sizeof bak, "%s.bak", old);
+    const char *player = "; my note\r\n;   The small \"PC SETTINGS  F1 L3 + R3\" note\r\nvsync = off\r\nVSYNC = on\r\nmystery = 7\r\nwindow=borderless\r\nanisotropic_filtering = 8";
+    remove(old);
+    assert(gfx_ini_refresh(old) == 0);                     /* no file: nothing to do */
+    spit(old, player);
+    assert(gfx_ini_refresh(old) == 1);
+    s = slurp(old);
+    assert(strstr(s, "Start + Select") && !strstr(s, "L3 + R3") && !strstr(s, "my note"));
+    assert(strstr(s, "\r\nvsync = on\r\n") && strstr(s, "\r\nwindow = borderless\r\n") && strstr(s, "\r\nanisotropic_filtering = 8\r\n"));      /* the last line with a key won */
+    assert(strstr(s, "\r\nhdr = auto\r\n") && strstr(s, "\r\n\r\nmystery = 7\r\n") && !strcmp(slurp(bak), player));
+    assert(gfx_ini_refresh(old) == 0 && !strcmp(slurp(old), s));      /* once */
+    spit(old, "; my note\r\n"); { FILE *f = fopen(old, "ab"); fputs(s, f); fclose(f); }
+    assert(gfx_ini_refresh(old) == 0 && strstr(slurp(old), "my note"));      /* the player's comment stays while the defaults stand */
+    s = slurp("config/graphics.ini");                      /* the shipped file: LF, and nothing to do at a new install's first start */
+    assert(!strstr(s, "\r\n"));
+    spit(old, s);
+    assert(gfx_ini_refresh(old) == 0);
+    { char *d = strstr(s, "\nvsync = auto\n") + 1; memmove(d, d + 13, strlen(d + 13) + 1); }      /* a key gone: LF stays */
+    spit(old, s);
+    assert(gfx_ini_refresh(old) == 1 && !strstr(slurp(old), "\r\n") && strstr(slurp(old), "\nvsync = auto\n"));
     printf("pcmenu self-test: all checks passed\n");
     return 0;
 }

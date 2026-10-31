@@ -1,6 +1,6 @@
 /* [witchtime] PC settings menu: a panel drawn by the runtime over the game, for the keys of graphics.ini.
  *
- * Open: F1 on the keyboard, or L3 + R3 (both sticks pressed) on player 1's controller; seen at the game's own pad reads
+ * Open: F1 on the keyboard, or Start + Select (Plus + Minus) on player 1's controller; seen at the game's own pad reads
  * (pcmenu_gate, nnhid.c), so nothing runs while it is closed but one key and one mask test per read. While it is open:
  *   - the game is held: every guest thread stops at its next SDK call (hostrt.c g_guest_frozen, the console's suspension);
  *     its sound runs dry; the game's pad reads (none while held) get an idle pad, and after the menu
@@ -282,7 +282,7 @@ static void draw_panel(int W, int H) {
     button(x, fy, fpx, "A", "Change", C_GOLD); x += text_w("Change", fpx, 0) + 66 * s;
     g_close_r[0] = (int)x; g_close_r[1] = fy - (int)(30 * s); g_close_r[3] = (int)(44 * s);
     button(x, fy, fpx, "B", "Close", C_GOLD); x += text_w("Close", fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
-    const char *keys = "F1 \xC2\xB7 L3 + R3";
+    const char *keys = "F1 \xC2\xB7 Start + Select";
     text(pw - pad - 6 * s - text_w(keys, fpx, 0), fy, keys, fpx, C_GOLD_DIM, 0);
 }
 
@@ -292,7 +292,7 @@ static volatile ULONGLONG g_hint_until;
 static void draw_hint(int W, int H) {
     float s = (float)W / 1920.0f < (float)H / 1080.0f ? (float)W / 1920.0f : (float)H / 1080.0f;
     if (s < 0.45f) s = 0.45f;
-    const char *t1 = "PC SETTINGS", *t2 = "F1  \xC2\xB7  L3 + R3";
+    const char *t1 = "PC SETTINGS", *t2 = "F1  \xC2\xB7  Start + Select";
     float p1 = 21 * s, p2 = 19 * s, w1 = text_w(t1, p1, 3 * s), w2 = text_w(t2, p2, 0);
     int pw = (int)((w1 > w2 ? w1 : w2) + 64 * s), ph = (int)(78 * s), b = s > 1.4f ? 3 : 2;
     if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
@@ -426,11 +426,11 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     while (g_open && !g_display_close) {
         uint64_t b; int lx, ly, mx, my, md;
         nnhid_menu_read(&b, &lx, &ly);
-        enum { BA = 1 << 0, BB = 1 << 1, BL3 = 1 << 4, BR3 = 1 << 5, BLEFT = 1 << 12, BUP = 1 << 13, BRIGHT = 1 << 14, BDOWN = 1 << 15 };
+        enum { BA = 1 << 0, BB = 1 << 1, BPLUS = 1 << 10, BMINUS = 1 << 11, BLEFT = 1 << 12, BUP = 1 << 13, BRIGHT = 1 << 14, BDOWN = 1 << 15 };
         int up = (b & BUP) || ly > 16000 || nnhid_menu_key(VK_UP), down = (b & BDOWN) || ly < -16000 || nnhid_menu_key(VK_DOWN);
         int left = (b & BLEFT) || lx < -16000 || nnhid_menu_key(VK_LEFT), right = (b & BRIGHT) || lx > 16000 || nnhid_menu_key(VK_RIGHT);
         int ok = (b & BA) || nnhid_menu_key(VK_RETURN) || nnhid_menu_key(VK_SPACE);
-        int back = (b & BB) || nnhid_menu_key(VK_ESCAPE) || nnhid_menu_key(VK_BACK) || nnhid_menu_key(VK_F1) || (b & (BL3 | BR3)) == (BL3 | BR3);
+        int back = (b & BB) || nnhid_menu_key(VK_ESCAPE) || nnhid_menu_key(VK_BACK) || nnhid_menu_key(VK_F1) || (b & (BPLUS | BMINUS)) == (BPLUS | BMINUS);
         int dir = up ? 1 : down ? 2 : left ? 3 : right ? 4 : 0;
         ULONGLONG now = GetTickCount64();
         int step = dir && (dir != prev_dir || (rep_at && now >= t_dir + (ULONGLONG)rep_at));
@@ -489,10 +489,10 @@ int pcmenu_gate(uint32_t id, uint64_t buttons) {
     LONG bit = id < 8 ? 1L << id : 0, o;
     if (g_open) return 1;
     if (id == 0) {
-        int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0x30) == 0x30;      /* L3 + R3 */
+        int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0xc00) == 0xc00;      /* Start + Select (the game uses L3 and R3) */
         if (test < 0) { const char *e = getenv("SSBU_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
         if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN"); return 1; }
-        if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "L3 + R3"); return 1; }
+        if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "Start + Select"); return 1; }
         prev = f1 || combo;
         if (prev && (g_release & 1)) return 1;             /* the F1 that closed it is still down */
     }

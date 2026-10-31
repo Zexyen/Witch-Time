@@ -759,12 +759,13 @@ visible window (the test window is hidden, so SDL's relative mode was not switch
 An in-game panel for the keys of graphics.ini, drawn by the runtime over the game (the feasibility study's path: plumbing,
 then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `runtime/nvn_vk_pcmenu.c`.
 
-- **Open / close**: F1, or L3 + R3 on player 1's controller (seen at the game's own pad reads, `pcmenu_gate` in nnhid.c);
+- **Open / close**: F1, or Start + Select on player 1's controller (L3 + R3 until 2026-10-31, which the game uses; seen at the game's own pad reads, `pcmenu_gate` in nnhid.c);
   B / Escape / F1 close it. Up / down choose a row, left / right change it (they stop at the ends), A / Enter go round;
   the mouse points at a row and clicks the value ('‹' for the one before). While it is open the **game is held** with the
   console's suspension (`g_guest_frozen`; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
   game's last picture again with the panel about 60 times a second, and the game reads an idle pad, also after closing
   until the buttons that closed it are let go.
+- **A new version's graphics.ini** (2026-10-31): an update leaves `config/` alone and the old launcher installs it, so the game does it at start (`gfx_ini_refresh`, gfx_options.c): a comment or key of the defaults missing from the file makes the file the defaults with the player's values, then the player's other keys, the old file in `graphics.ini.bak`. A file with every line is not touched; a file named by `SSBU_GRAPHICS_CONFIG` / `SSBU_CONFIG` (tests, benches) never. Filling in a key changes nothing: a file with no keys and the defaults load to the same options.
 - **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the
   next start), vsync (live: the present mode is chosen again and the swapchain made again, display.c's pacing chosen
   again; a display lock is let go live, a new one is only taken if none was tried in this run), cutscene frame rate
@@ -798,7 +799,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
     `mods/witchtime-pc-settings/romfs/ui_000.pkz`: the dump's archive byte for byte plus the 13 entries appended stored
     and re-pointed (185 MB; made in 0.3 s here, through `witch-time-game --pkz-dump`). Without
     the mod the row is named with the pause menu's "Options" and the log says how to make the text.
-  The pause menu's hint (below) stays: it names F1 / L3 + R3, which work everywhere.
+  The pause menu's hint (below) stays: it names F1 / Start + Select, which work everywhere.
   Runs (muted, hidden window, copies of the save and graphics.ini; `/tmp/shots/optionshook_*`): r3 with the virtual pad
   (SSBU_SCRIPT) and r4 with keyboard events (SSBU_KBM_SCRIPT): pause -> Options -> R x3 -> Screen Display shows the
   row (`optionshook_row_screen_display_en.png`); down x6 and A / Enter open the panel over the game's Options
@@ -848,7 +849,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   C + V open and close; after a close the mouse is captured again by the next click (windowed; fullscreen at once), as
   after Escape in play. Pictures: `/tmp/shots/pcmenu_kbm_k1_sheet.png`, `pcmenu_kbm_k2_sheet.png`.
 - **Not tested**: a person with a real pad, keyboard and mouse (the pointer path ran on synthetic events only; a real
-  pad's L3 + R3 and B not tried, only their keyboard bindings), a visible window made fullscreen (a size change of the hidden
+  pad's Start + Select and B not tried, only their keyboard bindings), a visible window made fullscreen (a size change of the hidden
   Wayland window was confirmed by its new pixel size; fullscreen was not tried), Windows (not built), HDR output (the panel is
   copied into the 8-bit picture; shots are refused there). Movies keep their clock while the game is held, so a movie
   catches up (drops frames) after the panel closes.
@@ -870,7 +871,7 @@ Screen Display page** (the fallback asked for when a tab is not possible), below
 | Texture Detail | -1 / -0.5 / 0 / +0.5 / +1 | at once (new samplers) |
 | Aspect Ratio | Original / Stretch | at once |
 
-then "PC Settings" (opens the panel, which keeps window size and the values these rows do not list; F1 / L3 + R3 as
+then "PC Settings" (opens the panel, which keeps window size and the values these rows do not list; F1 / Start + Select as
 before) and Restore Defaults. Left / right go round the values with the game's sounds and key repeat (the game's own list
 row), X resets the row to its default (the game's own "Reset Option" guide); a value of graphics.ini that is none of a
 row's shows "Custom" (an extra value until left / right leave it). The game's Restore Defaults does not touch these rows
