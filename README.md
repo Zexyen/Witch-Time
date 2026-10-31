@@ -69,6 +69,10 @@ brings LLVM's own clang + lld (`deps\llvm`), the runtime already built (`prebuil
 build\wtbuild.exe setup --dump <your dump folder>
 ```
 
+Windows Defender might flag Witch Time as a Trojan: the release's binaries are not code-signed, and each release has
+new ones Defender has not seen. Download it only from this repository's Releases page, and check the zip against the
+`.sha256` file beside it (`certutil -hashfile <zip> SHA256`).
+
 Movies play through the FFmpeg that ships in `prebuilt\`, in software, so they need no codec on your PC. The album's video
 clips use Media Foundation, which Windows has; the "N" editions need the Media Feature Pack, and the `deps` step says so
 when it is missing. The game runs as `build\witch-time-game.exe`, with its own window; the launcher waits for it.
