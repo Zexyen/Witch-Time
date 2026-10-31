@@ -106,6 +106,7 @@ void f_7100d02de0(Ctx *c);
 static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
 static int g_one_pass;                             /* h_frame_clock: this fixed-step frame runs one logic step (h_main_pass) */
+static int g_half;                                 /* the last frame ran the first kind of logic step alone, so this one is the second (h_step_kind) */
 static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&f, (void *)(uintptr_t)fp, 4); return f; }
 __declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
@@ -120,9 +121,8 @@ void h_fps_mode_set(Ctx *c) {
         fflush(stdout);
         last = want;
     }
-    /* above 60 fps the 30 fps scenes run at frame_rate too (real time), but not the chapter 3 spider ride (#45: flag 16, the game's
-     * mode 1 is 2 ticks of frame_rate there): its scripted parts' frame counters are not all known, and at most 60 logic steps
-     * a second keep them right (at 120 exactly; below 120 they are slower, so its prompts last longer, never shorter) */
+    /* above 60 fps the 30 fps scenes run at frame_rate too (real time), but not the ride set pieces (#45: flag 16, the game's
+     * mode 1 is 2 ticks of frame_rate there): the chapter 3 spider ride's prompts need logic steps of exactly 1.0, 60 a second (scene_even) */
     g_fps_forced = want == 1 && (uncap_on() ? !(state_flags() & 0x10000) : sixty);
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
@@ -131,23 +131,32 @@ void h_fps_mode_set(Ctx *c) {
  * stores the last frame's length in ms at clock+0xf0 and keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a
  * ratio of the measured frame time, with w1 = 0 (the title, menus and cutscenes: the game's state flags 28 and 30) s0 as it
  * is, 1.0 a logic step, two of them a 30 Hz frame (h_main_pass). Such a scene follows real time at any frame rate (#45, #47: its long sounds do, they never wait for a late frame):
- * the step stays even, 0.5 at 60, 1.0 at 30, and what late frames owe is paid off gently (scene_step.h). (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
+ * the step stays even, 0.5 at 60, 1.0 at 30, and what late frames owe is paid off gently (scene_step.h), on the spider ride in whole frames (scene_even). (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
  * follows the real frame time already. */
 void f_7100c1f600(Ctx *c);
-/* The main loop runs a second logic step (0x7100670da4: pads, 0x7100671600) in a frame of a fixed-step scene, when flags 28 and
- * 30 were set before the frame's first one: 2 steps of 1.0 a 30 Hz frame, 60 steps a second, each 1/60 s. At 60 fps that is 120
- * a second, so whatever counts steps runs twice as fast whatever the step (#45: the spider ride's third jump prompt, not found by
- * the census). Above 30 fps such a frame takes one step of twice the size, as gameplay does: 60 a second at 60 fps, as on
- * the console. f_7100b20a20 ends a logic step; called from 0x7100670d88 it comes just before the loop's test of bit 28 of w21,
- * that register's last use. Two cases keep the second step. Flag 21 repeats it until the scene player reaches a frame it seeks
- * (0x7100bb2350 clears the flag), so it is read after the first step. And a scene skipped from its pause menu ends in a second
- * step of the frame the menu closes; without one it played on to its end behind the skip's black (#45, 6 s on the spider ride's
- * first scripted part. Found by test: which read needs that step is not known), so the menu's frames keep both (h_frame_clock). */
+/* The main loop runs two logic steps in a frame of a fixed-step scene, when flags 28 and 30 were set before the frame's first:
+ * 2 steps of 1.0 a 30 Hz frame, 60 a second, each 1/60 s. They are of two kinds. In the first, flag 27 set (0x7100670d0c to
+ * 0x7100670d90), the timeline update 0x7100bbcb94 recomputes its pause bits. In the second (0x7100670da4: pads, 0x7100671600) it
+ * latches what was asked for: a skip, a branch, a chain, ProgressAct (0x71007078a0, 0x7100707860 read the flag). At 60 fps
+ * both are 120 steps a second, so whatever counts steps runs twice as fast whatever the step (#45: the spider ride's third
+ * jump prompt, not found by the census), and the first kind alone latches nothing (#65: a chained scene's skip sticks and it
+ * plays on behind black; #67, #69: the ride's ProgressAct is lost and it runs into its death cut). So above 30 fps a frame
+ * takes one step of twice the size and the kinds take turns (h_step_kind): on time those are the console's logic steps,
+ * one a frame. f_7100b20a20 ends a logic step; called from 0x7100670d88 it comes just before the loop's test of bit 28 of
+ * w21, that register's last use. Flag 21 repeats the second step until the scene player reaches a frame it seeks
+ * (0x7100bb2350 clears the flag), so it is read after the first step; the console's next frame starts with the first kind. */
 void f_7100b20a20(Ctx *c);
 void h_main_pass(Ctx *c) {
     int first = c->x[30] == 0x7100670d8cull;
     f_7100b20a20(c);
-    if (first && g_one_pass && !(state_flags() & 0x200000)) c->x[21] &= ~(uint64_t)0x10000000;
+    if (!first || !g_one_pass) return;
+    if (state_flags() & 0x200000) g_half = 0; else c->x[21] &= ~(uint64_t)0x10000000;
+}
+/* f_710067037c: its one call, 0x7100670d18, comes just after flag 27 is set in the word at x19 and before the first step's jobs */
+void f_710067037c(Ctx *c);
+void h_step_kind(Ctx *c) {
+    if (scene_second(&g_half, g_one_pass)) { uint32_t f = state_flags() & ~0x8000000u; memcpy((void *)(uintptr_t)c->x[19], &f, 4); }
+    f_710067037c(c);
 }
 /* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WT_FPS_CENSUS=1 calls
  * fps_census before the store of every counter site (tools/wtbuild/src/lifter/fps.rs, the list in gen_eh/fps_sites.txt).
@@ -305,20 +314,23 @@ void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     g_clock_ctx = c;
     int fixed = (uint32_t)c->x[1] == 0;
-    /* s0 is 4.0 in the game's mode 2. Flags 14 and 0: the pause menu, h_main_pass */
-    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on()) && !(state_flags() & 0x4001);
+    /* s0 is 4.0 in the game's mode 2 */
+    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on());
     f_7100c1f600(c);
     {
         static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
         static int was_fixed;
         if (fixed) {
             float v, ms;
+            uint32_t flags = state_flags();
+            int ride = flags & 0x10000;
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
             float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; above 60 fps a frame is shorter */
             float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
-            if (uncap_on() && due < even) even = due;
-            if (!was_fixed) { owed = 0.0f; due = even; }      /* the load before a scene is not the scene's time */
-            float k = scene_step(&owed, due, even);
+            if (uncap_on() && due < even && !ride) even = due;
+            /* the load before a scene is not the scene's time, nor is its pause menu (flags 14 and 0: its clock stands) */
+            if (!was_fixed || flags & 0x4001) { owed = 0.0f; due = even; }
+            float k = ride ? scene_even(&owed, due, even, &g_one_pass, g_half) : scene_step(&owed, due, even);
             v *= g_one_pass ? 2.0f * k : k;            /* one logic step: it is 2 of the 1/60 s ones of a 30 Hz frame */
             memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
         }

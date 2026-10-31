@@ -13,4 +13,21 @@ static float scene_step(float *owed, float due, float even) {
     *owed = o + even - k;
     return k;
 }
+/* The step of the ride set pieces (flag 16): the spider ride's prompt code (eva142, 0x7100867380) works only when each logic
+ * step advances exactly 1.0. Above that a window's end is jumped over and the ride hangs before the parking lot; below it a
+ * model has the ride reach its death cut (one run at 0.9 passed). So the step never changes, and a whole even step owed runs both logic steps of a console frame (*one = 0, even doubled).
+ * half: the last frame ran the first kind alone (h_step_kind), so a pair can't start here. Ahead of real time at most one
+ * even step is kept: only a frame rate above 60 gets there, and it runs slightly fast rather than slow down. */
+static float scene_even(float *owed, float due, float even, int *one, int half) {
+    if (*one && !half && *owed + due - even >= even) { *one = 0; even *= 2.0f; }
+    float o = *owed + due - even;
+    *owed = o < -even ? -even : o > 90.0f ? 90.0f : o;
+    return even;
+}
+/* A single step above 30 fps: the kinds take turns (game_shim_eh.c h_step_kind). half is scene_even's; is this one the second? */
+static int scene_second(int *half, int one) {
+    int second = one && *half;
+    *half = one && !*half;
+    return second;
+}
 #endif

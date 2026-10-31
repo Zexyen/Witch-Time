@@ -473,21 +473,53 @@ cutscenes in the game's 60 fps mode.
 - **One logic step (2026-10-31, #45)**: the prompt's cause. The main loop (`7100670da4`) runs a second logic step (pads,
   `7100671600`, no drawing) in a frame of a fixed-step scene, so a 30 fps scene has 60 steps of 1/60 s a second. Forcing 60
   kept both: 120 steps a second of half the size. Anything scaled by the step kept real time, but whatever counts steps ran
-  twice as fast, in cutscenes and menus too. That is why no census found one counter. `h_main_pass` (the override of
-  `7100b20a20`, called from `7100670d88` just before the loop tests bit 28 of w21) clears the bit when the scene runs above
-  30 fps, and `h_frame_clock` doubles the step: one step of 1.0 a frame at 60, as gameplay. Two cases keep the second step.
-  Flag 21 repeats it until the scene player reaches a frame it seeks (`7100bb2350` clears the flag). And a scene skipped from
-  its pause menu ends in a second step of the frame the menu closes: without one it played on to its end behind the skip's
-  black, 6 s on the ride's first scripted part. Found by test, which read needs that step is not known, so the frames with
-  the menu's flags 14 and 0 keep both. Skipped there: `00c10000` the next frame at 30, 60 and 120. Resumed: the scene goes
-  on to its end. The third jump is probably in the scripted part `0x50810008`
-  at updates 7654-7776 of the hand run: three motions of about 0.9 s, with a slow motion of 0.05 at the third (read off the
-  census windows, not seen on the screen).
+  twice as fast, in cutscenes and menus too. That is why no census found one counter. So above 30 fps such a frame takes one
+  step of twice the size: `h_main_pass` (the override of `7100b20a20`, called from `7100670d88` just before the loop tests
+  bit 28 of w21) clears the bit, and `h_frame_clock` doubles the step: one step of 1.0 a frame at 60, as gameplay.
+  Flag 21 still keeps the second step: it repeats it until the scene player reaches a frame it seeks (`7100bb2350` clears the
+  flag). No log has shown that flag yet, so this path has not been run. The third jump is probably in the scripted part
+  `0x50810008` at updates 7654-7776 of the hand run: three motions of about 0.9 s, with a slow motion of 0.05 at the third
+  (read off the census windows, not seen on the screen).
+  - **The two kinds of step (#65, #67, #69)**: the two steps of a console frame are not the same. Bit 27 of the flags is set
+    at `7100670d0c` before the first and cleared at `7100670d90` after it. In the first the timeline update `7100bbcb94`
+    recomputes its pause bits 5 and 31; only there does a seek start. In the second it latches what was asked for: skip
+    (bit 10), branch (0), chain (15), ProgressAct (19), bits 8, 25 and 28 (`71007078a0`, callers `7100bbc3b4` and
+    `7100bbcc00`; `7100707860`, caller `7100bbcc0c`). v0.4.5 dropped the second step, so nothing latched: eva142's
+    ProgressAct at cut 6 frame 294 was lost and the ride ran into cut 7, its death cut, and in chapter 1's ev1000 chain the
+    second scene's Skip stuck (tf `00400400`) and it played on behind black. Both at 60 and 120, neither at cutscene_fps 30.
+    A scene skipped from its pause menu needed the same latch, so its frames keep one step now. Skipped there, the ride's
+    first scripted part still ends at once: `00c10000` three frames after the menu at 60 and 120.
+    Now `h_step_kind` (the override of `710067037c`, called at `7100670d18` just after bit 27 is set) clears the bit in
+    every other frame, so the kinds take turns one a frame. On time the logic steps are the console's. The frames'
+    once-a-frame jobs (`7100671520`, `71009567f0`, `7100b20c20`) and the fades' lengths stay as they were (read from the
+    code). Forcing the latch on every step (a test build) passed too, but latches a request made in a second step one step
+    early. The parity resets with flag 21, as the console's next frame starts with the first kind. The menu's frames are no
+    exception now: their steps are the console's too. In v0.4.5 they ran 1.0 against 0.5 due, so the steps after the menu
+    were 0.0, 0.125, 0.23. A menu frame owes nothing, and a pause drops what was owed.
+  - **The ride's steps are exact (#67, #69)**: eva142's prompt code (coroutine `7100867380`, evaluator `71007acb24`,
+    sequencer `7100bb87dc`) works only when each logic step advances exactly 1.0. Above it a window's end call is jumped
+    over, +580/+588 stay set and the coroutine hangs before the parking lot (50 fps, step 1.203). Below it a model jumps to
+    cut 7 (one run at 0.9 passed). ProgressAct and condition events exist only in eva142, among all 217 ControlSeq files. So with flag 16 the step
+    is the game's in every mode (`scene_even`, `scene_step.h`), and a frame that owes a whole even step runs both logic
+    steps of a console frame; pairs start only where the turns allow one. Elsewhere late frames keep `scene_step`.
+    Flag 16 is not only eva142: 17 sites set it, the Gomorrah and Malphas rides among them. Fixed-step frames of those
+    (not measured) take this step too, so a machine below 30 fps lags there instead of keeping real time.
+    Above 30 fps debt from a stall on the ride is paid, not forgiven: an unpressed prompt is 245 steps, 4.08 s at 60 fps, as
+    the evaluator slows the event to 0.05, and pairs can at most halve that in real time (a model: 3.85 s after 236 ms, the
+    worst of #67's log; 3.08 s after 1 s). Forgiving it would leave the ride behind the sound for good. At cutscene_fps 30 a
+    frame already runs both steps, so nothing can pay it and the next plain frame drops it, as on the console.
   - **Rates**: cutscene_fps = 60 runs the whole ride at 60, the plain frames (`0x00810000`, measured) too. Above 60 the
-    ride is not forced: mode 1 is 2 ticks of frame_rate, 60 fps at 120 and 45 at 90, one step a frame. So its scripted
-    parts have at most 60 steps a second and its prompts are never short; the counter itself is still not named, and a
-    named one in `fps_counters.txt` is what would let the ride run at frame_rate.
-  - **Measured** (scripted ride with bot, 170 s at 60): 58-60 fps from the ride's start on, 0 Vulkan failures. The Shibuya
+    ride is not forced: mode 1 is 2 ticks of frame_rate, 60 fps at 120 and 45 at 90, where pair frames make up the 60 steps
+    a second. A counter named in `fps_counters.txt` would not let the ride run at frame_rate: the steps have to be 1.0.
+  - **Measured** (the bot through the crane event, 24.5 s, a build with test logging): 60 three times, cutscene_fps 30,
+    frame_rate 120 and 90, 50 fps twice, 41 and 25 fps, a 300 ms and a 1 s stall, a pause and resume four times. All end on
+    ProgressAct at cut 6 frame 294, no cut 7, and the steps take turns with no break. Every step with flag 16 is 1.0 but
+    the first at 120 and 90, before any prompt. 60 steps a second down to 41 fps; at 25 fps 49.9, as a frame runs at most two.
+    A missed prompt still goes to cut 7, twice. The ev1000 chain at 60: all three scenes skip in 6 frames from their menu's Skip
+    and the next scene starts. A normal build, one run of each at 60, by its pictures: the parking lot, and the scene after
+    the chain. A late press at 60 and random frames of 0-30 ms more (622 pairs, over the prompts) pass too. Not run: the
+    chain at 30 and 120, other single scenes' skips, the held fader, real time off the ride, a seek, a New Game, the title loop.
+  - **Measured** (v0.4.5; scripted ride with bot, 170 s at 60): 58-60 fps from the ride's start on, 0 Vulkan failures. The Shibuya
     cutscene: 91.94 s at 60 (91.95 s before). The title screen's loop until the game goes on: 40.00 s at 60, 39.96 s at 120,
     40.03 s at 30, 39.95 s before (it shows a random character, so its pictures differ from boot to boot). Logic steps
     (`f_7100671600`) against frames under gdb over 40 s from the start: 1,978 / 1,978 at 60, 4,300 / 4,301 at 120, 1,981 /
@@ -500,7 +532,7 @@ cutscenes in the game's 60 fps mode.
 - **Late frames (2026-10-30, #45, #47)**: the sound runs on real time and never waits, but a frame over 33 ms lost its
   excess for good at 60, and at 30 every late frame did (a fixed step). A reporter's log has 0.5-2 s of excess per 1-3 minute mode-1 scene, an
   upper guess for cutscenes: it has no flags, and some of those scenes may be gameplay (below), which is measured. `h_frame_clock` now gives every fixed-step
-  scene, at 30 too, the measured step and keeps what a stall owes, paid at up to 2.0 a frame (at most 90 30 Hz frames
+  scene but the ride (see "One logic step"), at 30 too, the measured step and keeps what a stall owes, paid at up to 2.0 a frame (at most 90 30 Hz frames
   owed; reset on entering a scene). The Shibuya cutscene with a 300 ms stall every 120 fixed frames (test build only):
   at 60 104.64 s -> 91.83 s, at 30 98.58 s -> 92.33 s; at 60 without stalls 91.74 s. Muted; steps above 1.0 not looked
   at by eye; the frame counters still run per frame (2,758 at 30 before, 2,588 now with the stalls).
