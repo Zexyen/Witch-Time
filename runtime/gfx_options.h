@@ -30,6 +30,7 @@ typedef struct {
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */
+int gfx_ini_refresh(const char *path);                   /* [witchtime] a new version's comments and keys in the player's file, values kept; 1 = rewritten */
 int gfx_ini_get(const char *key, char *out, size_t n);      /* [witchtime] graphics.ini's value of a key as the reader sees it; 0 = not in the file */
 int gfx_option_set(const char *key, const char *val);     /* [witchtime] rewrite the key in graphics.ini (comments and other keys kept), take over the live keys; 0 = not written */
 #endif

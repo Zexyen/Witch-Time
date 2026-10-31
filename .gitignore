@@ -9,6 +9,7 @@
 /userdata/
 /mods/
 /notes/
+/config/*.bak
 /runtime/obj_host/
 /lifter/eh_main_tables.json
 # runtime/gen/: only the generator is ours; everything else in it comes from the dump
