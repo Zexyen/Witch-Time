@@ -27,7 +27,7 @@ const char* const ASSET = "-linux-x86_64.tar.gz";
 struct Shared {
 	std::mutex m;
 	State state = State::none;
-	std::string tag, url, sha_url, message;
+	std::string tag, url, sha256, message;
 };
 Shared& shared()
 {
@@ -111,7 +111,7 @@ std::string install(const fs::path& from, const fs::path& to, const fs::path& ol
 	return "";
 }
 
-void run_update(Paths paths, std::string tag, std::string url, std::string sha_url)
+void run_update(Paths paths, std::string tag, std::string url, std::string sha256)
 {
 	const std::string dir = paths.build + "/update", archive = dir + "/" + url.substr(url.find_last_of('/') + 1);
 	std::error_code ec;
@@ -124,12 +124,8 @@ void run_update(Paths paths, std::string tag, std::string url, std::string sha_u
 	if (code)
 		return set(State::failed, "Download failed: " + (out.empty() ? "is curl installed?" : out));
 	set(State::working, "Checking " + tag + "...");
-	// <hash>  <file name>, as sha256sum writes it
-	std::string want = run_capture({"curl", "-sSfL", "--max-time", "20", sha_url}, paths.build, &code).substr(0, 64);
-	if (code || want.size() != 64)
-		return set(State::failed, "Cannot download the checksum: " + want);
 	std::string got = run_capture({paths.build + "/wtbuild" WT_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
-	if (code || got != want)
+	if (code || got != sha256)
 		return set(State::failed, "The download is damaged (checksum mismatch); try again");
 	set(State::working, "Unpacking " + tag + "...");
 	out = run_capture({"tar", "-xf", archive, "-C", dir + "/new"}, paths.build, &code);
@@ -163,27 +159,28 @@ void check(const Paths& paths)
 		std::vector<std::string> tags = json_strings(json, "tag_name");
 		if (code || tags.empty() || version_number(tags[0]) <= mine)
 			return;
-		std::string url, sha_url;
+		std::string url;
 		for (const std::string& u : json_strings(json, "browser_download_url"))
-		{
 			if (ends_with(u, ASSET))
 				url = u;
-			else if (ends_with(u, std::string(ASSET) + ".sha256"))
-				sha_url = u;
-		}
-		if (url.empty() || sha_url.empty())
+		if (url.empty())
+			return;
+		// GitHub lists an asset's digest ("sha256:<hash>") ahead of its download URL
+		size_t at = json.rfind("\"digest\"", json.find(url));
+		std::vector<std::string> digests = at == std::string::npos ? std::vector<std::string>{} : json_strings(json.substr(at), "digest");
+		if (digests.empty() || digests[0].size() != 71 || digests[0].compare(0, 7, "sha256:") != 0)
 			return;
 		std::lock_guard<std::mutex> l(shared().m);
 		shared().tag = tags[0];
 		shared().url = url;
-		shared().sha_url = sha_url;
+		shared().sha256 = digests[0].substr(7);
 		shared().state = State::available;
 	}).detach();
 }
 
 void start(const Paths& paths)
 {
-	std::string tag, url, sha_url;
+	std::string tag, url, sha256;
 	{
 		std::lock_guard<std::mutex> l(shared().m);
 		if (shared().state != State::available && shared().state != State::failed)
@@ -191,9 +188,9 @@ void start(const Paths& paths)
 		shared().state = State::working;
 		tag = shared().tag;
 		url = shared().url;
-		sha_url = shared().sha_url;
+		sha256 = shared().sha256;
 	}
-	std::thread(run_update, paths, tag, url, sha_url).detach();
+	std::thread(run_update, paths, tag, url, sha256).detach();
 }
 
 State state(std::string& tag, std::string& message)

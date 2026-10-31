@@ -53,7 +53,7 @@ driver ("Build (Windows)" in the main README).
   `build\witch-time-game.exe` with its own window. Either way the game's output goes to `build/run/witch-time-game.log`.
 - **Updates.** A release build (`WT_VERSION` `vX.Y.Z`) asks GitHub for the latest release at start and, if it is
   newer, offers "Update to vX.Y.Z" on the title menu. That downloads this platform's archive with the system's `curl`,
-  checks it against the release's `.sha256` (`build/wtbuild sha256`), unpacks it with `tar` (Windows 10 and 11 ship
+  checks it against the SHA-256 digest GitHub lists for it (`build/wtbuild sha256`), unpacks it with `tar` (Windows 10 and 11 ship
   `curl` and `tar`), moves its files over the installed ones (keeping the player's `config/`) and starts the new
   launcher. The replaced files wait in `build/update` until the next start. A release launcher will not start a game
   that `build/built_version` says another release built (also after unpacking a release by hand); it opens the build
