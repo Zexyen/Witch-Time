@@ -111,6 +111,13 @@ static void loop_guard(Mx *e, int back) {
  * through and AMD's compiler refuses (VK_ERROR_INITIALIZATION_FAILED). Seen only as the point size limit c0[0x610] of
  * B2's particle vertex shaders, which Vulkan ignores (mx_psize; the size comes from MXPC): it reads 0. */
 static int c0_unbacked(const Mx *e) { return e->in->target == 1 && e->in->stage != MX_COMPUTE; }
+/* [issue 66] A lane on Vulkan. gl_SubgroupInvocationID is no place in a quad in a fragment stage: AMD's compiler (Windows, AMDVLK) leaves whole
+ * quad mode early and counts it over the live lanes, so one helper lane shifts every lane after it in the wave. The pixel says where it is. */
+static const char *vk_lane(Mx *e) {
+    if (e->in->stage == MX_FRAGMENT) return "((uint(gl_FragCoord.x) & 1u) | (uint(gl_FragCoord.y) & 1u) << 1)";
+    e->uses_sg = 1;
+    return "gl_SubgroupInvocationID";
+}
 static const char *X(Mx *e, unsigned r) { if (r == 255) return "0u"; e->regs[r] = 1; return S(e, "r%u", r); }
 static const char *D(Mx *e, unsigned r) { if (r == 255) return "rz"; e->regs[r] = 1; return S(e, "r%u", r); }
 static const char *CB(Mx *e, uint64_t i) {                /* c[bits 34..38][bits 20..33 words] */
@@ -777,7 +784,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned sr = MXB(i, 20, 8);
         const char *v;
         switch (sr) {
-        case 0x00: v = e->in->target == 1 ? (e->uses_sg = 1, "(gl_SubgroupInvocationID & 31u)") : "gl_SubGroupInvocationARB"; break;
+        case 0x00: v = e->in->target == 1 ? S(e, "(%s & 31u)", vk_lane(e)) : "gl_SubGroupInvocationARB"; break;
         case 0x11: v = e->in->stage == MX_GEOMETRY || e->in->stage == MX_TESS_CONTROL ? "uint(gl_InvocationID)" : "0u"; break;
         case 0x12: v = "0x3f800000u"; break;                     /* y direction: +1 (the window origin is applied by glClipControl) */
         case 0x13: v = e->in->stage == MX_FRAGMENT ? "(gl_HelperInvocation ? 0xffffffffu : 0u)" : "0u"; break;
@@ -822,7 +829,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         }
     case MXOP_SHFL: {                           /* [witchtime] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
                                                  * and segment mask (bits 8..12), immediate (bits 34..46) or Rc; Pd (48..50) = the source lane is in range.
-                                                 * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). */
+                                                 * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). A fragment stage shuffles
+                                                 * inside its quad (the game's own operands are 0..3): quad operations are the only ones that have to see helper
+                                                 * lanes, and all three are read before the choice because lanes of one quad can choose differently. */
         static const char *const range[4] = {
             "uint mn = tid & seg; mx = mn | (cl & ~seg); src = (sa & ~seg) | mn; ib = int(src) <= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid - sa; ib = int(src) >= int(mx);",
@@ -832,8 +841,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         e->uses_sg = 1;
         b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
         c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
-        emit(e, "uint sv = %s, sa = %s, sb = %s, tid = gl_SubgroupInvocationID & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, range[MXB(i, 30, 2)]);
-        emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
+        emit(e, "uint sv = %s, sa = %s, sb = %s, tid = %s & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, vk_lane(e), range[MXB(i, 30, 2)]);
+        if (e->in->stage == MX_FRAGMENT) emit(e, " uint sh = uvec4(sv, subgroupQuadSwapHorizontal(sv), subgroupQuadSwapVertical(sv), subgroupQuadSwapDiagonal(sv))[(src ^ tid) & 3u]; %s = ib ? sh : sv;", DST);
+        else emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
         if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
         break;
     }
@@ -841,14 +851,13 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
                                                  * its quad (suyu's tables: la = 1 -1 1 0, lb = 1 1 -1 1). NDV (bit 38, "no divergence") is a hint: the
                                                  * same arithmetic. CC is not modelled. */
         if (MXB(i, 47, 1)) { fail(e, "FSWZADD", "FSWZADD with CC"); break; }
-        const char *lane = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupInvocationID") : "gl_SubGroupInvocationARB";
+        const char *lane = e->in->target == 1 ? vk_lane(e) : "gl_SubGroupInvocationARB";
         emit(e, "uint q = (%uu >> ((%s & 3u) << 1)) & 3u;", (unsigned)MXB(i, 28, 8), lane);
         fres(e, i, S(e, "F(%s) * vec4(1.0, -1.0, 1.0, 0.0)[q] + F(%s) * vec4(1.0, 1.0, -1.0, 1.0)[q]", A8, R20), 0, 0);
         break;
     }
-    /* [witchtime] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). shortcut: no-ops;
-     * correct where the driver keeps helper invocations active for subgroup shuffles (RADV, NVIDIA); upgrade with
-     * VK_KHR_shader_quad_control if edge pixels of such textures look wrong elsewhere. */
+    /* [witchtime] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). No-ops: the quad operations
+     * of a fragment stage's SHFL make the driver keep the helper lanes active (issue 66). */
     case MXOP_SAM: case MXOP_RAM:
         break;
     case MXOP_VMNMX: {                          /* [witchtime] as suyu: d = op(min/max(a, b), c); a word-wide, selectors 2; op 0 MRG_16H 1 MRG_16L
@@ -1800,7 +1809,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
         if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
-        if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
+        if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n#extension GL_KHR_shader_subgroup_quad : require\n");
         emit(&h, "%s", k_prelude);
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; };\n");      /* track O */
         else
