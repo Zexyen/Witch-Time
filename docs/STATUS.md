@@ -1201,6 +1201,10 @@ the disc at the start, at the right and top edges when pushed there, the dart la
 still drawn 1280 wide (an oval at 21:9, its drawing not found). `774b4c` (below) read from the screen's ratio did not
 move or round it.
 
+**The cutscene bars** (seen by hand on the spider ride, 3440x1440): the black bars are UI elements 1280 across, at y = -360 and
+360 of `huda02a` (the ride) and `event0020`, so they stopped at the 16:9 block. `h_ui_element` widens those two by the
+screen's ratio to 16:9, with the HUD at the edges or centred. Confirmed by hand on the ride; `event0020` was not seen.
+
 **The HUD's gauges** (health, Demon Slave, enemy bars; seen by hand): their fill is a scissor, made by the UI's clip
 element `0x7100c1dfe8` as (x + 640) * the target's width (`0x7100d02d90`) / 1280. Wider than 16:9 the UI is 720 * ratio
 wide around the middle, so a full health bar showed 74 % (HUD at the edges) or 20 % (centred) at 21:9. Found by logging

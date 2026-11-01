@@ -530,17 +530,17 @@ void h_camera_fov(Ctx *c) {
  * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
  * RECOMPS_HUD_CENTRE=1; "Centered" in the PC menu and the Options screen, at once: game_hud_centre) keeps them in the middle. */
 void f_7100c0ef04(Ctx *c);
-/* Is the layout at lay an entry named hud* of a DAT archive in memory? The archive ("DAT\0", file count, offset table at
+/* The name of the layout at lay, an entry of a DAT archive in memory, or "". The archive ("DAT\0", file count, offset table at
  * +8, name table at +0x10: u32 name size, then the names) starts before it, 4-aligned, within 16 MB (the UI archives are
  * a few MB); its offset table holds lay - archive. Asked once per layout (a table of 1024). */
-static int ui_is_hud(uint64_t lay) {
-    static struct { uint64_t lay; int hud; } t[1024];
+static const char *ui_name(uint64_t lay) {
+    static struct { uint64_t lay; const char *name; } t[1024];
     uint32_t h = (uint32_t)((lay >> 2) * 0x9E3779B1u) >> 22;
     for (uint32_t i = 0; i < 1024; i++, h = (h + 1) & 1023) {
-        if (t[h].lay == lay) return t[h].hud;
+        if (t[h].lay == lay) return t[h].name;
         if (!t[h].lay) break;
     }
-    int hud = 0;
+    const char *name = "";
     for (uint64_t p = lay & ~3ull; p + (16u << 20) > lay && p >= 0x1000; p -= 4) {
         uint32_t w; memcpy(&w, (void *)(uintptr_t)p, 4);
         if (w != 0x00544144u) continue;      /* "DAT\0" */
@@ -550,12 +550,12 @@ static int ui_is_hud(uint64_t lay) {
         if (nl == 0 || nl > 256) continue;
         for (uint32_t i = 0; i < n; i++) {
             uint32_t o; memcpy(&o, (void *)(uintptr_t)(p + po + 4 * i), 4);
-            if (p + o == lay) { hud = !memcmp((void *)(uintptr_t)(p + no + 4 + (uint64_t)i * nl), "hud", 3); goto found; }
+            if (p + o == lay) { name = (const char *)(uintptr_t)(p + no + 4 + (uint64_t)i * nl); goto found; }
         }
     }
 found:
-    if (!t[h].lay) { t[h].lay = lay; t[h].hud = hud; }
-    return hud;
+    if (!t[h].lay) { t[h].lay = lay; t[h].name = name; }
+    return name;
 }
 __declspec(dllexport) volatile int game_hud_centre = -1;      /* -1 = not read yet; 0 / 1; the PC menu and the Options row (pcmenu.c) change it while the game runs */
 void h_ui_element(Ctx *c) {
@@ -563,9 +563,18 @@ void h_ui_element(Ctx *c) {
     f_7100c0ef04(c);
     float a = aspect_want();
     if (game_hud_centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); game_hud_centre = e && atoi(e); }
-    if (el != 0 || game_hud_centre || !(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    if (!(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    if (el >= 1 && el <= 8) {
+        uint32_t f; float y0; memcpy(&f, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&y0, (void *)(uintptr_t)(lay + f + el * 0x1b4 + 4), 4);
+        const char *nm;
+        if ((y0 == 360.0f || y0 == -360.0f) && (!strncmp(nm = ui_name(lay), "huda02a", 7) || !strncmp(nm, "event0020", 9))) {      /* the black cutscene bars: 1280 across, the width of the 16:9 block */
+            float s; memcpy(&s, (void *)(uintptr_t)(out + 0x50), 4); s *= a * 9.0f / 16.0f; memcpy((void *)(uintptr_t)(out + 0x50), &s, 4);
+        }
+        return;
+    }
+    if (el != 0 || game_hud_centre) return;
     uint32_t first; float x0, x; memcpy(&first, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&x0, (void *)(uintptr_t)(lay + first), 4);
-    if (!(x0 >= 200.0f || x0 <= -200.0f) || !ui_is_hud(lay)) return;
+    if (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(ui_name(lay), "hud", 3)) return;
     memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
     float extra = (720.0f * a - 1280.0f) * 0.5f;
     x += x0 > 0.0f ? extra : -extra;
