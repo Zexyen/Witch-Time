@@ -2,7 +2,7 @@
  * BGRA pixels on the CPU when its content changes; here they are copied over the presented picture (after the game's frame, the
  * bars and the first-run text: never into the game's textures), at the size of the window.
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:
- *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync), the panel's pixels
+ *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync, the images and stages of a new resolution scale), the panel's pixels
  *     into a staging buffer when they changed, then the game's last picture presented again with the panel (vk_present2's
  *     extra present, as the held loading screens do).
  *   - pcm_vk_draw: in every present while the menu is open (also the game's own presents before it is held); one flag read
@@ -12,7 +12,7 @@
 int pcmenu_is_open(void), pcmenu_visible(void);
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
-int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again */
+int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
 static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: the pixels are the menu's, not the hint's */
 static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, said; } g_pcm_shot;
 
@@ -44,6 +44,7 @@ void nvn_vk_pcmenu_job(void *arg) {
         } else printf("pcmenu: too many samplers kept already: anisotropic_filtering applies to new samplers only (all at the next start)\n");
     }
     if (work & 2) { present_mode_pick(); if (V.swapchain) swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
+    if (work & 4) rs_apply();
     if (pcmenu_panel_size((int)V.extent.width, (int)V.extent.height, r, &gen) && (gen != g_pcm.gen || !g_pcm.ready)) {
         uint64_t need = (uint64_t)r[2] * (uint64_t)r[3] * 4;
         if (!work && !g_pcm_shot.pending) cmd_wait_all();      /* the staging buffer may be read by a present in flight */

@@ -740,6 +740,7 @@ struct VTex {
  * reads keep the game's sizes. Fragment stages are translated with MxIn.screen_scale (another hash: ssrc_hb). At 1.0 none
  * of this runs: every branch is behind RS_ON or VTex.rs / R.pass_rs, which are then 0. */
 static float g_rs = -1.0f;
+static uint32_t g_rs_flips;                         /* [witchtime] how often the scale left or reached 1.0 while the game ran (rs_apply) */
 static LONG64 g_rs_images, g_rs_stages, g_rs_fcs, g_rs_tf, g_rs_up, g_rs_down, g_rs_blits;
 static LONG64 g_rs_bytes;                          /* PR #8 review: device memory taken by the scaled images made (reported at exit: what a scale above 1.0 costs) */
 #define RS_MAX 3.0f                                /* PR #8 (stephenjayakar): the upper limit of resolution_scale / SSBU_VK_SCALE (was 1.0; the PR's 4.0 capped at 2.0).
@@ -776,9 +777,10 @@ void nvn_vk_rs_base(int w, int h) {
  * at 4K it stayed 520x360. Arrays of these sizes are scaled too (all the attachments of their passes together). */
 static int rs_extra_class(int w, int h) { return w == 520 && h == 360; }
 static float rs_extra_scale(void) {                 /* SSBU_VK_CLOUD_SCALE=<cap>: at most that for these (a weak GPU; the pass is tessellated): 4K A/B at equal load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60 */
-    static float v = -1;
-    if (v < 0) { const char *e = getenv("SSBU_VK_CLOUD_SCALE"); float cap = e ? (float)atof(e) : RS_MAX; v = rs_scale() < cap ? rs_scale() : cap; if (v < 1.0f && rs_scale() >= 1.0f) v = 1.0f; }
-    return v;
+    static float cap = -1;
+    if (cap < 0) { const char *e = getenv("SSBU_VK_CLOUD_SCALE"); cap = e ? (float)atof(e) : RS_MAX; }
+    float v = rs_scale() < cap ? rs_scale() : cap;
+    return v < 1.0f && rs_scale() >= 1.0f ? 1.0f : v;
 }
 static int rs_screen_class(int w, int h) {
     if (rs_extra_class(w, h)) return 1;
@@ -856,6 +858,10 @@ static void garbage_collect(void) {
     }
     g_ngarbage = n;
 }
+static void vt_garbage(VTex *vt) {                  /* the command buffer being recorded may still name it */
+    if (g_ngarbage == g_garbage_cap) { g_garbage_cap = g_garbage_cap ? g_garbage_cap * 2 : 256; g_garbage = realloc(g_garbage, sizeof *g_garbage * (size_t)g_garbage_cap); }
+    g_garbage[g_ngarbage].vt = vt; g_garbage[g_ngarbage++].serial = R.serial + 1;
+}
 static void vk_drop(int kind, void *host) {
     if (kind != K_TEX) return;
     Tex *t = host;
@@ -866,8 +872,7 @@ static void vk_drop(int kind, void *host) {
     t->vk = NULL;
     for (int i = 0; i < 8; i++) if (R.col[i].tex == t) { pass_end(); R.col[i].tex = NULL; }
     if (R.depth.tex == t) { pass_end(); R.depth.tex = NULL; }
-    if (g_ngarbage == g_garbage_cap) { g_garbage_cap = g_garbage_cap ? g_garbage_cap * 2 : 256; g_garbage = realloc(g_garbage, sizeof *g_garbage * (size_t)g_garbage_cap); }
-    g_garbage[g_ngarbage].vt = vt; g_garbage[g_ngarbage++].serial = R.serial + 1;       /* the command buffer being recorded may still name it */
+    vt_garbage(vt);
 }
 static int lvl_(int v, int l) { v >>= l; return v > 0 ? v : 1; }
 /* Track O. A temporary image of w x h (one level, one layer, the format of `like`) for an upload into, or a read-back from,
@@ -888,8 +893,7 @@ static VTex *rs_temp(VTex *like, int w, int h) {
     vt->layout = VK_IMAGE_LAYOUT_UNDEFINED;
     vt->next = g_vtex_all; if (g_vtex_all) g_vtex_all->prev = vt; g_vtex_all = vt;
     R.images_live++;
-    if (g_ngarbage == g_garbage_cap) { g_garbage_cap = g_garbage_cap ? g_garbage_cap * 2 : 256; g_garbage = realloc(g_garbage, sizeof *g_garbage * (size_t)g_garbage_cap); }
-    g_garbage[g_ngarbage].vt = vt; g_garbage[g_ngarbage++].serial = R.serial + 1;
+    vt_garbage(vt);
     return vt;
 }
 /* PR #8 (stephenjayakar): track O, scale above 1 (supersampling): the present's reduction chain. One linear blit samples 2x2
@@ -901,10 +905,7 @@ static VTex *g_rs_chain[6];
 static VTex *rs_chain_image(int i, VTex *like, int w, int h) {
     VTex *vt = g_rs_chain[i];
     if (vt && vt->w == w && vt->h == h && vt->fmt == like->fmt) return vt;
-    if (vt) {
-        if (g_ngarbage == g_garbage_cap) { g_garbage_cap = g_garbage_cap ? g_garbage_cap * 2 : 256; g_garbage = realloc(g_garbage, sizeof *g_garbage * (size_t)g_garbage_cap); }
-        g_garbage[g_ngarbage].vt = vt; g_garbage[g_ngarbage++].serial = R.serial + 1;
-    }
+    if (vt) vt_garbage(vt);
     vt = calloc(1, sizeof *vt);
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     VkMemoryRequirements rq;
@@ -1012,6 +1013,12 @@ static void vt_put(Tex *t, int level, int layer, int w, int h, int d, const void
 static LONG64 g_ta_n, g_ta_bytes, g_ta_tk, g_ta_max_tk, g_late_n, g_late_tk, g_late_fight_n, g_late_fight_tk, g_up_fr_tk, g_up_fr_bytes;
 static int g_up_fr_n, g_ta_inside;
 static volatile LONG g_in_fight;                   /* nvn_vk_m4.c (included further down) */
+/* track O: a texture of the game's size gw x gh is a target of the screen class; kind: its Fmt's */
+static int rs_wants(Tex *t, const VTex *vt, int gw, int gh, int kind) {
+    const TexBuilder *b = &t->b;
+    return RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(gw, gh))) && !vt->decode && !b->packaged && rs_screen_class(gw, gh) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
+           (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)));
+}
 static VTex *vt_get2(Tex *t, int sync) {
     VTex *vt = t->vk;
     LONG64 tu0 = 0, ub0 = R.upload_bytes;
@@ -1033,8 +1040,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->levels = nvn_front_tex_levels(t); vt->layers = nvn_front_tex_layers(t); vt->samples = b->samples > 1 ? b->samples : 1; vt->is3d = b->target == 2;
         if (b->target == 0 || b->target == 3) { ci.imageType = VK_IMAGE_TYPE_1D; vt->h = 1; if (b->target == 3) vt->layers = b->height > 0 && b->depth <= 1 ? b->height : vt->layers; }
         else ci.imageType = vt->is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-        if (RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(vt->w, vt->h))) && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
-            (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
+        if (rs_wants(t, vt, vt->w, vt->h, f.kind)) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
             float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale();
             vt->w = (int)((float)gw * sc + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
@@ -1119,6 +1125,45 @@ static VTex *vt_get2(Tex *t, int sync) {
     return vt;
 }
 static VTex *vt_get(Tex *t) { return vt_get2(t, 1); }
+/* [witchtime] The scale changed while the game runs (nvn_vk_pcmenu_job): render thread, between two commands of the game, perhaps
+ * in a frame. Every target of the screen class gets an image of the new size with the old texels blitted over (the game does
+ * not draw them all again: a paused scene is a picture it drew once); R.col and R.depth name textures, so the next pass takes
+ * the new images. When the scale leaves or reaches 1.0 the fragment stages change translation (g_rs_flips): each is looked up
+ * again at its next draw, held like the first run at a scale when it was never made. */
+static void rs_apply(void) {
+    float was = rs_scale();
+    int n = 0;
+    LONG64 t0 = tk();
+    LARGE_INTEGER fq;
+    g_rs = -1;
+    if (rs_scale() == was) return;
+    if ((was != 1.0f) != RS_ON) g_rs_flips++;
+    for (VTex *vt = g_vtex_all, *next; vt; vt = next) {      /* a new image goes to the head of the list: not met here */
+        Tex *t = vt->t;
+        Fmt f;
+        next = vt->next;
+        if (!t || t->dead || t->vk != vt || !nvn_front_fmt(t->b.format, &f) || !(vt->rs || rs_wants(t, vt, t->b.width, t->b.height, f.kind))) continue;
+        t->vk = NULL;
+        VTex *nv = vt_get2(t, 0);
+        if (vt->samples == 1 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) {      /* else it stays cleared until the game draws it */
+            vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL); vt_layout(nv, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            for (int l = 0; l < vt->levels && l < nv->levels; l++) {
+                VkImageBlit b;
+                memset(&b, 0, sizeof b);
+                b.srcSubresource.aspectMask = vt->aspect; b.srcSubresource.mipLevel = (uint32_t)l; b.srcSubresource.layerCount = (uint32_t)vt->layers; b.dstSubresource = b.srcSubresource;
+                b.srcOffsets[1].x = lvl_(vt->w, l); b.srcOffsets[1].y = lvl_(vt->h, l); b.srcOffsets[1].z = 1;
+                b.dstOffsets[1].x = lvl_(nv->w, l); b.dstOffsets[1].y = lvl_(nv->h, l); b.dstOffsets[1].z = 1;
+                vkCmdBlitImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, nv->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, rs_filter(vt));
+            }
+        }
+        vt_garbage(vt);
+        n++;
+    }
+    cmd_wait_all();
+    garbage_collect();
+    QueryPerformanceFrequency(&fq);
+    printf("nvn_vk_scale: internal resolution scale %.3f -> %.3f while the game runs: %d images made again in %.1f ms\n", (double)was, (double)rs_scale(), n, (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
+}
 /* Session 8, render thread, after every present. A texture used to get its image, and its texels read out of the game's
  * memory (hash, de-swizzle, copy into the stream ring), at the first draw that sampled it: the first frame of a fight paid
  * 37-50 ms for the stage's and the fighters' textures (runs s7fn2 / s7gn2, frames 1804-1823). Here every block-compressed

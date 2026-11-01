@@ -46,10 +46,8 @@ LA, VSYNC, ASPECT, FL = 'Anisotropic Filtering', 'VSync', 'Aspect Ratio', 'Frame
 MENU = [
     ('MENU_OPTION_LIST_PC_SETTINGS', T('PC Settings', 'PC設定', 'PC-Einstellungen', 'Paramètres PC', 'Ajustes de PC', 'Impostazioni PC',
                                        'Настройки ПК', 'PC设置', 'PC設定', 'PC 설정')),
-    ('MENU_OPTION_LIST_PC_RES', T('Internal Resolution (next start)', '画面サイズ (スタート時に変更)', 'Interne Auflösung (nach Neustart)',
-                                  'Résolution interne (au redémarrage)', 'Resolución interna (al reiniciar)', 'Risoluzione interna (al riavvio)',
-                                  'Разрешение (после перезапуска)', '画面大小 (Restart)', '畫面大小 (Restart)',
-                                  ('내부 해상도 (다음 시작 시)', '해상도 (다음 시작 시)'))),     # applies at the next start
+    ('MENU_OPTION_LIST_PC_RES', T('Internal Resolution', '画面サイズ', 'Interne Auflösung', 'Résolution interne', 'Resolución interna', 'Risoluzione interna',
+                                  'Разрешение', '画面大小', '畫面大小', ('내부 해상도', '해상도'))),
     ('MENU_OPTION_LIST_PC_CUTSCENE', T('Cutscene Frame Rate', 'イベントシーンのFPS', ('Bildrate der Zwischensequenzen', 'Bildrate der Filmszenen', 'Bildrate in Filmen'), 'Fréquence des cinématiques',
                                        'Fotogramas de las cinemáticas', 'Frame rate dei filmati', 'Частота кадров в роликах', '动画FPS',
                                        '動畫FPS', '무비 프레임 레이트')),
@@ -93,7 +91,7 @@ CORE = [
     ('CORE_PC_LOD_M1', ALL('-1')), ('CORE_PC_LOD_M05', ALL('-0.5')), ('CORE_PC_LOD_0', ALL('0')), ('CORE_PC_LOD_P05', ALL('+0.5')),
     ('CORE_PC_LOD_P1', ALL('+1')),
 ]
-CORE += [('CORE_PC_RES_' + v.replace('.', ''), ALL(v)) for v in ('1.0', '1.2', '1.6', '2.4')]
+CORE += [('CORE_PC_RES_' + v, ALL(h + 'p', h)) for v, h in (('10', '900'), ('12', '1080'), ('16', '1440'), ('24', '2160'))]
 CORE += [('CORE_PC_FPS_90', ALL('90')), ('CORE_PC_FPS_120', ALL('120'))]
 LANGS = list(MENU[0][1])
 MOD = 'witchtime-pc-settings'

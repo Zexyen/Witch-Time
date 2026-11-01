@@ -14,7 +14,7 @@
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
  * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
- * scripts/pc_settings_mod.py; the names here are theirs (the internal resolution's and the frame rate's labels say they apply at the next start; the frame rate's that it is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
+ * scripts/pc_settings_mod.py; the names here are theirs (the frame rate's label says it applies at the next start and is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
  * more value, until left / right leave it). The game's Restore Defaults does not touch these rows (its reset is the game's
  * own settings); the list row's reset button sets the row's default. Values change through pcmenu.c (pcmenu_key_set), so
  * the file is written and the live keys applied as from the panel. */

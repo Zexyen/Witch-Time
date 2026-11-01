@@ -692,6 +692,28 @@ halved in 2:1 steps first).
   `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
   behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
 
+## Resolution scale, live (2026-11-01)
+
+`resolution_scale` no longer needs a restart: a change in the PC settings panel applies when the panel closes (stepping past
+3.0 on the way to another value must not make its images), one in the game's Options rows at once.
+- **Images** (`rs_apply`, a job of the render thread): every target of the screen class gets an image of the new size with
+  the old texels blitted over, level by level. The contents have to survive: the game does not draw every target again, a
+  paused scene is a picture it drew once. `R.col` and `R.depth` name textures, so the next pass takes the new images, in the
+  middle of a frame too. Multisampled images and formats that cannot be blitted stay cleared until the game draws them.
+- **Stages**: one translation serves every scale other than 1.0, so only a change that leaves or reaches 1.0 changes the
+  fragment stages. `SSrc.rs` keeps the class a stage was asked for (a worker may build it after the change) and `g_rs_flips`
+  sends each program's fragment stage through `vstage_get`'s lookup once. The two translations stay side by side: going back costs a
+  table lookup. 1.0 itself is the translation it always was, so no cache is made again by this change.
+- **Measured** (Linux, RX 9070 XT, Shibuya fight, hidden window, another session's two game runs on the same PC): 82-133 images
+  in 2-31 ms; 1.0 -> 1.6 -> 3.0 -> 2.0 -> 1.6 -> 3.0 in the fight and through the pause menu, each size confirmed in native
+  screenshots (`SSBU_VK_SHOT_NATIVE=1`, 1200x675 to 4800x2700), 0 Vulkan call failures. The first change away from 1.0 with
+  the `rs1` stages already on disk: frames of 114-213 ms for about 8 s, no longer stop.
+  With `SSBU_VK_VALIDATE=1`, 1.0 -> 1.2 -> 2.4 -> 0.8 -> 1.0 from the panel gave no message but the 10 unused-output warnings
+  an equal run has without a change.
+- **Not measured**: that first change on a PC whose cache has no `rs1` stages (the game translates what each draw needs, held,
+  on the render thread; 3,755 stages took 110.7 s over a whole first run). Windows, and a change from the Options rows (their
+  job post was seen working for vsync, not for the scale).
+
 ## Level of detail (2026-10-25)
 
 - **`texture_lod_bias`** (graphics.ini; `SSBU_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
@@ -989,7 +1011,7 @@ Screen Display page** (the fallback asked for when a tab is not possible), below
 
 | row | values | applies |
 |---|---|---|
-| Internal Resolution (next start) | 1.0 / 1.2 / 1.6 / 2.4 | at the next start (said in the label: the value field has room for about 10 letters, no help line exists) |
+| Internal Resolution | 900p / 1080p / 1440p / 2160p | at once (nvn_vk_draw.c rs_apply; "Resolution scale, live") |
 | Cutscene Frame Rate | 30 / 60 | at once |
 | Vertical Sync | Auto / Monitor (display) / Timer (clock) / ON / OFF | at once |
 | Display Mode | Windowed / Borderless / Fullscreen | at once (Linux; Windows at the next start, as the panel) |

@@ -11,8 +11,10 @@
  * Controls: up / down choose a row, left / right (or A / Enter, B / Escape closes) change it; the mouse: point at a row,
  * click on the value (on '‹' for the one before). A change is written to graphics.ini at once (gfx_option_set: comments and
  * other keys kept) and applied while the game runs where the runtime can: cutscene_fps (the game library's switch), vsync
- * (present mode and pacing), the window (Linux), anisotropic filtering and texture detail (new samplers from then on), aspect. The rest
- * (resolution_scale) is marked "applies at the next start". A key set by an environment variable is shown and locked.
+ * (present mode and pacing), the window (Linux), anisotropic filtering and texture detail (new samplers from then on), aspect,
+ * resolution_scale (when the panel closes, so that going past 3.0 does not make its images; from the game's Options rows at
+ * once: nvn_vk_draw.c rs_apply). The rest (frame_rate) is marked "applies at the next start". A key set by an environment
+ * variable is shown and locked.
  * Rows with `optional` appear only when graphics.ini has their key (for keys of later builds; a frame-rate cap: one more row,
  * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
@@ -48,7 +50,7 @@ int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
 const char *nnpad_prompts_setting(void);
 int nnpad_prompts_set(const char *val);
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -66,11 +68,9 @@ static const Row k_rows[] = {
      {"30", "60"}, {"30 fps", "60 fps"}},
     {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
      {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
-    {"resolution_scale", "Internal resolution", "The size the game renders at (Bayonetta 3: 1600 \xC3\x97 900 at 1.0). The first start at a new scale prepares its shaders for about two minutes once.", "SSBU_VK_SCALE", "1.0", A_RESTART, 0,
+    {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "SSBU_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
-     {"0.4 \xE2\x80\x94 640 \xC3\x97 360", "0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.6 \xE2\x80\x94 960 \xC3\x97 540", "0.75 \xE2\x80\x94 1200 \xC3\x97 675",
-      "0.8 \xE2\x80\x94 1280 \xC3\x97 720", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",
-      "2.0 \xE2\x80\x94 3200 \xC3\x97 1800", "2.4 \xE2\x80\x94 3840 \xC3\x97 2160", "3.0 \xE2\x80\x94 4800 \xC3\x97 2700"}},
+     {"360p", "450p", "540p", "675p", "720p", "900p", "1080p", "1440p", "1800p", "2160p", "2700p"}},
     {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
      {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
     {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "SSBU_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 0,
@@ -208,7 +208,7 @@ static int wrap(char lines[][160], int maxl, const char *s, float px, float widt
 static const char *val_name(int i) { return g_cur[i] >= 0 ? k_rows[i].name[g_cur[i]] : g_raw[i]; }
 static int row_restart(int i) {                            /* a value that is not the running one yet */
     if (g_cur[i] == g_start[i]) return 0;
-    return k_rows[i].apply == A_RESTART || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
+    return k_rows[i].apply == A_RESTART || (k_rows[i].apply == A_SCALE && g_open) || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
 }
 static void button(float x, int base, float px, const char *letter, const char *what, Rgb ring) {
     float r = px * 0.62f, cx = x + r, cy = base - px * 0.36f;
@@ -272,7 +272,7 @@ static void draw_panel(int W, int H) {
     Rgb sc = C_AMBER;
     if (g_lock_why[g_sel] == 1) { snprintf(st, sizeof st, "Set by the environment variable %s", k_rows[g_sel].env); sc = C_LOCK; }
     else if (g_lock_why[g_sel] == 2) { snprintf(st, sizeof st, "Set by profile = low in graphics.ini"); sc = C_LOCK; }
-    else if (row_restart(g_sel)) snprintf(st, sizeof st, "Saved \xE2\x80\x94 applies at the next start");
+    else if (row_restart(g_sel)) snprintf(st, sizeof st, "Saved \xE2\x80\x94 applies %s", k_rows[g_sel].apply == A_SCALE ? "when this panel closes" : "at the next start");
     else if (g_cur[g_sel] != g_start[g_sel]) { snprintf(st, sizeof st, "Applied and saved"); sc = C_GOLD; }
     if (st[0]) { diamond(pad + 16 * s, hy + 2 * (int)(30 * s) + 3 * s - hpx * 0.33f, 5 * s, sc); text(pad + 30 * s, hy + 2 * (int)(30 * s) + (int)(3 * s), st, hpx, sc, 0); }
     /* footer */
@@ -371,9 +371,10 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     case A_VSYNC: display_vsync_apply(); add_work(2); break;
     case A_WINDOW: case A_SIZE: if (!display_window_apply()) g_nowin = 1; break;
     case A_SAMPLER: add_work(1); break;
+    case A_SCALE: if (!g_open) add_work(4); break;         /* (the panel: when it closes) */
     default: break;
     }
-    printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], row_restart(i) ? "applies at the next start" : "applied");
+    printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], !row_restart(i) ? "applied" : r->apply == A_SCALE ? "applies when the panel closes" : "applies at the next start");
 }
 static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
     int n = row_count(i);
@@ -403,6 +404,7 @@ void pcmenu_key_set(const char *key, const char *val) {
     if (g_cur[i] != was) g_ver++;
     else if (g_lock_why[i]) printf("pcmenu: %s is set by %s: not changed\n", key, g_lock_why[i] == 1 ? k_rows[i].env : "profile = low");
     ReleaseSRWLockExclusive(&g_lock);
+    if (g_work && !g_open) nvn_front_post_pcmenu();        /* (outside the lock: the job takes it, and this may wait for room in the queue) */
 }
 
 /* ---------------------------------------------------------------- the menu's thread */
@@ -459,7 +461,11 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         Sleep(16);
     }
     InterlockedExchange(&g_release, 0xff);                 /* each player reads an idle pad until it has let go of everything */
+    AcquireSRWLockExclusive(&g_lock);
+    for (int i = 0; i < NROW; i++) if (k_rows[i].apply == A_SCALE) g_start[i] = g_cur[i];
     InterlockedExchange(&g_open, 0);
+    ReleaseSRWLockExclusive(&g_lock);
+    if (!g_display_close) { add_work(4); nvn_front_post_pcmenu(); }      /* before the game goes on: its next commands come after the job */
     InterlockedExchange(&g_guest_frozen, 0);
     if (nnpad_mouse_cfg(&sens, &inv)) display_mouse_want(1);
     printf("pcmenu: closed; the game goes on\n");
