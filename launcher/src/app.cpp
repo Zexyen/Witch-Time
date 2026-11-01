@@ -311,13 +311,16 @@ void App::bind_model()
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
 	c.Bind("tab", &tab);
-	c.Bind("prompts", &prompts);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_remove", &tex_remove);
 	// footer hints: by the label on the button, as confirm and back in handle() go
 	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
 	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=26222f" : prompts == 2 ? "gen:glyph?n=circle&c=26222f" : "gen:glyph?n=b&c=26222f"); });
+	// the settings' sections (Q / E, the shoulder buttons) and a row's value (the arrow keys, the d-pad)
+	c.BindFunc("glyph_tab_l", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=Q&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=L&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=L1&c=26222f" : "gen:glyph?n=bumper&t=LB&c=26222f"); });
+	c.BindFunc("glyph_tab_r", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=E&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=R&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=R1&c=26222f" : "gen:glyph?n=bumper&t=RB&c=26222f"); });
+	c.BindFunc("glyph_change", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=arrows&c=26222f" : "gen:glyph?n=dpad&c=26222f"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
@@ -487,8 +490,8 @@ void App::prompts_use(int family)
 	prompts = family;
 	if (model)
 	{
-		model.DirtyVariable("glyph_ok");
-		model.DirtyVariable("glyph_back");
+		for (const char* g : {"glyph_ok", "glyph_back", "glyph_tab_l", "glyph_tab_r", "glyph_change"})
+			model.DirtyVariable(g);
 	}
 }
 
@@ -1067,18 +1070,16 @@ void App::tick()
 			dump_modified = true;
 			model.DirtyVariable("dump_modified");
 		}
-		if (checks.size() > 8)
-			checks.erase(checks.begin(), checks.end() - 8);
+		// the screen shows one line: what runs now, "Version verified", or why it failed (the log keeps the rest)
 		if (runner.running())
-			checks.push_back({phase_of(runner.current.empty() ? "deps" : runner.current), "", "run"});
+			checks = {{phase_of(runner.current.empty() ? "deps" : runner.current), "", "run"}};
 		else
 		{
 			checking = false;
 			verified = std::find(runner.done.begin(), runner.done.end(), "verify") != runner.done.end();
-			if (!runner.failed.empty() && !checks.empty())
-				checks.back().state = "fail";      // the line that says why
-			checks.push_back(verified ? CheckRow{"Your dump is the version this port supports", "Matches", "done"}
-									  : CheckRow{"The dump did not pass the checks above", "", "fail"});
+			CheckRow why = checks.empty() ? CheckRow{"The dump did not pass the checks", "", "fail"} : checks.back();
+			why.state = "fail";
+			checks = verified ? std::vector<CheckRow>{{"Version verified", "", "done"}} : std::vector<CheckRow>{why};
 			job = Job::none;
 		}
 		for (const char* v : {"checks", "checking", "verified"})

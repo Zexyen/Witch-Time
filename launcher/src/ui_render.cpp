@@ -16,7 +16,7 @@
 //   gen:fade?c=&a=                         c fading out from left to right (the selected menu row's line)
 //   gen:pill?w=&h=&f=&c=&a=&l=             a w x h texel rounded bar filled with f (if given), its edge c l texels
 //                                          thick (if given): the switches; w = h is a disc. RmlUi's border-radius is jagged
-//   gen:glyph?n=&c=                        a button prompt, as the game shows it: n = a b cross circle enter esc
+//   gen:glyph?n=&c=&t=                     a button prompt, as the game shows it: n = a b cross circle enter esc key bumper dpad arrows (t: the letters)
 //   gen:grad?d=&c0=&a0=&c1=&a1=&c2=&a2=&c3=&a3=&p1=&p2=
 //                                          a gradient with up to four stops (c0 at 0, c3 at 1, c1 and c2 at p1 and p2),
 //                                          left to right (d=h, the default) or top to bottom (d=v): the panel, the bars
@@ -82,7 +82,7 @@ Image glow(const Params& p)
 	Image im(320, 200);
 	const float cx = p.num("x", .5f), cy = p.num("y", .5f), rx = p.num("rx", .7f), ry = p.num("ry", .9f), stop = p.num("stop", .62f);
 	const Rml::Colourb c1 = p.color("c1", {36, 17, 46, 255}), c0 = p.color("c0", {10, 6, 16, 255});
-	const float a1 = p.num("a1", 255), a0 = p.num("a0", 255);
+	const float a1 = p.num("a1", 255), a0 = p.num("a0", 255), edge = p.num("edge", 0);
 	for (int y = 0; y < im.h; y++)
 		for (int x = 0; x < im.w; x++)
 		{
@@ -91,7 +91,14 @@ Image glow(const Params& p)
 			t = t * t * (3 - 2 * t);
 			Rml::Colourb c(Rml::byte(c1.red + (c0.red - c1.red) * t), Rml::byte(c1.green + (c0.green - c1.green) * t),
 				Rml::byte(c1.blue + (c0.blue - c1.blue) * t), 255);
-			im.put(x, y, c, (a1 + (a0 - a1) * t) / 255.f);
+			float a = (a1 + (a0 - a1) * t) / 255.f;
+			if (edge > 0)                                       // fades to nothing at the four edges: no box around a halo
+			{
+				const float u = (x + .5f) / im.w, v = (y + .5f) / im.h;
+				const float e = std::clamp(std::min({u, 1 - u, v, 1 - v}) / edge, 0.f, 1.f);
+				a *= e * e * (3 - 2 * e);
+			}
+			im.put(x, y, c, a);
 		}
 	return im;
 }
@@ -188,6 +195,7 @@ Image glyph(const Params& p)
 {
 	std::vector<uint8_t> s(S * S);
 	const auto n = p.v.count("n") ? p.v.at("n") : Rml::String();
+	const auto t = p.v.count("t") ? p.v.at("t") : Rml::String();
 	if (n == "cross")
 		ps_cross(s.data());
 	else if (n == "circle")
@@ -196,6 +204,24 @@ Image glyph(const Params& p)
 		keycap(s.data(), "ENT");
 	else if (n == "esc")
 		keycap(s.data(), "ESC");
+	else if (n == "key")                                    // a keycap with the letters t
+		keycap(s.data(), t.substr(0, 4).c_str());
+	else if (n == "bumper")                                 // a shoulder button with the letters t: L, L1, LB
+		bumper(s.data(), t.substr(0, 4).c_str());
+	else if (n == "dpad")                                   // the d-pad, left and right
+	{
+		box(s.data(), 16, 7, 24, 33, 2, 1);
+		box(s.data(), 7, 16, 33, 24, 2, 1);
+		box(s.data(), 17.5f, 8.5f, 22.5f, 14, 1, 0);
+		box(s.data(), 17.5f, 26, 22.5f, 31.5f, 1, 0);
+	}
+	else if (n == "arrows")                                 // the left and right arrow keys
+	{
+		box(s.data(), 3, 11.5f, 19, 28.5f, 3, 1);
+		box(s.data(), 21, 11.5f, 37, 28.5f, 3, 1);
+		seg(s.data(), 13, 16, 9, 20, 2, 0); seg(s.data(), 9, 20, 13, 24, 2, 0);
+		seg(s.data(), 27, 16, 31, 20, 2, 0); seg(s.data(), 31, 20, 27, 24, 2, 0);
+	}
 	else
 		letter_disc(s.data(), n == "b" ? "B" : "A");
 	// the middle of the cell, two subsamples to a texel

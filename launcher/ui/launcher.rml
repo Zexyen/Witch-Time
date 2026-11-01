@@ -49,11 +49,6 @@
 		<div class="flourish"></div>
 		<p>A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
 		<p>The launcher turns your copy's code into a native program on this PC. You do this once; updates rebuild only what changed.</p>
-		<div class="facts">
-			<div>About 15 minutes on 16 threads</div>
-			<div>About 9 GB of free space</div>
-			<div>Close the window any time; it resumes</div>
-		</div>
 	</div>
 	<div class="col">
 		<div class="label">DUMP FOLDER</div>
@@ -83,6 +78,7 @@
 	</div>
 	<div class="band">{{ verified ? 'Your dump checks out. Begin the build.' : 'Choose the folder, then check the dump.' }}</div>
 	<div class="foot">
+		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
 		<div class="grow"></div>
 		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
@@ -102,7 +98,7 @@
 	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Building</span></div>
 	<div data-for="s, i : steps" class="mi" data-class-on="s.state == 'run'" data-class-run="s.state == 'run'" data-class-dim="s.state == 'wait'" data-class-fail="s.state == 'fail'" data-style-left="(60 + 36 * i) + 'dp'" data-style-top="(170 + 70 * i) + 'dp'" style="width: 300dp;">
 		<div class="halo"></div><div class="fill"></div><div class="chev">»</div>
-		<span class="num">{{ s.num }}</span><div class="lbl"><div>{{ s.name }}</div><div class="sub" data-if="s.note != '' &amp;&amp; s.state == 'run'">{{ s.note }}</div></div>
+		<span class="num">{{ s.num }}</span><div class="lbl"><div>{{ s.name }}</div></div>
 		<span class="dia" data-if="s.state == 'done'"></span>
 	</div>
 	<div class="readout">
@@ -192,9 +188,11 @@
 		<p data-if="tab == 1">{{ tex_note }}</p>
 	</div>
 	<div class="tabs">
+		<img class="gl" data-attr-src="glyph_tab_l" data-event-click="tab(tab - 1)"/>
 		<div class="tab" data-class-on="tab == 0" data-event-click="tab(0)"><div>Display</div></div>
 		<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
 		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
+		<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
 	</div>
 	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(620 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'">
 		<div class="fill"></div><div class="chev">»</div>
@@ -212,8 +210,8 @@
 	<div class="band">Changes are saved as you make them.</div>
 	<div class="foot">
 		<div class="grow"></div>
-		<div class="hint"><div class="key">{{ prompts == 4 ? 'Q' : 'L' }}</div><div class="key">{{ prompts == 4 ? 'E' : 'R' }}</div><span>Section</span></div>
-		<div class="hint"><div class="key">‹ ›</div><span>Change</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
 		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
