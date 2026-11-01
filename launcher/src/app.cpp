@@ -61,25 +61,37 @@ const char* phase_of(const std::string& step)
 struct SettingDef {
 	const char *key, *name, *note;
 	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
+	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls
+	const char *dflt = nullptr;                                 // the reader's value when the key is not in the file; else the first option
 	const char *file = "/graphics.ini", *section = "";
 };
+// The rows, names and values of the game's own PC settings panel (runtime/pcmenu.c), in its order, so the two read alike.
 const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
-		{"resolution_scale", "Internal resolution", "Takes effect at the next start",
-			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"},
-				{"0.4", "0.4× · 360p"}, {"0.6", "0.6× · 540p"}, {"0.8", "0.8× · 720p"}}},   // after 2.4: the first option is the default, and left from 1.0 goes down
-		{"cutscene_fps", "Cutscene frame rate", "Menus and cutscenes; movies keep their own", {{"30", "30"}, {"60", "60"}}},
-		{"window", "Display mode", "How the game uses the window", {{"windowed", "Window"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}},
-		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
-		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at an angle", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}},
-		{"aspect", "Aspect", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}},
+		{"window", "Display mode", "Windowed, or the monitor the window is on", {{"windowed", "Windowed"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}, 0},
+		{"size", "Window size", "The window in windowed mode",
+			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0, "1920x1080"},
+		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
+			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
+		{"cutscene_fps", "Cutscene frame rate", "Title, menus and cutscenes; movies keep theirs", {{"30", "30 fps"}, {"60", "60 fps"}}, 0},
+		{"frame_rate", "Frame rate (experimental)", "Above 60 some effects may run fast; next start", {{"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
+		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
+			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
+			1, "1.0"},
+		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}, 1},
+		{"texture_lod_bias", "Texture detail", "Below 0 sharper in the distance, above 0 blurrier",
+			{{"-1", "–1"}, {"-0.5", "–0.5"}, {"0", "0 — game"}, {"0.5", "+0.5"}, {"1", "+1"}}, 1, "0"},
+		{"aspect", "Aspect ratio", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
-			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, "/controllers.ini", "general"},
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Menus confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"layout", "Face buttons", "By position, as on a Switch, or by printed letter",
+			{{"auto", "Auto"}, {"positional", "Position"}, {"labels", "Printed letter"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
+const char* default_value(const SettingDef& d) { return d.dflt ? d.dflt : d.options.front().first; }
 bool same_value(const std::string& a, const std::string& b)
 {
 	char *ea = nullptr, *eb = nullptr;
@@ -139,6 +151,8 @@ bool App::init(int argc, char** argv)
 	refresh_title();
 	refresh_build();
 	update::check(paths);
+	if (const char* t = std::getenv("WITCHTIME_TAB"))       // test aid: the settings' section
+		tab = std::atoi(t) % 3;
 	if (const char* s = std::getenv("WITCHTIME_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -256,6 +270,7 @@ void App::bind_model()
 		h.RegisterMember("name", &SettingRow::name);
 		h.RegisterMember("note", &SettingRow::note);
 		h.RegisterMember("value", &SettingRow::value);
+		h.RegisterMember("index", &SettingRow::index);
 	}
 	c.RegisterArray<std::vector<CheckRow>>();
 	c.RegisterArray<std::vector<StepRow>>();
@@ -297,6 +312,8 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
+	c.Bind("tab", &tab);
+	c.Bind("prompts", &prompts);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_remove", &tex_remove);
@@ -331,6 +348,7 @@ void App::bind_model()
 			update::start(paths);
 	});
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
+	c.BindEventCallback("tab", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) { set_tab(arg_int(a, 0)); });
 	c.BindEventCallback("convert_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { convert_textures(); });
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
@@ -525,6 +543,10 @@ void App::handle(SDL_Event& ev)
 			key(KI_LEFT);
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
 			key(KI_RIGHT);
+		else if (button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)
+			key(KI_Q);
+		else if (button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)
+			key(KI_E);
 		return;
 	}
 	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
@@ -561,6 +583,11 @@ bool App::key(Rml::Input::KeyIdentifier k)
 	if ((k == KI_RETURN || k == KI_NUMPADENTER) && focus && !editing && focus != ctx->GetDocument(0))
 	{
 		focus->Click();
+		return true;
+	}
+	if ((k == KI_Q || k == KI_E) && screen == "settings" && !editing)
+	{
+		set_tab(tab + (k == KI_Q ? -1 : 1));
 		return true;
 	}
 	if ((k == KI_LEFT || k == KI_RIGHT) && focus && focus->IsClassSet("setting"))
@@ -836,13 +863,18 @@ void App::toggle_mod(int index)
 void App::refresh_settings()
 {
 	settings.clear();
-	for (const SettingDef& d : setting_defs())
+	const auto& defs = setting_defs();
+	for (size_t n = 0; n < defs.size(); n++)
 	{
-		std::string v = ini_get(paths.config + d.file, d.section, d.key, d.options.front().first);
+		const SettingDef& d = defs[n];
+		if (d.tab != tab)
+			continue;
+		std::string v = ini_get(paths.config + d.file, d.section, d.key, default_value(d));
 		int i = option_index(d, v);
-		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v});
+		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n)});
 	}
 	model.DirtyVariable("settings");
+	model.DirtyVariable("tab");
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;
@@ -867,6 +899,13 @@ void App::refresh_settings()
 		model.DirtyVariable(v);
 }
 
+void App::set_tab(int t)
+{
+	tab = (t + 3) % 3;
+	refresh_settings();
+	want_focus = true;
+}
+
 void App::step_setting(int index, int dir)
 {
 	const auto& defs = setting_defs();
@@ -874,7 +913,7 @@ void App::step_setting(int index, int dir)
 		return;
 	const SettingDef& d = defs[size_t(index)];
 	const std::string ini = paths.config + d.file;
-	int i = option_index(d, ini_get(ini, d.section, d.key, d.options.front().first));
+	int i = option_index(d, ini_get(ini, d.section, d.key, default_value(d)));
 	int n = int(d.options.size());
 	i = i < 0 ? 0 : (i + dir + n) % n;
 	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);

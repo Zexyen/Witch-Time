@@ -51,7 +51,7 @@ body {
 .wide .rule.r1 { left: 510dp; }
 .wide .rule.r2 { left: 515dp; }
 /* on the text-heavy screens the wheel sits at the bottom left, lilac on the indigo side, as in the game's panel */
-.wide .wheel.dark { left: -70dp; top: 320dp; width: 460dp; height: 460dp; }
+.wide .wheel.dark { left: -10dp; top: 390dp; width: 320dp; height: 320dp; }
 
 /* the wheel: the clockwork image, the hands turned to the local time by the model (hour_deg, minute_deg) */
 .wheel { width: 660dp; height: 660dp; }
@@ -175,7 +175,14 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .tag { font-size: 12dp; letter-spacing: 2dp; font-weight: 600; color: #6a49d0; border: 1dp #6a49d080; padding: 4dp 8dp; }
 .empty { font-size: 18dp; color: #5d5868; padding: 20dp 0; line-height: 26dp; width: 420dp; }
 
-/* ---- settings: a staircase of rows on the pearl side, the value in violet ---- */
+/* ---- settings: the three sections as tabs over the rows, then a staircase of rows on the pearl side, the value in violet ---- */
+.tabs { left: 590dp; top: 44dp; display: flex; flex-direction: row; gap: 40dp; }
+.tab { position: relative; padding: 6dp 2dp 8dp 2dp; font-size: 15dp; font-weight: 600; letter-spacing: 3dp; color: #5d5868;
+	border-bottom: 2dp transparent; tab-index: auto; nav: horizontal; }
+.tab div { position: relative; }
+.tab:hover { color: #24202e; }
+.tab.on { color: #6a49d0; border-bottom-color: #a690ec; }
+.tab:focus-visible { color: #6a49d0; border-bottom-color: #6a49d0; }
 .srow { height: 50dp; width: 500dp; display: flex; flex-direction: row; align-items: center; padding: 0 16dp 0 30dp; font-size: 19dp; letter-spacing: 0.5dp; color: #24202e;
 	tab-index: auto; nav: vertical; border-bottom: 1dp #24202e40; }
 .srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom; opacity: 0;
@@ -183,7 +190,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .srow .chev { position: absolute; left: -16dp; top: 0; height: 50dp; line-height: 48dp; font-size: 30dp; color: #ffffff; opacity: 0; }
 .srow .k { position: relative; flex: 1; display: flex; flex-direction: column; }
 .srow .k div { position: relative; }
-.srow .k .note { font-size: 13dp; color: #5d5868; line-height: 14dp; }
+.srow .k .note { font-size: 13dp; color: #5d5868; line-height: 14dp; white-space: nowrap; }
 .srow .v { position: relative; width: 200dp; display: flex; flex-direction: row; justify-content: space-between; align-items: center; color: #6a49d0; font-weight: 600; }
 .srow .v .arrow { width: 28dp; text-align: center; color: #6a49d08c; font-weight: 400; font-size: 24dp; }
 .srow .v .arrow:hover { color: #6a49d0; }
