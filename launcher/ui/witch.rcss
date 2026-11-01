@@ -53,9 +53,19 @@ body {
 /* on the text-heavy screens the wheel sits at the bottom left, lilac on the indigo side, as in the game's panel */
 .wide .wheel.dark { left: -10dp; top: 390dp; width: 320dp; height: 320dp; }
 
-/* the wheel: the clockwork image, the hands turned to the local time by the model (hour_deg, minute_deg) */
+/* the wheel, in layers as the design page animates it: the outer rings turn once in two minutes, the inner one the other
+ * way in under three, the gears in 10 and 14 s; the hands are turned to the local time by the model (hour_deg, minute_deg).
+ * The gears are small squares placed at their centres (fractions of the 800 px drawing) so they turn about themselves. */
 .wheel { width: 660dp; height: 660dp; }
 .wheel img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes spin-back { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+.wheel .ring1 { animation: 120s linear infinite spin; }
+.wheel .ring2 { animation: 160s linear infinite spin-back; }
+.wheel .gear1, .wheel .gear2, .wheel .gear3 { width: 20%; height: 20%; }
+.wheel .gear1 { left: 27.26%; top: 24.81%; animation: 10s linear infinite spin-back; }
+.wheel .gear2 { left: 52.74%; top: 55.19%; animation: 14s linear infinite spin; }
+.wheel .gear3 { left: 62.54%; top: 36.08%; animation: 14s linear infinite spin; }
 
 /* ---- the header plate, as on the gallery screens: WITCH TIME, a lozenge, the screen's name ---- */
 .plate { left: 0; top: 30dp; height: 44dp; width: 340dp; display: flex; flex-direction: row; align-items: center; gap: 14dp; padding-left: 44dp;
