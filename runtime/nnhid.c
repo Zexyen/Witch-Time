@@ -709,6 +709,10 @@ static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
  * player's keys and the first controller, without the side effects of a game poll (input sequence, recording, statistics). */
 int pcmenu_gate(uint32_t id, uint64_t buttons);
 static void pad_gate(uint64_t out, uint32_t id) { if (pcmenu_gate(id, rd64(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18); }
+uint32_t nnhid_menu_pad(void) {                                /* the pad's buttons alone, as they are: what a rebinding takes */
+    NnPadState ps;
+    return sdl_on() && devices_live() && nnpad_get(0, &ps) ? (uint32_t)ps.buttons & 0xffff : 0;
+}
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab) {      /* swap_ab: the pad's A and B, not the keys' */
     static const struct { int vk, bit; } map[] = {{'Z', BTN_A}, {'X', BTN_B}, {'J', BTN_LEFT}, {'I', BTN_UP}, {'L', BTN_RIGHT}, {'K', BTN_DOWN},
                                                   {0, BTN_PLUS}, {0, BTN_MINUS}};      /* (Start + Select close it: the keyboard's bindings for them) */

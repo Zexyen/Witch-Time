@@ -18,6 +18,9 @@ int  nnpad_button_prompts(void);                /* [Recomps#1] [general] button_
 void nnpad_prompts_used(int keyboard);          /* player 1 used a pad (0) or the keyboard / mouse (1): button_prompts = auto follows */
 int  nnpad_prompts_by_letter(void);             /* [Recomps#1] finding 148: player 1's face buttons by printed letter (A = the bottom button) */
 int  nnpad_menu_swapped(void);                  /* [witchtime] [general] swap_confirm, for the device in use: menus confirm with B, back with A */
+int  nnpad_bind_get(int ch, unsigned char *out);  /* [witchtime] the layout of a character (rebind.h; 0 Bayonetta, 1 Viola): 0 = none, the game's control type */
+int  nnpad_bind_set(int ch, const unsigned char *b);   /* writes it to controllers.ini; NULL = none */
+int  nnpad_bind_live(void);                      /* a pad, not the keyboard, is in use: the layouts count */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */
 int  nnpad_present(int player);                  /* a device is assigned to this player slot */

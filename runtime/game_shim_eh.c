@@ -22,6 +22,92 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 #include <stdlib.h>
 #include <time.h>
 #include "quad_walk.h"
+#include "rebind.h"
+/* [witchtime] Button rebinding (docs/RE_NOTES.md section 9). The runtime keeps these (options_row.c menu_swap_tick). */
+__declspec(dllexport) uint8_t game_rebind[2][16];      /* by character, 0 Bayonetta, 1 Viola: the layout, rebind.h */
+__declspec(dllexport) uint8_t game_rebind_on[2];       /* the character has a layout of its own, not the game's control type */
+__declspec(dllexport) volatile int game_rebind_live;   /* a pad is in use: the keyboard has its own bindings on top of Type A */
+void f_7100987cb0(Ctx *c);                             /* -> the current character */
+static int rebind_of(int ch) { return game_rebind_live && game_rebind_on[ch != 0]; }
+static const uint8_t *rebind_cur(Ctx *c) {
+    f_7100987cb0(c);
+    int ch = (uint32_t)c->x[0] == 1;
+    return rebind_of(ch) ? game_rebind[ch] : NULL;
+}
+/* 0x7100983610 is empty and called once, just after the frame's pads were copied (0x710095f40c). What gameplay reads is rewritten
+ * here: every pad of the first copy, the gameplay copy, the one record. The menus' copy comes from the raw pads later (0x710095f464). */
+void h_rebind_pads(Ctx *c) {
+    static const struct { uint64_t at; int n; } copies[] = {{0x7104d8f338ull, 4}, {0x7104d8f418ull, 4}, {0x7104d8f5d8ull, 1}};
+    if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
+    const uint8_t *r = rebind_cur(c);
+    if (!r) return;
+    {   /* test aid: SSBU_REBIND_LOG=1, player 1's buttons at every change, as the pad has them and as gameplay gets them */
+        static int on = -1; static uint32_t last;
+        uint32_t w = *(uint32_t *)(uintptr_t)copies[0].at;
+        if (on < 0) on = getenv("SSBU_REBIND_LOG") != NULL;
+        if (on && w != last) { last = w; printf("rebind: pad %05x -> game %05x\n", w, rb_to_game(r, w)); fflush(stdout); }
+    }
+    for (int i = 0; i < 3; i++) for (int p = 0; p < copies[i].n; p++) {
+        uint32_t *w = (uint32_t *)(uintptr_t)(copies[i].at + 0x38ull * p);       /* held, pressed, and two more of the same kind */
+        for (int k = 0; k < 4; k++) w[k] = rb_to_game(r, w[k]);
+    }
+}
+/* f_710095f464 makes the menus' copy. Pause and Subscreen are read from it (0x7100983660, in 36 places with the menus' own uses of
+ * those bits), so while gameplay has the pad, the flags that let the gameplay copy through (0x710095f300), its two bits follow the
+ * layout there too. Nothing else of the copy moves, and in a menu nothing does. */
+void f_710095f464(Ctx *c);
+void h_rebind_menu_pads(Ctx *c) {
+    f_710095f464(c);
+    if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
+    uint64_t fp; uint8_t b; uint16_t h;
+    memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&b, (void *)(uintptr_t)(fp + 0x12), 1); memcpy(&h, (void *)(uintptr_t)(fp + 0x16), 2);
+    if ((b & 0x20) || (h & 0x2008)) return;
+    const uint8_t *r = rebind_cur(c);
+    if (!r) return;
+    for (int p = 0; p < 4; p++) {
+        uint32_t *w = (uint32_t *)(uintptr_t)(0x7104d8f4f8ull + 0x38ull * p);
+        for (int k = 0; k < 4; k++) w[k] = (w[k] & ~0x300u) | (rb_to_game(r, w[k]) & 0x300u);
+    }
+}
+/* f_7100b22cc0(character w0, type w1, action w2) -> the prompt's number */
+void f_7100b22cc0(Ctx *c);
+void h_prompt_number(Ctx *c) {
+    int ch = (uint32_t)c->x[0] == 1;
+    f_7100b22cc0(c);
+    if (rebind_of(ch)) c->x[0] = (uint32_t)rb_number(game_rebind[ch], (int)(uint32_t)c->x[0]);
+}
+/* f_7100b22ee0, the same -> the mask; its one caller tests the menus' copy of the pad, which is not rewritten */
+void f_7100b22ee0(Ctx *c);
+void h_action_mask(Ctx *c) {
+    int ch = (uint32_t)c->x[0] == 1;
+    f_7100b22ee0(c);
+    if (rebind_of(ch)) c->x[0] = rb_to_pad(game_rebind[ch], (uint32_t)c->x[0]);
+}
+/* f_7100b31b60(settings x0, character w1) -> the control type. A layout counts from Type A, and the type stays in the save */
+void f_7100b31b60(Ctx *c);
+void h_control_type(Ctx *c) {
+    int ch = (uint32_t)c->x[1] == 1;
+    f_7100b31b60(c);
+    if (game_rebind_on[ch]) c->x[0] = 0;
+}
+/* f_7100c0f960(x0 a text's tag, UTF-16) -> the tag's symbol. Every button tag of the game's text comes here, the HUD's lists every
+ * frame: [BTN:R2 ], and [KC:AVOID ] by way of its button (0x7100961b44). By Pro button; the space is in the name. */
+void f_7100c0f960(Ctx *c);
+void h_text_symbol(Ctx *c) {
+    static const uint16_t *const tag[16] = {(const uint16_t *)u"[BTN:A ]", (const uint16_t *)u"[BTN:B ]", (const uint16_t *)u"[BTN:X ]", (const uint16_t *)u"[BTN:Y ]",
+        (const uint16_t *)u"[BTN:L3 ]", (const uint16_t *)u"[BTN:R3 ]", (const uint16_t *)u"[BTN:L1 ]", (const uint16_t *)u"[BTN:R1 ]", (const uint16_t *)u"[BTN:L2 ]", (const uint16_t *)u"[BTN:R2 ]",
+        (const uint16_t *)u"[BTN:START ]", (const uint16_t *)u"[BTN:SELECT ]", (const uint16_t *)u"[BTN:DP_L ]", (const uint16_t *)u"[BTN:DP_U ]", (const uint16_t *)u"[BTN:DP_R ]", (const uint16_t *)u"[BTN:DP_D ]"};
+    uint64_t text = c->x[0];
+    const uint8_t *r = text ? rebind_cur(c) : NULL;
+    c->x[0] = text;
+    for (int b = 0; r && b < 16; b++) {
+        const uint16_t *name = tag[b], *t = (const uint16_t *)(uintptr_t)text;
+        int i = 1;                                         /* past the [ or the < */
+        while (name[i] != ']' && t[i] == name[i]) i++;
+        if (name[i] == ']' && (t[i] == ']' || t[i] == '>')) { c->x[0] = (uint64_t)(uintptr_t)tag[r[b]]; break; }
+    }
+    f_7100c0f960(c);
+}
 /* [witchtime] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300

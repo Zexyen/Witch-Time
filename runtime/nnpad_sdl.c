@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <SDL3/SDL.h>
 #include "nnpad.h"
+#include "rebind.h"
 
 #define MAXDEV 16
 #define MAXCFG 64
@@ -39,6 +40,8 @@ typedef struct {
     float mouse_sens;                   /* [Recomps#1] [keyboard] mouse_sensitivity (default 1.0) */
     int prompts;                        /* [Recomps#1] [general] button_prompts: 0 auto, 1 switch, 2 playstation, 3 xbox */
     int menu_swap;                      /* [witchtime] [general] swap_confirm */
+    unsigned char bind[2][16];          /* [witchtime] [general] bind_bayonetta, bind_viola: the layout (rebind.h) */
+    int bind_on[2];                     /* 0 = game: the game's own control type */
     int input;                          /* [Recomps#1] [general] input: 0 both, 1 keyboard (pads unused), 2 controller (keyboard and mouse unused) */
 } Cfg;
 typedef struct {
@@ -167,6 +170,12 @@ static const char *const g_default_ini =
 "; Menus confirm with B and go back with A, and their button prompts show it: on / off. Gameplay keeps its buttons, and the\r\n"
 ";   keyboard its keys. Which button is B depends on layout above: with positional, the bottom one (A on an Xbox pad).\r\n"
 "swap_confirm = off\r\n"
+"; Gameplay's buttons, for each character: game = the Controls setting of the game's Options, or for each Pro button in the order\r\n"
+";   A B X Y STICK_L STICK_R L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN the button you press for what it does in Type A; each one once.\r\n"
+";   R and ZR changed: A B X Y STICK_L STICK_R L ZR ZL R PLUS MINUS LEFT UP RIGHT DOWN. Options, Controller, Controls sets it in the\r\n"
+";   game, and the prompts follow. Menus and the keyboard keep their buttons.\r\n"
+"bind_bayonetta = game\r\n"
+"bind_viola = game\r\n"
 "; Which input the game takes: both (pads and the keyboard + mouse, merged), keyboard (pads are ignored), controller (the\r\n"
 ";   keyboard and mouse are ignored). The keyboard part takes effect when the game starts, the pads part at once.\r\n"
 "input = both\r\n"
@@ -315,6 +324,25 @@ static void cfg_set(Cfg *c, DevCfg *d, int in_dev, const char *key, char *val) {
     }
     (void)c;
 }
+/* one name of g_pro per button, each once; anything else is no layout */
+static int bind_parse(const char *val, unsigned char *o) {
+    unsigned char r[16];
+    int n = 0;
+    while (*val && n <= 16) {
+        const char *e = val;
+        while (*e && *e != ' ' && *e != '\t' && *e != ',') e++;
+        if (e > val) {
+            int b = 0;
+            while (b < 16 && (strlen(g_pro[b]) != (size_t)(e - val) || _strnicmp(val, g_pro[b], (size_t)(e - val)))) b++;
+            if (b == 16 || n == 16) return 0;
+            r[n++] = (unsigned char)b;
+        }
+        val = *e ? e + 1 : e;
+    }
+    if (n != 16 || !rb_valid(r)) return 0;
+    memcpy(o, r, 16);
+    return 1;
+}
 static void cfg_parse(Cfg *c, char *text) {
     DevCfg *cur = NULL;
     int sect = 0;                                     /* 1 general, 2 players, 3 keyboard, 4 device */
@@ -345,6 +373,11 @@ static void cfg_parse(Cfg *c, char *text) {
         else if (sect == 1 && !_stricmp(key, "button_prompts"))                                /* [Recomps#1] */
             c->prompts = prompts_value(val);
         else if (sect == 1 && !_stricmp(key, "swap_confirm")) c->menu_swap = !_stricmp(val, "on");
+        else if (sect == 1 && (!_stricmp(key, "bind_bayonetta") || !_stricmp(key, "bind_viola"))) {
+            int ch = !_stricmp(key, "bind_viola");
+            c->bind_on[ch] = bind_parse(val, c->bind[ch]);
+            if (!c->bind_on[ch] && _stricmp(val, "game")) printf("nn::pad: %s is not 16 Pro buttons, each once: the game's control type\n", key);
+        }
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
         else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
@@ -818,8 +851,38 @@ int nnpad_menu_swap_set(const char *val) {
     unlock();
     return ok;
 }
+/* [witchtime] layout (face buttons), the same way */
+const char *nnpad_layout_setting(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); int l = g_cfg.def.layout; unlock();
+    return l == 1 ? "labels" : l == 2 ? "auto" : "positional";
+}
+int nnpad_layout_set(const char *val) {
+    lock();
+    int ok = cfg_key_set("layout", val);
+    if (ok) g_cfg.def.layout = !_stricmp(val, "labels") ? 1 : !_stricmp(val, "auto") ? 2 : 0;
+    unlock();
+    return ok;
+}
+/* [witchtime] the layouts (rebind.h). ch: 0 Bayonetta, 1 Viola. get: 1 and the layout, 0 = the game's control type. set: NULL = that */
+int nnpad_bind_get(int ch, unsigned char *out) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1);
+    int on = g_cfg.bind_on[ch];
+    if (on) memcpy(out, g_cfg.bind[ch], 16);
+    unlock();
+    return on;
+}
+int nnpad_bind_set(int ch, const unsigned char *b) {
+    char v[16 * 8] = "game";
+    if (b) { v[0] = 0; for (int i = 0; i < 16; i++) { if (i) strcat(v, " "); strcat(v, g_pro[b[i]]); } }
+    lock();
+    int ok = cfg_key_set(ch ? "bind_viola" : "bind_bayonetta", v);
+    if (ok) { g_cfg.bind_on[ch] = b != NULL; if (b) memcpy(g_cfg.bind[ch], b, 16); }
+    unlock();
+    return ok;
+}
 static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
 void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }
+int nnpad_bind_live(void) { return !g_prompts_kb; }  /* the layouts are the pads'; the keyboard has [keyboard] */
 /* swap_confirm in force: only for a pad, or Enter would go back and the keyboard's prompts (its keys, on the A and B pictures) would lie */
 int nnpad_menu_swapped(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); int on = g_cfg.menu_swap; unlock();

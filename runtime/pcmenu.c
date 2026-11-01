@@ -19,7 +19,10 @@
  * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
  * a subset of Noto Serif (SIL OFL 1.1, third_party/OFL-NotoSerif.txt), embedded with #embed; opaque, dark, gold lines.
- * One row is not graphics.ini's: button_prompts, of controllers.ini, shown by the game when it runs on (prompts.c).
+ * Some rows are not graphics.ini's: button_prompts, swap_confirm and layout, of controllers.ini, shown by the game when it runs on (prompts.c).
+ * A second page, Controls, has the buttons of gameplay by character (docs/RE_NOTES.md section 9): A on a row, then the button
+ * to use for it, or left / right to go through them (for a player without a pad to press). A button already in use changes
+ * places with the row's: a layout stays one button per action. From the game's Options, Controller, Controls it opens by itself.
  * Test aids: SSBU_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), SSBU_PCMENU_OPEN=<seconds> opens it that long after the first pad
  * read (for scripted runs without keys), SSBU_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
@@ -29,6 +32,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "gfx_options.h"
+#include "rebind.h"
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "third_party/stb_truetype.h"
@@ -42,6 +46,7 @@ extern volatile LONG g_display_close;                      /* display.c: the win
 __declspec(dllimport) extern volatile int game_cutscene_fps;      /* game_shim_eh.c (the game library) */
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab);       /* nnhid.c */
 int nnhid_menu_key(int vk);
+uint32_t nnhid_menu_pad(void);
 int nvn_front_post_pcmenu(void);                           /* nvn_gl.c: 0 = not the Vulkan renderer */
 void display_vsync_apply(void);                            /* display.c */
 int display_window_apply(void);
@@ -52,14 +57,24 @@ int nnpad_prompts_set(const char *val);
 const char *nnpad_menu_swap_setting(void);
 int nnpad_menu_swap_set(const char *val);
 int nnpad_menu_swapped(void);
+const char *nnpad_layout_setting(void);
+int nnpad_layout_set(const char *val);
+int nnpad_button_prompts(void);
+int nnpad_prompts_by_letter(void);
+int nnpad_bind_get(int ch, unsigned char *out);
+int nnpad_bind_set(int ch, const unsigned char *b);
+int options_control_type(int ch);                          /* options_row.c */
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP };   /* A_PROMPTS, A_MENU_SWAP: keys of controllers.ini */
+/* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; from A_CHAR on its rows */
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_CHAR, A_PRESET, A_BIND };
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
     int apply, optional;
     const char *val[ROW_VALUES], *name[ROW_VALUES];
+    int slot;                                              /* A_BIND: the Pro button that does this in Type A */
 } Row;
+#define BIND(key, label, slot) {key, label, "A, then the button to use (it changes places with the one that had it). Left / right go through them.", NULL, NULL, A_BIND, 0, {0}, {0}, slot}
 static const Row k_rows[] = {
     {"window", "Display mode", "Windowed: a window of the size below. Borderless and fullscreen cover the monitor the window is on.", NULL, "windowed", A_WINDOW, 0,
      {"windowed", "borderless", "fullscreen"}, {"Windowed", "Borderless", "Fullscreen"}},
@@ -84,6 +99,18 @@ static const Row k_rows[] = {
      {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
     {"swap_confirm", "Swap Confirm", "Menus confirm with B and go back with A, and show it. Gameplay and the keyboard stay the same. This panel follows when it next opens.", NULL, "off", A_MENU_SWAP, 0,
      {"off", "on"}, {"Off", "On"}},
+    {"layout", "Face buttons", "Position: the right button acts as A, as on a Switch. Printed letter: the button marked A, Cross as A on PlayStation pads. Prompts follow.", NULL, "auto", A_LAYOUT, 0,
+     {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}},
+    {"controls", "Controls", "Rebind every button of gameplay, for Bayonetta and for Viola. Menus keep theirs, and the game's prompts show yours.", NULL, "open", A_PAGE, 0,
+     {"open"}, {"Open"}},
+    {"bind_character", "Character", "Each character keeps a layout.", NULL, "bayonetta", A_CHAR, 0, {"bayonetta", "viola"}, {"Bayonetta", "Viola"}},
+    {"bind_preset", "Preset", "The game's four control types, as a start. Game's setting: no layout, what the save had.", NULL, "game", A_PRESET, 0,
+     {"game", "a", "b", "c", "d"}, {"Game's setting", "Type A", "Type B", "Type C", "Type D"}},
+    BIND("bind_punch", "Punch", 2), BIND("bind_kick", "Kick", 0), BIND("bind_jump", "Jump", 1), BIND("bind_shoot", "Shoot", 3),
+    BIND("bind_dodge", "Dodge", RB_ZR), BIND("bind_demon", "Demon Slave", RB_ZL), BIND("bind_weapon", "Weapon Switch", RB_L),
+    BIND("bind_stance", "Stance Change", RB_R), BIND("bind_lock", "Camera / Lock On", 5), BIND("bind_way", "Waypoint", 4),
+    BIND("bind_d1", "Demon Select, left", 12), BIND("bind_d2", "Demon Select, up", 13), BIND("bind_d3", "Demon Select, right", 14),
+    BIND("bind_taunt", "Taunt", RB_DOWN), BIND("bind_sub", "Subscreen", 11), BIND("bind_pause", "Pause", 10),
 };
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
@@ -95,11 +122,16 @@ static char g_raw[NROW][32];                               /* a value of the fil
 static unsigned g_ver;
 static int g_env_cut, g_env_set[NROW];
 static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
+static int g_page, g_direct;                               /* 1 = Controls, the rows from A_CHAR on; g_direct: opened there, so back closes */
+static int g_ch, g_cap = -1, g_fam, g_letter;              /* the character shown; the row that waits for a button; the button names */
+static uint8_t g_b[2][16];                                 /* the layouts shown: as saved, else the game's type */
+static int g_b_on[2];                                      /* saved */
 /* the environment as the program started (gfx_options sets SSBU_CUTSCENE_FPS itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
-static int row_count(int i) { int n = 0; while (n < ROW_VALUES && k_rows[i].val[n]) n++; return n; }
+static int row_on(int i) { return g_shown[i] && g_page == (k_rows[i].apply >= A_CHAR); }
+static int row_count(int i) { if (k_rows[i].apply == A_BIND) return 16; int n = 0; while (n < ROW_VALUES && k_rows[i].val[n]) n++; return n; }
 static int find_val(int i, const char *v) {
     for (int k = 0; k < row_count(i); k++) {
         if (!_stricmp(k_rows[i].val[k], v)) return k;
@@ -108,16 +140,47 @@ static int find_val(int i, const char *v) {
     }
     return -1;
 }
+static void binds_show(void) {                             /* the Controls rows from the layouts */
+    for (int i = 0; i < NROW; i++) {
+        const Row *r = &k_rows[i];
+        if (r->apply == A_CHAR) g_cur[i] = g_ch;
+        else if (r->apply == A_BIND) g_cur[i] = g_b[g_ch][r->slot];
+        else if (r->apply == A_PRESET) {
+            g_cur[i] = g_b_on[g_ch] ? -1 : 0;
+            for (int t = 0; t < 4 && g_cur[i] < 0; t++) { uint8_t p[16]; rb_preset(g_ch, t, p); if (!memcmp(p, g_b[g_ch], 16)) g_cur[i] = t + 1; }
+            if (g_cur[i] < 0) snprintf(g_raw[i], sizeof g_raw[i], "Custom");
+        } else continue;
+        g_start[i] = g_cur[i];
+    }
+}
+static void binds_load(void) {
+    for (int ch = 0; ch < 2; ch++) if (!(g_b_on[ch] = nnpad_bind_get(ch, g_b[ch]))) rb_preset(ch, options_control_type(ch), g_b[ch]);
+    binds_show();
+}
+static int bind_assign(int slot, int button) {             /* the button that had it takes the row's old one */
+    uint8_t *r = g_b[g_ch];
+    for (int b = 0; b < 16; b++) if (r[b] == button) r[b] = r[slot];
+    r[slot] = (uint8_t)button;
+    g_b_on[g_ch] = 1;
+    return nnpad_bind_set(g_ch, r);
+}
+static void page_go(int page) {
+    g_page = page; g_cap = -1;
+    g_sel = 0;
+    while (g_sel < NROW - 1 && !row_on(g_sel)) g_sel++;
+}
 static void menu_init(void) {                              /* the first opening: the file's values = what runs */
     const GfxOptions *o = gfx_options();
     char v[64];
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
-        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || gfx_ini_get(r->key, v, sizeof v);
+        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply >= A_LAYOUT || gfx_ini_get(r->key, v, sizeof v);
         if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* SSBU_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
-        else if (!have) snprintf(v, sizeof v, "%s", r->dflt);
+        else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());
+        else if (r->apply == A_BIND) { g_shown[i] = 1; continue; }
+        else if (!have || r->apply >= A_PAGE) snprintf(v, sizeof v, "%s", r->dflt);
         g_shown[i] = !r->optional || have;
         if ((g_cur[i] = find_val(i, v)) < 0) snprintf(g_raw[i], sizeof g_raw[i], "%s", v);
         g_start[i] = g_cur[i];
@@ -212,7 +275,25 @@ static int wrap(char lines[][160], int maxl, const char *s, float px, float widt
     }
     return n;
 }
-static const char *val_name(int i) { return g_cur[i] >= 0 ? k_rows[i].name[g_cur[i]] : g_raw[i]; }
+static const char *pad_name(int b) {                       /* the button on a pad of the family in use: by position, its Pro name's place */
+    static const char *const sw[16] = {"A", "B", "X", "Y", "Left stick press", "Right stick press", "L", "R", "ZL", "ZR", "Plus", "Minus", "D-pad left", "D-pad up", "D-pad right", "D-pad down"};
+    static const char *const face[2][2][4] = {{{"Circle", "Cross", "Triangle", "Square"}, {"Cross", "Circle", "Square", "Triangle"}}, {{"B", "A", "Y", "X"}, {"A", "B", "X", "Y"}}};
+    static const char *const ps[6] = {"L1", "R1", "L2", "R2", "Options", "Create"}, *const xb[6] = {"LB", "RB", "LT", "RT", "Menu", "View"};
+    if (g_fam != 2 && g_fam != 3) return sw[b];
+    if (b < 4) return face[g_fam == 3][g_letter][b];
+    if (b >= 6 && b <= 11) return (g_fam == 3 ? xb : ps)[b - 6];
+    return sw[b];
+}
+static const char *row_label(int i) {                      /* the words of the game's own picture of the pad for Viola, who has no weapons or demons */
+    int s = k_rows[i].slot;
+    if (k_rows[i].apply != A_BIND || !g_ch) return k_rows[i].label;
+    return s == RB_R ? "Block" : s == RB_ZL ? "Summon Cheshire" : s == RB_L || (s >= 12 && s <= 14) ? "Not used" : k_rows[i].label;
+}
+static const char *val_name(int i) {
+    if (i == g_cap) return "Press a button\xE2\x80\xA6";
+    if (k_rows[i].apply == A_BIND) return pad_name(g_cur[i]);
+    return g_cur[i] >= 0 ? k_rows[i].name[g_cur[i]] : g_raw[i];
+}
 static int row_restart(int i) {                            /* a value that is not the running one yet */
     if (g_cur[i] == g_start[i]) return 0;
     return k_rows[i].apply == A_RESTART || (k_rows[i].apply == A_SCALE && g_open) || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
@@ -228,9 +309,10 @@ static void draw_panel(int W, int H) {
     float s = (float)W / 1920.0f < (float)H / 1080.0f ? (float)W / 1920.0f : (float)H / 1080.0f;
     if (s < 0.45f) s = 0.45f;
     int nshow = 0;
-    for (int i = 0; i < NROW; i++) nshow += g_shown[i];
-    int pad = (int)(48 * s), rowh = (int)(58 * s), title_h = (int)(118 * s), help_h = (int)(116 * s), foot_h = (int)(78 * s);
-    int pw = (int)(980 * s), ph = title_h + nshow * rowh + help_h + foot_h + pad;
+    for (int i = 0; i < NROW; i++) nshow += row_on(i);
+    int pad = (int)(48 * s), rowh = (int)(58 * s), title_h = (int)(118 * s), help_h = (int)(116 * s), foot_h = (int)(78 * s), rest = title_h + help_h + foot_h + pad;
+    if (rest + nshow * rowh > H) rowh = (H - rest) / nshow;   /* the Controls page: every row in the window */
+    int pw = (int)(980 * s), ph = rest + nshow * rowh;
     if (pw > W) pw = W;
     if (ph > H) ph = H;
     if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
@@ -243,24 +325,25 @@ static void draw_panel(int W, int H) {
     rect(in, in, pw - 2 * in, 1, C_GOLD_DIM, 1); rect(in, ph - in - 1, pw - 2 * in, 1, C_GOLD_DIM, 1); rect(in, in, 1, ph - 2 * in, C_GOLD_DIM, 1); rect(pw - in - 1, in, 1, ph - 2 * in, C_GOLD_DIM, 1);
     diamond((float)in, (float)in, 6 * s, C_GOLD); diamond((float)(pw - in - 1), (float)in, 6 * s, C_GOLD); diamond((float)in, (float)(ph - in - 1), 6 * s, C_GOLD); diamond((float)(pw - in - 1), (float)(ph - in - 1), 6 * s, C_GOLD);
     /* title */
-    float tpx = 46 * s, tw = text_w("PC SETTINGS", tpx, 7 * s);
+    const char *title = g_page ? "CONTROLS" : "PC SETTINGS";
+    float tpx = 46 * s, tw = text_w(title, tpx, 7 * s);
     int tb = (int)(74 * s);
-    text((pw - tw) / 2, tb, "PC SETTINGS", tpx, C_GOLD_HI, 7 * s);
+    text((pw - tw) / 2, tb, title, tpx, C_GOLD_HI, 7 * s);
     int ly = (int)(98 * s);
     hgrad(pad, ly, pw / 2 - pad - (int)(14 * s), 1, C_BG0, C_GOLD); hgrad(pw / 2 + (int)(14 * s), ly, pw / 2 - pad - (int)(14 * s), 1, C_GOLD, C_BG0);
     diamond(pw / 2.0f, (float)ly, 7 * s, C_GOLD);
     /* rows */
-    float rpx = 29 * s;
+    float rpx = rowh * 0.5f;
     int y = title_h;
     g_row_h = rowh; g_val_x0 = pw / 2; g_val_x1 = pw - pad;
     for (int i = 0; i < NROW; i++) {
         g_row_y[i] = -1;
-        if (!g_shown[i]) continue;
+        if (!row_on(i)) continue;
         g_row_y[i] = y;
         int sel = i == g_sel, base = y + (int)(rowh * 0.66f);
         Rgb tc = g_lock_why[i] ? C_LOCK : sel ? C_TEXT : mix(C_TEXT, C_GREY, 0.35f);
         if (sel) { hgrad(pad - (int)(16 * s), y + (int)(4 * s), pw - 2 * pad + (int)(32 * s), rowh - (int)(8 * s), C_SEL0, C_SEL1); rect(pad - (int)(16 * s), y + (int)(4 * s), (int)(4 * s) > 2 ? (int)(4 * s) : 2, rowh - (int)(8 * s), C_GOLD_HI, 1); }
-        text(pad + 10 * s, base, k_rows[i].label, rpx, tc, 0);
+        text(pad + 10 * s, base, row_label(i), rpx, tc, 0);
         const char *v = val_name(i);
         float vw = text_w(v, rpx, 0), cx = (g_val_x0 + g_val_x1) / 2.0f;
         Rgb vc = g_lock_why[i] ? C_LOCK : sel ? C_GOLD_HI : C_GOLD;
@@ -273,7 +356,7 @@ static void draw_panel(int W, int H) {
     rect(pad, y + (int)(10 * s), pw - 2 * pad, 1, C_GOLD_DIM, 1);
     char lines[3][160];
     float hpx = 23 * s;
-    int n = wrap(lines, 2, k_rows[g_sel].help, hpx, pw - 2 * pad - 20 * s), hy = y + (int)(46 * s);
+    int n = wrap(lines, 2, g_cap >= 0 ? "Press the button for this, on the pad. Esc: leave it as it is." : k_rows[g_sel].help, hpx, pw - 2 * pad - 20 * s), hy = y + (int)(46 * s);
     for (int k = 0; k < n; k++) text(pad + 10 * s, hy + k * (int)(30 * s), lines[k], hpx, C_GREY, 0);
     char st[160] = "";
     Rgb sc = C_AMBER;
@@ -288,7 +371,8 @@ static void draw_panel(int W, int H) {
     rect(pad, ph - foot_h, pw - 2 * pad, 1, C_GOLD_DIM, 1);
     button(x, fy, fpx, g_swap ? "B" : "A", "Change", C_GOLD); x += text_w("Change", fpx, 0) + 66 * s;
     g_close_r[0] = (int)x; g_close_r[1] = fy - (int)(30 * s); g_close_r[3] = (int)(44 * s);
-    button(x, fy, fpx, g_swap ? "A" : "B", "Close", C_GOLD); x += text_w("Close", fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
+    const char *close = g_page && !g_direct ? "Back" : "Close";
+    button(x, fy, fpx, g_swap ? "A" : "B", close, C_GOLD); x += text_w(close, fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
     const char *keys = "F1 \xC2\xB7 Start + Select";
     text(pw - pad - 6 * s - text_w(keys, fpx, 0), fy, keys, fpx, C_GOLD_DIM, 0);
 }
@@ -371,6 +455,18 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
     else if (r->apply == A_PROMPTS) ok = nnpad_prompts_set(r->val[k]);
     else if (r->apply == A_MENU_SWAP) ok = nnpad_menu_swap_set(r->val[k]);
+    else if (r->apply == A_LAYOUT) { ok = nnpad_layout_set(r->val[k]); g_letter = nnpad_prompts_by_letter(); }
+    else if (r->apply == A_CHAR) { g_ch = k; binds_show(); return; }
+    else if (r->apply == A_BIND) { if (bind_assign(r->slot, k)) printf("pcmenu: %s = %s (%s)\n", r->key, pad_name(k), g_ch ? "Viola" : "Bayonetta"); binds_show(); return; }
+    else if (r->apply == A_PRESET) {
+        g_b_on[g_ch] = k != 0;
+        rb_preset(g_ch, k ? k - 1 : options_control_type(g_ch), g_b[g_ch]);
+        nnpad_bind_set(g_ch, k ? g_b[g_ch] : NULL);
+        printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], g_ch ? "Viola" : "Bayonetta");
+        binds_show();
+        return;
+    }
+    else if (r->apply == A_PAGE) return;
     else ok = gfx_option_set(r->key, r->val[k]);
     if (!ok) return;
     g_cur[i] = k;
@@ -386,7 +482,16 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
 }
 static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
     int n = row_count(i);
+    if (k_rows[i].apply == A_BIND) wrap = 1;
     set_value(i, g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir);
+}
+static ULONGLONG g_cap_t;
+static int g_cap_armed;
+static int activate(int i, int dir) {                      /* A or a click on a row; 1 = it took the press and the row's value is not what changes */
+    if (k_rows[i].apply == A_PAGE) { page_go(1); return 1; }
+    if (k_rows[i].apply == A_BIND) { g_cap = i; g_cap_t = GetTickCount64(); g_cap_armed = 0; return 1; }
+    change(i, dir, 1);
+    return 0;
 }
 /* options_row.c, the game's main thread: the rows by key for the game's own Options screen. The value as the panel has it
  * (one of the row's spellings, else the file's text as it is) and whether it waits for the next start; a set goes through
@@ -443,6 +548,18 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         int back = (b & BB) || nnhid_menu_key(VK_ESCAPE) || nnhid_menu_key(VK_BACK) || nnhid_menu_key(VK_F1) || (b & (BPLUS | BMINUS)) == (BPLUS | BMINUS);
         int dir = up ? 1 : down ? 2 : left ? 3 : right ? 4 : 0;
         ULONGLONG now = GetTickCount64();
+        if (g_cap >= 0) {                                  /* a row waits: only the pad counts, and what is down now has to go up first */
+            uint32_t p = nnhid_menu_pad();
+            int esc = nnhid_menu_key(VK_ESCAPE);
+            g_cap_armed |= !p;
+            if (esc || now - g_cap_t > 8000 || (g_cap_armed && p)) {
+                AcquireSRWLockExclusive(&g_lock);
+                if (!esc && p) { int k = 0; while (!(p >> k & 1)) k++; set_value(g_cap, k); }
+                g_cap = -1; g_ver++;
+                ReleaseSRWLockExclusive(&g_lock);
+            }
+            dir = 0; ok = back = prev_ok = prev_back = 1;  /* (the press that ends it does nothing else) */
+        }
         int step = dir && (dir != prev_dir || (rep_at && now >= t_dir + (ULONGLONG)rep_at));
         if (dir != prev_dir) { t_dir = now; rep_at = 380; } else if (step) { t_dir = now; rep_at = 90; }
         prev_dir = dir;
@@ -450,12 +567,12 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         AcquireSRWLockExclusive(&g_lock);
         int was_sel = g_sel, was_cur[NROW];
         memcpy(was_cur, g_cur, sizeof g_cur);
-        if (step && (dir == 1 || dir == 2)) { do g_sel = (g_sel + (dir == 1 ? NROW - 1 : 1)) % NROW; while (!g_shown[g_sel]); }
+        if (step && (dir == 1 || dir == 2)) { do g_sel = (g_sel + (dir == 1 ? NROW - 1 : 1)) % NROW; while (!row_on(g_sel)); }
         if (step && (dir == 3 || dir == 4)) change(g_sel, dir == 3 ? -1 : 1, 0);
-        if (ok && !prev_ok) change(g_sel, 1, 1);
+        if (ok && !prev_ok) { activate(g_sel, 1); g_ver++; }
         int px = mx - g_rect[0], py = my - g_rect[1], click = md && !prev_click;
         if (mx >= 0 && (mx != mx0 || my != my0 || click) && px >= 0 && px < g_pw && py >= 0 && py < g_ph) {      /* the mouse: hover chooses, a click changes */
-            for (int i = 0; i < NROW; i++) if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h) { g_sel = i; if (click && px >= g_val_x0 - g_row_h) change(i, px < g_val_x0 + g_row_h ? -1 : 1, 1); }
+            for (int i = 0; i < NROW; i++) if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h && g_cap < 0) { g_sel = i; if (click && px >= g_val_x0 - g_row_h) { activate(i, px < g_val_x0 + g_row_h ? -1 : 1); g_ver++; break; } }
             if (click && px >= g_close_r[0] && px < g_close_r[0] + g_close_r[2] && py >= g_close_r[1] && py < g_close_r[1] + g_close_r[3]) back = 1, prev_back = 0;
         }
         mx0 = mx; my0 = my;
@@ -463,7 +580,12 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         ReleaseSRWLockExclusive(&g_lock);
         if (g_log && (step || (ok && !prev_ok) || (back && !prev_back) || click)) printf("pcmenu: input: %s%s%s%s -> row %d (%s)\n", step ? (dir == 1 ? "up " : dir == 2 ? "down " : dir == 3 ? "left " : "right ") : "", ok && !prev_ok ? "A " : "", back && !prev_back ? "B " : "", click ? "click " : "", g_sel, k_rows[g_sel].key);
         prev_ok = ok; prev_click = md;
-        if (back && !prev_back) break;
+        if (back && !prev_back) {
+            if (!g_page || g_direct) break;
+            AcquireSRWLockExclusive(&g_lock);
+            page_go(0); g_ver++;
+            ReleaseSRWLockExclusive(&g_lock);
+        }
         prev_back = back;
         if (!InterlockedExchange(&g_job, 1) && !nvn_front_post_pcmenu()) InterlockedExchange(&g_job, 0);
         Sleep(16);
@@ -480,7 +602,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     fflush(stdout);
     return 0;
 }
-static void menu_open(const char *why) {
+static void menu_open(const char *why, int controls, int ch) {
     if (InterlockedExchange(&g_open, 1)) return;
     g_hint_until = 0;
     if (g_log < 0) g_log = getenv("SSBU_PCMENU_LOG") && atoi(getenv("SSBU_PCMENU_LOG"));
@@ -488,6 +610,11 @@ static void menu_open(const char *why) {
     if (!g_font.data && !stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
     if (!g_inited) menu_init();
     g_swap = nnpad_menu_swapped();
+    g_fam = nnpad_button_prompts();
+    g_letter = nnpad_prompts_by_letter();
+    g_ch = ch; g_direct = controls;
+    binds_load();
+    page_go(controls);
     g_ver++;
     ReleaseSRWLockExclusive(&g_lock);
     InterlockedExchange(&g_guest_frozen, 1);               /* the game stops at its next SDK call (hostrt.c) */
@@ -496,7 +623,8 @@ static void menu_open(const char *why) {
     HANDLE th = CreateThread(NULL, 0, menu_thread, NULL, 0, NULL);
     if (th) CloseHandle(th); else { InterlockedExchange(&g_guest_frozen, 0); InterlockedExchange(&g_open, 0); }
 }
-void pcmenu_open_game(void) { menu_open("the game's Options: PC Settings"); }     /* options_row.c, the game's main thread */
+void pcmenu_open_game(void) { menu_open("the game's Options: PC Settings", 0, 0); }     /* options_row.c, the game's main thread */
+void pcmenu_open_controls(int ch) { menu_open("the game's Options: Controls", 1, ch); }
 /* nnhid.c, at every pad state the game reads: opens the menu, and says when the game gets an idle pad */
 int pcmenu_gate(uint32_t id, uint64_t buttons) {
     static int prev = 1, test = -1;
@@ -506,8 +634,8 @@ int pcmenu_gate(uint32_t id, uint64_t buttons) {
     if (id == 0) {
         int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0xc00) == 0xc00;      /* Start + Select (the game uses L3 and R3) */
         if (test < 0) { const char *e = getenv("SSBU_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
-        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN"); return 1; }
-        if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "Start + Select"); return 1; }
+        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN", 0, 0); return 1; }
+        if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "Start + Select", 0, 0); return 1; }
         prev = f1 || combo;
         if (prev && (g_release & 1)) return 1;             /* the F1 that closed it is still down */
     }

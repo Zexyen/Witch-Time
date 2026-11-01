@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 /// Game functions whose direct calls go to a host function instead (runtime/game_shim_eh.c): see recomp_eh.py.
-pub const HOST_OVERRIDES: &[(i64, &str)] = &[(0x7100b382c0, "morton_split32"), (0x7100d02de0, "fps_mode_set"), (0x7100c1f600, "frame_clock"), (0x71007e1fe4, "quad_walk"), (0x7100b20a20, "main_pass"), (0x710067037c, "step_kind")];
+pub const HOST_OVERRIDES: &[(i64, &str)] = &[(0x7100b382c0, "morton_split32"), (0x7100d02de0, "fps_mode_set"), (0x7100c1f600, "frame_clock"), (0x71007e1fe4, "quad_walk"), (0x7100b20a20, "main_pass"), (0x710067037c, "step_kind"), (0x7100983610, "rebind_pads"), (0x710095f464, "rebind_menu_pads"), (0x7100b22cc0, "prompt_number"), (0x7100b22ee0, "action_mask"), (0x7100b31b60, "control_type"), (0x7100c0f960, "text_symbol")];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;

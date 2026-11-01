@@ -13,6 +13,9 @@
  *   +0x360  rows 26 .. 33's method table: the Display Language row's (a list row: left / right go round its values, with
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
+ *   +0x510  rows 1 and 2's method table, Controls (Bayonetta, Viola): the Brightness row's again, the label the game's own,
+ *           and "decide" opens the panel's Controls page. Their objects follow row 33's. The list they were is the game's four
+ *           control types, which that page has as presets. The page's picture of the pad is kept, and shows the layout (labels_tick)
  * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
  * scripts/pc_settings_mod.py; the names here are theirs (the frame rate's label says it applies at the next start and is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
  * more value, until left / right leave it). The game's Restore Defaults does not touch these rows (its reset is the game's
@@ -27,6 +30,9 @@
 #include "hostrt.h"
 #include "nnpad.h"
 
+__declspec(dllimport) extern uint8_t game_rebind[2][16], game_rebind_on[2];      /* game_shim_eh.c (the game library) */
+__declspec(dllimport) extern volatile int game_rebind_live;
+
 #define OPTX_BASE   0x7105a00000ULL      /* lifter/recomp_eh.py OPTX_PAGE */
 #define ROWS        0x7101c2b1a8ULL      /* the Options screen's row objects */
 #define SCREEN_ROWS 0x71018511bcULL      /* Screen Display's 7 row numbers (18 .. 24) in main */
@@ -40,8 +46,12 @@
 #define TRIGGERED   0x7100983660ULL      /* (w0 bits) -> w0: pressed this frame */
 #define MENU_SOUND  0x710095a110ULL      /* (w0 sound): 2 confirm, 8 refused */
 #define LIST_BUILD  0x7100a32390ULL      /* (x0 screen): the page's rows filled again (what Restore Defaults does after its reset) */
+#define CTL_LABEL_B 0x4155985cu          /* Controls (Bayonetta), the game's label methods 0x7100a714c0 */
+#define CTL_LABEL_V 0x3652a8cau          /* Controls (Viola), 0x7100a71aa0 */
+#define SETTINGS    0x7104e7e4c0ULL      /* the game's settings; the control types at +4 and +0x30 (0x7100b31b60) */
 
 void pcmenu_open_game(void);             /* pcmenu.c */
+void pcmenu_open_controls(int ch);
 int pcmenu_is_open(void);
 const char *pcmenu_key_get(const char *key, int *pending);
 void pcmenu_key_set(const char *key, const char *val);
@@ -76,7 +86,32 @@ static uint64_t g_obj0;                  /* the guest address of row 26's object
 #define PIC_A 0x1760995eu                /* crc32("btn_002") & 0x7fffffff */
 #define PIC_B 0x0e69c8e4u                /* btn_001 */
 static int g_swap_known;
+/* The Controller page's picture of the pad (docs/RE_NOTES.md section 9): one drawing, its 18 labels from a table of messages by
+ * type. A layout counts from Type A, so that type's table, in main's read-only data, is written to say what each button does. */
+#define PAD_LABELS 0x7101851340ULL       /* u32[18], Bayonetta's Type A; Viola's follows */
+static uint32_t g_labels[2][18];         /* the game's own */
+static int g_labels_known;
+static void labels_tick(void) {
+    enum { ZR = 0, R = 1, ZL = 2, L = 3, PLUS = 4, MINUS = 5, STICK_L = 6, FACE = 7, STICK_R = 15, DOWN = 16, DPAD = 17 };
+    static const signed char label_of[16] = {FACE, FACE, FACE, FACE, STICK_L, STICK_R, L, R, ZL, ZR, PLUS, MINUS, DPAD, DPAD, DPAD, DOWN};     /* by Pro button */
+    if (!g_labels_known) return;
+    for (int ch = 0; ch < 2; ch++) {
+        uint32_t t[18];
+        memcpy(t, g_labels[ch], sizeof t);
+        for (int b = 0; game_rebind_on[ch] && b < 16; b++) {       /* face buttons and the three d-pad buttons share a label: only what the others do is told */
+            int to = label_of[game_rebind[ch][b]];
+            if (to != FACE && to != DPAD) t[to] = g_labels[ch][label_of[b]];
+        }
+        if (memcmp(t, (void *)(uintptr_t)(PAD_LABELS + 0x48 * ch), sizeof t) && plat_protect((void *)(uintptr_t)(PAD_LABELS & ~0xfffULL), 0x1000, PLAT_RW)) memcpy((void *)(uintptr_t)(PAD_LABELS + 0x48 * ch), t, sizeof t);
+    }
+}
+static void rebind_tick(void) {
+    for (int ch = 0; ch < 2; ch++) game_rebind_on[ch] = (uint8_t)nnpad_bind_get(ch, game_rebind[ch]);
+    game_rebind_live = nnpad_bind_live();
+    labels_tick();
+}
 void menu_swap_tick(void) {              /* nnhid.c, from player 1's pad poll */
+    rebind_tick();
     if (!g_swap_known) return;
     uint32_t confirm = nnpad_menu_swapped() ? PAD_B : PAD_A, now = rd32(CONFIRM_BITS);
     if (now == confirm || (now != PAD_A && now != PAD_B)) return;
@@ -99,16 +134,20 @@ static uint32_t msg_hash(const char *name, const char *suffix) {      /* crc32 o
 }
 
 static void pc_row_label(Ctx *c) { c->x[0] = g_text_mod ? msg_hash("MENU_OPTION_LIST_PC_SETTINGS", NULL) : PC_LABEL_ALT; }
+static uint64_t g_ctl_obj;               /* the guest address of Controls (Bayonetta)'s object; Viola's is next */
+static void ctl_row_label(Ctx *c) { c->x[0] = c->x[0] == g_ctl_obj ? CTL_LABEL_B : CTL_LABEL_V; }
+/* the game's control type of a character, as it stands in the settings: the layout before a first change (pcmenu.c) */
+int options_control_type(int ch) { uint32_t t = rd32(SETTINGS + (ch == 1 ? 0x30 : 4)); return t < 4 ? (int)t : 0; }
 /* method +0x08 (row, screen, row state, widget) -> 1 = the input is used; called every frame for the row under the cursor */
 static int g_panel;                      /* the panel was opened from the row: the rows show its changes when it closes */
 static void pc_row_decide(Ctx *c) {
-    uint64_t screen = c->x[1], state = c->x[2], lr = c->x[30];
-    if (g_panel && !pcmenu_is_open()) { g_panel = 0; c->x[0] = screen; call_guest(c, LIST_BUILD); c->x[1] = screen; c->x[2] = state; }
+    uint64_t row = c->x[0], screen = c->x[1], state = c->x[2], lr = c->x[30];
+    if (g_panel && !pcmenu_is_open()) { g_panel = 0; rebind_tick(); c->x[0] = screen; call_guest(c, LIST_BUILD); c->x[1] = screen; c->x[2] = state; }
     call_guest(c, DECIDE_MASK);
     call_guest(c, TRIGGERED);
     int on = (uint32_t)c->x[0] != 0, greyed = on && rd32(state + 0x28);
     if (on) { c->x[0] = greyed ? 8 : 2; call_guest(c, MENU_SOUND); }
-    if (on && !greyed) { pcmenu_open_game(); g_panel = 1; }
+    if (on && !greyed) { if (g_ctl_obj && row >= g_ctl_obj) pcmenu_open_controls(row != g_ctl_obj); else pcmenu_open_game(); g_panel = 1; }
     c->x[0] = on && !greyed;
     c->x[30] = lr;
 }
@@ -141,7 +180,9 @@ void options_row_install(void) {
     uint64_t *table = (uint64_t *)(page + 0x100), *obj = (uint64_t *)(page + 0x400);
     for (int i = 0; i < PC_ROW; i++) table[i] = rd64(ROWS + 8 * (uint64_t)i);
     uint64_t bright = table[BRIGHTNESS], vt = bright ? rd64(bright) : 0, lang = table[LANGUAGE], lvt = lang ? rd64(lang) : 0;
+    uint64_t bctl = table[1], vctl = table[2], bcvt = bctl ? rd64(bctl) : 0, vcvt = vctl ? rd64(vctl) : 0;
     int known = rd64(ROWS + 8 * PC_ROW) == 0 && vt && rd64(vt + 0x38) == GUEST_BASE + 0xa72c2c       /* Brightness's label method */
+             && bcvt && rd64(bcvt + 0x38) == GUEST_BASE + 0xa714c0 && vcvt && rd64(vcvt + 0x38) == GUEST_BASE + 0xa71aa0      /* Controls' labels */
              && lvt && rd64(lvt) == GUEST_BASE + 0xa725ac && rd64(lvt + 0x10) == GUEST_BASE + 0xa72640      /* a list row: fill, decide */
              && rd64(lvt + 0x50) == GUEST_BASE + 0xa72ce0;                                            /* its bank method */
     for (int i = 0; i < 7; i++) known &= rd32(SCREEN_ROWS + 4 * i) == (uint32_t)(BRIGHTNESS + i);
@@ -163,6 +204,14 @@ void options_row_install(void) {
     mvt[7] = hostfn_address("options row: PC Settings, label", pc_row_label);
     obj[0] = (uint64_t)(uintptr_t)mvt;
     table[PC_ROW] = (uint64_t)(uintptr_t)&obj[0];
+    uint64_t *cvt = (uint64_t *)(page + 0x510);
+    for (int i = 0; i < 9; i++) cvt[i] = mvt[i];
+    cvt[7] = hostfn_address("options row: Controls, label", ctl_row_label);
+    obj[1 + NPC] = obj[2 + NPC] = (uint64_t)(uintptr_t)cvt;
+    g_ctl_obj = (uint64_t)(uintptr_t)&obj[1 + NPC];
+    table[1] = g_ctl_obj; table[2] = g_ctl_obj + 8;
+    memcpy(g_labels, (void *)(uintptr_t)PAD_LABELS, sizeof g_labels);
+    g_labels_known = rd32(PAD_LABELS) == 0x7e59fd6b && rd32(PAD_LABELS + 0x48) == 0x7f9b975c;      /* MENU_OPTION_KEYCONFIG_001, _101: Dodge */
     if (g_text_mod) {                        /* without the text the rows would show no words: the panel has them all */
         static void (*const fn[7])(Ctx *) = {pc_list_label, pc_list_get, pc_list_set, pc_list_bank, pc_list_text, pc_list_count, pc_list_reset};
         static const char *const what[7] = {"label", "get", "set", "bank", "value text", "count", "reset"};

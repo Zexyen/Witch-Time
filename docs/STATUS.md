@@ -907,6 +907,49 @@ Tests:
 Not tested: a person at a real keyboard and mouse (camera feel, sensitivity default), Wayland / X11 pointer capture of a
 visible window (the test window is hidden, so SDL's relative mode was not switched there), Windows (not built).
 
+## Button rebinding (2026-11-01; issues 82 and 84)
+
+The game's control types are replaced by a page of our own: every button of gameplay, for Bayonetta and for Viola, and the
+game's prompts, its HUD and its picture of the pad follow. The game's findings are in docs/RE_NOTES.md section 9.
+
+- **Where**: Options, Controller, the rows Controls (Bayonetta) and (Viola) are action rows now and open the panel's Controls
+  page, for that character; PC Settings has a Controls row to the same page. Character, Preset (Game's setting, Type A .. D), and
+  16 rows of actions (the game's wording; Viola's Block and Summon Cheshire). A on a row and the button to use, or
+  left / right to go through them, which is the way without a pad. A button in use changes places with the row's, so a layout is
+  always a permutation: no action is lost, and press and release stay true. `Face buttons` (layout: Position, Printed letter) is a
+  new row of the first page: with `button_prompts`, that is issue 84.
+- **controllers.ini**: `bind_bayonetta`, `bind_viola`: `game` or 16 Pro buttons in order. Anything else is reported and means
+  `game`. With `game` nothing is translated and the save's control type stands, so nothing changes for a player who rebinds nothing.
+- **How**: the bits are moved in the pads' copies that gameplay reads, just after the game makes them (`h_rebind_pads`,
+  runtime/rebind.h), not in nn::hid: that would move the menus' buttons too, which is what issue 82 asks to be rid of. Masks were not
+  rewritten either: gameplay has sites that test the copies directly. Pause and Subscreen are read from the menus' copy, so
+  `h_rebind_menu_pads` moves those two bits there while gameplay has the pad. A layout counts from Type A: `h_control_type` answers 0.
+- **Prompts**: `h_prompt_number` and `h_text_symbol` (the HUD's lists are text with button tags, rebuilt every frame). The atlas
+  is not touched. The Controller page's picture is one drawing with labels from a table by type, so Type A's table is written from the
+  layout (options_row.c `labels_tick`). Face buttons and the three d-pad buttons share a label there, so an action on one of those
+  is told by the panel and not by the picture.
+- **Keyboard**: while the keyboard is what player 1 used last the layouts do not count (`nnpad_bind_live`): `[keyboard]` is its binding.
+- **Checked in the running game on Linux**, with a virtual Xbox 360 pad through uinput (hidden window, copies of the save and
+  config, `SSBU_REBIND_LOG=1`: every press as the pad has it and as gameplay gets it):
+  - all 16 buttons give the bits of rebind.h;
+  - Options, Controls opens the page; a press rebinds Dodge to LB, the file is written, Custom shows, the picture says Dodge LB and
+    Weapon Switch RT;
+  - A and B swapped: gameplay gets them swapped and every menu keeps Confirm, from the title through a chapter's notices;
+  - R and ZR swapped, on the spider ride: the HUD shows Dodge RB and Massive Web RT; Dodge on a stick press and Massive Web on Start
+    show those pictures;
+  - Plus and Y swapped: Start does not pause, Y's button does, and Start still closes the pause menu. That run found the Pause path:
+    before `h_rebind_menu_pads` Start still paused;
+  - a key press turns the layouts off, and keycaps show; a line with a button twice is reported and ignored; a file of an older
+    version gets the key added.
+  `tests/rebind_test.c` holds the four types against 0x7100b22ee0; `tests/pcmenu_selftest.c` the page.
+- **Confirmed by the user on a real pad** (a Steam Controller on Linux, 2026-11-01).
+- **Not checked**: Windows (not built; the new code has no system calls of its own); Viola in gameplay (her
+  layout was set from the panel and written, but no save here reaches her, so her moves, her prompts and `Not used` for her
+  L and d-pad, taken from the picture's labels, were not seen); actual dodges and jumps on a rebound button were seen only as the
+  bits gameplay gets, except Pause, whose effect was seen.
+- **Left as they are**: the sticks (move and camera stay); what a cutscene's skip reads (the menus' copy: the pad's own Plus); the
+  game's Restore Defaults on that page resets the save's types and not a layout (the page's Preset does).
+
 ## PC settings menu (2026-10-25)
 
 An in-game panel for the keys of graphics.ini, drawn by the runtime over the game (the feasibility study's path: plumbing,
