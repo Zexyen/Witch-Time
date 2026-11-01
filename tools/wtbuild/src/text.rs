@@ -8,6 +8,7 @@ use crate::text_strings::{CORE, LANGS, MENU};
 use crate::util::{u16_at, u32_at, u64_at};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::process::Command;
 
@@ -28,7 +29,9 @@ fn rd32(d: &[u8], o: usize) -> R<u32> {
 
 /// (file size, [(name, codec, size, offset, stored size)]) of a pkz archive (pkz.py read_pkz)
 pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
-    let d = fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let mut f = fs::File::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let mut d = Vec::new();
+    f.by_ref().take(0x20).read_to_end(&mut d).map_err(|e| format!("{}: {}", path.display(), e))?;
     if d.len() < 0x20 || &d[..4] != b"pkzl" {
         return Err(format!(
             "{}: not a pkz archive (magic {})",
@@ -40,7 +43,10 @@ pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
         return Err(format!("{}: unknown pkz version 0x{:x}", path.display(), u32_at(&d, 4)));
     }
     let (fsize, count, toff, nsize) = (u64_at(&d, 8), u32_at(&d, 0x10) as usize, u32_at(&d, 0x14) as usize, u32_at(&d, 0x18) as usize);
-    let table = d.get(toff..toff + count * 0x20 + nsize).ok_or("pkz: entry table past the end")?;
+    let mut table = vec![0u8; count * 0x20 + nsize];
+    f.seek(std::io::SeekFrom::Start(toff as u64))
+        .and_then(|_| f.read_exact(&mut table))
+        .map_err(|_| "pkz: entry table past the end")?;
     let names = &table[count * 0x20..];
     let name = |o: usize| -> R<String> {
         let e = names.get(o..).and_then(|s| s.iter().position(|&c| c == 0)).ok_or("pkz: name past the end")?;

@@ -149,6 +149,13 @@ static const char *const k_default_ini =
 ";   lower can shimmer); added to every sampler that uses mip maps. Above 0: blurrier, a little less GPU time.\r\n"
 "texture_lod_bias = 0\r\n"
 "\r\n"
+"; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
+";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
+";   less work for the CPU, and a sharper picture. The launcher makes that folder after a build, about 16 GB: 12 minutes on 4\r\n"
+";   cores, roughly 25 on a Steam Deck. off, or a drive without the room: textures are decoded as they appear. Settings,\r\n"
+";   Converted textures, Remove sets this to off and gives the space back. A mod's textures are always decoded.\r\n"
+"bc7_textures = on\r\n"
+"\r\n"
 /* [Recomps#1] finding 147 */
 "; hdr = auto | off | on      (Vulkan, Windows)\r\n"
 ";   auto: while Windows HDR is on for the monitor the game is on, the picture goes out as HDR (the game's colours at\r\n"
@@ -204,6 +211,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
+    o->bc7_textures = 1;                       /* #54: a graphics.ini from before the key */
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
     opt_path(o->path);
     if (!arg && !getenv("SSBU_GRAPHICS_CONFIG") && !getenv("SSBU_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
@@ -245,6 +253,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
+        else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
         else unknown++;
     }

@@ -428,7 +428,8 @@ Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
   Now 0.73 s; `tex_ahead` makes the image when the decode is done, in fights too. A job keeps a copy of the bytes it
   decoded and its result is used only if the memory still equals them. `SSBU_TEXPREP_CHECK=1` (test): 3,110 textures,
   no level differs from a decode at the use. Shibuya 170 s from frame 1500: frames over 34 ms 11 -> 0, worst 59 -> 22 ms.
-- **ASTC stays**: no build-time conversion to BC (about 41 GB more, #54), and BC3 stays what GPUs without ASTC store.
+- ASTC stays in the game data and BC3 is what GPUs without ASTC store by default. Build-time conversion was first turned down
+  here (about 41 GB, a count that repeats every shared texture); it is now an option, see "Converted textures" below.
 
 - **The tree walk `f_71007e1fe4`** (the steady 46 / 90 ms frames here, the 45-50 ms trains in Tokyo): a quadtree over two
   1024x1024 byte maps. A leaf is 1 where they differ, and a node draws a quad for each child that returned 1 unless all four
@@ -439,6 +440,84 @@ Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
 
 **Left**: about 74 textures at the ride's start are first seen in the frame that
 draws them (one frame of about 0.6 s). `SSBU_LPROF` frames are 2 ahead of `SSBU_FRAMETIMES` frames.
+
+## Converted textures: BC7 sidecar (2026-10-31, #54, #35)
+
+`bc7_textures = on` (the default; `SSBU_BC7_TEXTURES=0|1` wins) takes ASTC textures from `build/cache/bc7`, which `wtbuild
+textures` makes from the player's own dump. The launcher runs it after a build, unless the option is off or the drive has
+under 19.5 GB free; without a pack the game decodes as before. It began as an opt-in; the default changed the same day. Everything below was measured on a Ryzen 7 7800X3D and an RX 9070 XT
+(RADV, no ASTC): 4 cores with `taskset` (cpus 0-3, with 8-11 for their threads), never on a Steam Deck.
+
+**Census** (all 72 archives; a raw scan for texture headers found nothing the walk missed): 44,456 records, 24,822 different
+textures, 16,828 of them ASTC (4.89 GiB). The 41 GB was every record counted: 42.6 GB as BC3. Keyed by content it is 20.5 GB.
+
+| block | textures | ASTC MiB | as 8 bpp MiB |
+|---|---|---:|---:|
+| 10x10 linear / sRGB | 4,970 / 3,039 | 1,237 / 980 | 5,995 / 4,775 |
+| 8x8 linear / sRGB | 3,092 / 4,877 | 997 / 983 | 3,965 / 3,892 |
+| 4x4 linear / sRGB | 316 / 458 | 307 / 389 | 306 / 388 |
+| 6x6, 5x5, 12x12 | 76 | 119 | 187 |
+
+Not ASTC: 7,994 textures, 3.25 GiB, stored as they are (BC3, BC6H, BC1, RGBA8).
+
+**The formats.** 420 textures by block size, alpha and kind (normal maps, colour with alpha), weighted back to the whole set;
+"worst 1 %" is the mean over textures of their worst 1 % of blocks. Against the ASTC decode:
+
+| encoder | size, whole set | LZ4 / zstd of that | PSNR | worst 1 % | Mtexels/s per thread | whole set, 16 threads |
+|---|---:|---:|---:|---:|---:|---:|
+| runtime BC3 | 20.5 GB | 0.46 / 0.35 | 38.3 | 29.3 | 106 | about 2.5 min |
+| ISPC BC3 | 20.5 GB | 0.47 / 0.35 | 39.3 | 30.7 | 330 | about 2.5 min |
+| ISPC BC1 opaque + BC3 alpha | 13.1 GB | 0.73 / 0.57 on BC1 | 39.3 | 30.4 | 407 | about 2.5 min |
+| ISPC BC7 very fast | 20.5 GB | 0.77 / 0.65 | 50.2 | 41.0 | 3.2 | 6.9 min (measured) |
+| ISPC BC7 basic | 20.5 GB | 0.78 / 0.66 | 51.9 | 42.4 | 0.80 | about 20 min |
+| ISPC BC7 slow | 20.5 GB | 0.78 / 0.67 | 52.2 | 42.7 | 0.22 | about 100 min |
+
+Only the BC7 very fast time is measured; the others are its 2 minutes of unpacking and decoding plus the rate above. BC4 and
+BC5 save nothing that counts: textures BC4 could hold add 0.01 GB to the BC1 policy's saving, and BC5 is the same 8 bpp as BC7.
+
+**Pick: BC7, very fast, LZ4.** The same memory as today's BC3, 12 dB better, and the worst blocks 11.7 dB better; the next
+setting up gains 1.5 dB for 4 times the wait. BC3 would save 6 GB of disk but gives nothing to look at. ASTC stays the source: nothing of the game's files changes. zstd would save another 2.5 GB and needs a
+library in the runtime; LZ4's decoder is 25 lines. `texture-compressor` (pure Rust) was rejected on these textures: its Balanced
+preset writes blocks of 4.5 dB, its Fast preset lost 34 dB on one of the 420, checked against a second decoder.
+
+**The pack.** 16,828 textures, 15.7 GB (20.5 raw), plus 3.2 GB while it runs (`ba`, the largest family). 412 s on 16 threads,
+713 s on 4 cores with 8 threads, 5,260 s of CPU; about 25 minutes on a Deck is an estimate from its clock. Every level of every
+texture read back from the pack: pooled BC7 45.9 dB, runtime BC3 36.5 dB; top levels 50.1 and 39.4 dB. 227 of about 170,000 levels
+are under 30 dB, all of them better than BC3 there.
+
+**At run time**, the 10,000 frames of the chapter 3 ride, cold pack (page cache dropped):
+
+| | render thread at a texture's use | workers | worst frame | frames over 100 ms |
+|---|---:|---:|---:|---:|
+| 8 threads on 4 cores, decode / pack | 1,435 / 336 ms | 25.7 / 1.9 s | 833 / 199 ms | 1.64 / 0.33 s |
+| 4 threads on 4 cores, decode / pack | 2,332-2,532 / 338-507 ms | 25 / 1.7-2.2 s | 899-977 / 130-244 ms | 1.6-1.9 / 0.3 s |
+| 16 threads, decode / pack | 1,084 / 346 ms | 24.9 / 2.8 s | 633 / 167 ms | 0.94 / 0.29 s |
+
+A job: 8.2 ms of decode and encode, 0.6 ms of hash, read and LZ4. Shibuya: workers 10.0 -> 0.9 s, at the use 1.8 -> 0.2 s, worst
+188 -> 119 ms. Sustained fps does not change (52-55 here): this removes stalls, it does not raise a frame rate a GPU holds down.
+
+**#35.** The three workers do not hurt on 4 cores, they help: `SSBU_TEXPREP_THREADS=0` against 3 on 4 threads is 9.0 -> 2.5 s of
+the render thread, worst frame 2.6 -> 1.0 s. Fps stays 52-54 either way, so they do not explain a Deck topping out near 38 fps,
+though this CPU runs at about twice the Deck's clock and its GPU is another class. No log from the reporter yet.
+
+**How it works.** The key is a hash of the texture's bytes (`tex_pack.c`), which a worker takes in place of decoding, so the
+check that memory has not changed is the old one. Every texture the ride (3,300) and Shibuya (1,720) made was found but the prompt atlas
+`prompts.c` paints, which goes the old way: BC3. A hit stores BC7 in the image; if the game later changes that memory,
+`tex_encode_bc7` (mode 6) fills the same format. `SSBU_TEXPACK_REDO=1` forces that on half the textures: 793 in Shibuya, the
+picture holds. `SSBU_TEXPACK_CHECK=1`: 48 of the ride's levels under 30 dB, worst 20.7 dB, on tiny mips; `SSBU_TEXPREP_CHECK=1`
+still 0 differ. Mods: a texture a mod changes has other bytes, is not found, and is decoded as before; nothing is corrupted.
+A GPU with ASTC never looks at the pack.
+
+The launcher's Remove, Continue, the chain after a build, and "off stays off" were run for real (a headless KWin, a stub for
+`setup`); so was a `graphics.ini` without the key. The branch for a drive without the room was not.
+
+#46: the mod's 4,442 paths each name an entry of the archive of that name, so "0 replace the game's" is expected: originals live
+in the `.pkz`. With all those paths in place, as unchanged copies of the game's files, the game opened none of them in a Shibuya
+run. That run's picture was broken, smaller parts of the tree were not; seen once, not repeated, not understood.
+
+**Left**: no measurement on a Deck; Windows: `wtbuild.exe` cross-built and its tests run under Wine, not on Windows, and the MSVC
+`cargo test` of release.yml has not run. The launcher does not know the GPU, so one with ASTC (most Intel) gets a pack it never
+reads: Remove gives the space back. A stopped conversion redoes its family of archives. A mod's textures are not converted.
 
 ## 60 fps menus and cutscenes (2026-10-25)
 
@@ -1057,6 +1136,8 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - `nn::fs` thread fs-context is a shared dummy object; `nn::oe` notifications / recording and `hid` mouse are no-ops.
 - `--pkz-dump` calls main's Oodle functions at fixed addresses (checked against two instruction words at start: other
   builds of main stop with a message); it holds a whole entry in memory (the largest is 373 MB).
+- `wtbuild`'s Windows build links `intel_tex_2`'s MSVC archives through renamed copies and `msvc_shim` (`src/texpack.rs`); a
+  gnullvm build of the crate, or a port of the encoder, would replace it.
 - The heap size (3,285 MB) is the console's documented application memory, not measured on hardware.
 - NVN 55 additions (`nvn_gl.c`, `nvn55:` in the log): deferred binds are read when recorded; separate samplers are
   dropped and separate textures bound as combined handles; transform feedback, subroutines, checkpoints, subtile size and

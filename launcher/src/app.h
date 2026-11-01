@@ -63,10 +63,12 @@ private:
 	Rml::String mods_summary, mods_error;
 	bool mods_rebuild = false;
 	std::vector<SettingRow> settings;
+	Rml::String tex_note, tex_action;  // settings: the converted textures (#54)
+	bool tex_remove = false;
 
 	// work for the main loop
 	BuildRunner runner;
-	enum class Job { none, verify, build } job = Job::none;
+	enum class Job { none, verify, build, textures } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	int returned_code = -1;            // --returned <code>: the game just ended
@@ -94,6 +96,8 @@ private:
 	void refresh_mods();
 	void refresh_settings();
 	void step_setting(int index, int dir);
+	void convert_textures();
+	void remove_textures();
 	void toggle_mod(int index);
 	void check_dump();
 	void start_build();

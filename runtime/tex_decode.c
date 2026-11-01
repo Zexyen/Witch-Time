@@ -1456,3 +1456,44 @@ void tex_encode_bc3(const uint8_t *rgba, int w, int h, uint8_t *dst) {
             bc3_block_enc((const uint8_t (*)[4])px, dst);
         }
 }
+
+/* #54: BC7 mode 6 (one line of 7-bit RGBA endpoints with a shared low bit each, 4-bit indices), for a texture stored as BC7
+ * from the pack whose memory the game then changes: the image's format stays, so its new texels have to be BC7 too. The
+ * same fit as bc3_block_enc, with alpha on the line; good enough for that rare case. */
+static void put_bits(uint8_t *o, int *pos, unsigned v, int n) { for (int i = 0; i < n; i++, (*pos)++) if (v >> i & 1) o[*pos >> 3] |= (uint8_t)(1 << (*pos & 7)); }
+static void bc7_block_enc(const uint8_t px[16][4], uint8_t *out) {
+    static const uint8_t wt[16] = {0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64};
+    int mn[4] = {255, 255, 255, 255}, mx[4] = {0, 0, 0, 0}, mean[4] = {0, 0, 0, 0}, cov[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 16; i++) for (int c = 0; c < 4; c++) { if (px[i][c] < mn[c]) mn[c] = px[i][c]; if (px[i][c] > mx[c]) mx[c] = px[i][c]; mean[c] += px[i][c]; }
+    for (int i = 0; i < 16; i++) { int g = px[i][1] * 16 - mean[1]; for (int c = 0; c < 4; c++) cov[c] += (px[i][c] * 16 - mean[c]) * g; }
+    int e[2][4], q[2][4], p[2], dd = 0, d[4], idx[16], flip;
+    for (int c = 0; c < 4; c++) { int s = cov[c] < 0; e[s][c] = mn[c]; e[!s][c] = mx[c]; }
+    for (int k = 0; k < 2; k++) {
+        int low = 0;
+        for (int c = 0; c < 4; c++) low += e[k][c] & 1;
+        p[k] = low >= 2;
+        for (int c = 0; c < 4; c++) { int v = (e[k][c] - p[k] + 1) >> 1; q[k][c] = v < 0 ? 0 : v > 127 ? 127 : v; }
+    }
+    for (int c = 0; c < 4; c++) { d[c] = (q[1][c] * 2 + p[1]) - (q[0][c] * 2 + p[0]); dd += d[c] * d[c]; }
+    for (int i = 0; i < 16; i++) {
+        int t = 0, b = 0;
+        for (int c = 0; c < 4; c++) t += (px[i][c] - (q[0][c] * 2 + p[0])) * d[c];
+        if (dd) { t = t * 64 / dd; for (int w = 0, bd = 1 << 30; w < 16; w++) { int a = abs(t - wt[w]); if (a < bd) { bd = a; b = w; } } }
+        idx[i] = b;
+    }
+    flip = idx[0] >= 8;                            /* the first index has no top bit: it must be below 8 */
+    memset(out, 0, 16);
+    int pos = 0;
+    put_bits(out, &pos, 1u << 6, 7);
+    for (int c = 0; c < 4; c++) { put_bits(out, &pos, (unsigned)q[flip][c], 7); put_bits(out, &pos, (unsigned)q[!flip][c], 7); }
+    put_bits(out, &pos, (unsigned)p[flip], 1); put_bits(out, &pos, (unsigned)p[!flip], 1);
+    for (int i = 0; i < 16; i++) put_bits(out, &pos, (unsigned)(flip ? 15 - idx[i] : idx[i]), i ? 4 : 3);
+}
+void tex_encode_bc7(const uint8_t *rgba, int w, int h, uint8_t *dst) {
+    uint8_t px[16][4];
+    for (int by = 0; by < h; by += 4)
+        for (int bx = 0; bx < w; bx += 4, dst += 16) {
+            for (int i = 0; i < 16; i++) { int x = bx + (i & 3), y = by + (i >> 2); memcpy(px[i], rgba + ((size_t)(y < h ? y : h - 1) * w + (x < w ? x : w - 1)) * 4, 4); }
+            bc7_block_enc((const uint8_t (*)[4])px, dst);
+        }
+}

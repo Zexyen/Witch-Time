@@ -45,7 +45,7 @@ MSVC_CRT = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')   # what a
 # ssbu-recomp tools/lifter/build.py HOST_SOURCES at 3a96916, minus Smash-only files removed in R0
 # (nnro.c, nro_registry.c, r1_state.c, debug_mode.c; stand-ins in r0_removed.c) and nn::mii (nnmii.c: our game imports none of it).
 HOST_SOURCES = ['hostrt.c', 'boot.c', 'nnsdk.c', 'libcxx.c', 'os_threads.c', 'nvn_stub.c', 'nvn_gl.c', 'nvn_vk.c',
-                'mx_translate.c', 'tex_decode.c', 'nnfs.c', 'clib.c', 'nntime.c', 'nnhid.c', 'nnpad_sdl.c', 'gen/sdkdata.c',
+                'mx_translate.c', 'tex_decode.c', 'tex_pack.c', 'nnfs.c', 'clib.c', 'nntime.c', 'nnhid.c', 'nnpad_sdl.c', 'gen/sdkdata.c',
                 'display.c', 'nnpl.c', 'nnfontll.c', 'nnmovie.c', 'nnmisc.c', 'nnaudio.c', 'nnmovie_mf.c', 'nniostream.c',
                 'nncxxrt.c', 'nncxxlib.c', 'nnlibc2.c', 'gen/sdklift_gen.c', 'sdklift_rt.c', 'nnsdk2.c', 'nnapplet.c',
                 'nnalbum.c', 'nnnet.c', 'nnfsdir.c', 'nnunwind.c', 'nvn_sdk.c', 'nvn_c4.c', 'nvn_c5.c', 'gfx_options.c',

@@ -189,9 +189,10 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 /* ---- settings ---- */
 .setting { tab-index: auto; nav: vertical; padding: 10dp 0; }
 .setting:focus-visible .name, .setting:hover .name { color: #e0338a; }
-.setting .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
-.setting .name { font-size: 21dp; transition: color 0.15s cubic-out; }
-.setting .note { font-size: 15dp; color: #b9aabd; }
+.setting .what, .texrow .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
+.setting .name, .texrow .name { font-size: 21dp; transition: color 0.15s cubic-out; }
+.setting .note, .texrow .note { font-size: 15dp; color: #b9aabd; }
+.texrow { padding: 10dp 0; gap: 12dp; align-items: center; }
 .chooser { display: flex; flex-direction: row; align-items: center; width: 320dp; flex-shrink: 0; }
 .chooser .arrow { width: 44dp; height: 44dp; line-height: 44dp; text-align: center; font-size: 22dp; color: #c9a35a; transition: color 0.15s cubic-out; }
 .chooser .arrow:hover { color: #efe6d8; }

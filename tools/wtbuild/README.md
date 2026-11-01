@@ -32,8 +32,20 @@ The launcher runs `build/wtbuild` (a release) or `tools/wtbuild/target/release/w
 
 Other commands, mostly for developers: `nso2elf <in> <out>`, `lift <main.elf> <outdir> [--no-patches]`,
 `tables <repo>`, `compile [--jobs N]`, `link`, `runtime --out <dir>` (the prebuilt runtime, CI), `text [--romfs <folder>] [--dump <folder>] [--out <mods folder>]`,
+`textures [--romfs <folder>] [--dump <--pkz-dump folder>] [--jobs N]` (below),
 `mods-tree <mods folder> [<main NSO>] [--ini=<mods.ini>]` (the launcher's Mods window), `mods-apply`, `lift-words`, `sha256 <file>` (the launcher's updater).
 `--repo <folder>` names the checkout (default: the current folder).
+
+## Converted textures
+
+`wtbuild textures` is not a step of `setup`: the launcher runs it after a build that succeeds, unless `bc7_textures = off` or
+the drive lacks the room (#54); a build from the command line runs it by hand. It writes the game's 16,828 ASTC textures as BC7 to `build/cache/bc7`: 15.7 GB, and up to 3.2 GB more while it runs,
+12 minutes on 4 cores with 8 threads. It stops and resumes by family of archives (`src/texpack.rs`). `runtime/tex_pack.c`
+reads the result when `bc7_textures = on`; `docs/STATUS.md`, "Converted textures" has the choice of format and the numbers.
+
+ASTC is decoded by the runtime's own `tex_decode.c` (`build.rs` compiles it in, through `src/tex_shim.c`), BC7 encoded by
+Intel's ISPC encoder (`intel_tex_2`). That crate packs its encoder for MSVC only: on `x86_64-pc-windows-gnullvm`, what
+release.yml builds, it needs the archives under other names (the wtbuild step there) and three symbols (`msvc_shim`).
 
 ## Prebuilt runtime
 

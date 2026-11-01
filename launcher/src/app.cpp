@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <sys/stat.h>
 
@@ -98,6 +99,18 @@ std::string minutes(double s)
 	char b[32];
 	std::snprintf(b, sizeof b, s < 60 ? "%.0f s" : "%.0f min", s < 60 ? s : s / 60);
 	return b;
+}
+
+// #54: 15.7 GB stay; up to 3.2 GB more while the largest archive family is unpacked
+const double TEX_NEED = 19.5e9;
+double folder_bytes(const std::string& dir)
+{
+	std::error_code ec;
+	double used = 0;
+	for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+		if (e.is_regular_file(ec))
+			used += double(e.file_size(ec));
+	return used;
 }
 
 } // namespace
@@ -275,6 +288,9 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
+	c.Bind("tex_note", &tex_note);
+	c.Bind("tex_action", &tex_action);
+	c.Bind("tex_remove", &tex_remove);
 	// footer hints: by the label on the button, as confirm and back in handle() go
 	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter" : prompts == 2 ? "gen:glyph?n=cross" : "gen:glyph?n=a"); });
 	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc" : prompts == 2 ? "gen:glyph?n=circle" : "gen:glyph?n=b"); });
@@ -289,6 +305,8 @@ void App::bind_model()
 			update::start(paths);
 	});
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
+	c.BindEventCallback("convert_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { convert_textures(); });
+	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
 	c.BindEventCallback("toggle_move", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
@@ -624,6 +642,20 @@ void App::refresh_title()
 
 void App::refresh_build()
 {
+	if (job == Job::textures && runner.running())
+	{
+		building = true;
+		progress = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
+		percent = int(progress * 100 + .5f);
+		phase = "converting textures";
+		build_aside = "Archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
+		log.clear();
+		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
+			log.push_back(runner.lines[i]);
+		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "log"})
+			model.DirtyVariable(v);
+		return;
+	}
 	const SetupState st = SetupState::read(paths.build);
 	const auto& all = BuildRunner::steps();
 	const bool run = job == Job::build && runner.running();
@@ -732,6 +764,28 @@ void App::refresh_settings()
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v});
 	}
 	model.DirtyVariable("settings");
+
+	// #54: what the converted textures would cost, before they cost it
+	namespace fs = std::filesystem;
+	const std::string dir = paths.build + "/cache/bc7";
+	std::error_code ec;
+	const double used = folder_bytes(dir), need = TEX_NEED;
+	const double room = double(fs::space(paths.build, ec).available);
+	const bool complete = file_exists(dir + "/complete");
+	char note[320];
+	if (complete)
+		std::snprintf(note, sizeof note, "In use: %.1f GB in build/cache/bc7. Remove them to get the space back; the game then decodes textures as it comes to them.", used / 1e9);
+	else if (room + used < need)
+		std::snprintf(note, sizeof note, "Needs about %.0f GB free on this drive, and it has %.1f GB.", need / 1e9, room / 1e9);
+	else if (used > 0)
+		std::snprintf(note, sizeof note, "Stopped part way, %.1f GB so far of about 16 GB. Continue, or remove them.", used / 1e9);
+	else
+		std::snprintf(note, sizeof note, "Normally made after a build. Takes about 16 GB of disk (%.0f GB free), 12 minutes on 4 cores, roughly 25 on a Steam Deck. Less CPU work while playing, a sharper picture.", room / 1e9);
+	tex_note = note;
+	tex_action = !built || complete || room + used < need ? "" : used > 0 ? "CONTINUE" : "CONVERT";
+	tex_remove = used > 0;
+	for (const char* v : {"tex_note", "tex_action", "tex_remove"})
+		model.DirtyVariable(v);
 }
 
 void App::step_setting(int index, int dir)
@@ -747,6 +801,29 @@ void App::step_setting(int index, int dir)
 	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
 	refresh_settings();
 	prompts_read();
+}
+
+void App::convert_textures()
+{
+	if (runner.running() || !built)
+		return;
+	ini_set(paths.config + "/graphics.ini", "", "bc7_textures", "on");
+	build_error.clear();
+	if (runner.start(paths.repo, {}, "textures"))
+		job = Job::textures;
+	else
+		build_error = "The build tool cannot be started.";
+	go("build");
+}
+
+void App::remove_textures()
+{
+	if (runner.running())
+		return;
+	ini_set(paths.config + "/graphics.ini", "", "bc7_textures", "off");
+	std::error_code ec;
+	std::filesystem::remove_all(paths.build + "/cache/bc7", ec);
+	refresh_settings();
 }
 
 // ---------------------------------------------------------------------------------------------------- work
@@ -854,7 +931,7 @@ void App::tick()
 			refresh_title();
 		}
 	}
-	if (!runner.poll() && !(job == Job::build && runner.running()))
+	if (!runner.poll() && !((job == Job::build || job == Job::textures) && runner.running()))
 		return;
 	if (job == Job::verify)
 	{
@@ -892,8 +969,9 @@ void App::tick()
 			model.DirtyVariable(v);
 		return;
 	}
-	if (job == Job::build && !runner.running())
+	if ((job == Job::build || job == Job::textures) && !runner.running())
 	{
+		const bool built_game = job == Job::build;
 		job = Job::none;
 		if (runner.exit_code)
 		{
@@ -908,9 +986,18 @@ void App::tick()
 			if (build_error.empty())
 				build_error = runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
-		else
+		else if (built_game)
 			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
 		refresh_title();
+		if (built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete")
+			&& build_command(paths.repo, "textures")[1] == "textures")      // not the Python fallback: it has no such step
+		{
+			std::error_code ec;
+			if (double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED)
+				convert_textures();
+			else
+				build_error = "The game is built. Converted textures need about 19.5 GB free on this drive, so it will decode textures as it plays. Free the space, then use Settings.";
+		}
 	}
 	refresh_build();
 }
