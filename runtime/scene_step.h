@@ -30,4 +30,9 @@ static int scene_second(int *half, int one) {
     *half = one && !*half;
     return second;
 }
+/* The frame of a movie scene is the movie's frame times 2 only while flags 28 and 30 are set (0x7100707840), so with 28 clear
+ * its subtitles and cues run at half speed to the scene's end (#72). fps / base == 2 is the test of the scene's start. */
+static int movie_flag_lost(unsigned flags, int movie, int fps, int base) {
+    return movie && base && fps / base == 2 && (flags & 0x50000000u) == 0x40000000u;
+}
 #endif

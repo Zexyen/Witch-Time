@@ -480,6 +480,14 @@ cutscenes in the game's 60 fps mode.
   flag). No log has shown that flag yet, so this path has not been run. The third jump is probably in the scripted part
   `0x50810008` at updates 7654-7776 of the hand run: three motions of about 0.9 s, with a slow motion of 0.05 at the third
   (read off the census windows, not seen on the screen).
+  - **A movie scene's subtitles (#72)**: the reporter's video has `ev0011` alone at 30 ticks a second against its 60 fps cues:
+    the delay grows from 20 s to 40 s and the last line never shows. The picture and the voices keep real time. In a movie
+    scene `7100bbccb8` sets the frame to the movie's frame [`7100cdaef0` +16] times the period, `max(scene +32,` `7100707840)`,
+    and that is 2 only with flags 28 and 30. Clearing 28 by hand at the start of `ev0000`: 30.0 ticks a second for the 73 s
+    measured, and the game asks for mode 0. `71007077d0` writes the flag, from a scene's start and its end. Not reproduced
+    on Linux: 60.0 ticks a second at v0.4.5 and `bd2923e`, cutscene_fps 60 and 30, New Game and the reporter's save through
+    Chapter Select; at the handover the old scene's end runs first. So `keep_movie_flag` sets the flag again and logs a line.
+    Why the reporter's PC lost it is not known, nor that it did: v0.4.5's Media Foundation path could not be run here.
   - **The two kinds of step (#65, #67, #69)**: the two steps of a console frame are not the same. Bit 27 of the flags is set
     at `7100670d0c` before the first and cleared at `7100670d90` after it. In the first the timeline update `7100bbcb94`
     recomputes its pause bits 5 and 31; only there does a seek start. In the second it latches what was asked for: skip
