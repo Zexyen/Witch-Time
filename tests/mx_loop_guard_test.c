@@ -1,8 +1,8 @@
 /* runtime/mx_translate.c, [issue 26]: a step back in a graphics stage is counted (the stage leaves the dispatcher after
  * MX_LOOP_MAX of them), a compute stage is left alone; MxIn.loopdebug sets the limit. Nothing returns or discards inside the
  * dispatcher: EXIT and the limit set pc = 0 and the loop ends; KIL only sets a flag (the pixel runs on, as on Maxwell) and its
- * discard comes after the loop. Hand-made stages:
- * NOP, @P0 BRA back to the NOP, EXIT; and a fragment stage with @P1 KIL in that loop.
+ * discard comes after the loop; a stage without a dispatcher discards at the KIL. Hand-made stages:
+ * NOP, @P0 BRA back to the NOP, EXIT; a fragment stage with @P1 KIL in that loop; and one with @P1 KIL, NOP, EXIT.
  *   clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o build/mx_loop_guard_test */
 #include <stdio.h>
 #include <string.h>
@@ -37,7 +37,15 @@ int main(void) {
     ok = ok && loop_end && strstr(k, "if (p1) { if (true) mx_kill = true; }") && !strstr(k, "mx_kill = true; pc = 0u") && strstr(loop_end, "if (mx_kill) discard;");
     for (const char *t = k; ok && (t = strstr(t, "discard")) && t < loop_end; t++) ok = 0;        /* no discard inside the loop */
     for (const char *t = k; ok && (t = strstr(t, "return;")) && t < loop_end; t++) ok = 0;        /* nor a return */
+    uint64_t g[4] = {0,
+        0xe33000000000000full | 1ull << 16,                            /* @P1 KIL */
+        0x50b0000000000f00ull | 7ull << 16,                            /* NOP */
+        0xe30000000000000full | 7ull << 16};                           /* EXIT */
+    memcpy(code + 0x50, g, sizeof g);
+    char *n = translate(1, code, sizeof code, 0);
+    ok = ok && n && strstr(n, "if (p1) { if (true) discard; }") && !strstr(n, "mx_kill = true") && !strstr(n, "while (");
     if (!ok && k) puts(k);
+    if (!ok && n) puts(n);
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }
