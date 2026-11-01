@@ -1143,9 +1143,9 @@ The green liquid of a dying giant Homunculus: 8 blobs of one 1272-index mesh, ea
 #3747), for 121 frames. Its skinning vertex stage has 98 dispatcher cases and up to about 120 jumps, each one a trip through
 `while (pc) switch (pc)`. RX 9070 XT, RADV: 5.65 ms a frame in those draws, whatever the resolution and on screen or not; an
 RX 6600 on Windows gave about 63 ms a frame more (12 fps).
-- **Stages with no step back** (every target is known: BRA, the tokens, the BRX tables) run their blocks once, in order:
-  `do { if (pc != N) continue; ... } while (false);`, and a jump leaves its block. 0.12 ms, frame 7.4 to 1.7 ms. 1,769 stages;
-  stages with a real loop and compute stages keep the dispatcher.
+- **Vertex stages with no step back** (every target is known: BRA, the tokens, the BRX tables) run their blocks once, in order:
+  `do { if (pc != N) continue; ... } while (false);`, and a jump leaves its block. Vertex stages with a real loop keep the
+  dispatcher, and so do fragment stages, whose quad reads depend on how a quad's lanes move through the blocks.
 - **`invariant gl_Position` is the rule now** (`SSBU_VK_INVARIANT=0` off). #3747 is a colour pass with a depth test for equality
   after depth pass #620. Without the dispatcher between the sums the two compiled differently and #3747 lost a third of its
   fragments (8,327,501 to 5,541,822). With it the count is exact.

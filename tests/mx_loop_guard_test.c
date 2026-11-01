@@ -45,6 +45,8 @@ int main(void) {
     memcpy(code + 0x50, g, sizeof g);
     char *s = translate(0, code, sizeof code, 0);
     int fwd = s && strstr(s, "do { if (pc != 3u) continue;") && strstr(s, "pc = 0u; } while (false);") && !strstr(s, "switch (pc)") && !strstr(s, "mx_back") && strstr(s, "invariant gl_Position;");
+    char *sf = translate(1, code, sizeof code, 0);                 /* a fragment stage keeps the dispatcher */
+    fwd = fwd && sf && strstr(sf, "while (pc != 0u) { switch (pc) {") && !strstr(sf, "do { if (pc");
     if (!fwd && s) puts(s);
     ok = ok && fwd;
     if (!ok && k) puts(k);

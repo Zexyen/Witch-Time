@@ -41,7 +41,7 @@ typedef struct {
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int uses_quad;                            /* [issue 66] mx_quad: a fragment SHFL */
-    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a graphics stage with none (see the blocks in mx_translate) */
+    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a vertex stage with none (see the blocks in mx_translate) */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
@@ -1789,10 +1789,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
     }
 
     if (!e->fail) analyze(e);
-    /* [issue 92] A stage with no step back runs its blocks once, in order: a jump leaves its block (continue ends the do) and the
-     * blocks up to the target skip themselves. In the dispatcher every jump is a new trip through all the cases, per lane: the
-     * goo's skinning stage (98 cases, about 120 jumps a vertex) took 5.7 ms of an RX 9070 XT's frame that way, 0.13 ms like this. */
-    e->seq = e->any_jump && !e->has_back && in->stage != MX_COMPUTE;
+    /* [issue 92] A vertex stage with no step back runs its blocks once, in order: a jump leaves its block (continue ends the do) and
+     * the blocks up to the target skip themselves. In the dispatcher every jump is a new trip through all the cases, per lane: the
+     * goo's skinning stage (98 cases, about 120 jumps a vertex) took 5.7 ms of an RX 9070 XT's frame that way, 0.13 ms like this.
+     * Fragment stages stay: their quad reads depend on how the lanes of a quad move through the blocks. */
+    e->seq = e->any_jump && !e->has_back && in->stage == MX_VERTEX;
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
