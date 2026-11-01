@@ -1205,11 +1205,21 @@ a value saved for the next start. The launcher never names the game: the code na
   the text-heavy screens (dump, mods, settings) the wheel is small, at the bottom left on the indigo side. Fonts:
   Marcellus, Source Sans 3 (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.
 - **PC settings panel** (`runtime/pcmenu.c`): the same stage over the whole window (the held frame is covered; the
-  copy is opaque), the light wheel behind the rows, a lilac one on the indigo side, the rows at the right edge stepping
-  down the diagonal (the Controls page's 18 rows with a smaller step and row), the chosen row's help in the message
-  band, the state ("Saved; applies at the next start", a lock) under the rows. The pictures are `runtime/art/*.bmp`
-  `#embed`ded; fonts `runtime/third_party/*-pcmenu.ttf` (subsets, OFL). The mouse map (`g_row_y`, `g_val_x0/1`,
-  `g_close_r`) follows. The pause-menu hint is a slanted indigo bar.
+  copy is opaque), the light wheel behind the rows, a lilac one on the indigo side, the rows stepping down the
+  diagonal at both ends as the launcher's do, 460 wide, the last ending 50 from the edge (the Controls page's 18 rows
+  with a smaller step and row), the chosen row's help in the message band, the state ("Saved; applies at the next
+  start", a lock) under the rows. The pictures are `runtime/art/*.bmp` `#embed`ded; fonts
+  `runtime/third_party/*-pcmenu.ttf` (subsets, OFL). The mouse map (`g_row_y`, `g_val_x0/1[]` a row, `g_close_r`)
+  follows. The pause-menu hint is a slanted indigo bar.
+- **The wheels turn** in the panel and on the first-start screen as in the launcher (2026-11-01): the wheel art is the
+  launcher's seven layers a set (`runtime/art/wheel-*.bmp`, `wheel-dark-*.bmp`, 5.6 MB embedded). A frame is the
+  cached ground (`g_pbg`: ground, wedge, the wheels' bases) plus the rings and gears turned by the clock
+  (`wheel_turn`, `anim_t`: `GetTickCount64`), the hubs and then the words composed over it from two layers drawn once
+  a version (`Layer`, `g_to`: `put` and `put_pre` draw into a layer while it is set). `pcmenu_panel_size` draws a new
+  frame up to 30 times a second, never more often than a frame takes (`took`), so the thread keeps half a core at
+  most; `pcm_upload` copies it each time. Measured with the harness at -O2 on the cloud machine: 18 ms a frame at
+  1280x720, 36 ms at 1080p, 132 ms at 4K (about 8 frames a second there; the rings move 3 degrees a second, the gears
+  36 and 26, so 4K is visibly stepped). The rotating blits sample only the ring's annulus and a picture's alpha box.
 - **First-start screen** (`pcmenu.c` `draw_prep`, `nvn_vk_draw.c` `prep_first_hold`): drawn by the panel's code too
   (title, the count of stages and the time left, a slanted bar, the dark wheel, a pearl panel at the right), copied over
   the held frame by `pcm_vk_draw` (`pcmenu_kind` 3; `nvn_vk_pcmenu.c` `pcm_upload`). The 5 x 7 dot font and the
