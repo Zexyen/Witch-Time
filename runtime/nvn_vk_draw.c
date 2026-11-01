@@ -32,6 +32,7 @@ VKD(X)
 static PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT;
 static PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR;
 static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
+static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
 static PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties;
 static PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties;
 static PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr;
@@ -46,6 +47,8 @@ static struct {
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, debug;
     int has_gpl, ext_gpl, ext_so;
+    int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
+    VkPhysicalDeviceDriverProperties drv;
     VkPhysicalDeviceMemoryProperties mp;
 } D;
 static int g_ck_on;                                /* [issue 26] SSBU_VK_CHECKPOINTS (ckpt, after nvn_vk_m4.c) */
@@ -64,6 +67,7 @@ static int vk_gpl_mode(void) { static int m = -1; if (m < 0) { const char *e = g
 static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties *dext, uint32_t ndext) {
     void **tail;
     vkGetPhysicalDeviceFeatures2 = vk_sym("vkGetPhysicalDeviceFeatures2");
+    vkGetPhysicalDeviceProperties2 = vk_sym("vkGetPhysicalDeviceProperties2");
     vkGetPhysicalDeviceFormatProperties = vk_sym("vkGetPhysicalDeviceFormatProperties");
     vkGetPhysicalDeviceMemoryProperties = vk_sym("vkGetPhysicalDeviceMemoryProperties");
     vkGetDeviceProcAddr = vk_sym("vkGetDeviceProcAddr");
@@ -102,6 +106,20 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.has_gpl = D.has_gpl && D.gpl.graphicsPipelineLibrary && D.has_eds3 && D.has_vids;
     printf("nvn_vk: driver support for pipelines without a hold: VK_EXT_graphics_pipeline_library %s, VK_EXT_shader_object %s, extended dynamic state 3 (all seven states) %s, vertex input dynamic state %s | pipeline libraries in use: %s\n",
            D.ext_gpl ? "yes" : "NO", D.ext_so ? "yes" : "NO", D.has_eds3 ? "yes" : "NO", D.has_vids ? "yes" : "NO", D.has_gpl ? "YES" : "no");
+    {   /* [issue 50] the driver and its branch. AMD's Windows driver for RDNA 2 and older (driverInfo "(AMD proprietary shader compiler)";
+         * Polaris and Vega get no other) applies alpha to coverage while the dynamic state says off: an RX 580 drew a dithered,
+         * washed-out world without Bayonetta's body, and RX 470 / 570 / 580 / 590 did the same in another recomp until it took alpha
+         * to coverage out of the dynamic state. Here it goes into the pipeline key on that branch's whole-pipeline path, as on a GPU
+         * without extended dynamic state 3. SSBU_VK_DYN_A2C=0 / 1 forces either way on whole pipelines. */
+        VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv;
+        vkGetPhysicalDeviceProperties2(V.gpu, &p2);
+        const char *e = getenv("SSBU_VK_DYN_A2C");
+        int amd_sc = D.drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(D.drv.driverInfo, "shader compiler") != NULL;
+        D.dyn_a2c = D.has_eds3 && (D.has_gpl || (e && e[0] ? atoi(e) != 0 : !amd_sc));      /* the libraries hold no alpha to coverage: always dynamic with them */
+        printf("nvn_vk: driver: %s, %s (id %d); alpha to coverage: %s\n", D.drv.driverName, D.drv.driverInfo, (int)D.drv.driverID,
+               !D.has_eds3 ? "in the pipeline key" : D.dyn_a2c ? (e && e[0] && !atoi(e) && D.has_gpl ? "dynamic state (SSBU_VK_DYN_A2C=0 needs whole pipelines: SSBU_VK_GPL=0)" : "dynamic state") : e && e[0] ? "in the pipeline key (SSBU_VK_DYN_A2C=0)" : "in the pipeline key: AMD's driver for RDNA 2 and older applies it while the dynamic state says off (issue 50)");
+    }
     /* session 11: ONE line that says which path draws and why */
     {   const char *e = getenv("SSBU_VK_GPL");
         int m = vk_gpl_mode();
@@ -2023,7 +2041,10 @@ static void set_dynamic_state3(int samples) {
         n.eq[i].srcAlphaBlendFactor = blend_factor(b[2]); n.eq[i].dstAlphaBlendFactor = blend_factor(b[3]); n.eq[i].alphaBlendOp = blend_op(b[5]);
     }
     n.poly = R.poly[2] == 0 ? VK_POLYGON_MODE_POINT : R.poly[2] == 1 ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
-    n.a2c = R.ms[1] != 0; n.smask = R.sample_mask; n.samples = (uint32_t)(samples ? samples : 1);
+    {   static int fa2c = -1;                      /* TEST ONLY: SSBU_VK_TEST bit 1024: alpha to coverage on for every draw, as AMD's Polaris driver does (issue 50) */
+        if (fa2c < 0) fa2c = getenv("SSBU_VK_TEST") && (atoi(getenv("SSBU_VK_TEST")) & 1024);
+        n.a2c = R.ms[1] != 0 || fa2c; }
+    n.smask = R.sample_mask; n.samples = (uint32_t)(samples ? samples : 1);
     n.dclamp = R.depth_clamp != 0 || (g_vk_test & 2);
     int all = !g_dsh3_ok || !dsh_on(), sent = 0;
     const DynSh3 *o = &g_dsh3;
@@ -2031,7 +2052,7 @@ static void set_dynamic_state3(int samples) {
     if (all || memcmp(n.eq, o->eq, sizeof n.eq)) { vkCmdSetColorBlendEquationEXT(R.cmd, 0, cnt, n.eq); sent++; }
     if (all || memcmp(n.wm, o->wm, sizeof n.wm)) { vkCmdSetColorWriteMaskEXT(R.cmd, 0, cnt, n.wm); sent++; }
     if (all || n.poly != o->poly) { vkCmdSetPolygonModeEXT(R.cmd, (VkPolygonMode)n.poly); sent++; }
-    if (all || n.a2c != o->a2c) { vkCmdSetAlphaToCoverageEnableEXT(R.cmd, n.a2c); sent++; }
+    if (D.dyn_a2c && (all || n.a2c != o->a2c)) { vkCmdSetAlphaToCoverageEnableEXT(R.cmd, n.a2c); sent++; }
     if (all || n.smask != o->smask || n.samples != o->samples) { VkSampleMask m = n.smask; vkCmdSetSampleMaskEXT(R.cmd, (VkSampleCountFlagBits)n.samples, &m); sent++; }
     if (D.f2.features.depthClamp && (all || n.dclamp != o->dclamp)) { vkCmdSetDepthClampEnableEXT(R.cmd, n.dclamp); sent++; }
     g_dsh3 = n; g_dsh3_ok = 1;
@@ -3206,6 +3227,7 @@ static int draw_prepare(unsigned prim) {
         k.a2c = R.ms[1] != 0; k.dclamp = R.depth_clamp && D.f2.features.depthClamp; k.blend_on = R.blend_on;
         memcpy(k.blend, R.blend, sizeof k.blend);
     }
+    if (!D.dyn_a2c) k.a2c = R.ms[1] != 0;          /* [issue 50] */
     if (!D.has_vids) { uint32_t n = vlay_number(vbd, vnb, vad, vna); pkey_vlay_set(&k, n); vs->vlay = n; }      /* finding 116 */
     pkey_targets(&k);
     Pipe *p = tess ? tess_pipe_get(&k, vs, tcs, tes, fs, R.patch) : pipe_get(&k, vs, fs);
@@ -3405,7 +3427,7 @@ static void stencil_clear_masked(uint32_t mask, uint32_t value, int sx, int sy, 
         uint32_t n = V.props.limits.maxColorAttachments < 8 ? V.props.limits.maxColorAttachments : 8;
         for (int i = 0; i < 8; i++) { eq[i].srcColorBlendFactor = eq[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; eq[i].dstColorBlendFactor = eq[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; eq[i].colorBlendOp = eq[i].alphaBlendOp = VK_BLEND_OP_ADD; }
         vkCmdSetColorBlendEnableEXT(R.cmd, 0, n, en); vkCmdSetColorBlendEquationEXT(R.cmd, 0, n, eq); vkCmdSetColorWriteMaskEXT(R.cmd, 0, n, wm);
-        vkCmdSetPolygonModeEXT(R.cmd, VK_POLYGON_MODE_FILL); vkCmdSetAlphaToCoverageEnableEXT(R.cmd, VK_FALSE); vkCmdSetSampleMaskEXT(R.cmd, (VkSampleCountFlagBits)(k.samples ? k.samples : 1), &all);
+        vkCmdSetPolygonModeEXT(R.cmd, VK_POLYGON_MODE_FILL); if (D.dyn_a2c) vkCmdSetAlphaToCoverageEnableEXT(R.cmd, VK_FALSE); vkCmdSetSampleMaskEXT(R.cmd, (VkSampleCountFlagBits)(k.samples ? k.samples : 1), &all);
         if (D.f2.features.depthClamp) vkCmdSetDepthClampEnableEXT(R.cmd, VK_FALSE);
         R.dyn3_dirty = 1;
     }

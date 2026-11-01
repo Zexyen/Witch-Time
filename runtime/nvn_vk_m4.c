@@ -543,7 +543,8 @@ static uint32_t pipe_dyn_list(VkDynamicState *dyn) {
     memcpy(dyn, base, sizeof base);
     if (D.has_eds3) {
         dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
-        dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
+        if (D.dyn_a2c) dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;      /* [issue 50] else static, from the key */
+        dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
     }
     ndyn += dyn_depth_bounds(dyn + ndyn);
@@ -971,7 +972,8 @@ whole:;
     uint32_t ndyn = D.has_vids ? 20 : 19;          /* finding 116: without the extension the vertex input is in the pipeline (the last entry is left out) */
     if (D.has_eds3) {
         dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
-        dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
+        if (D.dyn_a2c) dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;      /* [issue 50] else static, from the key */
+        dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
     }
     ndyn += dyn_depth_bounds(dyn + ndyn);
