@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/rebind_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/rebind_test.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -71,3 +71,5 @@ jobs:
           "$RUNNER_TEMP/rebind_test"
           clang -O2 -Wall -I runtime tests/quad_walk_test.c -o "$RUNNER_TEMP/quad_walk_test"
           "$RUNNER_TEMP/quad_walk_test"
+          clang -O2 -Wall -I runtime tests/rs_pyramid_test.c -o "$RUNNER_TEMP/rs_pyramid_test"
+          "$RUNNER_TEMP/rs_pyramid_test"
