@@ -188,7 +188,7 @@
 		<p>The same rows as the game's PC Settings panel (F1, or Start + Select), saved to the config folder as you change them.</p>
 		<p data-if="tab == 0">The window, the display and the frame rate.</p>
 		<p data-if="tab == 1">What the game draws and how sharply.</p>
-		<p data-if="tab == 2">Prompts and face buttons. Every button of gameplay is rebound in the game's panel, under Controls.</p>
+		<p data-if="tab == 2">Prompts and menu buttons. Every button of gameplay is rebound in the game's panel, under Controls.</p>
 		<p data-if="tab == 1">{{ tex_note }}</p>
 	</div>
 	<div class="tabs">
