@@ -15,7 +15,7 @@
 struct CheckRow { Rml::String text, right, state; };
 struct StepRow { Rml::String num, name, note, right, state; };
 struct ModRow { Rml::String name, note, kind; bool on = true; };
-struct SettingRow { Rml::String name, note, value; };
+struct SettingRow { Rml::String name, note, value; int index = 0; };   // index: the row in setting_defs()
 struct MenuRow { Rml::String label, tag; std::string action; bool dim = false; };   // a bar of the title's staircase
 
 class App {
@@ -65,7 +65,8 @@ private:
 	std::vector<ModEntry> mod_entries;
 	Rml::String mods_summary, mods_error;
 	bool mods_rebuild = false;
-	std::vector<SettingRow> settings;
+	std::vector<SettingRow> settings;  // the rows of the tab shown
+	int tab = 0;                       // settings: 0 Display, 1 Graphics, 2 Controls
 	Rml::String tex_note, tex_action;  // settings: the converted textures (#54)
 	bool tex_remove = false;
 
@@ -98,6 +99,7 @@ private:
 	void refresh_build();
 	void refresh_mods();
 	void refresh_settings();
+	void set_tab(int t);
 	void step_setting(int index, int dir);
 	void convert_textures();
 	void remove_textures();

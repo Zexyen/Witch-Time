@@ -1198,8 +1198,11 @@ a value saved for the next start. The launcher never names the game: the code na
   stops, `ui_render.cpp`); the pictures are 8-bit BMPs in `launcher/ui/img` whose palette carries alpha (premultiplied)
   in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel, the two hands, the
   runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
-  build screen's log hides behind Show log; the settings are a staircase of rows. Fonts: Marcellus, Source Sans 3
-  (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.
+  build screen's log hides behind Show log; the settings are the panel's own rows, names and values (`setting_defs()`
+  in `app.cpp`, in the panel's order: Window size, Frame rate, Texture detail and Face buttons are new there) under three
+  tabs, Display, Graphics and Controls (Q / E or the shoulder buttons, `tab` in the model), each a staircase of rows. On
+  the text-heavy screens (dump, mods, settings) the wheel is small, at the bottom left on the indigo side. Fonts:
+  Marcellus, Source Sans 3 (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.
 - **PC settings panel** (`runtime/pcmenu.c`): the same stage over the whole window (the held frame is covered; the
   copy is opaque), the light wheel behind the rows, a lilac one on the indigo side, the rows at the right edge stepping
   down the diagonal (the Controls page's 18 rows with a smaller step and row), the chosen row's help in the message
