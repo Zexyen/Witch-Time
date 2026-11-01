@@ -196,12 +196,12 @@
 		<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
 		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
 	</div>
-	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(560 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'">
+	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(620 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'">
 		<div class="fill"></div><div class="chev">»</div>
 		<div class="k"><div>{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
 		<span class="v"><span class="arrow" data-event-click="setting(s.index, -1)">‹</span><span class="value">{{ s.value }}</span><span class="arrow" data-event-click="setting(s.index, 1)">›</span></span>
 	</div>
-	<div class="srow" data-if="tab == 1" data-style-left="(560 + 26 * settings.size) + 'dp'" data-style-top="(110 + 56 * settings.size) + 'dp'">
+	<div class="srow" data-if="tab == 1" data-style-left="(620 + 26 * settings.size) + 'dp'" data-style-top="(110 + 56 * settings.size) + 'dp'">
 		<div class="fill"></div>
 		<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_remove ? 'In use' : 'Not available' }}</div></div>
 		<span class="v">
