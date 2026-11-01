@@ -50,6 +50,8 @@ body {
 .wide .stripe { left: 460dp; }
 .wide .rule.r1 { left: 510dp; }
 .wide .rule.r2 { left: 515dp; }
+/* on the text-heavy screens the wheel sits at the bottom left, lilac on the indigo side, as in the game's panel */
+.wide .wheel.dark { left: -70dp; top: 320dp; width: 460dp; height: 460dp; }
 
 /* the wheel: the clockwork image, the hands turned to the local time by the model (hour_deg, minute_deg) */
 .wheel { width: 660dp; height: 660dp; }

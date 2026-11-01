@@ -35,8 +35,12 @@
 <div class="screen wide" data-if="screen == 'setup'">
 	<div class="ground"></div>
 	<div class="glow"></div>
-	<div class="wheel" style="left: 760dp; top: 60dp;"><img src="img/wheel.bmp?a=80"/></div>
 	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img src="img/wheel-dark.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
 	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>{{ built ? 'Your dump' : 'First run' }}</span></div>
@@ -127,8 +131,12 @@
 <div class="screen wide" data-if="screen == 'mods'">
 	<div class="ground"></div>
 	<div class="glow"></div>
-	<div class="wheel" style="left: 760dp; top: 60dp;"><img src="img/wheel.bmp?a=80"/></div>
 	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img src="img/wheel-dark.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
 	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Mods</span></div>
@@ -165,8 +173,12 @@
 <div class="screen wide" data-if="screen == 'settings'">
 	<div class="ground"></div>
 	<div class="glow"></div>
-	<div class="wheel" style="left: 760dp; top: 60dp;"><img src="img/wheel.bmp?a=80"/></div>
 	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img src="img/wheel-dark.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
 	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Settings</span></div>
