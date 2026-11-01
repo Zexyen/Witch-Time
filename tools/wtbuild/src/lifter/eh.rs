@@ -15,7 +15,62 @@ use std::fs;
 use std::path::Path;
 
 /// Game functions whose direct calls go to a host function instead (runtime/game_shim_eh.c): see recomp_eh.py.
-pub const HOST_OVERRIDES: &[(i64, &str)] = &[(0x7100b382c0, "morton_split32"), (0x7100d02de0, "fps_mode_set"), (0x7100c1f600, "frame_clock"), (0x71007e1fe4, "quad_walk"), (0x7100b20a20, "main_pass"), (0x710067037c, "step_kind")];
+pub const HOST_OVERRIDES: &[(i64, &str)] = &[
+    (0x7100b382c0, "morton_split32"),
+    (0x7100d02de0, "fps_mode_set"),
+    (0x7100c1f600, "frame_clock"),
+    (0x71007e1fe4, "quad_walk"),
+    (0x7100b20a20, "main_pass"),
+    (0x710067037c, "step_kind"),
+    (0x710070a740, "screen_docked"),
+    (0x710070a760, "screen_handheld"),
+    (0x7100d01380, "gfx_setup"),
+    (0x7100cba90c, "camera_perspective"),
+    (0x7100cba97c, "camera_fov"),
+    (0x7100c0ef04, "ui_element"),
+    (0x7100d07610, "ui_ortho"),
+    (0x7100d02d70, "screen_w"),
+    (0x7100a6f5a0, "aim_pos"),
+    (0x7100d02d90, "target_w"),
+    (0x7100d04414, "clip_cmd"),
+];
+
+/// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as
+/// large as the screen, 1280.0 and 720.0, immediates, in these functions (0x7100c15ae4, 0x7100c180xx, 0x7100c190fc,
+/// 0x7100c19590 ...). Each load (pc, register) gets the UI's size from the game library instead (game_shim_eh.c
+/// wt_ui_w_bits, wt_ui_h_bits), checked against the expected statement so another binary keeps its own.
+const UI_SIZE_SITES: &[(i64, u32)] = &[
+    (0x7100c15b78, 9),
+    (0x7100c15bd8, 8),
+    (0x7100c1818c, 8),
+    (0x7100c181dc, 8),
+    (0x7100c19108, 8),
+    (0x7100c19110, 8),
+    (0x7100c19250, 8),
+    (0x7100c19270, 8),
+    (0x7100c19330, 8),
+    (0x7100c19350, 8),
+    (0x7100c19688, 9),
+    (0x7100c19694, 9),
+    (0x7100c19d18, 8),
+    (0x7100c19d30, 8),
+    (0x7100c19df4, 8),
+    (0x7100c19e0c, 8),
+    (0x7100c19ea4, 10),
+    (0x7100c19f00, 10),
+    (0x7100c19f64, 10),
+    (0x7100c19fd8, 8),
+    (0x7100c1a06c, 10),
+    (0x7100c1a0e8, 10),
+    (0x7100c1a108, 8),
+    (0x7100c1a1a4, 8),
+    (0x7100c1a610, 10),
+    (0x7100c1a628, 10),
+    (0x7100c1a6c8, 10),
+    (0x7100c1a6ec, 10),
+    (0x7100c1a7d4, 10),
+    (0x7100c1a7f4, 8),
+];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
@@ -407,6 +462,15 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
     let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
     let mut lines = lines;
+    for (pc, stmt) in lines.iter_mut() {
+        if let Some(&(_, r)) = UI_SIZE_SITES.iter().find(|s| s.0 == *pc) {
+            for (bits, f) in [("0x44a00000", "wt_ui_w_bits"), ("0x44340000", "wt_ui_h_bits")] {
+                if *stmt == format!("c->x[{}] = (uint32_t)({}ULL);", r, bits) {
+                    *stmt = format!("{{ extern uint32_t {}(void); c->x[{}] = (uint64_t){}(); }}", f, r, f);
+                }
+            }
+        }
+    }
     let listed = &im.fps_counters;
     if lines.iter().any(|(pc, _)| listed.contains(pc)) {
         for s in fps::sites(im, entry, end).into_iter().filter(|s| listed.contains(&s.store)) {

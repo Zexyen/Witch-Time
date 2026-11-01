@@ -213,7 +213,9 @@ def lift_function(env, entry):
 # frame in it in trains of frames in Tokyo.
 # 0x7100d02de0: the main loop's frame-rate mode setter (one caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with
 # cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame clock, whose fixed step is then halved (real time).
-HOST_OVERRIDES = {0x7100b382c0: 'morton_split32', 0x7100d02de0: 'fps_mode_set', 0x7100c1f600: 'frame_clock', 0x71007e1fe4: 'quad_walk', 0x7100b20a20: 'main_pass', 0x710067037c: 'step_kind'}
+# [witchtime] aspect ratios (docs/STATUS.md): the screen size, the render-target heap, the cameras, the HUD's layouts. Kept
+# in step with tools/wtbuild/src/lifter/eh.rs (the lift that is used) only so that compare_lift.py agrees.
+HOST_OVERRIDES = {0x7100b382c0: 'morton_split32', 0x7100d02de0: 'fps_mode_set', 0x7100c1f600: 'frame_clock', 0x71007e1fe4: 'quad_walk', 0x7100b20a20: 'main_pass', 0x710067037c: 'step_kind', 0x710070a740: 'screen_docked', 0x710070a760: 'screen_handheld', 0x7100d01380: 'gfx_setup', 0x7100cba90c: 'camera_perspective', 0x7100cba97c: 'camera_fov', 0x7100c0ef04: 'ui_element', 0x7100d07610: 'ui_ortho', 0x7100d02d70: 'screen_w', 0x7100a6f5a0: 'aim_pos', 0x7100d02d90: 'target_w', 0x7100d04414: 'clip_cmd'}
 
 # [witchtime] PC settings rows on the Options screen's Screen Display page (runtime/options_row.c). The page's row numbers
 # are a 7-entry table in main's read-only data (0x71018511bc, read by 13 adrp + add pairs of the Options screen's code) and

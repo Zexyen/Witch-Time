@@ -8,6 +8,7 @@
 
 volatile LONG g_guest_frozen, g_display_close;
 volatile int game_cutscene_fps;
+volatile int game_hud_centre;
 static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly) { *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
@@ -52,14 +53,16 @@ int main(int argc, char **argv) {
     snprintf(ini, sizeof ini, "%s/graphics_test.ini", dir);
     mkdir(dir, 0755);
     /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
-    spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
+    spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
     setenv("SSBU_GRAPHICS_CONFIG", ini, 1);
     assert(gfx_options()->present == 0);                   /* the last vsync line wins: clock */
     assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
+    assert(fabsf(gfx_options()->aspect_ratio - 21.0f / 9.0f) < 1e-5f && fabs(atof(getenv("RECOMPS_ASPECT")) - 21.0 / 9.0) < 1e-5);      /* <w>:<h>, handed on */
+    assert(gfx_options()->hud_centre == 1 && !strcmp(getenv("RECOMPS_HUD_CENTRE"), "1"));
     assert(!gfx_ini_get("aspect", buf, sizeof buf));
     assert(gfx_option_set("vsync", "off") && gfx_options()->present == 2);
     char *s = slurp(ini);
-    assert(!strcmp(s, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   off   \r\nmystery = 7\r\n[section]\r\nvsync = off\r\nresolution_scale = 1.0"));
+    assert(!strcmp(s, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   off   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = off\r\nresolution_scale = 1.0"));
     free(s);
     assert(gfx_option_set("aspect", "stretch") && gfx_options()->aspect_stretch == 1);
     s = slurp(ini);

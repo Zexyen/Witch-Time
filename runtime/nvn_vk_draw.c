@@ -758,7 +758,15 @@ static float rs_scale(void) {
     }
     return g_rs;
 }
-#define RS_ON (rs_scale() != 1.0f)
+/* [witchtime] aspect ratios (RECOMPS_ASPECT, game_shim_eh.c; docs/STATUS.md "Aspect ratios"): wider than 16:9 the game's
+ * window is wider, but its scene targets keep 16:9 sizes (1600x896 ...) and are stretched into it: such a target (of
+ * the 16:9 class, not of the window's) is made this much wider again, so the scene has the window's pixels across */
+static float rs_xstretch(void) {
+    static float v = -1;
+    if (v < 0) { const char *e = getenv("RECOMPS_ASPECT"); float a = e ? (float)atof(e) : 0.0f; v = a > 16.0f / 9.0f && a <= 8.0f ? a * 9.0f / 16.0f : 1.0f; }
+    return v;
+}
+#define RS_ON (rs_scale() != 1.0f || rs_xstretch() != 1.0f)
 /* [Recomps#1] the screen size the classes derive from is the game's window texture (Bayonetta 2: 1280x720, the size it
  * renders at; Smash: 1920x1080): nvn_gl.c win_initialize tells it (nvn_vk_rs_base); 1280x720 before that. With Smash's
  * fixed 1920x1080 no image of ours was ever scaled (finding 82). */
@@ -780,13 +788,17 @@ static float rs_extra_scale(void) {                 /* SSBU_VK_CLOUD_SCALE=<cap>
     if (v < 0) { const char *e = getenv("SSBU_VK_CLOUD_SCALE"); float cap = e ? (float)atof(e) : RS_MAX; v = rs_scale() < cap ? rs_scale() : cap; if (v < 1.0f && rs_scale() >= 1.0f) v = 1.0f; }
     return v;
 }
-static int rs_screen_class(int w, int h) {
-    if (rs_extra_class(w, h)) return 1;
+static int rs_window_class(int w, int h) {
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
     if (w < 40 || h < 22) return 0;
     double a = (double)w / h, b = (double)g_rs_bw / g_rs_bh;
     return a > b * 0.985 && a < b * 1.015;
 }
+static int rs_169_class(int w, int h) {                  /* [witchtime] a scene target of 16:9 in a window of another shape (rs_xstretch) */
+    double a = (double)w / h, b = 16.0 / 9.0;
+    return rs_xstretch() != 1.0f && !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
+}
+static int rs_screen_class(int w, int h) { return rs_extra_class(w, h) || rs_window_class(w, h) || rs_169_class(w, h); }
 /* A coordinate of the game's grid on a scaled image (nearest image texel edge, inside 0..max). */
 static int rs_edge(int v, float s, int max) { double r = floor((double)v * s + 0.5); return r < 0 ? 0 : r > max ? max : (int)r; }      /* [Recomps#1] clamped before the conversion (finding 83: rs_rect) */
 /* Session 9: the textures of the game's window (nvn_gl.c win_initialize keeps the list; also noted here at every present).
@@ -1036,8 +1048,8 @@ static VTex *vt_get2(Tex *t, int sync) {
         if (RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(vt->w, vt->h))) && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
             (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
-            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale();
-            vt->w = (int)((float)gw * sc + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
+            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale(), xs = rs_169_class(gw, gh) ? rs_xstretch() : 1.0f;
+            vt->w = (int)((float)gw * sc * xs + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
             if (vt->w < 1) vt->w = 1; if (vt->h < 1) vt->h = 1;
             vt->rs = 1; vt->sx = (float)vt->w / (float)gw; vt->sy = (float)vt->h / (float)gh;
             while ((vt->w >> lv) || (vt->h >> lv)) lv++;
@@ -1556,7 +1568,7 @@ static Pipe *pipe_make(const PKey *k, VStage *vs, VStage *fs, double *took) {
         if (i == 0 && D.has_push && p->nb[0] <= 32) { li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; p->push0 = 1; }      /* 32: the smallest maxPushDescriptors a device may have */
         VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &p->dl[i]));
     }
-    VkPushConstantRange pc = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16};
+    VkPushConstantRange pc = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20};
     VkPipelineLayoutCreateInfo pl = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pl.setLayoutCount = 2; pl.pSetLayouts = p->dl; pl.pushConstantRangeCount = 1; pl.pPushConstantRanges = &pc;
     VKC(vkCreatePipelineLayout(V.device, &pl, NULL, &p->layout));
@@ -1818,6 +1830,18 @@ static int framelog_on(void) {                     /* [witchtime] TEST ONLY: SSB
     return a >= 0 && f >= a && f <= b;
 }
 /* The image view and sampler of one declared sampler of stage s. May end the pass (upload, layout change). */
+/* [witchtime] aspect ratios: the movies (1600x900 VP9) are drawn by one full-screen pass into the window texture, which
+ * samples the frame's Y plane (R8, the game's 16:9 screen size: 1600x900) and UV plane. Wider or taller than 16:9 that pass
+ * keeps a centred 16:9 box (pillar- or letterboxed) and the rest of the window texture is cleared to black, as on a TV;
+ * the game's subtitles are drawn after it by the interface (its 16:9 area). */
+static int g_movie_y, g_movie_draw, g_movie_box[4];      /* box: x, y, w, h in the pass's pixels */
+/* [witchtime] The game's dither (objects near the camera fade through a screen-door pattern): the fragment stage samples a
+ * small tiled texture at gl_FragCoord / its size and discards against it. On a scaled image gl_FragCoord is given in the
+ * game's pixels (mx_fcs), so at a ratio that is not a whole number (21:9: 1600 game pixels over 2100) neighbouring pixels
+ * read the pattern unevenly and it shows as a coarser grid of crosses. A draw whose fragment stage samples no screen-class
+ * image (scaled, or kept at the game's size: those are read by screen position) and samples a small texture (64 x 64 or
+ * less: a pattern) gets the image's own pixels instead (mx_fcs 1): the pattern is even, at the image's resolution. */
+static int g_fs_screen, g_fs_small;
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
     Tex *t = NULL;
@@ -1826,10 +1850,12 @@ static void resolve_sampler(int s, VStage *v, int i) {
     LONG64 rt0 = g_ptm_on > 0 ? tk() : 0;
     int r = u < 32 ? nvn_front_handle(R.tpool, R.spool, R.nvn_tex[s][u], &t, &view, &sp) : 0;
     if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[0] += x - rt0; rt0 = x; }
+    if ((r & 1) && s == 1 && t->b.format == 0x1 && t->b.target == 1 && t->b.height == g_rs_bh && t->b.width * 9 == t->b.height * 16) g_movie_y = 1;      /* [witchtime] a movie's Y plane */
     g_dtex[g_ndtex].view = g_dummy.v[v->smp[i].dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if (r & 1) {
         VTex *vt = vt_get(t);
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
+        if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
         EView e;
         int attached = R.depth.tex == t, dim = v->smp[i].dim;
         for (int k = 0; k < R.ncol; k++) attached |= R.col[k].tex == t;
@@ -1902,6 +1928,13 @@ static void set_dynamic_state(void) {
     if (sx > R.pass_w) sx = R.pass_w; if (sy > R.pass_h) sy = R.pass_h;
     if (sw > R.pass_w - sx) sw = R.pass_w - sx; if (sh > R.pass_h - sy) sh = R.pass_h - sy;
     n.sc.offset.x = sx; n.sc.offset.y = sy; n.sc.extent.width = (uint32_t)(sw > 0 ? sw : 0); n.sc.extent.height = (uint32_t)(sh > 0 ? sh : 0);
+    if (g_movie_draw && R.pass_w > 0 && R.pass_h > 0) {      /* [witchtime] the movie in a centred 16:9 box (resolve_sampler) */
+        int bw = R.pass_w, bh = R.pass_h;
+        if ((double)R.pass_w * 9 > (double)R.pass_h * 16) bw = (int)((double)R.pass_h * 16 / 9 + 0.5); else bh = (int)((double)R.pass_w * 9 / 16 + 0.5);
+        g_movie_box[0] = (R.pass_w - bw) / 2; g_movie_box[1] = (R.pass_h - bh) / 2; g_movie_box[2] = bw; g_movie_box[3] = bh;
+        n.vp.x = (float)g_movie_box[0]; n.vp.width = (float)bw; n.vp.y = (float)(g_movie_box[1] + bh); n.vp.height = -(float)bh;
+        n.sc.offset.x = g_movie_box[0]; n.sc.offset.y = g_movie_box[1]; n.sc.extent.width = (uint32_t)bw; n.sc.extent.height = (uint32_t)bh;
+    }
     if (R.pass_rs && D.f2.features.wideLines) { float lw = R.line_width * R.pass_sx; n.lw = lw < V.props.limits.lineWidthRange[0] ? V.props.limits.lineWidthRange[0] : lw; }
     else n.lw = D.f2.features.wideLines ? R.line_width : 1.0f;
     {   /* session 13, TEST ONLY (the missing stage pieces on zelda_temple): SSBU_VK_TEST bits: 1 no culling, 2 depth clamp always on, 4 no depth bias */
@@ -3088,7 +3121,10 @@ static int draw_prepare(unsigned prim) {
     PT(0);
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
+    g_movie_y = 0; g_fs_screen = g_fs_small = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
+    {   int m = g_movie_y && g_rs_bw * 9 != g_rs_bh * 16 && R.ncol > 0 && R.col[0].tex && wintex_is(R.col[0].tex);      /* [witchtime] a movie in a window texture not of 16:9 */
+        if (m != g_movie_draw) { g_movie_draw = m; R.dyn_dirty = 1; } }
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: SSBU_VK_WATCHFS */
     int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
@@ -3180,6 +3216,18 @@ static int draw_prepare(unsigned prim) {
     if (R.pipe_bound != p) { vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->p); R.pipe_bound = p; }
     PT(5);
     if (R.dyn_dirty) { set_dynamic_state(); R.dyn_dirty = 0; }
+    if (g_movie_draw) {                            /* [witchtime] the bars beside (or above and below) the movie: black */
+        const int *b = g_movie_box;
+        VkClearRect cr[2]; int nr = 0;
+        VkClearAttachment ca; memset(&ca, 0, sizeof ca); memset(cr, 0, sizeof cr);
+        ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ca.colorAttachment = 0; ca.clearValue.color.float32[3] = 1.0f;
+        if (b[0] > 0) { cr[0].rect.extent.width = (uint32_t)b[0]; cr[0].rect.extent.height = (uint32_t)R.pass_h;
+                        cr[1].rect.offset.x = b[0] + b[2]; cr[1].rect.extent.width = (uint32_t)(R.pass_w - b[0] - b[2]); cr[1].rect.extent.height = (uint32_t)R.pass_h; nr = 2; }
+        else if (b[1] > 0) { cr[0].rect.extent.width = (uint32_t)R.pass_w; cr[0].rect.extent.height = (uint32_t)b[1];
+                             cr[1].rect.offset.y = b[1] + b[3]; cr[1].rect.extent.width = (uint32_t)R.pass_w; cr[1].rect.extent.height = (uint32_t)(R.pass_h - b[1] - b[3]); nr = 2; }
+        for (int i = 0; i < nr; i++) cr[i].layerCount = 1;
+        if (nr && cr[1].rect.extent.width && cr[1].rect.extent.height) vkCmdClearAttachments(R.cmd, 1, &ca, (uint32_t)nr, cr);
+    }
     if (D.has_eds3 && (R.dyn3_dirty || R.dyn3_samples != k.samples)) { set_dynamic_state3(k.samples); R.dyn3_dirty = 0; }
     {   int rst = R.restart && ((D.has_plr && !(g_vk_test & 16)) || prim == 3 || prim == 5 || prim == 6);      /* SSBU_VK_TEST bit 16 (session 14, test): no restart in list topologies */
         if ((int)vtopo != g_dsh_topo || !dsh_on()) { vkCmdSetPrimitiveTopology(R.cmd, vtopo); g_dsh_topo = (int)vtopo; g_dsh_sent++; } else g_dsh_kept++;
@@ -3274,13 +3322,14 @@ static int draw_prepare(unsigned prim) {
         }
         PT(9);
     }
-    {   uint32_t pc[4] = {(uint32_t)R.alpha_func, 0, 0, 0};
+    {   uint32_t pc[5] = {(uint32_t)R.alpha_func, 0, 0, 0, 0};
         memcpy(&pc[1], &R.alpha_ref, 4); memcpy(&pc[2], &R.point_size, 4);
         if (RS_ON) {                               /* track O: mx_fcs = game pixels per image pixel of this pass (fragment stages translated with screen_scale); points shrink with the image */
-            float fcs = R.pass_rs ? 1.0f / R.pass_sx : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
-            memcpy(&pc[3], &fcs, 4); memcpy(&pc[2], &ps, 4);
+            int own = g_fs_small && !g_fs_screen;      /* [witchtime] a pattern, no screen image: the image's own pixels (the dither, above) */
+            float fcs = R.pass_rs && !own ? 1.0f / R.pass_sx : 1.0f, fcy = R.pass_rs && !own ? 1.0f / R.pass_sy : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
+            memcpy(&pc[3], &fcs, 4); memcpy(&pc[4], &fcy, 4); memcpy(&pc[2], &ps, 4);
         }
-        vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, pc);
+        vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20, pc);
     }
     PT(10);
     if (drawlog_on()) {                            /* TEST ONLY: SSBU_VK_DRAWLOG */
@@ -5333,6 +5382,8 @@ static void vkd_shutdown(void) {
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
     if (RS_ON) printf("nvn_vk_scale: the scaled images made took %.0f MB of device memory in all\n", (double)g_rs_bytes / 1048576.0);      /* PR #8 review */
+    if (g_rs_pre_queued) printf("nvn_vk_scale: scaled translations made ahead (for another scale or aspect ratio; SSBU_VK_RS_PREP=0 off): %lld made, %lld in the cache already, %lld not reached (of %lld fragment stages)\n",
+                                (long long)g_rs_pre_made, (long long)g_rs_pre_had, (long long)(g_rs_pre_queued - g_rs_pre_made - g_rs_pre_had), (long long)g_rs_pre_queued);      /* [witchtime] */
     if (RS_ON && rs_scale() > 1.0f) printf("nvn_vk_scale: supersampling: %lld 2:1 reduction steps at the present (rs_reduce, PR #8), %lld presents without them (format cannot be blitted linearly)\n", (long long)g_rs_reduce_steps, (long long)g_rs_reduce_skipped);
     m4_stop();
     pcache_save();

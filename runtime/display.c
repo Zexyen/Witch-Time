@@ -434,6 +434,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
         RegisterRawInputDevices(&rid, 1, sizeof rid);
         atexit(mouse_release);
     }
+    gfx_aspect_window(cw, ch);                       /* [witchtime] aspect_ratio = auto: the client size (borderless / fullscreen: the monitor) */
     InterlockedExchange(&g_ready, 1);
     MSG msg;
     while (GetMessageA(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageA(&msg); }
@@ -629,6 +630,10 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
     printf("display: window %s, client %dx%d pixels (SDL %s video%s)%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph,
            SDL_GetCurrentVideoDriver(), visible ? "" : ", hidden (SSBU_SHOW=0)", 10);
+    {   /* [witchtime] aspect_ratio = auto: the window's shape; borderless / fullscreen: the monitor's (the window may not have its size yet) */
+        const SDL_DisplayMode *dm = go->window_mode ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : NULL;
+        gfx_aspect_window(dm ? dm->w : pw, dm ? dm->h : ph);
+    }
     g_hwnd = (HWND)w;
     InterlockedExchange(&g_ready, 1);
     { const char *ks = getenv("SSBU_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }

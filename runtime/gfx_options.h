@@ -28,10 +28,15 @@ typedef struct {
                              * env SSBU_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
     float texture_lod_bias; /* [witchtime] texture_lod_bias = 0 (the game's own) .. -3 (sharper: finer mip levels) .. +3; added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env SSBU_TEXTURE_LOD_BIAS wins */
+    float aspect_ratio;     /* [witchtime] aspect_ratio = 16:9 (0: the game's own) | auto (-1: the window's shape, gfx_aspect_window) | <w>:<h>: the shape of the game's screen, at the next start; handed on as
+                             * RECOMPS_ASPECT (game_shim_eh.c, r2_imports.c, nvn_vk_draw.c rs_xstretch), which wins when set */
+    int hud_centre;         /* [witchtime] hud_area = screen (0: wider than 16:9 the HUD's corners go to the screen's edges) | 16:9 (1: kept in the middle);
+                             * handed on as RECOMPS_HUD_CENTRE=1 (game_shim_eh.c h_ui_element) */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */
 int gfx_ini_refresh(const char *path);                   /* [witchtime] a new version's comments and keys in the player's file, values kept; 1 = rewritten */
+void gfx_aspect_window(int w, int h);     /* [witchtime] aspect_ratio = auto: the window's client size, before the game starts (display.c) */
 int gfx_ini_get(const char *key, char *out, size_t n);      /* [witchtime] graphics.ini's value of a key as the reader sees it; 0 = not in the file */
 int gfx_option_set(const char *key, const char *val);     /* [witchtime] rewrite the key in graphics.ini (comments and other keys kept), take over the live keys; 0 = not written */
 #endif

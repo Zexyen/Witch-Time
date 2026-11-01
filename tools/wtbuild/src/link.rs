@@ -123,6 +123,7 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
     &["game_bind", "game_eh_bind"],
     &[
         "game_cutscene_fps",
+        "game_hud_centre",
         "sdk_data",
         "sdk_data_count",
         "sdk_fns",
