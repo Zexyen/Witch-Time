@@ -1,4 +1,4 @@
-/* runtime/prompts.c through the texture decoders: the ASTC blocks must decode to white with the alpha asked for, and each
+/* runtime/prompts.c through the texture decoders: the ASTC blocks must decode to the luminance and alpha asked for, and each
  * prompt set must paint what it says. With an argument, writes the four sets as <arg>/<family><format>.rgba (256 x 512).
  *   clang -O2 -I runtime tests/prompts_test.c runtime/prompts.c runtime/tex_decode.c -lm -o /tmp/prompts_test && /tmp/prompts_test */
 #include <stdio.h>
@@ -6,7 +6,7 @@
 #include <string.h>
 #include "tex_decode.h"
 
-void prompts_astc_block(const uint8_t *alpha, int stride, uint8_t *out);
+void prompts_astc_block(const uint8_t *rgba, int stride, uint8_t *out);
 void prompts_paint(uint8_t *mem, int format, int bh_log2, int family, int by_letter);
 static int g_family = 1, g_written;
 int nnpad_button_prompts(void) { return g_family; }
@@ -37,17 +37,16 @@ static void paint(int format, int bh, int family, int by_letter) {
 
 int main(int argc, char **argv) {
     int bad = 0;
-    for (int seed = 0; seed < 2000; seed++) {               /* ASTC: weights give the alpha back within a 15th of the block's span */
-        uint8_t a[16], blk[16], px[64];
+    for (int seed = 0; seed < 2000; seed++) {               /* ASTC: luminance and alpha come back apart, within half a step of 7 */
+        uint8_t a[64], blk[16], px[64];
         srand((unsigned)seed);
-        int lo = rand() % 256, hi = lo + rand() % (256 - lo);
-        for (int i = 0; i < 16; i++) a[i] = (uint8_t)(i == 0 ? lo : i == 1 ? hi : lo + (hi > lo ? rand() % (hi - lo + 1) : 0));
+        for (int i = 0; i < 64; i++) a[i] = (uint8_t)rand();
+        for (int i = 0; i < 16; i++) a[i * 4 + 1] = a[i * 4 + 2] = a[i * 4];
         prompts_astc_block(a, 4, blk);
         tex_decode_block_rgba8(0x79, blk, px, 16);
         for (int i = 0; i < 16; i++) {
-            int d = px[i * 4 + 3] - a[i];
-            CHECK(px[i * 4] == 255 && px[i * 4 + 1] == 255 && px[i * 4 + 2] == 255);
-            CHECK(abs(d) <= (hi - lo) / 15 + 2);
+            CHECK(px[i * 4] == px[i * 4 + 1] && px[i * 4] == px[i * 4 + 2]);
+            CHECK(abs(px[i * 4] - a[i * 4]) <= 19 && abs(px[i * 4 + 3] - a[i * 4 + 3]) <= 19);
         }
     }
     CHECK(tex_astc_bad_blocks == 0);
@@ -60,8 +59,10 @@ int main(int argc, char **argv) {
         paint(f[i].format, f[i].bh, 2, 0);
         CHECK(alpha_at(204 + 20, 20) > 200 && alpha_at(204 + 20 + 5, 20) < 60);        /* A: Circle, ring around a filled centre */
         CHECK(alpha_at(160 + 20, 44 + 20) < 60 && alpha_at(160 + 20 + 7, 44 + 20) > 200); /* B: Cross, cut at the middle */
-        CHECK(red_at(204 + 1, 1) == 0 && red_at(204 + 38, 38) == 0);                   /* black around the disc: a combo prompt's shadow comes from it */
-        CHECK(red_at(204 + 20 + 5, 20) > 240);                                         /* white in the cut: edges filter to white */
+        CHECK(red_at(204 + 20 + 5, 20) > 200);                                         /* the backing is white in the cut ... */
+        CHECK(red_at(204 + 20 - 11, 20) > 200 && red_at(204 + 20 + 11, 20) > 200);     /* ... and just outside the disc ... */
+        CHECK(red_at(204 + 20 - 16, 20) < 40 && red_at(204 + 20, 20 + 16) < 40);       /* ... but stops 2 texels out ... */
+        CHECK(red_at(204 + 9, 9) < 40 && red_at(204 + 30, 30) < 40);                   /* ... and is round: the corners of its square are black */
         CHECK(alpha_at(56 + 20, 44 + 20) == 0);                                        /* a cell of no prompt stays empty */
         paint(f[i].format, f[i].bh, 2, 1);
         CHECK(alpha_at(204 + 20, 20) < 60);                                            /* by letter A is Cross */
