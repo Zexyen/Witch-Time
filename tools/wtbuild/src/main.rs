@@ -72,7 +72,7 @@ fn main() {
                 .position(|a| a == "--jobs")
                 .and_then(|i| args.get(i + 1))
                 .and_then(|j| j.parse().ok())
-                .unwrap_or(8);
+                .unwrap_or_else(util::default_jobs);
             let t = target::Target::from_args(&args).unwrap_or_else(|e| die(e));
             if let Err(e) = compile::run_step(&repo, &clang, t, jobs, &setup::child_env, &mut |l| println!("{}", l)) {
                 die(e)
@@ -144,7 +144,7 @@ fn main() {
             let repo = repo_root(&args);
             let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(PathBuf::from);
             let romfs = opt("--romfs").unwrap_or_else(|| repo.join("targets").join("romfs"));
-            let jobs = opt("--jobs").and_then(|j| j.to_str()?.parse().ok()).unwrap_or(0);
+            let jobs = opt("--jobs").and_then(|j| j.to_str()?.parse().ok()).unwrap_or_else(util::default_jobs);
             texpack::run(&repo, &romfs, opt("--dump").as_deref(), jobs, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         Some("sha256") if args.len() == 2 => {

@@ -98,6 +98,12 @@ pub fn py_repr(v: f64) -> String {
     }
 }
 
+/// Compile and texture jobs when no --jobs is given: half the logical CPUs, so a build does not peg the PC.
+/// The other half are mostly SMT siblings: 16 -> 8 jobs of 16 threads took 17% longer on 31% less CPU time.
+pub fn default_jobs() -> usize {
+    (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8) / 2).clamp(1, 24)
+}
+
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut f = fs::File::open(path)?;
     let mut h = Sha256::new();

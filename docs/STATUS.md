@@ -486,7 +486,7 @@ library in the runtime; LZ4's decoder is 25 lines. `texture-compressor` (pure Ru
 preset writes blocks of 4.5 dB, its Fast preset lost 34 dB on one of the 420, checked against a second decoder.
 
 **The pack.** 16,828 textures, 15.7 GB (20.5 raw), plus 3.2 GB while it runs (`ba`, the largest family). 412 s on 16 threads,
-713 s on 4 cores with 8 threads, 5,260 s of CPU; about 25 minutes on a Deck is an estimate from its clock. Every level of every
+713 s on 4 cores with 8 threads, 5,260 s of CPU; about 25 minutes on a Deck is an estimate from its clock. Those are all threads; `textures` now defaults to half of them (`ba`: 93 -> 120 s on 16 threads, 168 -> 222 s on 4 cores, so about 16 minutes there and 33 on a Deck). Every level of every
 texture read back from the pack: pooled BC7 45.9 dB, runtime BC3 36.5 dB; top levels 50.1 and 39.4 dB. 227 of about 170,000 levels
 are under 30 dB, all of them better than BC3 there.
 
