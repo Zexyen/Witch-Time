@@ -103,6 +103,11 @@ ignored `nvnCommandBufferBindImage`): handles per stage, STORAGE usage on colour
 descriptor layouts (per pipeline, universal, compute), GENERAL layout, barriers after a storing pass or dispatch. **Depth
 bounds test** as dynamic state.
 
+Alpha to coverage is dynamic state too (extended dynamic state 3), except on AMD's Windows driver for RDNA 2 and older (driverInfo
+"AMD proprietary shader compiler") without pipeline libraries: that driver applies it while the dynamic state says off (issue 50, an
+RX 580: a dithered, washed-out world without Bayonetta's body), so there it is part of the pipeline key. `SSBU_VK_DYN_A2C=0 / 1`
+forces either way on whole pipelines (`SSBU_VK_GPL=0`); `SSBU_VK_TEST` bit 1024 (test) applies it to every draw, as that driver does.
+
 ### Game runs of 2026-10-24 (the list above, validated)
 
 Run: from the save, `SSBU_PRESS=Z,25,3` (A every 3 s), Vulkan back end, no `SSBU_VK_MISSING`. What renders now (pictures of
