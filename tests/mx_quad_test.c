@@ -1,5 +1,5 @@
-/* runtime/mx_translate.c, [issue 66]: a fragment stage finds its place in the quad from the pixel and reads its neighbours with quad
- * operations, so nothing in it depends on gl_SubgroupInvocationID, which AMD's compiler counts over the live lanes only. Other stages
+/* runtime/mx_translate.c, [issue 66]: a fragment stage finds its place in the quad from the pixel and reads its neighbours with fine
+ * derivatives, so nothing in it depends on subgroups or gl_SubgroupInvocationID, which AMD's compiler counts over the live lanes only. Other stages
  * keep the lane id and subgroupShuffle. Hand-made stage: S2R lane, SHFL.XOR, FSWZADD, EXIT.
  *   clang -O2 -Wall -I runtime tests/mx_quad_test.c runtime/mx_translate.c -o build/mx_quad_test */
 #include <stdio.h>
@@ -28,10 +28,10 @@ int main(void) {
     memset(code, 0, sizeof code);
     memcpy(code + 0x50, w, sizeof w);
     char *f = translate(1, code, sizeof code), *c = translate(5, code + 0x50, sizeof w);
-    int ok = f && c && strstr(f, "subgroupQuadSwapHorizontal(sv)") && strstr(f, "subgroupQuadSwapVertical(sv)") && strstr(f, "subgroupQuadSwapDiagonal(sv)") &&
-             strstr(f, "[(src ^ tid) & 3u]") && strstr(f, "gl_FragCoord.y") && strstr(f, "#extension GL_KHR_shader_subgroup_quad") &&
+    int ok = f && c && strstr(f, "mx_quad(sv, (src ^ tid) & 3u)") && strstr(f, "dFdxFine(h)") && strstr(f, "dFdyFine(x)") && strstr(f, "gl_FragCoord.y") &&
+             !strstr(f, "subgroupQuadSwap") && !strstr(f, "#extension GL_KHR_shader_subgroup") &&
              !strstr(f, "gl_SubgroupInvocationID") && !strstr(f, "subgroupShuffle(") &&
-             strstr(c, "subgroupShuffle(sv") && strstr(c, "gl_SubgroupInvocationID") && !strstr(c, "subgroupQuadSwap") && !strstr(c, "gl_FragCoord");
+             strstr(c, "subgroupShuffle(sv") && strstr(c, "gl_SubgroupInvocationID") && !strstr(c, "mx_quad") && !strstr(c, "gl_FragCoord");
     if (!ok && f) puts(f);
     if (!ok && c) puts(c);
     printf("mx_quad_test: %s\n", ok ? "ok" : "FAILED");

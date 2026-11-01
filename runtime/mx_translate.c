@@ -40,6 +40,7 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
+    int uses_quad;                            /* [issue 66] mx_quad: a fragment SHFL */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
@@ -830,19 +831,19 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_SHFL: {                           /* [witchtime] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
                                                  * and segment mask (bits 8..12), immediate (bits 34..46) or Rc; Pd (48..50) = the source lane is in range.
                                                  * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). A fragment stage shuffles
-                                                 * inside its quad (the game's own operands are 0..3): quad operations are the only ones that have to see helper
-                                                 * lanes, and all three are read before the choice because lanes of one quad can choose differently. */
+                                                 * inside its quad (the game's own operands are 0..3) with mx_quad, in which all three neighbours are read
+                                                 * before the choice because lanes of one quad can choose differently. */
         static const char *const range[4] = {
             "uint mn = tid & seg; mx = mn | (cl & ~seg); src = (sa & ~seg) | mn; ib = int(src) <= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid - sa; ib = int(src) >= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid + sa; ib = int(src) <= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid ^ sa; ib = int(src) <= int(mx);"};
         if (e->in->target != 1) { fail(e, "SHFL", "warp shuffle (OpenGL target)"); break; }
-        e->uses_sg = 1;
+        if (e->in->stage == MX_FRAGMENT) e->uses_quad = 1; else e->uses_sg = 1;
         b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
         c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
         emit(e, "uint sv = %s, sa = %s, sb = %s, tid = %s & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, vk_lane(e), range[MXB(i, 30, 2)]);
-        if (e->in->stage == MX_FRAGMENT) emit(e, " uint sh = uvec4(sv, subgroupQuadSwapHorizontal(sv), subgroupQuadSwapVertical(sv), subgroupQuadSwapDiagonal(sv))[(src ^ tid) & 3u]; %s = ib ? sh : sv;", DST);
+        if (e->in->stage == MX_FRAGMENT) emit(e, " uint sh = mx_quad(sv, (src ^ tid) & 3u); %s = ib ? sh : sv;", DST);
         else emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
         if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
         break;
@@ -856,7 +857,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         fres(e, i, S(e, "F(%s) * vec4(1.0, -1.0, 1.0, 0.0)[q] + F(%s) * vec4(1.0, 1.0, -1.0, 1.0)[q]", A8, R20), 0, 0);
         break;
     }
-    /* [witchtime] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). No-ops: the quad operations
+    /* [witchtime] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). No-ops: the derivatives
      * of a fragment stage's SHFL make the driver keep the helper lanes active (issue 66). */
     case MXOP_SAM: case MXOP_RAM:
         break;
@@ -1809,8 +1810,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
         if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
-        if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n#extension GL_KHR_shader_subgroup_quad : require\n");
+        if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
         emit(&h, "%s", k_prelude);
+        if (e->uses_quad)                        /* [issue 66] value of the lane m away in this quad (1 across, 2 down, 3 diagonal). Derivatives, not subgroup quad swaps
+                                                  * (green on an RX 6700 XT, issue 54): 16-bit halves as floats, so the differences are exact for any bits. */
+            emit(&h, "uint mx_quad(uint v, uint m) { vec2 h = vec2(float(v & 0xffffu), float(v >> 16)), sx = vec2((uint(gl_FragCoord.x) & 1u) != 0u ? -1.0 : 1.0), sy = vec2((uint(gl_FragCoord.y) & 1u) != 0u ? -1.0 : 1.0);\n"
+                     " vec2 x = h + sx * dFdxFine(h), y = h + sy * dFdyFine(h), d = x + sy * dFdyFine(x), r = m == 1u ? x : m == 2u ? y : m == 3u ? d : h;\n"
+                     " return uint(r.x + 0.5) | uint(r.y + 0.5) << 16; }\n");
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; };\n");      /* track O */
         else
         if (vk && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && e->uses_alpha))) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\n");
