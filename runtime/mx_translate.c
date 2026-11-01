@@ -40,8 +40,11 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
-    int uses_quad;                            /* [issue 66] mx_quad: a fragment SHFL */
     int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a vertex stage with none (see the blocks in mx_translate) */
+    int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
+    uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
+    uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
+    unsigned qcase_pc[256]; uint32_t qcase_mask[256]; int nqcase; unsigned cur_case;      /* [issue 66] the snapshot bits each shuffle case needs */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
@@ -834,8 +837,10 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_SHFL: {                           /* [witchtime] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
                                                  * and segment mask (bits 8..12), immediate (bits 34..46) or Rc; Pd (48..50) = the source lane is in range.
                                                  * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). A fragment stage shuffles
-                                                 * inside its quad (the game's own operands are 0..3) with mx_quad, in which all three neighbours are read
-                                                 * before the choice because lanes of one quad can choose differently. */
+                                                 * inside its quad (the game's own operands are 0..3) from the snapshot mq_rN its dispatcher took at the loop
+                                                 * header, where every lane of the quad is present (issue 66: inside a case a neighbour that has left the loop or
+                                                 * sits in another case is not executing, and AMD's Windows compiler then reads it as garbage; the game's
+                                                 * killed pixels zero the registers their neighbours will read and EXIT, so those values must stay readable). */
         static const char *const range[4] = {
             "uint mn = tid & seg; mx = mn | (cl & ~seg); src = (sa & ~seg) | mn; ib = int(src) <= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid - sa; ib = int(src) >= int(mx);",
@@ -846,7 +851,18 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
         c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
         emit(e, "uint sv = %s, sa = %s, sb = %s, tid = %s & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, vk_lane(e), range[MXB(i, 30, 2)]);
-        if (e->in->stage == MX_FRAGMENT) emit(e, " uint sh = mx_quad(sv, (src ^ tid) & 3u); %s = ib ? sh : sv;", DST);
+        if (e->in->stage == MX_FRAGMENT) {
+            unsigned ra = MXB(i, 8, 8);
+            if (ra == 255) emit(e, " uint sh = 0u; %s = ib ? sh : sv;", DST);
+            else {
+                if (!e->qidx[ra]) e->qidx[ra] = (uint8_t)++e->nqsrc;
+                int k = 0;
+                while (k < e->nqcase && e->qcase_pc[k] != e->cur_case) k++;
+                if (k == e->nqcase) { if (k == 256) { fail(e, "SHFL", "more than 256 shuffle cases"); break; } e->qcase_pc[e->nqcase++] = e->cur_case; e->qcase_mask[k] = 0; }
+                if (e->qidx[ra] <= 32) e->qcase_mask[k] |= 1u << (e->qidx[ra] - 1);
+                emit(e, " uint m = (src ^ tid) & 3u, sh = m == 1u ? mq_r%u.x : m == 2u ? mq_r%u.y : m == 3u ? mq_r%u.z : sv; %s = ib ? sh : sv;", ra, ra, ra, DST);
+            }
+        }
         else emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
         if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
         break;
@@ -1476,10 +1492,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         /* [issue 26] a flag, discarded after the dispatcher (ScarletNX PR #512, kirikae #48: a pixel demoted inside the loop, the
          * quad's others still in it, hung the GPU; Vulkan's discard only demotes). [issue 66] The killed pixel runs on to EXIT as
          * on Maxwell (KIL only marks it): the quad's later SHFL / FSWZADD reads from it (the light-mask words, derivatives) see the
-         * values it computes. Leaving the loop at the KIL froze them: AMD's Windows driver then read 0 (no hit flash on a
-         * dissolving Homunculus) or stale words (a white flash). Its stores are suppressed from here on (kg), as a helper
-         * invocation's are, and its outputs discarded after the loop. */
-        e->uses_kill = 1; emit(e, "if (%s) mx_kill = true;", FLOW(e, MXB(i, 0, 5)));
+         * values it computes. Its stores are suppressed from here on (kg), as a helper invocation's are, and its outputs
+         * discarded after the loop. A stage without a dispatcher (so without a fragment SHFL) discards at the KIL: glslang
+         * makes that a demote, the pixel runs on as a helper. */
+        if (e->any_jump) { e->uses_kill = 1; emit(e, "if (%s) mx_kill = true;", FLOW(e, MXB(i, 0, 5))); }
+        else emit(e, "if (%s) discard;", FLOW(e, MXB(i, 0, 5)));
         break;
 
     /* ---- textures */
@@ -1717,6 +1734,24 @@ static void analyze(Mx *e) {
         }
     }
     free(wpc); free(wst);
+    /* [issue 66] a fragment SHFL reads its quad from the snapshot the dispatcher takes at its loop header, so the case it is in
+     * must start at the header: a SHFL that is not the first instruction of its case, or whose source an earlier SHFL of the
+     * case wrote, starts a new case; a case that starts with a SHFL is entered through the header only (qlead). */
+    if (e->in->stage == MX_FRAGMENT && e->in->target == 1 && !e->fail) {
+        unsigned other = 0, lead = 1;
+        uint8_t wrote[256];
+        memset(wrote, 0, sizeof wrote);
+        for (unsigned pc = 1; pc < e->words; pc++) {
+            if ((pc & 3) == 0 || !e->reach[pc]) continue;
+            if (e->leader[pc]) { lead = pc; other = 0; memset(wrote, 0, sizeof wrote); }
+            uint64_t i = MXW(pc);
+            if (decode(i) != MXOP_SHFL) { other++; continue; }
+            unsigned ra = MXB(i, 8, 8), rd = MXB(i, 0, 8);
+            if (other || (ra != 255 && wrote[ra])) { e->leader[pc] = 1; lead = pc; other = 0; memset(wrote, 0, sizeof wrote); }
+            e->qlead[lead] = 1; e->any_jump = 1;
+            if (rd != 255) wrote[rd] = 1;
+        }
+    }
 }
 
 /* ---------------------------------------------------------------- whole shader */
@@ -1749,7 +1784,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
     if (in->code_len < hdr + 0x10 || !in->code) { snprintf(out->why, sizeof out->why, "no code"); strcpy(out->op, "no code"); free(e); return 0; }
     e->base = in->code + hdr;
     e->words = (unsigned)(in->code_len - hdr) / 8;
-    e->reach = calloc(e->words + 8, 1); e->leader = calloc(e->words + 8, 1);
+    e->reach = calloc(e->words + 8, 1); e->leader = calloc(e->words + 8, 1); e->qlead = calloc(e->words + 8, 1);
     e->jt = calloc(e->words + 8, sizeof *e->jt); e->stk_of = calloc(e->words + 8, sizeof *e->stk_of);
     if (in->stage == MX_COMPUTE) {
         e->lmem_words = in->lmem_bytes > 65536 ? 16384 : (in->lmem_bytes + 3) / 4;
@@ -1797,9 +1832,10 @@ int mx_translate(const MxIn *in, MxOut *out) {
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
+            if (e->qlead[pc] && pc != 1) emit(e, "{ pc = %uu; continue; }\n", pc);      /* [issue 66] through the header: the snapshot first */
             if (!e->seq) emit(e, "case %uu:\n", pc);
             else { if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc); emit(e, " do { if (pc != %uu) continue;\n", pc); }
-            e->blocks++;
+            e->blocks++; e->cur_case = pc;
         }
         insn(e, pc, MXW(pc));
     }
@@ -1826,12 +1862,18 @@ int mx_translate(const MxIn *in, MxOut *out) {
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
         if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
         if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
+        if (vk && e->uses_quad) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_vote : require\n#extension GL_KHR_shader_subgroup_arithmetic : require\n");
         emit(&h, "%s", k_prelude);
-        if (e->uses_quad)                        /* [issue 66] value of the lane m away in this quad (1 across, 2 down, 3 diagonal). Derivatives, not subgroup quad swaps
-                                                  * (green on an RX 6700 XT, issue 54): 16-bit halves as floats, so the differences are exact for any bits. */
-            emit(&h, "uint mx_quad(uint v, uint m) { vec2 h = vec2(float(v & 0xffffu), float(v >> 16)), sx = vec2((uint(gl_FragCoord.x) & 1u) != 0u ? -1.0 : 1.0), sy = vec2((uint(gl_FragCoord.y) & 1u) != 0u ? -1.0 : 1.0);\n"
-                     " vec2 x = h + sx * dFdxFine(h), y = h + sy * dFdyFine(h), d = x + sy * dFdyFine(x), r = m == 1u ? x : m == 2u ? y : m == 3u ? d : h;\n"
-                     " return uint(r.x + 0.5) | uint(r.y + 0.5) << 16; }\n");
+        if (e->uses_quad) {                      /* [issue 66] the values of the three other lanes of this quad (x across, y down, z diagonal). Derivatives, not subgroup
+                                                  * quad swaps (green on an RX 6700 XT, issue 54): 16-bit halves as floats, so the differences are exact for any bits.
+                                                  * mx_qneed: the snapshot bits a shuffle case reads. */
+            emit(&h, "uvec3 mx_quad3(uint v) { vec2 h = vec2(float(v & 0xffffu), float(v >> 16)), sx = vec2((uint(gl_FragCoord.x) & 1u) != 0u ? -1.0 : 1.0), sy = vec2((uint(gl_FragCoord.y) & 1u) != 0u ? -1.0 : 1.0);\n"
+                     " vec2 x = h + sx * dFdxFine(h), y = h + sy * dFdyFine(h), d = x + sy * dFdyFine(x);\n"
+                     " return uvec3(uint(x.x + 0.5) | uint(x.y + 0.5) << 16, uint(y.x + 0.5) | uint(y.y + 0.5) << 16, uint(d.x + 0.5) | uint(d.y + 0.5) << 16); }\n"
+                     "uint mx_qneed(uint p) { switch (p) {");
+            for (int k = 0; k < e->nqcase; k++) if (e->qcase_mask[k]) emit(&h, " case %uu: return 0x%xu;", e->qcase_pc[k], e->qcase_mask[k]);
+            emit(&h, " default: return 0u; } }\n");
+        }
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; };\n");      /* track O */
         else
         if (vk && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && e->uses_alpha))) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\n");
@@ -1947,7 +1989,18 @@ int mx_translate(const MxIn *in, MxOut *out) {
         /* [issue 26] every way out of the dispatcher (EXIT, KIL, the loop limit, a pc no case has) sets pc = 0 and leaves through the
          * loop's own exit; the outputs, the alpha test and KIL's discard happen once, after it. No return or discard inside the loop:
          * a quad whose pixels left it at different points hung NVIDIA's (kirikae #48) and AMD's (ScarletNX #512) Windows drivers. */
-        if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
+        /* [issue 66] with a fragment SHFL the loop is wave-uniform: a pixel that reached EXIT, or was killed, stays in it with its registers
+         * frozen while a quad mate still runs, as a Maxwell thread's registers stay readable; the header takes the snapshot of every
+         * shuffled register's three neighbours when any lane of the wave is about to shuffle, with all four lanes of each quad present. */
+        if (e->any_jump && e->uses_quad) {
+            emit(&h, " uint pc = 1u;\n while (subgroupAny(pc != 0u)) {\n  uint mq_need = subgroupOr(mx_qneed(pc));\n");
+            for (unsigned r = 0; r < 256; r++) if (e->qidx[r]) {
+                if (e->qidx[r] <= 32) emit(&h, "  uvec3 mq_r%u = uvec3(0u); if ((mq_need & 0x%xu) != 0u) mq_r%u = mx_quad3(r%u);\n", r, 1u << (e->qidx[r] - 1), r, r);
+                else emit(&h, "  uvec3 mq_r%u = mx_quad3(r%u);\n", r, r);
+            }
+            emit(&h, "  switch (pc) {\n");
+        }
+        else if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 512;
         res = malloc(need);
         memcpy(res, h.s, h.len);
