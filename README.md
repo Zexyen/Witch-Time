@@ -2,8 +2,7 @@
   <img src="docs/images/witch-time-logo.svg" alt="Witch Time" width="720">
 </p>
 
-# Witch Time
-![](https://dcbadge.limes.pink/api/server/https://discord.gg/hvkD3JNhWZ) ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zexyen/witch-time/total)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zexyen/witch-time/total)
 
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
