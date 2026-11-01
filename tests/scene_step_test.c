@@ -74,6 +74,12 @@ int main(void) {
         ride_frame(&owed, &half, &kind, due);
         check("ride: the debt stays in its range", owed >= -1.0f && owed <= 90.0f);
     }
+    check("movie scene without flag 28", movie_flag_lost(0x40000000u, 1, 60, 30));
+    check("flag 28 set: nothing to do", !movie_flag_lost(0x58000000u, 1, 60, 30));
+    check("not a fixed-step frame: nothing to do", !movie_flag_lost(0x00000000u, 1, 60, 30));
+    check("no movie: nothing to do", !movie_flag_lost(0x40000000u, 0, 60, 30));
+    check("a scene the game runs without the flag", !movie_flag_lost(0x40000000u, 1, 60, 60));
+    check("an empty header", !movie_flag_lost(0x40000000u, 1, 60, 0));
     if (!bad) printf("scene_step: ok\n");
     return bad;
 }

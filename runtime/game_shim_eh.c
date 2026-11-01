@@ -310,9 +310,31 @@ float fps_fs(Ctx *c, uint64_t key, uint64_t field) {
     r->f = f; r->U = n; r->S = fc_gtab[n & 255];
     return f;
 }
+/* f_71007077d0(w0): the game's set / clear of flag 28, called by a scene's start (0x7100bb1bf4) and end (0x7100bb2a6c, after it
+ * zeroes the movie handle at +168). A movie scene left without it plays on with the subtitles of a 30 fps scene (#72), so it is
+ * set again here. Not seen on Linux; the line in the log tells whether that is what a reporter's PC does. */
+void f_71007077d0(Ctx *c);
+static void keep_movie_flag(Ctx *c) {
+    static uint64_t told;
+    uint64_t slots, x0 = c->x[0];
+    memcpy(&slots, (void *)(uintptr_t)0x71024aae68ull, 8);
+    for (int i = 0; slots && i < 8; i++) {
+        uint64_t q = slots + 112 * (uint64_t)i, sc, hdr; uint32_t on, movie; int8_t fps, base;
+        memcpy(&on, (void *)(uintptr_t)q, 4); memcpy(&sc, (void *)(uintptr_t)(q + 56), 8);
+        if (!(on & 1) || !sc) continue;
+        memcpy(&movie, (void *)(uintptr_t)(sc + 168), 4); memcpy(&hdr, (void *)(uintptr_t)(sc + 8), 8);
+        memcpy(&fps, (void *)(uintptr_t)(hdr + 144), 1); memcpy(&base, (void *)(uintptr_t)(hdr + 145), 1);
+        uint32_t flags = state_flags();
+        if (!movie_flag_lost(flags, movie != 0, fps, base)) continue;
+        c->x[0] = 1; f_71007077d0(c); c->x[0] = x0;
+        if (sc != told) { told = sc; printf("movie scene %d: flag 28 was clear, set again (flags %08x -> %08x)\n", i, flags, state_flags()); fflush(stdout); }
+        return;
+    }
+}
 void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     g_clock_ctx = c;
+    keep_movie_flag(c);
     int fixed = (uint32_t)c->x[1] == 0;
     /* s0 is 4.0 in the game's mode 2 */
     g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on());
