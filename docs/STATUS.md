@@ -1196,8 +1196,9 @@ a value saved for the next start. The launcher never names the game: the code na
 - **Launcher** (`launcher/ui/witch.rcss`, `launcher.rml`): every screen is absolute boxes on a 1280 x 800 dp stage. The
   diagonal is `transform: skewX(22deg)` on plain boxes; gradients come from a new `gen:grad` texture (up to four
   stops, `ui_render.cpp`); the pictures are 8-bit BMPs in `launcher/ui/img` whose palette carries alpha (premultiplied)
-  in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel, the two hands, the
-  runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
+  in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel in seven layers
+  (two rings, the base, three gears, the hub; light and dark sets) that turn as the design page's SVG does (rings 120 s
+  and 160 s the other way, gears 10 s and 14 s; `@keyframes spin`), the two hands, the runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
   build screen's log hides behind Show log; the settings are the panel's own rows, names and values (`setting_defs()`
   in `app.cpp`, in the panel's order: Window size, Frame rate and Texture detail are new there; Face buttons is left out, it stays auto) under three
   tabs, Display, Graphics and Controls (Q / E or the shoulder buttons, `tab` in the model), each a staircase of rows. On

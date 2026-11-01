@@ -614,9 +614,6 @@ static void draw_prep(int W, int H) {
         float ttl = 54 * s;
         text(&g_f_head, 72 * s, (int)(150 * s + ttl * 0.78f), "Preparing shaders", ttl, C_WHITE, 0);
         hgrad_a((int)(72 * s), (int)(150 * s + ttl * 1.05f), (int)(260 * s), 1, C_LAV, C_LAV, 1, 0.1f);
-        char lines[4][160];
-        int n = wrap(&g_f_ui, lines, 3, "Every shader of your copy is compiled for this graphics card once. The next start goes straight to the game.", 19 * s, 440 * s);
-        for (int k = 0; k < n; k++) text(&g_f_ui, 72 * s, (int)(150 * s + ttl * 1.05f + 36 * s + k * 28 * s), lines[k], 19 * s, C_LILAC, 1 * s);
         text(&g_f_ui, 72 * s, (int)(572 * s + 14 * s), "FIRST START ONLY  \xC2\xB7  CLOSING THE WINDOW KEEPS WHAT IS DONE", 14 * s, C_LILAC, 2 * s);
         for (int j = 0; j < (int)(74 * s); j++) rect(0, (int)(H - 74 * s) + j, W, 1, mix(C_FOOT_DK, C_INDIGO0, j / (74 * s)), 0.94f);
         text(&g_f_ui, 60 * s, (int)(H - 30 * s), g_prep.info, 15 * s, C_LILAC, 1 * s);

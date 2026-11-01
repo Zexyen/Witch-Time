@@ -10,7 +10,13 @@
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wheel">
-		<img src="img/wheel.bmp?a=170"/>
+		<img class="ring1" src="img/wheel-ring1.bmp?a=170"/>
+		<img class="ring2" src="img/wheel-ring2.bmp?a=170"/>
+		<img class="base" src="img/wheel-base.bmp?a=170"/>
+		<img class="gear1" src="img/wheel-gear1.bmp?a=170"/>
+		<img class="gear2" src="img/wheel-gear2.bmp?a=170"/>
+		<img class="gear3" src="img/wheel-gear3.bmp?a=170"/>
+		<img class="top" src="img/wheel-top.bmp?a=170"/>
 		<img src="img/hand-hour.bmp" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
 		<img src="img/hand-minute.bmp" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
@@ -37,7 +43,13 @@
 	<div class="glow"></div>
 	<div class="wedge"></div>
 	<div class="wheel dark">
-		<img src="img/wheel-dark.bmp?a=85"/>
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
 		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
 		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
@@ -89,7 +101,15 @@
 <div class="screen build" data-if="screen == 'build'">
 	<div class="ground"></div>
 	<div class="glow"></div>
-	<div class="wheel"><img src="img/wheel.bmp?a=150"/></div>
+	<div class="wheel">
+		<img class="ring1" src="img/wheel-ring1.bmp?a=150"/>
+		<img class="ring2" src="img/wheel-ring2.bmp?a=150"/>
+		<img class="base" src="img/wheel-base.bmp?a=150"/>
+		<img class="gear1" src="img/wheel-gear1.bmp?a=150"/>
+		<img class="gear2" src="img/wheel-gear2.bmp?a=150"/>
+		<img class="gear3" src="img/wheel-gear3.bmp?a=150"/>
+		<img class="top" src="img/wheel-top.bmp?a=150"/>
+	</div>
 	<img class="track" src="gen:ring?c=24202e&amp;a=24&amp;w=22"/>
 	<progress direction="clockwise" start-edge="top" data-attr-value="progress"></progress>
 	<div class="wedge" style="width: 640dp;"></div>
@@ -129,7 +149,13 @@
 	<div class="glow"></div>
 	<div class="wedge"></div>
 	<div class="wheel dark">
-		<img src="img/wheel-dark.bmp?a=85"/>
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
 		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
 		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
@@ -171,7 +197,13 @@
 	<div class="glow"></div>
 	<div class="wedge"></div>
 	<div class="wheel dark">
-		<img src="img/wheel-dark.bmp?a=85"/>
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
 		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
 		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
