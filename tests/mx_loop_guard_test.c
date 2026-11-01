@@ -37,6 +37,16 @@ int main(void) {
     ok = ok && loop_end && strstr(k, "if (p1) { if (true) mx_kill = true; }") && !strstr(k, "mx_kill = true; pc = 0u") && strstr(loop_end, "if (mx_kill) discard;");
     for (const char *t = k; ok && (t = strstr(t, "discard")) && t < loop_end; t++) ok = 0;        /* no discard inside the loop */
     for (const char *t = k; ok && (t = strstr(t, "return;")) && t < loop_end; t++) ok = 0;        /* nor a return */
+    /* [issue 92] only forward jumps: blocks in order, no dispatcher, no counter; a colour pass's depth test for equality needs the invariant position */
+    uint64_t g[4] = {0,
+        0x50b0000000000f00ull | 7ull << 16,                            /* NOP */
+        0xe24000000000000full,                                         /* @P0 BRA to the EXIT */
+        0xe30000000000000full | 7ull << 16};                           /* EXIT */
+    memcpy(code + 0x50, g, sizeof g);
+    char *s = translate(0, code, sizeof code, 0);
+    int fwd = s && strstr(s, "do { if (pc != 3u) continue;") && strstr(s, "pc = 0u; } while (false);") && !strstr(s, "switch (pc)") && !strstr(s, "mx_back") && strstr(s, "invariant gl_Position;");
+    if (!fwd && s) puts(s);
+    ok = ok && fwd;
     if (!ok && k) puts(k);
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;

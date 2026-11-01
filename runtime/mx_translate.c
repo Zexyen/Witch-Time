@@ -41,6 +41,7 @@ typedef struct {
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int uses_quad;                            /* [issue 66] mx_quad: a fragment SHFL */
+    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a graphics stage with none (see the blocks in mx_translate) */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
@@ -100,7 +101,7 @@ static void fail(Mx *e, const char *op, const char *fmt, ...) {
  * 2,240 jumps back at most); raise it if a stage loses detail. */
 #define MX_LOOP_MAX 4096u
 static void loop_guard(Mx *e, int back) {
-    if (!back || e->in->stage == MX_COMPUTE) return;
+    if (!back || e->in->stage == MX_COMPUTE || e->seq) return;
     e->uses_guard = 1;
     if (e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ")) e->uses_spun = 1;
     emit(e, "if (++mx_back > %uu) { %spc = 0u; continue; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->uses_spun ? "mx_spun = true; " : "");
@@ -1673,7 +1674,7 @@ static void analyze(Mx *e) {
                 if (MXB(i, 5, 1)) { fail(e, "BRA.CC", "branch through a constant buffer"); break; }
                 if (ft == 0 || ft == 28) continue;                   /* flow test never true */
                 if (tgt >= e->words) { fail(e, "BRA", "branch target %u outside the code", tgt); break; }
-                e->leader[tgt] = 1; e->any_jump = 1;
+                e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)sid;
                 if (always && ft == 15) break;
@@ -1688,7 +1689,7 @@ static void analyze(Mx *e) {
                 if (ft == 0 || ft == 28) continue;
                 unsigned tgt = s.tgt[k];
                 s.n = k;
-                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1;
+                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
                 if (tgt >= e->words) { fail(e, mx_op_name[op], "target outside the code"); break; }
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)stk_id(e, &s);
@@ -1701,7 +1702,7 @@ static void analyze(Mx *e) {
                 if (n < 0) { fail(e, "BRX", n == -2 ? "BRX table not in constant buffer 1" : n == -3 ? "BRX table outside the constants" : "BRX table not found"); break; }
                 for (int k = 0; k < n; k++) {
                     if (tg[k] >= e->words) { fail(e, "BRX", "BRX target outside the code"); break; }
-                    e->leader[tg[k]] = 1;
+                    e->leader[tg[k]] = 1; if (tg[k] <= pc) e->has_back = 1;
                     if (nw < cap) { wpc[nw] = tg[k]; wst[nw++] = (uint16_t)sid; }
                 }
                 e->any_jump = 1;
@@ -1788,9 +1789,17 @@ int mx_translate(const MxIn *in, MxOut *out) {
     }
 
     if (!e->fail) analyze(e);
+    /* [issue 92] A stage with no step back runs its blocks once, in order: a jump leaves its block (continue ends the do) and the
+     * blocks up to the target skip themselves. In the dispatcher every jump is a new trip through all the cases, per lane: the
+     * goo's skinning stage (98 cases, about 120 jumps a vertex) took 5.7 ms of an RX 9070 XT's frame that way, 0.13 ms like this. */
+    e->seq = e->any_jump && !e->has_back && in->stage != MX_COMPUTE;
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
-        if (e->leader[pc] && e->any_jump) { emit(e, "case %uu:\n", pc); e->blocks++; }
+        if (e->leader[pc] && e->any_jump) {
+            if (!e->seq) emit(e, "case %uu:\n", pc);
+            else { if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc); emit(e, " do { if (pc != %uu) continue;\n", pc); }
+            e->blocks++;
+        }
         insn(e, pc, MXW(pc));
     }
     if (e->fail) {
@@ -1849,12 +1858,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
             if (nclip && mx_vk_clip(in) != 2) emit(&h, " float gl_ClipDistance[%d];", nclip);
             emit(&h, " };\n");
             if (nclip && mx_vk_clip(in) == 2) emit(&h, "float mx_clip[8];\n");      /* round 17: see mx_vk_clip */
-            {   /* Track V session 13, EXPERIMENT behind SSBU_VK_INVARIANT=1 (Vulkan text only): the position is declared
-                 * invariant (and precise with =2), so that two different programs that draw the same mesh (a depth pass and
-                 * a colour pass with a depth test for equality) give bit-equal depths. Found on zelda_temple, NVIDIA only:
-                 * large triangles of static stage meshes missing. Making it the rule needs a new MX_VK_VERSION. */
+            {   /* The position is declared invariant (SSBU_VK_INVARIANT=0 off, =2 also precise): two programs that draw the same mesh,
+                 * a depth pass and a colour pass with a depth test for equality, must give bit-equal depths. [issue 92] Without it,
+                 * stages run as blocks in order (no dispatcher between the sums) lost a third of the goo's colour fragments on RADV. */
                 static int inv = -1;
-                if (inv < 0) inv = getenv("SSBU_VK_INVARIANT") ? atoi(getenv("SSBU_VK_INVARIANT")) : 0;
+                if (inv < 0) inv = getenv("SSBU_VK_INVARIANT") ? atoi(getenv("SSBU_VK_INVARIANT")) : 1;
                 if (vk && inv) emit(&h, "invariant gl_Position;\n");
                 if (vk && inv >= 2) emit(&h, "precise gl_Position;\n");
             }
@@ -1938,13 +1946,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
         /* [issue 26] every way out of the dispatcher (EXIT, KIL, the loop limit, a pc no case has) sets pc = 0 and leaves through the
          * loop's own exit; the outputs, the alpha test and KIL's discard happen once, after it. No return or discard inside the loop:
          * a quad whose pixels left it at different points hung NVIDIA's (kirikae #48) and AMD's (ScarletNX #512) Windows drivers. */
-        if (e->any_jump) emit(&h, " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
+        if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 512;
         res = malloc(need);
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, " default: pc = 0u; continue;\n } }\n%s %s%s\n%s}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "",
+        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? " pc = 0u; } while (false);" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
                                               e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
         else n += (size_t)sprintf(res + n, "%s %s%s\n}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "", e->exitcode, e->uses_kill ? " }" : "");
         res[n] = 0;
