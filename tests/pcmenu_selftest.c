@@ -23,6 +23,18 @@ static const char *g_menu_swap = "off";
 const char *nnpad_menu_swap_setting(void) { return g_menu_swap; }
 int nnpad_menu_swap_set(const char *val) { g_menu_swap = val; return 1; }
 int nnpad_menu_swapped(void) { return !strcmp(g_menu_swap, "on"); }
+static const char *g_layout = "auto";
+const char *nnpad_layout_setting(void) { return g_layout; }
+int nnpad_layout_set(const char *val) { g_layout = val; return 1; }
+int nnpad_button_prompts(void) { return 3; }
+int nnpad_prompts_by_letter(void) { return 1; }
+static uint8_t g_saved[2][16];
+static int g_saved_on[2], g_type[2];
+int nnpad_bind_get(int ch, unsigned char *o) { if (g_saved_on[ch]) memcpy(o, g_saved[ch], 16); return g_saved_on[ch]; }
+int nnpad_bind_set(int ch, const unsigned char *b) { g_saved_on[ch] = b != NULL; if (b) memcpy(g_saved[ch], b, 16); return 1; }
+int options_control_type(int ch) { return g_type[ch]; }
+static uint32_t g_pad;
+uint32_t nnhid_menu_pad(void) { return g_pad; }
 int display_mouse_pixels(int *x, int *y) { *x = *y = -1; return 0; }
 SHORT GetAsyncKeyState(int vk) { (void)vk; return 0; }
 
@@ -80,7 +92,8 @@ int main(int argc, char **argv) {
     assert(pcmenu_gate(0, 0) == 0 && pcmenu_gate(0, 0xc00) == 1 && g_open);
     InterlockedExchange(&g_open, 0); Sleep(200);
     /* the menu's rows from that file; changes through the menu */
-    menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
+    g_type[1] = 2;                                         /* Viola on the game's Type C */
+    menu_open("test", 0, 0);                              /* (its thread runs on with the stubs' idle input) */
     assert(g_cur[5] == 7 && !strcmp(val_name(5), "1440p"));
     assert(g_shown[7] && g_cur[7] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
     change(7, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(7));
@@ -95,6 +108,32 @@ int main(int argc, char **argv) {
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
     g_sel = 2; g_ver++;
     panel(dir, "pcmenu_1920x1080", 1920, 1080);
+    /* the Controls page. No layout yet: the game's type shows; a change makes a layout from it, and the button that had it moves */
+    int row[16], preset = -1, chr = -1;
+    for (int i = 0; i < NROW; i++) { if (k_rows[i].apply == A_BIND) row[k_rows[i].slot] = i; if (k_rows[i].apply == A_PRESET) preset = i; if (k_rows[i].apply == A_CHAR) chr = i; }
+    assert(!row_on(row[RB_ZR]) && row_on(0));
+    AcquireSRWLockExclusive(&g_lock); page_go(1); g_ver++; ReleaseSRWLockExclusive(&g_lock);
+    assert(row_on(row[RB_ZR]) && !row_on(0) && g_sel == chr && g_cur[preset] == 0);
+    panel(dir, "controls_1920x1080", 1920, 1080);
+    panel(dir, "controls_1280x720", 1280, 720);
+    assert(!strcmp(val_name(row[RB_ZR]), "RT") && !strcmp(val_name(row[0]), "A"));        /* an Xbox pad, by letter */
+    set_value(row[RB_ZR], RB_R);                           /* issue 82: dodge on the bumper */
+    assert(g_saved_on[0] && g_saved[0][RB_ZR] == RB_R && g_saved[0][RB_R] == RB_ZR && rb_valid(g_saved[0]));
+    assert(g_cur[row[RB_R]] == RB_ZR && !strcmp(val_name(row[RB_R]), "RT") && !strcmp(g_raw[preset], "Custom") && g_cur[preset] < 0);
+    change(chr, 1, 0); assert(g_ch == 1 && !g_saved_on[1] && g_cur[row[RB_L]] == RB_R);    /* Viola: her Type C, nothing saved */
+    change(row[9], 1, 1); assert(g_saved_on[1] && rb_valid(g_saved[1]));                   /* left / right on a row go round and swap too */
+    set_value(preset, 4); assert(g_saved_on[1] && g_saved[1][RB_ZR] == RB_R && g_cur[preset] == 4);      /* her Type D */
+    set_value(preset, 0); assert(!g_saved_on[1] && g_cur[preset] == 0 && g_cur[row[RB_L]] == RB_R);      /* the game's setting again */
+    change(chr, -1, 0); assert(g_ch == 0 && g_cur[row[RB_ZR]] == RB_R);
+    /* a press on the row: what is down has to go up first, then the next button is taken and does nothing else */
+    AcquireSRWLockExclusive(&g_lock); g_sel = row[RB_ZR]; activate(g_sel, 1); ReleaseSRWLockExclusive(&g_lock);
+    assert(g_cap == row[RB_ZR] && !strcmp(val_name(g_cap), "Press a button\xE2\x80\xA6"));
+    g_pad = 1u << 2; Sleep(100); assert(g_cap >= 0);       /* held from before */
+    g_pad = 0; Sleep(100); g_pad = 1u << 3; Sleep(100); assert(g_cap < 0 && g_saved[0][RB_ZR] == 3 && rb_valid(g_saved[0]));
+    g_pad = 0; Sleep(100);
+    assert(g_sel == row[RB_ZR] && g_page == 1);
+    /* back: to the first page, not out of the panel */
+    AcquireSRWLockExclusive(&g_lock); page_go(0); g_ver++; ReleaseSRWLockExclusive(&g_lock);
     /* closing: every player reads an idle pad until that player has let go (player 2 = a keyboard holding Esc = Plus) */
     InterlockedExchange(&g_open, 0); Sleep(200);           /* the menu's thread ends: what it does at a close */
     assert(g_release == 0xff && !g_guest_frozen && (g_work & 4) && !row_restart(5));
@@ -115,6 +154,7 @@ int main(int argc, char **argv) {
     assert(!strcmp(pcmenu_key_get("no_such_key", NULL), ""));
     pcmenu_key_set("swap_confirm", "on"); assert(!strcmp(g_menu_swap, "on") && !strcmp(pcmenu_key_get("swap_confirm", NULL), "on"));      /* a key of controllers.ini */
     pcmenu_key_set("swap_confirm", "off"); assert(!strcmp(g_menu_swap, "off"));
+    pcmenu_key_set("layout", "labels"); assert(!strcmp(g_layout, "labels") && !strcmp(pcmenu_key_get("layout", NULL), "labels"));
     /* a new version over a player's file: its comments and keys, the player's values and keys, the old file kept */
     char old[320], bak[330];
     snprintf(old, sizeof old, "%s/graphics_old.ini", dir); snprintf(bak, sizeof bak, "%s.bak", old);

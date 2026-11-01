@@ -25,7 +25,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 FAKE = os.path.join(HERE, 'testdata', 'fake_main')
 # lifter/recomp_eh.py HOST_OVERRIDES: game functions game_shim_eh.c calls the lifted originals of; not in a stand-in
-GAME_ONLY = {'f_7100b382c0', 'f_7100d02de0', 'f_7100c1f600', 'f_71007e1fe4', 'f_7100b20a20', 'f_710067037c', 'f_71007077d0'}
+GAME_ONLY = {'f_7100b382c0', 'f_7100d02de0', 'f_7100c1f600', 'f_71007e1fe4', 'f_7100b20a20', 'f_710067037c', 'f_71007077d0',
+             'f_710095f464', 'f_7100987cb0', 'f_7100b22cc0', 'f_7100b22ee0', 'f_7100b31b60', 'f_7100c0f960'}
 # nvn_sdk.c's sdk addresses the stand-in sdk has no counterpart of (any value links; the smoke run never calls them)
 SDKA = ['nvnTextureBuilderGetRawStorageClass', 'nvnTextureBuilderGetSparseTileLayout', 'nvnTextureBuilderGetStorageAlignment',
         'nvnTextureBuilderGetStorageClass', 'nvnTextureBuilderGetStorageSize', 'nvnTextureGetRawStorageClass',

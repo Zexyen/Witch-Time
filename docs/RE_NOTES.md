@@ -335,3 +335,59 @@ buttons into a picture through 0x7100960870, a table of u32 hashes at 0x710184b4
 A (btn_002) and B (btn_001), and [4], [5] the same two pictures: gameplay's prompts come through 0x7100b22cc0, whose results
 never include 0 or 1, so only the guides read [0] and [1]. Of the 55 sites whose entries could be read statically, bit 0 only
 ever says OK, Confirm, Next, Start, Unlock or Disable and bit 1 only Back, Cancel or Close.
+
+## 9. Pads and control types (2026-11-01; button rebinding, issues 82 and 84)
+
+**The pads' copies** (records of 0x38 bytes, per pad; 0x7100cc47e0 fills one from nn::hid: +0 held, +4 pressed, +8 and +0xc two
+more button words, +0x10 .. +0x1c the sticks):
+```
+raw        0x7104d8f258   filled by 0x710095f208, the frame's pad update
+all pads   0x7104d8f338   a copy; about 30 readers, gameplay and event code that test button bits
+gameplay   0x7104d8f418   a copy, or zeros while flags say no gameplay input (0x710095f300)
+one record 0x7104d8f5d8   a copy of the first pad, at the end of the update
+menus      0x7104d8f4f8   copied from raw at another time (0x710095f464): every menu reads this one
+```
+0x710095f40c, just after the copies, calls 0x7100983610, an empty function: rebinding overrides it (`h_rebind_pads`) and rewrites
+all but raw and menus. The gameplay copy has five readers besides the writers (0x71002b250c, 0x7100559cd0, 0x7100707070,
+0x7100790050, 0x7100793520), and the player's state (below) comes from it.
+
+**Game bits**: 1 d-pad left, 2 right, 4 down, 8 up, 0x10 A, 0x20 B, 0x40 X, 0x80 Y, 0x100 Plus, 0x200 Minus, 0x400 L, 0x800 ZL,
+0x1000 left stick press, 0x2000 R, 0x4000 ZR, 0x8000 right stick press, then 0xf0000 and 0xf00000 the sticks as buttons.
+
+**The player's input**: the player object keeps a block at +0x1780 (0x7100559c2c fills it each frame from the gameplay copy) with
+a table of masks at +0x19b8 (block + 0x238 .. 0x2b4), the constructor's constants (0x710041a438: X 0x40, A 0x10, B 0x20, Y 0x80 ...)
+and 0x7100559aa0, which the update calls every frame and which rewrites nine of them by control type. Hundreds of gameplay
+sites read those masks. Writing the masks alone would not reach what tests the copies directly, which is why the bits are moved
+instead.
+
+**Control types**: the type is at settings 0x7104e7e4c0 + 4 (Bayonetta) and + 0x30 (Viola), by 0x7100b31b60 and 0x7100b31b78; 0
+Type A .. 3 Type D. Readers: the mask rewrite, the prompts (0x7100961b34, 0x71009bf070), 0x7100731fac, a listener (0x7100b22400),
+and the Options screen through 0x710071c1e0, whose last use after the rows is the page's picture of the pad (0x7100a32530).
+
+**The picture of the pad** on the Controller page is one drawing whose labels come from a table (0x7100aab84c): u32[18] message
+hashes by type and character, Bayonetta's Type A at 0x7101851340, Viola's at + 0x48, and the same for B, C and D. Comparing them
+with the types gives the slots: 0 ZR, 1 R, 2 ZL, 3 L, 4 Plus, 5 Minus, 6 left stick, 7 .. 14
+the face buttons (not messages of messmenu), 15 right stick, 16 d-pad down, 17 the other d-pad buttons. The texts are
+MENU_OPTION_KEYCONFIG_001 .. 011 (Bayonetta) and _101 .. (Viola: Dodge, Block, Summon Cheshire; 0 for Weapon Switch and Demon
+Select, which she does not have).
+
+**Actions**: 0x7100b22cc0 (character w0, type w1, action w2) -> a prompt's number, 0x7100b22ee0 -> the action's mask, 0..34:
+0 Plus, 1 Minus, 2 .. 5 confirm, cancel, the X and Y of the menus, 6 .. 9 L ZL R ZR, 10 .. 16 the left stick's directions,
+17 L3, 18 .. 24 the right stick's, 25 R3, 26 .. 29 d-pad up down left right, then what a type moves: 30 R (the text's DEFENSE),
+31 ZR (AVOID), 32 L (W_CHANGE), 33 ZL (SUMMON), 34 d-pad down (PROVO). A type is a permutation of those five buttons alone
+(rebind.h `rb_preset`, checked against the function in tests/rebind_test.c); Viola differs from Bayonetta only in Type D.
+A prompt's number indexes the pictures of section 8: action + 2 up to 29. 0x7100b22ea0 is cc0 and the picture together.
+
+**Text**: 0x7100961880 goes through a message's tags. [KC:AVOID ] and its [KC:B_...] and [KC:V_...] forms become a button tag by
+0x7100b22bf0 and the type, and every tag reaches 0x7100c0f960 -> a symbol: the name's hash looked up in a sorted table of 232
+symbols (0x7100c0d7cc), private characters from 0xe000. The HUD's command lists are such text, rebuilt every frame. main names 12
+button tags, [BTN:A ] B X Y L1 R1 L2 R2 DP_U DP_D DP_L DP_R (the space is in the name); tried against the table, [BTN:L3 ], R3,
+START and SELECT exist too, and LS, RS the sticks.
+
+**Pause and Subscreen** do not come from the gameplay copy: 0x7100983660 and 0x7100983630 test 0x100 and 0x200 on the menus' copy, in
+36 places mixed with the menus' own uses. So `h_rebind_menu_pads` moves those two bits in the menus' copy too, while the flags at
+0x710095f300 say gameplay has the pad, and leaves that copy alone otherwise. It was found by moving Pause in a test: Start still
+paused.
+
+The one reader of a logical mask on the menus' copy is 0x71009bfd70 (action 34), so `h_action_mask` turns that mask back into
+the pad's bits. The other readers of the menus' copy there test the confirm variable.
