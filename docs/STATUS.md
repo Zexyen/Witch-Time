@@ -1141,9 +1141,8 @@ and street); the cutscene fills the screen (no bars); subtitles, "Break Free" pr
 (`ui/*.dat`, .uid) are in a 1280x720 space around the centre; each layout's root (element 0) has its place (health
 -492, 269; gauges -572, -316; score 260, 297 ...). `0x7100c0ef04(layout, state, element, time)` evaluates an element
 every frame (elements of 0x1b4 bytes from layout + [layout + 0xc]: position +0, +4 into state + 0x10; then its animation
-tracks; found with a read watchpoint on hud0020's root in memory). **The menus place themselves by the screen's width
-already** (with the shift off, the pause menu and Options span 21:9: "OPTIONS" and the info panel at the left edge, the
-button guide and the currencies at the right); the HUD does not. So override `ui_element` moves only a root of a layout
+tracks; found with a read watchpoint on hud0020's root in memory). The menus spanned 21:9 by being stretched (later:
+"The stretched menus"; they are in the middle now). Override `ui_element` moves only a root of a layout
 named `hud*` (its DAT archive found backwards from the layout in memory, once per layout) placed 200 or more from the
 centre in the file, out by (720 * ratio - 1280) / 2. (Moving every such root pushed the Options rows, which their
 screen places itself, off the left edge.) Checked at 21:9 and 32:9: health and gauges at the left edge, score, Verse,
@@ -1197,9 +1196,35 @@ graphics object; found with gdb on a run it starts, counting calls of the projec
 is up). `0x710091c298` stores the aim's position on screen through `0x7100a6f5a0` for the ring, whose drawing takes it as
 1280 wide. Overrides `screen_w` (only for the call at `0x71009207f8`: the getter's other 50 callers are not checked) and
 `aim_pos` (x times 1280 / the viewport's width). Checked at 21:9 (scripted pad, the save's chapter select): the ring on
-the disc at the start, at the right and top edges when pushed there, the dart lands at the ring (as at 16:9). The ring is
-still drawn 1280 wide (an oval at 21:9, its drawing not found). `774b4c` (below) read from the screen's ratio did not
-move or round it.
+the disc at the start, at the right and top edges when pushed there, the dart lands at the ring (as at 16:9). `774b4c`
+(below) read from the screen's ratio did not move or round it.
+
+**The stretched menus** (the chapter select's ring an oval 1.34 wide at 21:9, its text, icons and prompts, the pause menu):
+the game has two projections for the UI. In a fight its camera, which `h_camera_perspective` makes wider; on flat screens
+0 to 1280 and 0 to 720 (`0x7100d07610`, one caller, `0x7100640218`), which fills the screen. Override `ui_ortho` gives the
+flat one the camera's space: the 1280 x 720 in the middle, unstretched, with more around it. So the menus are in the
+middle now, and what filled the screen needed more:
+- **Sprites in the UI's screen mode** (+0x4c = 1: the dims, 16 x 9 in `core0030`, 100 x 100 in `menu0103`) are as large as
+  the screen by 1280.0 and 720.0, immediates: 30 loads in `eh.rs` `UI_SIZE_SITES` read `wt_ui_w_bits` / `wt_ui_h_bits`
+  instead. Rust lifter only: the stand-in of `compare_lift` has none of them, `--main` on a real dump will differ.
+- **What is 1280 across in its layout** (size at the element's +0x1a4, kinds 1 and 2; not turned, within 30 of the middle:
+  123 elements, none with children): `h_ui_element` widens it. A whole screen keeps its shape and loses a little at the
+  edges, except the screen's capture (type 1021), which is the screen's shape already. This took over from `huda02a`'s
+  case; `event0020` keeps its own (its bars reach 1280 by their animation; not seen).
+- **The chapter select's banner** (`menu000b`, elements 1 and 2): a picture with a diagonal edge, so it is scaled evenly
+  around a point of that diagonal (149 right of its centre), which stays, until its left edge passes the screen's.
+- The aim's position is mapped into that space (`h_aim_pos`), wider and narrower.
+
+The ring is `core0005.uid`, elements 3 to 5, turning, under element 1 (scale 0.71). Found by skipping draws by vertex shader,
+dumping that shader's matrices per draw and finding the ring's colours in the elements.
+
+Checked by screenshots at 21:9 (Linux): the chapter select (ring round and on the disc, text, prompts, strip, banner), a
+Verse 3 fight, the pause menu, Photo Mode. **Not right yet: the Yes / No dialog** (`core0030`, seen as "End Photo Mode?"):
+it is cut to the middle 1280 with black at the sides, strips included, not a UI clip (full-width clips were tried) and
+not yet found. Before `UI_SIZE_SITES` the scene showed at the sides instead, doubled. **Not checked since `ui_ortho`**: 32:9
+and 9:10 (the size sites, the banner and the aim are written for them), Options, the title and main menus, the
+verse result (`hud` clips assume this same space, which may be what cut its panel), loading screens, the spider ride,
+Windows. The final build had no `smoke_link`, `compare_lift` or test runs.
 
 **The cutscene bars** (seen by hand on the spider ride, 3440x1440): the black bars are UI elements 1280 across, at y = -360 and
 360 of `huda02a` (the ride) and `event0020`, so they stopped at the 16:9 block. `h_ui_element` widens those two by the

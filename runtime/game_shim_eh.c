@@ -434,8 +434,7 @@ void h_screen_handheld(Ctx *c) { f_710070a760(c); screen_size_aspect(c); }
  * 0x7100d02d70's width (+304 of the graphics object, 1280 whatever the window): wider than 16:9 the aim could not reach
  * the right part of the screen. Only that call gets the screen's width: the getter's other 50 callers are not checked.
  * f_7100a6f5a0(x s0, y s1) stores the aim's position on screen (one caller, 0x710091c298, by the same projection) for
- * the ring drawn there, which takes it as 1280 wide: at 21:9 the ring was 290 units right of the aim. The ring itself
- * is still drawn 1280 wide (stretched with the screen). */
+ * the ring drawn there, in the UI's space (h_ui_ortho): at 21:9 the ring was 290 units right of the aim. */
 void f_7100d02d70(Ctx *c);
 void h_screen_w(Ctx *c) {
     f_7100d02d70(c);
@@ -471,10 +470,23 @@ void h_clip_cmd(Ctx *c) {
     r[0] += g_clip_off; r[2] += g_clip_off;
     memcpy((void *)(uintptr_t)c->x[31], r, 16);
 }
+/* f_7100d07610(slot w0, left s0, right s1, top s2, bottom s3, near s4, far s5): the UI's flat projection, one caller (0x7100640218),
+ * 0 to 1280 and 0 to 720 whatever the screen: the chapter select and the menus were stretched with it. It gets the space
+ * the UI's camera shows in a fight (h_camera_perspective): the 1280 x 720 in the middle, unstretched, and more around it. */
+static float ui_x0, ui_y0, ui_k = 1.0f;      /* a point of the screen in 720 high units (the viewport's) -> the UI's: x * ui_k + ui_x0, y * ui_k + ui_y0 */
+void f_7100d07610(Ctx *c);
+void h_ui_ortho(Ctx *c) {
+    float a = aspect_want();
+    if (a > 16.0f / 9.0f) { ui_x0 = (1280.0f - (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f))) / 2.0f; c->v[0].f[0] += ui_x0; c->v[1].f[0] -= ui_x0; }
+    else if (a > 0.0f) { ui_k = 1280.0f / (720.0f * a); ui_y0 = (720.0f - 720.0f * ui_k) / 2.0f; c->v[2].f[0] += ui_y0; c->v[3].f[0] -= ui_y0; }
+    f_7100d07610(c);
+}
+/* The screen's size in that space, for a sprite in the UI's screen mode (lifter eh.rs UI_SIZE_SITES). */
+uint32_t wt_ui_w_bits(void) { float w = 1280.0f - 2.0f * ui_x0; uint32_t b; memcpy(&b, &w, 4); return b; }
+uint32_t wt_ui_h_bits(void) { float h = 720.0f - 2.0f * ui_y0; uint32_t b; memcpy(&b, &h, 4); return b; }
 void f_7100a6f5a0(Ctx *c);
 void h_aim_pos(Ctx *c) {
-    float a = aspect_want();
-    if (a > 0.0f) c->v[0].f[0] *= 1280.0f / (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f));
+    c->v[0].f[0] = c->v[0].f[0] * ui_k + ui_x0; c->v[1].f[0] = c->v[1].f[0] * ui_k + ui_y0;
     f_7100a6f5a0(c);
 }
 /* f_7100d01380(config x0): the graphics set-up (one caller, 0x710069d1ec). config + 0x90 is the size of the heap the
@@ -523,9 +535,9 @@ void h_camera_fov(Ctx *c) {
 /* f_7100c0ef04(layout x0, state out x1, element w2, time s0): one element of a UI layout (a .uid of ui/*.dat: elements of 0x1b4
  * bytes from layout + [layout + 0xc]) at this frame: its base position (+0, +4), turn, scale and colours into out + 0x10 ..,
  * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the
- * centre. Wider than 16:9 the cameras keep that space in the middle (h_camera_perspective). The menus place themselves
- * by the screen's width already (the pause menu and Options span 21:9 as they are); the HUD does not: a root (element 0)
- * of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
+ * centre. Wider than 16:9 the cameras and the flat projection keep that space in the middle (h_camera_perspective,
+ * h_ui_ortho). What is 1280 across (not turned, in the middle: dims, strips, the cutscene bars) gets the screen's width
+ * here, the banner of the chapter select stays at its diagonal. Of the HUD: a root (element 0) of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
  * the file (health -492, 269; the gauges -572, -316; the score 260, 297 ...) moves out by half the extra width, to the
  * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
  * RECOMPS_HUD_CENTRE=1; "Centered" in the PC menu and the Options screen, at once: game_hud_centre) keeps them in the middle. */
@@ -563,17 +575,36 @@ void h_ui_element(Ctx *c) {
     f_7100c0ef04(c);
     float a = aspect_want();
     if (game_hud_centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); game_hud_centre = e && atoi(e); }
-    if (!(a > 16.0f / 9.0f) || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    if (a <= 0.0f || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
+    uint32_t f, kind, ty, d; float ex[2], sc[2], rot, sz[2] = {0, 0};
+    memcpy(&f, (void *)(uintptr_t)(lay + 0xc), 4);
+    uint64_t e = lay + f + el * 0x1b4;
+    memcpy(ex, (void *)(uintptr_t)e, 8); memcpy(&rot, (void *)(uintptr_t)(e + 0x14), 4); memcpy(sc, (void *)(uintptr_t)(e + 0x18), 8);
+    memcpy(&kind, (void *)(uintptr_t)(e + 0x198), 4); memcpy(&ty, (void *)(uintptr_t)(e + 0x19c), 4); memcpy(&d, (void *)(uintptr_t)(e + 0x1a4), 4);
+    if ((kind == 1 || kind == 2) && d) memcpy(sz, (void *)(uintptr_t)(lay + d), 8);      /* a picture's or a framed panel's size */
+    float v[2]; memcpy(v, (void *)(uintptr_t)(out + 0x50), 8);
+    if ((ty == 0 || ty == 2001 || ty == 1021) && sz[0] * sc[0] >= 1270.0f && sz[1] >= 1.0f && rot == 0.0f && ex[0] >= -30.0f && ex[0] <= 30.0f) {      /* 1280 across: dims, pictures, strips, the cutscene bars; none has children */
+        int full = sz[1] * sc[1] >= 700.0f, shot = ty == 1021;      /* a whole screen keeps its shape and loses a little at the edges; the screen's capture (1021) is the screen's shape already */
+        float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
+        if (a > 16.0f / 9.0f ? 1 : full && !shot) v[0] *= k;
+        if (a > 16.0f / 9.0f ? full && !shot : full) v[1] *= k;
+        memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+    } else if ((el == 1 || el == 2) && !strncmp(ui_name(lay), "menu000b", 8)) {      /* the banner of the chapter select: its left edge is -187 of the UI at rest; scaled around a point of its diagonal (149 right of its centre), the diagonal stays */
+        float k = (310.0f - ui_x0) / 497.0f, x;
+        if (k > 1.0f) {
+            v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+            memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x += 149.0f * (1.0f - k); memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+        }
+    }
+    if (!(a > 16.0f / 9.0f)) return;
     if (el >= 1 && el <= 8) {
-        uint32_t f; float y0; memcpy(&f, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&y0, (void *)(uintptr_t)(lay + f + el * 0x1b4 + 4), 4);
-        const char *nm;
-        if ((y0 == 360.0f || y0 == -360.0f) && (!strncmp(nm = ui_name(lay), "huda02a", 7) || !strncmp(nm, "event0020", 9))) {      /* the black cutscene bars: 1280 across, the width of the 16:9 block */
-            float s; memcpy(&s, (void *)(uintptr_t)(out + 0x50), 4); s *= a * 9.0f / 16.0f; memcpy((void *)(uintptr_t)(out + 0x50), &s, 4);
+        if ((ex[1] == 360.0f || ex[1] == -360.0f) && !strncmp(ui_name(lay), "event0020", 9)) {      /* its bars reach 1280 by their animation */
+            float v; memcpy(&v, (void *)(uintptr_t)(out + 0x50), 4); v *= a * 9.0f / 16.0f; memcpy((void *)(uintptr_t)(out + 0x50), &v, 4);
         }
         return;
     }
     if (el != 0 || game_hud_centre) return;
-    uint32_t first; float x0, x; memcpy(&first, (void *)(uintptr_t)(lay + 0xc), 4); memcpy(&x0, (void *)(uintptr_t)(lay + first), 4);
+    float x0 = ex[0], x;
     if (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(ui_name(lay), "hud", 3)) return;
     memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
     float extra = (720.0f * a - 1280.0f) * 0.5f;
