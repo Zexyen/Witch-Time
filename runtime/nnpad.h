@@ -17,6 +17,7 @@ typedef struct {
 int  nnpad_button_prompts(void);                /* [Recomps#1] [general] button_prompts: 1 switch, 2 playstation, 3 xbox, 4 keyboard (auto resolved) */
 void nnpad_prompts_used(int keyboard);          /* player 1 used a pad (0) or the keyboard / mouse (1): button_prompts = auto follows */
 int  nnpad_prompts_by_letter(void);             /* [Recomps#1] finding 148: player 1's face buttons by printed letter (A = the bottom button) */
+int  nnpad_menu_swapped(void);                  /* [witchtime] [general] swap_confirm, for the device in use: menus confirm with B, back with A */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */
 int  nnpad_present(int player);                  /* a device is assigned to this player slot */

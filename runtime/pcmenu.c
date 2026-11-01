@@ -40,7 +40,7 @@ static const unsigned char k_font[] = {
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
 extern volatile LONG g_display_close;                      /* display.c: the window is being closed (the game must run to exit) */
 __declspec(dllimport) extern volatile int game_cutscene_fps;      /* game_shim_eh.c (the game library) */
-void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly);       /* nnhid.c */
+void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab);       /* nnhid.c */
 int nnhid_menu_key(int vk);
 int nvn_front_post_pcmenu(void);                           /* nvn_gl.c: 0 = not the Vulkan renderer */
 void display_vsync_apply(void);                            /* display.c */
@@ -49,8 +49,11 @@ void display_mouse_want(int on);
 int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
 const char *nnpad_prompts_setting(void);
 int nnpad_prompts_set(const char *val);
+const char *nnpad_menu_swap_setting(void);
+int nnpad_menu_swap_set(const char *val);
+int nnpad_menu_swapped(void);
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP };   /* A_PROMPTS, A_MENU_SWAP: keys of controllers.ini */
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -79,6 +82,8 @@ static const Row k_rows[] = {
      {"keep", "stretch"}, {"Keep 16:9", "Stretch"}},
     {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
      {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
+    {"swap_confirm", "Swap Confirm", "Menus confirm with B and go back with A, and show it. Gameplay and the keyboard stay the same. This panel follows when it next opens.", NULL, "off", A_MENU_SWAP, 0,
+     {"off", "on"}, {"Off", "On"}},
 };
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
@@ -89,6 +94,7 @@ static int g_sel, g_cur[NROW], g_start[NROW], g_shown[NROW], g_lock_why[NROW], g
 static char g_raw[NROW][32];                               /* a value of the file that is none of the row's: shown as it is */
 static unsigned g_ver;
 static int g_env_cut, g_env_set[NROW];
+static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
 /* the environment as the program started (gfx_options sets SSBU_CUTSCENE_FPS itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
@@ -107,9 +113,10 @@ static void menu_init(void) {                              /* the first opening:
     char v[64];
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
-        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || gfx_ini_get(r->key, v, sizeof v);
+        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || gfx_ini_get(r->key, v, sizeof v);
         if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* SSBU_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
+        else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (!have) snprintf(v, sizeof v, "%s", r->dflt);
         g_shown[i] = !r->optional || have;
         if ((g_cur[i] = find_val(i, v)) < 0) snprintf(g_raw[i], sizeof g_raw[i], "%s", v);
@@ -279,9 +286,9 @@ static void draw_panel(int W, int H) {
     int fy = ph - (int)(38 * s);
     float fpx = 22 * s, x = pad + 6 * s;
     rect(pad, ph - foot_h, pw - 2 * pad, 1, C_GOLD_DIM, 1);
-    button(x, fy, fpx, "A", "Change", C_GOLD); x += text_w("Change", fpx, 0) + 66 * s;
+    button(x, fy, fpx, g_swap ? "B" : "A", "Change", C_GOLD); x += text_w("Change", fpx, 0) + 66 * s;
     g_close_r[0] = (int)x; g_close_r[1] = fy - (int)(30 * s); g_close_r[3] = (int)(44 * s);
-    button(x, fy, fpx, "B", "Close", C_GOLD); x += text_w("Close", fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
+    button(x, fy, fpx, g_swap ? "A" : "B", "Close", C_GOLD); x += text_w("Close", fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
     const char *keys = "F1 \xC2\xB7 Start + Select";
     text(pw - pad - 6 * s - text_w(keys, fpx, 0), fy, keys, fpx, C_GOLD_DIM, 0);
 }
@@ -363,6 +370,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
     else if (r->apply == A_PROMPTS) ok = nnpad_prompts_set(r->val[k]);
+    else if (r->apply == A_MENU_SWAP) ok = nnpad_menu_swap_set(r->val[k]);
     else ok = gfx_option_set(r->key, r->val[k]);
     if (!ok) return;
     g_cur[i] = k;
@@ -427,7 +435,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     display_mouse_want(0);                                 /* the cursor back for the menu (the mouse camera lets it go) */
     while (g_open && !g_display_close) {
         uint64_t b; int lx, ly, mx, my, md;
-        nnhid_menu_read(&b, &lx, &ly);
+        nnhid_menu_read(&b, &lx, &ly, g_swap);
         enum { BA = 1 << 0, BB = 1 << 1, BPLUS = 1 << 10, BMINUS = 1 << 11, BLEFT = 1 << 12, BUP = 1 << 13, BRIGHT = 1 << 14, BDOWN = 1 << 15 };
         int up = (b & BUP) || ly > 16000 || nnhid_menu_key(VK_UP), down = (b & BDOWN) || ly < -16000 || nnhid_menu_key(VK_DOWN);
         int left = (b & BLEFT) || lx < -16000 || nnhid_menu_key(VK_LEFT), right = (b & BRIGHT) || lx > 16000 || nnhid_menu_key(VK_RIGHT);
@@ -479,6 +487,7 @@ static void menu_open(const char *why) {
     AcquireSRWLockExclusive(&g_lock);
     if (!g_font.data && !stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
     if (!g_inited) menu_init();
+    g_swap = nnpad_menu_swapped();
     g_ver++;
     ReleaseSRWLockExclusive(&g_lock);
     InterlockedExchange(&g_guest_frozen, 1);               /* the game stops at its next SDK call (hostrt.c) */

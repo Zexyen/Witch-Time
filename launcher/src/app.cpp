@@ -75,6 +75,7 @@ const std::vector<SettingDef>& setting_defs()
 		{"aspect", "Aspect", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, "/controllers.ini", "general"},
 	};
 	return d;
 }

@@ -652,10 +652,11 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
     }
     if (id == 0) {                                            /* [witchtime] button prompts follow the device: at once when it changes, else a few times a second */
         void prompts_tick(void);
+        void menu_swap_tick(void);                            /* options_row.c */
         static int used = -1, polls;
         int changed = prompts_used >= 0 && prompts_used != used;
         if (changed) { used = prompts_used; nnpad_prompts_used(used); }
-        if (changed || !(++polls & 15)) prompts_tick();
+        if (changed || !(++polls & 15)) { prompts_tick(); menu_swap_tick(); }
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
     if (id == 0 && r1_on()) r1_pad(&buttons, &lx, &ly, &rx, &ry);
@@ -708,14 +709,14 @@ static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
  * player's keys and the first controller, without the side effects of a game poll (input sequence, recording, statistics). */
 int pcmenu_gate(uint32_t id, uint64_t buttons);
 static void pad_gate(uint64_t out, uint32_t id) { if (pcmenu_gate(id, rd64(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18); }
-void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly) {
+void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab) {      /* swap_ab: the pad's A and B, not the keys' */
     static const struct { int vk, bit; } map[] = {{'Z', BTN_A}, {'X', BTN_B}, {'J', BTN_LEFT}, {'I', BTN_UP}, {'L', BTN_RIGHT}, {'K', BTN_DOWN},
                                                   {0, BTN_PLUS}, {0, BTN_MINUS}};      /* (Start + Select close it: the keyboard's bindings for them) */
     uint64_t b = 0;
     int x = (key_for(0, VK_RIGHT, 18) - key_for(0, VK_LEFT, 16)) * STICK_MAX, y = (key_for(0, VK_UP, 17) - key_for(0, VK_DOWN, 19)) * STICK_MAX;
     NnPadState ps;
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++) if (key_for(0, map[i].vk, map[i].bit)) b |= 1ull << map[i].bit;
-    if (sdl_on() && devices_live() && nnpad_get(0, &ps)) { b |= ps.buttons; if (ps.lx || ps.ly) { x = ps.lx; y = ps.ly; } }
+    if (sdl_on() && devices_live() && nnpad_get(0, &ps)) { b |= swap_ab ? (ps.buttons & ~3ull) | (ps.buttons & 1) << 1 | (ps.buttons >> 1 & 1) : ps.buttons; if (ps.lx || ps.ly) { x = ps.lx; y = ps.ly; } }
     *buttons = b; *lx = x; *ly = y;
 }
 int nnhid_menu_key(int vk) { return key(vk); }
