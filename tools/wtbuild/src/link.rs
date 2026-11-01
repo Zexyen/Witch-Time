@@ -37,6 +37,7 @@ const HOST_SOURCES: &[&str] = &[
     "nvn_vk.c",
     "mx_translate.c",
     "tex_decode.c",
+    "tex_pack.c",
     "nnfs.c",
     "clib.c",
     "nntime.c",

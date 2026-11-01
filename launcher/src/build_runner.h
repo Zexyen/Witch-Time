@@ -14,7 +14,7 @@ public:
 	// the build's steps, in order (tools/wtbuild/src/setup.rs STEPS, scripts/setup.py STEPS)
 	static const std::vector<std::string>& steps();
 
-	bool start(const std::string& repo, const std::vector<std::string>& args);
+	bool start(const std::string& repo, const std::vector<std::string>& args, const std::string& command = "setup");
 	void stop();                         // ends the build; it resumes from the step it was in next time
 	bool poll();                         // reads what is new; true when anything changed
 #ifdef _WIN32
@@ -29,7 +29,7 @@ public:
 	std::map<std::string, std::string> took;   // and how long each took, as the build says it
 	std::string failed;                  // the step that failed
 	std::vector<std::string> lines;      // the output, without the step lines
-	int compiled = 0, to_compile = 0;    // the compile step's progress ([n/total] in build/logs/compile.log)
+	int compiled = 0, to_compile = 0;    // the compile step's progress ([n/total] in build/logs/compile.log), or which archive `textures` is at
 	double started_at = 0;
 
 private:

@@ -727,7 +727,7 @@ static void vin_describe(int nattr, const uint32_t *vattr, const uint32_t *vstre
 typedef struct VView { EView e; int vtype, attach; VkImageView view; struct VView *next; } VView;
 struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
-    int w, h, d, levels, layers, samples, expand, decode, is3d, feedback, bpb, bw, bh;
+    int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
     VView *views; VTex *next, *prev;
@@ -1026,6 +1026,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->fmt = tex_vkfmt(b->format, &vt->expand, &vt->decode);
         if (!vt->fmt || !nvn_front_fmt(b->format, &f)) { static char msg[80]; snprintf(msg, sizeof msg, "texture format 0x%x", b->format); nvn_vk_missing(msg); vt->fmt = VK_FORMAT_R8G8B8A8_UNORM; nvn_front_fmt(0x25, &f); }
         int bc3 = vt->decode && (vt->fmt == VK_FORMAT_BC3_UNORM_BLOCK || vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK);
+        if (bc3 && fmt_supported(VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) && nvn_front_tex_bc7(t)) { vt->bc7 = 1; vt->fmt = vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK; }      /* #54: blocks of the same size */
         vt->bpb = bc3 ? 16 : vt->decode ? 4 : vt->expand ? f.bpb / 3 * 4 : f.bpb; vt->bw = bc3 ? 4 : vt->decode ? 1 : f.bw; vt->bh = bc3 ? 4 : vt->decode ? 1 : f.bh;
         vt->aspect = fmt_aspect(vt->fmt);
         vt->w = b->width > 0 ? b->width : 1; vt->h = b->height > 0 ? b->height : 1; vt->d = b->depth > 0 ? b->depth : 1;
@@ -1097,7 +1098,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         g_put_vt = vt;
         cmd_begin();
         LARGE_INTEGER fru0, fru1, fruf; QueryPerformanceCounter(&fru0);
-        if (!nvn_front_tex_read(t, vt->decode && vt->bw == 4 ? 2 : vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
+        if (!nvn_front_tex_read(t, vt->bc7 ? 3 : vt->decode && vt->bw == 4 ? 2 : vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
         R.uploads++;
         if (framelog_on()) printf("FRU f%lld upload %p fmt 0x%x %dx%d levels %d decode %d mem %p draw %lld %.2f ms\n", nvn_front_frame_next(), (void *)t, t->b.format, t->b.width, t->b.height, t->b.levels, vt->decode, (void *)t->mem, (long long)R.frame_draws,
                                   (QueryPerformanceCounter(&fru1), QueryPerformanceFrequency(&fruf), (double)(fru1.QuadPart - fru0.QuadPart) * 1000.0 / (double)fruf.QuadPart));      /* TEST ONLY: SSBU_VK_FRAMELOG */

@@ -49,6 +49,7 @@
 #include "gfx_options.h"
 #include "nvn_front.h"
 #include "tex_decode.h"
+#include "tex_pack.h"
 #include "nvn_sdk.h"
 #include "nvn_c4.h"
 
@@ -5851,13 +5852,38 @@ int nvn_front_tex_changed(Tex *t, uint32_t gen) {
     g_st.tex_uploads++;
     return 1;
 }
+/* #54: the BC7 pack (tex_pack.c): bc7_textures in graphics.ini, on by default (SSBU_BC7_TEXTURES=0 or 1 wins), when
+ * `wtbuild textures` has made one. */
+static int pack_on(void) {
+    static volatile LONG on = -1;
+    if (on < 0) {
+        static SRWLOCK lock;
+        AcquireSRWLockExclusive(&lock);
+        if (on < 0) {
+            int want = getenv("SSBU_BC7_TEXTURES") ? atoi(getenv("SSBU_BC7_TEXTURES")) != 0 : gfx_options()->bc7_textures, n = want ? tex_pack_open("../cache/bc7") : 0;
+            if (want) printf(n ? "nvn_vk_tex: bc7_textures: %d converted textures in ../cache/bc7\n" : "nvn_vk_tex: bc7_textures is on, but there is no pack in ../cache/bc7 (%d): textures are decoded as without it\n", n);
+            on = n > 0;
+        }
+        ReleaseSRWLockExclusive(&lock);
+    }
+    return on;
+}
+static LONG64 g_pack_hit, g_pack_miss, g_pack_ns, g_pack_redo, g_pack_lowq;
+static double g_pack_worst = 99;
+/* The pack's entry for these bytes of `t`. */
+static const TexPackEntry *pack_find(const Tex *t, const uint8_t *src) {
+    const TexBuilder *b = &t->b;
+    return tex_pack_find(tex_pack_hash(src, t->data_size), t->data_size, b->format, b->width, b->height, nvn_front_tex_levels(t), nvn_front_tex_layers(t));
+}
+
 /* #45, #54: ASTC textures decoded to BC3 ahead of their first draw, on threads of their own. At the draw a decode stops the
  * frame: 5.5 s of the render thread in 100 s of the chapter 3 ride, 629 textures in one frame, though 94 % of them were known
  * 30 frames before. A job copies the texture's bytes first and keeps the copy: nvn_front_tex_read uses the result only if the
  * memory still equals it, so what the game writes later is never missed. Whichever of worker and render thread lets go of a
- * job second frees it (owner). SSBU_TEXPREP_THREADS=<n> (default 3, 0 = at the draw, as before); SSBU_TEXPREP_CHECK=1 (test)
- * decodes again at the draw and compares. */
-typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok; } TexPrep;
+ * job second frees it (owner). With the BC7 pack a job finds the texture there instead (bc7 = 1: out holds BC7 blocks).
+ * SSBU_TEXPREP_THREADS=<n> (default 3, 0 = at the draw, as before); SSBU_TEXPREP_CHECK=1 (test) decodes again at the draw and
+ * compares; SSBU_TEXPACK_CHECK=1 (test) compares the pack's texels with the decode and prints the worst level. */
+typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok, bc7; } TexPrep;
 static TexPrep *g_tp_head, *g_tp_tail;
 static CRITICAL_SECTION g_tp_lock;
 static HANDLE g_tp_go;
@@ -5881,6 +5907,17 @@ static void tp_decode(TexPrep *j) {
     j->snap = malloc(j->size); o = j->out = malloc(total);
     if (!tmp || !j->snap || !o) { free(tmp); return; }
     memcpy(j->snap, j->src, j->size);
+    if (pack_on()) {
+        const TexPackEntry *e = pack_find(t, j->snap);
+        if (e && e->raw == total && tex_pack_read(e, o)) {
+            free(tmp);
+            InterlockedIncrement64(&g_pack_hit);
+            j->bytes = total; j->bc7 = j->ok = 1;
+            InterlockedAdd64(&g_tp_held, (LONG64)(total + j->size));
+            return;
+        }
+        InterlockedIncrement64(&g_pack_miss);
+    }
     for (int layer = 0; layer < L.layers; layer++)
         for (int l = 0; l < levels && l < L.levels; l++) {
             const uint8_t *p = tex_level_ptr(&L, j->snap, l, layer);
@@ -5904,7 +5941,7 @@ static DWORD WINAPI tp_worker(LPVOID a) {
             if (j && !(g_tp_head = j->next)) g_tp_tail = NULL;
             LeaveCriticalSection(&g_tp_lock);
             if (!j) break;
-            if (!j->owner) tp_decode(j);
+            if (!j->owner) { LONG64 t0 = pf_now(); tp_decode(j); InterlockedAdd64(&g_pack_ns, pf_now() - t0); }
             if (InterlockedExchange(&j->owner, 1)) tp_free(j);
         }
     }
@@ -5940,6 +5977,15 @@ int nvn_front_tex_prep(Tex *t, size_t *bytes) {
     for (int k = 1; k < g_tp_n && g_tp_head; k++) SetEvent(g_tp_go);
     return 0;
 }
+/* A new image: 1 = it takes BC7, because the pack has this texture. What a finished job found holds; a read at the use then
+ * finds the same bytes, or (the game wrote them meanwhile) tex_encode_bc7 makes the blocks. */
+int nvn_front_tex_bc7(Tex *t) {
+    if (!pack_on()) return 0;
+    TexPrep *j = t->prep;
+    if (j && j->owner && j->ok) return j->bc7;
+    const uint8_t *src = t->b.packaged ? P(t->b.packaged) : t->mem;
+    return src && t->data_size && (t->b.packaged || !t->limit || src + t->data_size <= t->limit) && pack_find(t, src) != NULL;
+}
 void nvn_front_tex_prep_drop(Tex *t) {
     TexPrep *j = t->prep;
     if (!j) return;
@@ -5958,6 +6004,9 @@ static TexPrep *tp_take(Tex *t, const uint8_t *src) {
     return NULL;
 }
 void nvn_front_tex_prep_report(void) {
+    if (pack_on()) printf("nvn_vk_tex: bc7_textures: %lld textures from the pack, %lld not in it, %lld read again after the game changed them\n", (long long)g_pack_hit, (long long)g_pack_miss, (long long)g_pack_redo);
+    if (getenv("SSBU_TEXPACK_CHECK")) printf("nvn_vk_tex: TEST: pack against decode: worst level %.1f dB, %lld levels under 30 dB\n", g_pack_worst, (long long)g_pack_lowq);
+    if (g_tp_n > 0) { LARGE_INTEGER q; QueryPerformanceFrequency(&q); printf("nvn_vk_tex: workers %.1f ms in all\n", (double)g_pack_ns * 1000.0 / (double)q.QuadPart); }
     if (g_tp_n > 0) printf("nvn_vk_tex: decoded ahead by %d threads: %lld used, %lld stale (the memory changed), %lld not finished at their use\n", g_tp_n, (long long)g_tp_hit, (long long)g_tp_stale, (long long)g_tp_late);
     if (getenv("SSBU_TEXPREP_CHECK")) printf("nvn_vk_tex: TEST: %lld levels decoded ahead differ from a decode at the use\n", (long long)g_tp_diff);
 }
@@ -5979,21 +6028,45 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
     TexLayout L;
     tex_lay(b, &L);
     int levels = nvn_front_tex_levels(t);
-    TexPrep *pj = decode == 2 ? tp_take(t, src) : NULL;
+    TexPrep *pj = decode >= 2 ? tp_take(t, src) : NULL;
+    if (pj && pj->bc7 != (decode == 3)) { tp_free(pj); pj = NULL; }      /* blocks of the other format: not for this image */
     const uint8_t *pb = pj ? pj->out : NULL;
+    uint8_t *pack = NULL;
+    {   /* TEST ONLY: SSBU_TEXPACK_REDO=1: every second texture as if the game had changed it after the image was made */
+        static int redo = -1;
+        if (redo < 0) redo = getenv("SSBU_TEXPACK_REDO") != NULL;
+        if (redo && decode == 3 && (tex_pack_hash(src, t->data_size) >> 7 & 1)) { if (pj) { tp_free(pj); pj = NULL; } pb = NULL; g_pack_redo++; goto encode; }
+    }
+    if (decode == 3 && !pb) {                       /* stored as BC7 and not read ahead: from the pack, if it has these bytes */
+        const TexPackEntry *e = t->data_size ? pack_find(t, src) : NULL;
+        if (e && (pack = malloc(e->raw)) && tex_pack_read(e, pack)) { pb = pack; InterlockedIncrement64(&g_pack_hit); }
+        else { free(pack); pack = NULL; g_pack_redo++; }
+    }
+encode:
     for (int layer = 0; layer < L.layers; layer++) {
         for (int l = 0; l < levels && l < L.levels; l++) {
             const uint8_t *p = tex_level_ptr(&L, src, l, layer);
             size_t lin = L.lvl_linear_size[l], rgba = (size_t)L.lvl_w[l] * L.lvl_h[l] * 4, bc3 = (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16,
-                   need = lin + (decode ? rgba : 0) + (decode == 2 ? bc3 : 0);
+                   need = lin + (decode ? rgba : 0) + (decode >= 2 ? bc3 : 0) + (decode == 3 ? rgba : 0);
             if (pb) {
-                static int chk = -1;
-                if (chk < 0) chk = getenv("SSBU_TEXPREP_CHECK") != NULL;
-                if (chk) {      /* TEST ONLY */
+                static int chk = -1, pchk = -1;
+                if (chk < 0) { chk = getenv("SSBU_TEXPREP_CHECK") != NULL; pchk = getenv("SSBU_TEXPACK_CHECK") != NULL; }
+                if (chk && decode == 2) {      /* TEST ONLY */
                     if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
                     tex_deswizzle_level(&L, l, p, tmp);
                     decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, tmp + lin + rgba);
                     if (memcmp(tmp + lin + rgba, pb, bc3)) g_tp_diff++;
+                }
+                if (pchk && decode == 3) {     /* TEST ONLY: the pack's level against the ASTC decode, RGBA */
+                    if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
+                    tex_deswizzle_level(&L, l, p, tmp);
+                    decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, NULL);
+                    tex_decode_rgba8(0x4D, pb, L.lvl_w[l], L.lvl_h[l], tmp + lin + rgba);
+                    double se = 0;
+                    for (size_t i = 0; i < rgba; i++) { double d = (double)tmp[lin + i] - tmp[lin + rgba + i]; se += d * d; }
+                    double db = se > 0 ? 10 * log10(65025.0 * (double)rgba / se) : 99;
+                    if (db < g_pack_worst) g_pack_worst = db;
+                    if (db < 30) { g_pack_lowq++; printf("nvn_vk_tex: TEST: format 0x%x %dx%d level %d: %.1f dB against the decode\n", b->format, L.lvl_w[l], L.lvl_h[l], l, db); }
                 }
                 put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, pb, bc3, 0, 0);
                 pb += bc3;
@@ -6017,17 +6090,19 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
             tex_deswizzle_level(&L, l, p, tmp);
             if (decode) {
                 unsigned bad0 = tex_astc_bad_blocks;
-                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, decode == 2 ? tmp + lin + rgba : NULL);
+                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, decode == 2 ? tmp + lin + rgba : NULL);      /* 3: tex_encode_bc7 below */
                 if (tex_astc_bad_blocks != bad0 && getenv("SSBU_ASTC_LOG"))      /* TEST ONLY: which texture and level the rejected blocks came from */
                     printf("tex_decode: TEST: %u rejected in format 0x%x %dx%d level %d of %d layer %d, layout %02x %02x %02x %02x %02x %02x %02x %02x, flags 0x%x\n", tex_astc_bad_blocks - bad0, b->format, b->width, b->height, l, L.levels, layer,
                            b->layout[0], b->layout[1], b->layout[2], b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], (unsigned)b->flags);
-                if (decode == 2) put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin + rgba, bc3, 0, 0);      /* [issue 22] BC3 blocks */
+                if (decode == 3) { tex_encode_bc7(tmp + lin, L.lvl_w[l], L.lvl_h[l], tmp + lin + rgba); put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin + rgba, bc3, 0, 0); }      /* #54 */
+                else if (decode == 2) put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin + rgba, bc3, 0, 0);      /* [issue 22] BC3 blocks */
                 else put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin, rgba, 1, 0);
             } else put(t, l, layer, L.lvl_w[l], L.lvl_h[l], L.lvl_d[l], tmp, lin, 0, 0);
             g_st.tex_bytes += (LONG64)lin;
         }
     }
     if (pj) tp_free(pj);
+    free(pack);
     return 1;
 }
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p) {

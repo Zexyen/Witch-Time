@@ -354,10 +354,17 @@ jobs:
       - name: wtbuild
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: x86_64-w64-mingw32-clang
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS: -C target-feature=+crt-static
+          CC_x86_64_pc_windows_gnullvm: x86_64-w64-mingw32-clang
+          AR_x86_64_pc_windows_gnullvm: llvm-ar
         run: |
           rustup target add x86_64-pc-windows-gnullvm
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          # intel_tex_2 packs its encoder for MSVC only: the same archives under the names it asks for on this target, the
+          # C++ half of its ASTC encoder and MSVC's libraries empty (only BC7 is called; msvc_shim in src/texpack.rs)
+          ispc="$(ls -d ~/.cargo/registry/src/*/intel_tex_2-*/src/ispc)"; libs="$RUNNER_TEMP/ispc-gnullvm"; mkdir -p "$libs"
+          for k in kernel kernel_astc; do cp "$ispc/${k}x86_64-pc-windows-msvc.lib" "$libs/lib${k}x86_64-pc-windows-gnullvm.a"; done
+          for e in ispc_texcomp_astcx86_64-pc-windows-gnullvm-MT LIBCMT OLDNAMES libcpmt; do llvm-ar rcs "$libs/lib$e.a"; done
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS="-C target-feature=+crt-static -L native=$libs"
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml --target x86_64-pc-windows-gnullvm
 
       # FFmpeg for the movies, as in the Linux job: shared and LGPL, nothing found on the runner (--disable-autodetect), so

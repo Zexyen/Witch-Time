@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -45,6 +45,13 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
           "$RUNNER_TEMP/plat_hash_test"
+
+      - name: The BC7 pack's reader and the fallback encoder (runtime/tex_pack.c, tex_decode.c, issue 54)
+        run: |
+          clang -O2 -Wall -I runtime tests/tex_pack_test.c runtime/tex_pack.c -o "$RUNNER_TEMP/tex_pack_test"
+          (cd "$RUNNER_TEMP" && ./tex_pack_test)
+          clang -O2 -I runtime tests/bc7_encode_test.c runtime/tex_decode.c -lm -o "$RUNNER_TEMP/bc7_encode_test"
+          "$RUNNER_TEMP/bc7_encode_test"
 
       - name: The shader translator's loop guard (runtime/mx_translate.c, issue 26)
         run: |

@@ -21,7 +21,7 @@ const std::vector<std::string>& BuildRunner::steps()
 	return s;
 }
 
-bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::string>& args)
+bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::string>& args, const std::string& command)
 {
 	if (running())
 		return false;
@@ -36,7 +36,7 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 	exit_code = 0;
 #ifdef _WIN32
 	set_env("PYTHONUNBUFFERED", "1", true);
-	std::vector<std::string> argv = build_command(repo, "setup");
+	std::vector<std::string> argv = build_command(repo, command);
 	argv.insert(argv.end(), args.begin(), args.end());
 	if (!child.start(argv, repo))
 		return false;
@@ -55,7 +55,7 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 		if (chdir(repo.c_str()))
 			_exit(127);
 		setenv("PYTHONUNBUFFERED", "1", 1);
-		std::vector<std::string> argv = build_command(repo, "setup");
+		std::vector<std::string> argv = build_command(repo, command);
 		argv.insert(argv.end(), args.begin(), args.end());
 		std::vector<char*> a;
 		for (std::string& s : argv)
@@ -111,6 +111,8 @@ void BuildRunner::line(const std::string& l)
 		else
 		{
 			current = name;
+			if (name == "textures")
+				std::sscanf(l.c_str(), "[%d/%d]", &compiled, &to_compile);
 			if (name == "compile")                   // only what this run writes counts (the log is appended to)
 			{
 				std::ifstream f(repo + "/build/logs/compile.log", std::ios::binary | std::ios::ate);

@@ -11,6 +11,7 @@ mod tables;
 mod target;
 mod text;
 mod text_strings;
+mod texpack;
 mod util;
 
 use std::io::{BufRead, Write};
@@ -137,6 +138,14 @@ fn main() {
             let romfs = opt("--romfs").unwrap_or_else(|| repo.join("targets").join("romfs"));
             let mods = opt("--out").unwrap_or_else(|| repo.join("mods"));
             text::run(&repo, &romfs, opt("--dump").as_deref(), &mods, &|_| {}, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+        }
+        Some("textures") => {
+            // #54: the BC7 pack of the game's ASTC textures. textures [--romfs <folder>] [--dump <--pkz-dump folder>] [--jobs N]
+            let repo = repo_root(&args);
+            let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(PathBuf::from);
+            let romfs = opt("--romfs").unwrap_or_else(|| repo.join("targets").join("romfs"));
+            let jobs = opt("--jobs").and_then(|j| j.to_str()?.parse().ok()).unwrap_or(0);
+            texpack::run(&repo, &romfs, opt("--dump").as_deref(), jobs, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         Some("sha256") if args.len() == 2 => {
             // the launcher's updater checks a downloaded release with it

@@ -202,6 +202,7 @@ int tex_convert_rgba8(int nvn_format, const void *src, int w, int h, uint8_t *ds
 
 /* RGBA8 (w x h, row pitch w * 4) -> BC3 blocks, ((w + 3) / 4) * ((h + 3) / 4) * 16 bytes, rows of blocks packed. */
 void tex_encode_bc3(const uint8_t *rgba, int w, int h, uint8_t *dst);
+void tex_encode_bc7(const uint8_t *rgba, int w, int h, uint8_t *dst);      /* #54: mode 6 only, the same blocks */
 
 /* ---------------------------------------------------------------- helpers */
 float tex_half_to_float(uint16_t h);

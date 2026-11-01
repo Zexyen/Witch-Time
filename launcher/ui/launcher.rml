@@ -216,6 +216,11 @@
 					</div>
 				</div>
 			</div>
+			<div class="row texrow">
+				<div class="what"><div class="name">Converted textures</div><div class="note">{{ tex_note }}</div></div>
+				<div class="button small" data-if="tex_action != ''" data-event-click="convert_textures()">{{ tex_action }}</div>
+				<div class="button small quiet" data-if="tex_remove" data-event-click="remove_textures()">REMOVE</div>
+			</div>
 			<div class="note-line">Saved to the config folder as you change them. The same options are in the game while you play (F1).</div>
 		</div>
 	</div>
