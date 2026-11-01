@@ -92,7 +92,7 @@ build/mxcheck <dir> [-v] [-o <dir for the GLSL of failing stages>]
 ```
 
 On the 7,838 vertex / fragment / compute stages of a run: **5,627 compiled at the start of stage 3, 7,838 now**. Added:
-`SHFL` (warp shuffle on `subgroupShuffle`, 32-lane warps inside 32/64-wide subgroups; in fragment stages on quad swaps with the lane from `gl_FragCoord`, issue 66), `VOTE` / lane id / lane masks on KHR
+`SHFL` (warp shuffle on `subgroupShuffle`, 32-lane warps inside 32/64-wide subgroups; in fragment stages on fine derivatives with the lane from `gl_FragCoord`, issues 66 and 54), `VOTE` / lane id / lane masks on KHR
 subgroups, `FSWZADD` (with `.NDV`), `BAR.SYNC`, `ATOM` / `RED` / `ATOMS` (global through per-op helpers on the storage
 blocks, CAS loops where GLSL has no atomic), image accesses whose handle register was loaded from an image slot (all 799 of
 them), texel offsets from registers (lowered), `VMNMX`, `SAM` / `RAM`. The 29 programs with **tessellation** stages followed
