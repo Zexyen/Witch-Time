@@ -663,7 +663,8 @@ halved in 2:1 steps first).
   Shadow maps (1024 / 2048 square, a 2048 depth array) and other odd sizes stay as they are.
 - **Storage images**: fragment programs #1693 and #5548 write 800x448 / 720x408 / 512x288 targets with SUST at
   gl_FragCoord in the game's pixels; such an image is made again at the game's size the first time it is bound as a storage
-  image and kept there (`g_rs_keep`, 4-6 a run; the shaders that sample it use normalised coordinates).
+  image and kept there (`g_rs_keep`; the shaders that sample it use normalised coordinates). So are the depth levels below it
+  (`rs_pyramid.h`, "Depth pyramid at a scale"): 8-20 a run in all.
 - **Compute**: B3's compute dispatches touch no scaled image (one 64x64 storage image; `SSBU_VK_RTLOG=1` lists the render
   targets, every stage's storage images and any scaled image a compute stage samples), so their sizes need no change.
   Viewports, scissors, clears, copies, uploads, read-backs, `gl_FragCoord` and integer texel fetches in fragment stages
@@ -718,6 +719,28 @@ halved in 2:1 steps first).
 - **Not measured**: that first change on a PC whose cache has no `rs1` stages (the game translates what each draw needs, held,
   on the render thread; 3,755 stages took 110.7 s over a whole first run). Windows, and a change from the Options rows (their
   job post was seen working for vsync, not for the scale).
+
+## Depth pyramid at a scale (issue 93, 2026-11-01)
+
+Black triangles and cut-out steps along the outlines of characters at any `resolution_scale` above 1.0, worst when the game's
+dynamic resolution steps down, with colours that stop on a grid of 16 game pixels. The game builds a min/max depth pyramid:
+fs5548 stores the 1/2 level, fs5550 halves it to 1/4 and 1/8, and fs2263, in a pass with no attachments, tests lights against
+the depth range of each 16-pixel tile and stores the tile's light mask, read by the materials. fs5548's image was already kept
+at the game's size (a storage image), but 1/4 and 1/8 were scaled and fs2263 still takes 2x2 texels per tile: 17 % of the tile
+at 2.4. An edge outside those texels is left out of the tile's range, so the tile loses its lights.
+- **Fix**: the colour target of a draw from a kept image stays at the game's size when it is the next level (`rs_keep_level`,
+  the rule in `rs_pyramid.h`, `tests/rs_pyramid_test.c`). Dropped before the draw fills it, so no frame reads an empty level.
+  `rs_apply` leaves kept images alone, so a live change needs nothing more.
+- **Measured** (Linux, RX 9070 XT, the reporter's save, Chapter 1's intro, dynamic resolution forced down by test timestamps):
+  with the fix off "Why do you know our names?" and "And if they can pull it off" show the steps and
+  triangles of the reporter's Windows screenshots on the same outlines; with it on, not on the frames compared. Only fs5550 is
+  caught, at every dynamic size, in the intro and a chapter of play (an earlier form of the rule also caught fs1727, a radial
+  mask, which reads the 1/2 level through a UV: such a stage has inputs, fs5550 has none). 2.4 forced and nothing forced, and a
+  live 1.0 -> 2.4 -> 1.0 -> 2.4 under validation: 0 Vulkan call failures, no VUID. 0.8 ran on the earlier form only.
+- **Left as they are**: dark marks of a game pixel or two on the same outlines. They are there at 1.0 too, and with fs5548
+  reading the whole of its footprint at 2.4 (fs5548 still takes 2x2 texels of the scaled depth).
+- **Not measured**: NVIDIA and Windows, where it was reported. The square steps in the title's colours (issues 66, 89) fit this
+  grid, but that frame did not come up here (the title's scenes are random), so the fix is untested on them.
 
 ## Level of detail (2026-10-25)
 

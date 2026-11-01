@@ -778,6 +778,7 @@ static float rs_scale(void) {
     return g_rs;
 }
 #define RS_ON (rs_scale() != 1.0f)
+#include "rs_pyramid.h"
 /* [Recomps#1] the screen size the classes derive from is the game's window texture (Bayonetta 2: 1280x720, the size it
  * renders at; Smash: 1920x1080): nvn_gl.c win_initialize tells it (nvn_vk_rs_base); 1280x720 before that. With Smash's
  * fixed 1920x1080 no image of ours was ever scaled (finding 82). */
@@ -819,7 +820,8 @@ static int wintex_is(const Tex *t) { if (nvn_front_tex_is_window(t)) return 1; f
 static void wintex_note(Tex *t) { if (!t || wintex_is(t)) return; for (int i = 0; i < 8; i++) if (!g_wintex[i]) { g_wintex[i] = t; return; } }
 /* [witchtime] Textures that stay at the game's size: a scaled image the game binds as a storage image (B3: fragment programs
  * #1693 / #5548 write 800x448, 720x408 and 512x288 targets with SUST at gl_FragCoord in the game's pixels) is dropped and made
- * again at its size the first time (resolve_image); its contents are written by the shader. */
+ * again at its size the first time (resolve_image); its contents are written by the shader. So are the levels below #5548's
+ * (rs_keep_level). */
 static Tex *g_rs_keep[256];
 static int g_rs_nkeep;
 static LONG64 g_rs_demoted;
@@ -891,6 +893,10 @@ static void vk_drop(int kind, void *host) {
     for (int i = 0; i < 8; i++) if (R.col[i].tex == t) { pass_end(); R.col[i].tex = NULL; }
     if (R.depth.tex == t) { pass_end(); R.depth.tex = NULL; }
     vt_garbage(vt);
+}
+static void rs_demote(Tex *t) {                     /* [witchtime] made again at the game's size at its next use (g_rs_keep) */
+    g_rs_keep[g_rs_nkeep++] = t; g_rs_demoted++;
+    g_rs_demoting = 1; vk_drop(K_TEX, t); g_rs_demoting = 0;
 }
 static int lvl_(int v, int l) { v >>= l; return v > 0 ? v : 1; }
 /* Track O. A temporary image of w x h (one level, one layer, the format of `like`) for an upload into, or a read-back from,
@@ -1880,6 +1886,13 @@ static int framelog_on(void) {                     /* [witchtime] TEST ONLY: SSB
     long long f = nvn_front_frame_next();
     return a >= 0 && f >= a && f <= b;
 }
+/* The colour target of a draw from a kept image is the next level of the depth pyramid (rs_pyramid.h): dropped before the draw
+ * fills it. vk_drop lets go of the target, and the next pass makes it again. */
+static void rs_keep_level(Tex *c) {
+    if (c->dead || !vt_get(c)->rs || g_rs_nkeep >= 256) return;
+    rs_demote(c);
+    R.col[0].tex = c;
+}
 /* The image view and sampler of one declared sampler of stage s. May end the pass (upload, layout change). */
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
@@ -1891,6 +1904,8 @@ static void resolve_sampler(int s, VStage *v, int i) {
     if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[0] += x - rt0; rt0 = x; }
     g_dtex[g_ndtex].view = g_dummy.v[v->smp[i].dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if (r & 1) {
+        Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
+        if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
         VTex *vt = vt_get(t);
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
         EView e;
@@ -2904,8 +2919,7 @@ static int resolve_image(int s, VStage *v, int k) {
     if (!(nvn_front_handle(R.tpool, NULL, R.nvn_img[s][k], &t, &view, NULL) & 1)) { nvn_vk_missing("a storage image whose handle names no texture (nvnCommandBufferBindImage)"); return 0; }
     VTex *vt = vt_get(t);
     if (vt && vt->rs && g_rs_nkeep < 256) {        /* [witchtime] a storage image stays at the game's size (g_rs_keep) */
-        g_rs_keep[g_rs_nkeep++] = t; g_rs_demoted++;
-        g_rs_demoting = 1; vk_drop(K_TEX, t); g_rs_demoting = 0;
+        rs_demote(t);
         vt = vt_get(t);
     }
     int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
@@ -5396,7 +5410,7 @@ static void vkd_shutdown(void) {
     }
     frstat_report();
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: SSBU_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
-    if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size because they are storage images (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
+    if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
     if (RS_ON) printf("nvn_vk_scale: the scaled images made took %.0f MB of device memory in all\n", (double)g_rs_bytes / 1048576.0);      /* PR #8 review */
