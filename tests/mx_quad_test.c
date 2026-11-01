@@ -1,6 +1,7 @@
 /* runtime/mx_translate.c, [issue 66]: a fragment stage finds its place in the quad from the pixel and reads its neighbours with fine
- * derivatives, so nothing in it depends on subgroups or gl_SubgroupInvocationID, which AMD's compiler counts over the live lanes only. Other stages
- * keep the lane id and subgroupShuffle. Hand-made stage: S2R lane, SHFL.XOR, FSWZADD, EXIT.
+ * derivatives, never with gl_SubgroupInvocationID, which AMD's compiler counts over the live lanes only. The read is a snapshot taken at
+ * the header of a wave-uniform dispatcher (every lane of the quad present), and a SHFL that is not first in its case starts one, entered
+ * through the header. Other stages keep the lane id and subgroupShuffle. Hand-made stage: S2R lane, SHFL.XOR, FSWZADD, EXIT.
  *   clang -O2 -Wall -I runtime tests/mx_quad_test.c runtime/mx_translate.c -o build/mx_quad_test */
 #include <stdio.h>
 #include <string.h>
@@ -28,8 +29,12 @@ int main(void) {
     memset(code, 0, sizeof code);
     memcpy(code + 0x50, w, sizeof w);
     char *f = translate(1, code, sizeof code), *c = translate(5, code + 0x50, sizeof w);
-    int ok = f && c && strstr(f, "mx_quad(sv, (src ^ tid) & 3u)") && strstr(f, "dFdxFine(h)") && strstr(f, "dFdyFine(x)") && strstr(f, "gl_FragCoord.y") &&
-             !strstr(f, "subgroupQuadSwap") && !strstr(f, "#extension GL_KHR_shader_subgroup") &&
+    int ok = f && c && strstr(f, "dFdxFine(h)") && strstr(f, "dFdyFine(x)") && strstr(f, "gl_FragCoord.y") &&
+             strstr(f, "while (subgroupAny(pc != 0u)) {") && strstr(f, "uint mq_need = subgroupOr(mx_qneed(pc));") &&
+             strstr(f, "uvec3 mq_r1 = uvec3(0u); if ((mq_need & 0x1u) != 0u) mq_r1 = mx_quad3(r1);") &&
+             strstr(f, "uint mx_qneed(uint p) { switch (p) { case 2u: return 0x1u; default: return 0u; } }") &&
+             strstr(f, "{ pc = 2u; continue; }\ncase 2u:") && strstr(f, "sh = m == 1u ? mq_r1.x : m == 2u ? mq_r1.y : m == 3u ? mq_r1.z : sv; r2 = ib ? sh : sv;") &&
+             !strstr(f, "subgroupQuadSwap") && !strstr(f, "GL_KHR_shader_subgroup_shuffle") &&
              !strstr(f, "gl_SubgroupInvocationID") && !strstr(f, "subgroupShuffle(") &&
              strstr(c, "subgroupShuffle(sv") && strstr(c, "gl_SubgroupInvocationID") && !strstr(c, "mx_quad") && !strstr(c, "gl_FragCoord");
     if (!ok && f) puts(f);
