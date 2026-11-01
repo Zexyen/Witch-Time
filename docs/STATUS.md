@@ -1199,7 +1199,7 @@ a value saved for the next start. The launcher never names the game: the code na
   in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel, the two hands, the
   runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
   build screen's log hides behind Show log; the settings are the panel's own rows, names and values (`setting_defs()`
-  in `app.cpp`, in the panel's order: Window size, Frame rate, Texture detail and Face buttons are new there) under three
+  in `app.cpp`, in the panel's order: Window size, Frame rate and Texture detail are new there; Face buttons is left out, it stays auto) under three
   tabs, Display, Graphics and Controls (Q / E or the shoulder buttons, `tab` in the model), each a staircase of rows. On
   the text-heavy screens (dump, mods, settings) the wheel is small, at the bottom left on the indigo side. Fonts:
   Marcellus, Source Sans 3 (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.

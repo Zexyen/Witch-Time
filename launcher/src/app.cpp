@@ -86,8 +86,6 @@ const std::vector<SettingDef>& setting_defs()
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
 		{"swap_confirm", "Swap Confirm", "Menus confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"layout", "Face buttons", "By position, as on a Switch, or by printed letter",
-			{{"auto", "Auto"}, {"positional", "Position"}, {"labels", "Printed letter"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
