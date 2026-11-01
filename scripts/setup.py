@@ -159,7 +159,7 @@ class Ctx:
             with open(self.state_file) as f:
                 self.state = json.load(f)
         self.dump = os.path.abspath(a.dump) if a.dump else self.state.get('dump')
-        self.jobs = a.jobs or min(24, os.cpu_count() or 8)
+        self.jobs = a.jobs or max(1, min(24, (os.cpu_count() or 8) // 2))
         self.tools = {}                                      # environment variables for the children, filled by deps
 
     def save(self):

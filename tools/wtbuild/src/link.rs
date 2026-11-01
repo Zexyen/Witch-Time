@@ -240,12 +240,12 @@ impl Clang<'_> {
         run(&mut c, None)
     }
 
-    /// `-c src -o obj` for each (src, obj) on 16 threads: the failures (name, output), in order
+    /// `-c src -o obj` for each (src, obj) on default_jobs threads: the failures (name, output), in order
     fn compile_all(&self, jobs: &[(PathBuf, PathBuf)], flags: &[String]) -> Vec<(String, String)> {
         let failed = Mutex::new(Vec::new());
         let next = AtomicUsize::new(0);
         std::thread::scope(|sc| {
-            for _ in 0..16 {
+            for _ in 0..crate::util::default_jobs() {
                 sc.spawn(|| loop {
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     let Some((src, obj)) = jobs.get(i) else { break };

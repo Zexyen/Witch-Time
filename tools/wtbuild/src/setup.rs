@@ -1011,10 +1011,7 @@ pub fn main(args: &[String]) -> i32 {
         .as_deref()
         .map(abspath)
         .or_else(|| state.get("dump").and_then(|v| v.as_str()).map(String::from));
-    let jobs = a
-        .jobs
-        .filter(|j| *j > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8).min(24));
+    let jobs = a.jobs.filter(|j| *j > 0).unwrap_or_else(crate::util::default_jobs);
     let mut cx = Ctx {
         repo: repo.clone(),
         targets: Path::new(&repo).join("targets"),

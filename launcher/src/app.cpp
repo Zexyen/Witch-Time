@@ -781,7 +781,7 @@ void App::refresh_settings()
 	else if (used > 0)
 		std::snprintf(note, sizeof note, "Stopped part way, %.1f GB so far of about 16 GB. Continue, or remove them.", used / 1e9);
 	else
-		std::snprintf(note, sizeof note, "Normally made after a build. Takes about 16 GB of disk (%.0f GB free), 12 minutes on 4 cores, roughly 25 on a Steam Deck. Less CPU work while playing, a sharper picture.", room / 1e9);
+		std::snprintf(note, sizeof note, "Normally made after a build. Takes about 16 GB of disk (%.0f GB free), 16 minutes on 4 cores, roughly 33 on a Steam Deck. Less CPU work while playing, a sharper picture.", room / 1e9);
 	tex_note = note;
 	tex_action = !built || complete || room + used < need ? "" : used > 0 ? "CONTINUE" : "CONVERT";
 	tex_remove = used > 0;

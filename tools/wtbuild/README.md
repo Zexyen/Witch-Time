@@ -27,6 +27,8 @@ tools/wtbuild/target/release/wtbuild setup --dump <your dump folder> [--jobs N] 
                                            [--status] [--accept-modified] [--mods <folder>] [--llvm <folder>]
 ```
 
+`--jobs N` defaults to half the logical CPUs (at most 24), for `compile` and `textures` too.
+
 The launcher runs `build/wtbuild` (a release) or `tools/wtbuild/target/release/wtbuild` (a checkout), and falls back to
 `python3 scripts/setup.py` when neither is there.
 
@@ -40,7 +42,7 @@ Other commands, mostly for developers: `nso2elf <in> <out>`, `lift <main.elf> <o
 
 `wtbuild textures` is not a step of `setup`: the launcher runs it after a build that succeeds, unless `bc7_textures = off` or
 the drive lacks the room (#54); a build from the command line runs it by hand. It writes the game's 16,828 ASTC textures as BC7 to `build/cache/bc7`: 15.7 GB, and up to 3.2 GB more while it runs,
-12 minutes on 4 cores with 8 threads. It stops and resumes by family of archives (`src/texpack.rs`). `runtime/tex_pack.c`
+about 16 minutes on 4 cores. It stops and resumes by family of archives (`src/texpack.rs`). `runtime/tex_pack.c`
 reads the result when `bc7_textures = on`; `docs/STATUS.md`, "Converted textures" has the choice of format and the numbers.
 
 ASTC is decoded by the runtime's own `tex_decode.c` (`build.rs` compiles it in, through `src/tex_shim.c`), BC7 encoded by
