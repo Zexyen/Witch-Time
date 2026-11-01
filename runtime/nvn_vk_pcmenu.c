@@ -9,11 +9,11 @@
  *     while it is closed.
  *   - SSBU_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
  *     pcmenu_<n>.bmp (needs swapchain images with TRANSFER_SRC; the log says when they have none). */
-int pcmenu_is_open(void), pcmenu_visible(void);
+int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void);      /* kind: 1 the menu, 2 the hint, 3 the first-start screen */
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
-static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: the pixels are the menu's, not the hint's */
+static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: whose pixels these are (pcmenu_kind) */
 static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, said; } g_pcm_shot;
 
 static void pcm_shot_write(void) {                 /* the picture copied by the last present (the GPU has finished: cmd_wait_all) */
@@ -32,8 +32,7 @@ static void pcm_shot_write(void) {                 /* the picture copied by the 
 void nvn_vk_pcmenu_job(void *arg) {
     (void)arg;
     if (!V.alive) return;
-    int work = pcmenu_take_work(), r[4];
-    unsigned gen;
+    int work = pcmenu_take_work();
     if (work || g_pcm_shot.pending) cmd_wait_all();
     pcm_shot_write();
     if (work & 1) {      /* anisotropic filtering, texture_lod_bias: new samplers from now on; the old ones may still be named by cached descriptor sets */
@@ -45,21 +44,27 @@ void nvn_vk_pcmenu_job(void *arg) {
     }
     if (work & 2) { present_mode_pick(); if (V.swapchain) swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
     if (work & 4) rs_apply();
+    pcm_upload(!work && !g_pcm_shot.pending);
+    if (g_pcm_last.win && pcmenu_is_open()) vk_present2(&g_pcm_last, 1);      /* (the hint alone rides on the game's presents) */
+}
+/* the panel's pixels into the staging buffer when they changed (render thread; also the first-start screen, prep_first_hold) */
+static void pcm_upload(int wait) {
+    int r[4];
+    unsigned gen;
     if (pcmenu_panel_size((int)V.extent.width, (int)V.extent.height, r, &gen) && (gen != g_pcm.gen || !g_pcm.ready)) {
         uint64_t need = (uint64_t)r[2] * (uint64_t)r[3] * 4;
-        if (!work && !g_pcm_shot.pending) cmd_wait_all();      /* the staging buffer may be read by a present in flight */
+        if (wait) cmd_wait_all();                          /* the staging buffer may be read by a present in flight */
         if (need > g_pcm.size) {
             if (g_pcm.buf) { vkDestroyBuffer(V.device, g_pcm.buf, NULL); vmem_free(g_pcm.mem); }
             g_pcm.buf = vbuf_new(need, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &g_pcm.mem); g_pcm.size = need;
         }
         pcmenu_panel_read(g_pcm.mem.map, r[2], r[3]);
-        memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_is_open();
+        memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_kind();
         if (getenv("SSBU_PCMENU_SHOT")) g_pcm_shot.pending = -1;       /* the next present */
     }
-    if (g_pcm_last.win && pcmenu_is_open()) vk_present2(&g_pcm_last, 1);      /* (the hint alone rides on the game's presents) */
 }
 static void pcm_vk_draw(VkImage tgt) {
-    if (!pcmenu_visible() || !g_pcm.ready || g_pcm.panel != pcmenu_is_open()) return;      /* (not the other one's pixels before the next job)*/
+    if (!g_pcm.ready || g_pcm.panel != pcmenu_kind()) return;      /* (not another screen's pixels before the next job) */
     int W = (int)V.extent.width, H = (int)V.extent.height, *r = g_pcm.r;
     if (r[0] < 0 || r[1] < 0 || r[0] + r[2] > W || r[1] + r[3] > H) return;      /* made for another window size: the next job makes it again */
     VkBufferImageCopy c;

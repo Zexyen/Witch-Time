@@ -16,6 +16,7 @@ struct CheckRow { Rml::String text, right, state; };
 struct StepRow { Rml::String num, name, note, right, state; };
 struct ModRow { Rml::String name, note, kind; bool on = true; };
 struct SettingRow { Rml::String name, note, value; };
+struct MenuRow { Rml::String label, tag; std::string action; bool dim = false; };   // a bar of the title's staircase
 
 class App {
 public:
@@ -43,7 +44,8 @@ private:
 	Rml::String screen = "title";
 	bool built = false, status_bad = false;
 	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
-	Rml::String status_title, status_line, footer_info;
+	Rml::String status_title, status_line, footer_info, version;
+	std::vector<MenuRow> menu;
 	Rml::String update_tag;            // a newer release to install, or empty
 	bool stale = false;                // built by another release than this launcher
 	Rml::String dump;
@@ -55,7 +57,8 @@ private:
 	bool building = false;
 	float progress = 0;
 	int percent = 0;
-	Rml::String phase, build_aside, build_error;
+	Rml::String phase, build_aside, build_line, build_error;
+	bool show_log = false;             // the build screen's log box
 	std::vector<StepRow> steps;
 	std::vector<Rml::String> log;
 	std::vector<ModRow> mods;

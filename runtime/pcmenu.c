@@ -18,7 +18,9 @@
  * Rows with `optional` appear only when graphics.ini has their key (for keys of later builds; a frame-rate cap: one more row,
  * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
- * a subset of Noto Serif (SIL OFL 1.1, third_party/OFL-NotoSerif.txt), embedded with #embed; opaque, dark, gold lines.
+ * subsets of Marcellus and Source Sans 3 (SIL OFL 1.1, third_party/OFL-*.txt), embedded with #embed, the pictures from
+ * runtime/art the same way; opaque, the whole window: the launcher's look (launcher/ui/witch.rcss). The same drawing
+ * makes the first-start screen (draw_prep) for nvn_vk_draw.c.
  * Some rows are not graphics.ini's: button_prompts, swap_confirm and layout, of controllers.ini, shown by the game when it runs on (prompts.c).
  * A second page, Controls, has the buttons of gameplay by character (docs/RE_NOTES.md section 9): A on a row, then the button
  * to use for it, or left / right to go through them (for a player without a pad to press). A button already in use changes
@@ -31,14 +33,21 @@
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#include <time.h>
 #include "gfx_options.h"
 #include "rebind.h"
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "third_party/stb_truetype.h"
 
-static const unsigned char k_font[] = {
-#embed "third_party/NotoSerif-pcmenu.ttf"
+static const unsigned char k_font_head[] = {               /* Marcellus (SIL OFL 1.1, third_party/OFL-Marcellus.txt): titles */
+#embed "third_party/Marcellus-pcmenu.ttf"
+};
+static const unsigned char k_font_ui[] = {                 /* Source Sans 3 Regular and SemiBold (SIL OFL 1.1, third_party/OFL-SourceSans3.txt) */
+#embed "third_party/SourceSans3-pcmenu.ttf"
+};
+static const unsigned char k_font_uib[] = {
+#embed "third_party/SourceSans3-SemiBold-pcmenu.ttf"
 };
 
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
@@ -191,14 +200,26 @@ static void menu_init(void) {                              /* the first opening:
 }
 
 /* ---------------------------------------------------------------- drawing (BGRA, on the CPU) */
-static stbtt_fontinfo g_font;
+/* The look (the launcher's too, launcher/ui/witch.rcss; the design page in the project files): a pearl ground crossed by an
+ * indigo panel on a 22 degree diagonal with a runic stripe on its edge, settings as a staircase of rows stepping down the
+ * diagonal, the chosen row a violet glow, a clockwork wheel behind, a dark message band and a pale hint band at the bottom.
+ * Everything is laid out for 1280 x 720 and scaled by s = min(W / 1280, H / 720); the rows keep to the right edge. */
+static stbtt_fontinfo g_f_head, g_f_ui, g_f_uib;          /* Marcellus (titles); Source Sans 3 Regular and SemiBold */
 static uint8_t *g_px;                                      /* the panel */
 static int g_pw, g_ph, g_rect[4], g_for_w, g_for_h;
 static unsigned g_drawn_ver = ~0u, g_gen;
 static int g_row_y[NROW], g_row_h, g_val_x0, g_val_x1, g_close_r[4];
 typedef struct { uint8_t b, g, r; } Rgb;
-static const Rgb C_BG0 = {26, 14, 18}, C_BG1 = {11, 7, 9}, C_GOLD = {96, 178, 214}, C_GOLD_HI = {140, 214, 244}, C_GOLD_DIM = {48, 88, 110},
-                 C_TEXT = {214, 228, 238}, C_GREY = {150, 146, 152}, C_AMBER = {70, 160, 236}, C_LOCK = {130, 120, 120}, C_SEL0 = {26, 60, 86}, C_SEL1 = {14, 14, 18};
+static const Rgb C_PEARL = {242, 237, 238}, C_PEARL_LO = {218, 209, 211}, C_INK = {46, 32, 36}, C_MUTE = {104, 88, 93},
+                 C_INDIGO = {40, 22, 27}, C_INDIGO0 = {28, 15, 18}, C_INDIGO1 = {54, 27, 34}, C_INDIGO2 = {66, 33, 42}, C_STRIPE0 = {72, 33, 43}, C_STRIPE1 = {98, 45, 58},
+                 C_VIOLET = {208, 73, 106}, C_VIOLET0 = {196, 60, 90}, C_LAV = {236, 144, 166}, C_LAV2 = {230, 117, 143}, C_LILAC = {247, 204, 215},
+                 C_WHITE = {255, 255, 255}, C_RED = {75, 51, 229}, C_BAND = {32, 18, 22}, C_FOOT = {222, 212, 214}, C_FOOT_DK = {44, 22, 28};
+#define TAN22 0.4040f                                      /* the diagonal: 22 degrees from the vertical */
+static int fonts_init(void) {
+    return stbtt_InitFont(&g_f_head, k_font_head, stbtt_GetFontOffsetForIndex(k_font_head, 0)) &&
+           stbtt_InitFont(&g_f_ui, k_font_ui, stbtt_GetFontOffsetForIndex(k_font_ui, 0)) &&
+           stbtt_InitFont(&g_f_uib, k_font_uib, stbtt_GetFontOffsetForIndex(k_font_uib, 0));
+}
 static void put(int x, int y, Rgb c, float a) {
     if (x < 0 || y < 0 || x >= g_pw || y >= g_ph || a <= 0) return;
     uint8_t *p = g_px + ((size_t)y * g_pw + x) * 4;
@@ -208,11 +229,37 @@ static void put(int x, int y, Rgb c, float a) {
 static Rgb mix(Rgb a, Rgb b, float t) { Rgb c = {(uint8_t)(a.b + (b.b - a.b) * t), (uint8_t)(a.g + (b.g - a.g) * t), (uint8_t)(a.r + (b.r - a.r) * t)}; return c; }
 static void rect(int x, int y, int w, int h, Rgb c, float a) { for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) put(i, j, c, a); }
 static void hgrad(int x, int y, int w, int h, Rgb a, Rgb b) { for (int i = 0; i < w; i++) rect(x + i, y, 1, h, mix(a, b, (float)i / (w > 1 ? w - 1 : 1)), 1); }
-static void diamond(float cx, float cy, float r, Rgb c) {  /* a small gold lozenge, edge-smoothed */
-    for (int y = (int)(cy - r - 1); y <= (int)(cy + r + 1); y++) for (int x = (int)(cx - r - 1); x <= (int)(cx + r + 1); x++) {
-        float d = fabsf(x + 0.5f - cx) + fabsf(y + 0.5f - cy);
-        put(x, y, c, r - d + 0.5f > 1 ? 1 : r - d + 0.5f);
+static void hgrad_a(int x, int y, int w, int h, Rgb a, Rgb b, float a0, float a1) {      /* with the alpha fading too */
+    for (int i = 0; i < w; i++) { float t = (float)i / (w > 1 ? w - 1 : 1); rect(x + i, y, 1, h, mix(a, b, t), a0 + (a1 - a0) * t); }
+}
+/* a parallelogram leaning 22 degrees, skewed about its bottom left corner (row j of h is shifted right by (h - j) * TAN22),
+ * filled left to right with c0 -> c1 -> c2 (c1 at t1) and the alpha a0 -> a2 */
+static void para(float x, float y, float w, float h, Rgb c0, Rgb c1, Rgb c2, float t1, float a0, float a2) {
+    for (int j = (int)y; j < (int)(y + h); j++) {
+        float off = (y + h - j) * TAN22, x0 = x + off;
+        int i0 = (int)floorf(x0), i1 = (int)ceilf(x0 + w);
+        for (int i = i0; i < i1; i++) {
+            float t = (i + 0.5f - x0) / w, cov = 1;
+            if (t < 0 || t > 1) { cov = t < 0 ? 1 + t * w : 1 - (t - 1) * w; if (cov <= 0) continue; t = t < 0 ? 0 : 1; }      /* the slanted ends smoothed */
+            Rgb c = t < t1 ? mix(c0, c1, t1 > 0 ? t / t1 : 1) : mix(c1, c2, t1 < 1 ? (t - t1) / (1 - t1) : 1);
+            put(i, j, c, (a0 + (a2 - a0) * t) * cov);
+        }
     }
+}
+/* the indigo panel: its right edge runs from x_top at the top of the window down to the right at 22 degrees (as the
+ * launcher's skewX from the top left corner); filled from x_left with c0 -> c1 -> c2 over w */
+static void wedge(float x_left, float w, float x_top, int H, Rgb c0, Rgb c1, Rgb c2, float t1) {
+    for (int j = 0; j < H; j++) {
+        float e = x_top + j * TAN22;
+        int i1 = (int)ceilf(e);
+        for (int i = (int)x_left < 0 ? 0 : (int)x_left; i < i1 && i < g_pw; i++) {
+            float t = (i + 0.5f - x_left) / w, cov = e - i; if (t > 1) t = 1; if (t < 0) t = 0;
+            put(i, j, t < t1 ? mix(c0, c1, t / t1) : mix(c1, c2, (t - t1) / (1 - t1)), cov > 1 ? 1 : cov);
+        }
+    }
+}
+static void slant_line(float x_top, int H, float w, Rgb c, float a) {      /* a thin line down the diagonal */
+    for (int j = 0; j < H; j++) { float x = x_top + j * TAN22; int i = (int)floorf(x); float f = x - i; put(i, j, c, a * (1 - f) * w); put(i + 1, j, c, a * f * w); if (w > 1) for (int k = 1; k < (int)w; k++) put(i + k, j, c, a); }
 }
 static void disc(float cx, float cy, float r, Rgb c, float ring) {      /* ring > 0: only the outline */
     for (int y = (int)(cy - r - 1); y <= (int)(cy + r + 1); y++) for (int x = (int)(cx - r - 1); x <= (int)(cx + r + 1); x++) {
@@ -221,6 +268,109 @@ static void disc(float cx, float cy, float r, Rgb c, float ring) {      /* ring 
         put(x, y, c, a > 1 ? 1 : a);
     }
 }
+static void soft_disc(float cx, float cy, float r, Rgb c, float a) {     /* a glow: c fading out from the centre */
+    for (int y = (int)(cy - r); y <= (int)(cy + r); y++) for (int x = (int)(cx - r); x <= (int)(cx + r); x++) {
+        float d = sqrtf((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy)) / r;
+        if (d < 1) put(x, y, c, a * (1 - d) * (1 - d));
+    }
+}
+
+/* ---- the art (runtime/art, made by the design's scripts): 8-bit BMPs whose palette carries alpha in its fourth byte,
+ * colours premultiplied. The wheel in the pearl side's grey and in the indigo side's lilac, the two hands, the stripe. ---- */
+typedef struct { int w, h, stride; const uint8_t *pal, *px; } Art;      /* px: the bottom row first, as a BMP is */
+static Art art_load(const unsigned char *b, size_t n) {
+    Art a = {0};
+    if (n < 54 + 1024 || b[0] != 'B' || b[1] != 'M') return a;
+    uint32_t hs = b[14] | b[15] << 8 | b[16] << 16 | (uint32_t)b[17] << 24, off = b[10] | b[11] << 8 | b[12] << 16 | (uint32_t)b[13] << 24;
+    a.w = (int)(b[18] | b[19] << 8 | b[20] << 16 | (uint32_t)b[21] << 24); a.h = (int)(b[22] | b[23] << 8 | b[24] << 16 | (uint32_t)b[25] << 24);
+    a.stride = (a.w + 3) & ~3; a.pal = b + 14 + hs; a.px = b + off;
+    if (a.w <= 0 || a.h <= 0 || off + (size_t)a.stride * a.h > n) a.w = 0;
+    return a;
+}
+static void art_texel(const Art *a, int x, int y, float out[4]) {       /* B G R A premultiplied, 0..255; outside: nothing */
+    if (x < 0 || y < 0 || x >= a->w || y >= a->h) { out[0] = out[1] = out[2] = out[3] = 0; return; }
+    const uint8_t *e = a->pal + (size_t)a->px[(size_t)(a->h - 1 - y) * a->stride + x] * 4;
+    out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
+}
+static void art_sample(const Art *a, float u, float v, float out[4]) {  /* bilinear at source coordinates (u, v) */
+    float t[4][4];
+    int x = (int)floorf(u - 0.5f), y = (int)floorf(v - 0.5f);
+    float fx = u - 0.5f - x, fy = v - 0.5f - y;
+    art_texel(a, x, y, t[0]); art_texel(a, x + 1, y, t[1]); art_texel(a, x, y + 1, t[2]); art_texel(a, x + 1, y + 1, t[3]);
+    for (int k = 0; k < 4; k++) out[k] = (t[0][k] * (1 - fx) + t[1][k] * fx) * (1 - fy) + (t[2][k] * (1 - fx) + t[3][k] * fx) * fy;
+}
+static void put_pre(int x, int y, const float c[4], float a) {          /* premultiplied source over the opaque panel */
+    if (x < 0 || y < 0 || x >= g_pw || y >= g_ph) return;
+    uint8_t *p = g_px + ((size_t)y * g_pw + x) * 4;
+    float k = 1 - c[3] * a / 255.0f;
+    p[0] = (uint8_t)(p[0] * k + c[0] * a + 0.5f); p[1] = (uint8_t)(p[1] * k + c[1] * a + 0.5f); p[2] = (uint8_t)(p[2] * k + c[2] * a + 0.5f);
+}
+/* the picture fitted to the box (x, y, w, h), turned by `deg` about the box's centre, at the opacity `alpha`; on the window,
+ * only where x < xmax(y) when clip_top >= 0 (a slanted edge: xmax = clip_top + y * TAN22) */
+static void art_blit(const Art *a, float x, float y, float w, float h, float alpha, float deg, float clip_top) {
+    if (!a->w) return;
+    float cx = x + w / 2, cy = y + h / 2, cs = cosf(deg * 3.14159265f / 180), sn = sinf(deg * 3.14159265f / 180), sx = a->w / w, sy = a->h / h;
+    int x0 = (int)floorf(x), y0 = (int)floorf(y), x1 = (int)ceilf(x + w), y1 = (int)ceilf(y + h);
+    if (deg != 0) { float r = sqrtf(w * w + h * h) / 2; x0 = (int)floorf(cx - r); x1 = (int)ceilf(cx + r); y0 = (int)floorf(cy - r); y1 = (int)ceilf(cy + r); }
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > g_pw) x1 = g_pw; if (y1 > g_ph) y1 = g_ph;
+    for (int j = y0; j < y1; j++) {
+        int jx1 = clip_top >= 0 ? (int)(clip_top + j * TAN22) : x1;
+        if (jx1 > x1) jx1 = x1;
+        for (int i = x0; i < jx1; i++) {
+            float dx = i + 0.5f - cx, dy = j + 0.5f - cy, u = (dx * cs + dy * sn + w / 2) * sx, v = (-dx * sn + dy * cs + h / 2) * sy, c[4];
+            if (u < 0 || v < 0 || u >= a->w || v >= a->h) continue;
+            art_sample(a, u, v, c);
+            if (c[3] > 0) put_pre(i, j, c, alpha);
+        }
+    }
+}
+/* the runic stripe: the text picture down the slanted band (x_top, w) over the window's height */
+static void stripe_text(const Art *a, float x_top, float w, int H, float alpha) {
+    if (!a->w) return;
+    for (int j = 0; j < H; j++) {
+        float e = x_top + j * TAN22;
+        for (int i = (int)e; i < (int)(e + w) + 1; i++) {
+            float u = (i + 0.5f - e) / w * a->w, v = (float)j / H * a->h, c[4];
+            if (u < 0 || u >= a->w) continue;
+            art_sample(a, u, v, c);
+            if (c[3] > 0) put_pre(i, j, c, alpha);
+        }
+    }
+}
+static const unsigned char k_art_wheel[] = {
+#embed "art/wheel.bmp"
+};
+static const unsigned char k_art_wheel_dark[] = {
+#embed "art/wheel-dark.bmp"
+};
+static const unsigned char k_art_hand_minute[] = {
+#embed "art/hand-minute.bmp"
+};
+static const unsigned char k_art_hand_hour[] = {
+#embed "art/hand-hour.bmp"
+};
+static const unsigned char k_art_stripe[] = {
+#embed "art/stripe.bmp"
+};
+static Art g_wheel, g_wheel_dark, g_hand_minute, g_hand_hour, g_stripe;
+static void art_init(void) {
+    if (g_wheel.w) return;
+    g_wheel = art_load(k_art_wheel, sizeof k_art_wheel); g_wheel_dark = art_load(k_art_wheel_dark, sizeof k_art_wheel_dark);
+    g_hand_minute = art_load(k_art_hand_minute, sizeof k_art_hand_minute); g_hand_hour = art_load(k_art_hand_hour, sizeof k_art_hand_hour);
+    g_stripe = art_load(k_art_stripe, sizeof k_art_stripe);
+}
+/* the wheel with its hands at this PC's local time (the pictures: the wheel of radius R fills its box, the hands point up) */
+static void wheel(const Art *w, float cx, float cy, float R, float alpha, int hands, float clip_top) {
+    art_blit(w, cx - R, cy - R, 2 * R, 2 * R, alpha, 0, clip_top);
+    if (!hands) return;
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    float m = t ? t->tm_min + t->tm_sec / 60.0f : 0, h = t ? (t->tm_hour % 12) + m / 60 : 0, hb = 2 * R;      /* the hand pictures are drawn in the wheel's box */
+    art_blit(&g_hand_hour, cx - hb / 2, cy - hb / 2, hb, hb, alpha, h * 30, clip_top);
+    art_blit(&g_hand_minute, cx - hb / 2, cy - hb / 2, hb, hb, alpha, m * 6, clip_top);
+}
+
+/* ---- text ---- */
 static int utf8(const char **s) {
     const unsigned char *p = (const unsigned char *)*s;
     int c = *p++;
@@ -230,33 +380,34 @@ static int utf8(const char **s) {
     *s = (const char *)p;
     return c;
 }
-static float text_w(const char *s, float px, float track) {
-    float sc = stbtt_ScaleForPixelHeight(&g_font, px), w = 0;
+static float text_w(const stbtt_fontinfo *f, const char *s, float px, float track) {
+    float sc = stbtt_ScaleForPixelHeight(f, px), w = 0;
     int prev = 0, adv, lsb;
-    while (*s) { int c = utf8(&s); if (prev) w += sc * stbtt_GetCodepointKernAdvance(&g_font, prev, c); stbtt_GetCodepointHMetrics(&g_font, c, &adv, &lsb); w += adv * sc + track; prev = c; }
+    while (*s) { int c = utf8(&s); if (prev) w += sc * stbtt_GetCodepointKernAdvance(f, prev, c); stbtt_GetCodepointHMetrics(f, c, &adv, &lsb); w += adv * sc + track; prev = c; }
     return w - (prev ? track : 0);
 }
-static float text(float x, int base, const char *s, float px, Rgb col, float track) {      /* returns the pen's end */
+static float text_a(const stbtt_fontinfo *f, float x, int base, const char *s, float px, Rgb col, float track, float alpha) {      /* returns the pen's end */
     static uint8_t buf[256 * 256];
-    float sc = stbtt_ScaleForPixelHeight(&g_font, px);
+    float sc = stbtt_ScaleForPixelHeight(f, px);
     int prev = 0, adv, lsb;
     while (*s) {
         int c = utf8(&s), x0, y0, x1, y1;
-        if (prev) x += sc * stbtt_GetCodepointKernAdvance(&g_font, prev, c);
+        if (prev) x += sc * stbtt_GetCodepointKernAdvance(f, prev, c);
         float fx = x - floorf(x);
-        stbtt_GetCodepointBitmapBoxSubpixel(&g_font, c, sc, sc, fx, 0, &x0, &y0, &x1, &y1);
+        stbtt_GetCodepointBitmapBoxSubpixel(f, c, sc, sc, fx, 0, &x0, &y0, &x1, &y1);
         int w = x1 - x0, h = y1 - y0;
         if (w > 0 && h > 0 && w <= 256 && h <= 256) {
-            stbtt_MakeCodepointBitmapSubpixel(&g_font, buf, w, h, w, sc, sc, fx, 0, c);
-            for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (buf[j * w + i]) put((int)floorf(x) + x0 + i, base + y0 + j, col, buf[j * w + i] / 255.0f);
+            stbtt_MakeCodepointBitmapSubpixel(f, buf, w, h, w, sc, sc, fx, 0, c);
+            for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (buf[j * w + i]) put((int)floorf(x) + x0 + i, base + y0 + j, col, buf[j * w + i] / 255.0f * alpha);
         }
-        stbtt_GetCodepointHMetrics(&g_font, c, &adv, &lsb);
+        stbtt_GetCodepointHMetrics(f, c, &adv, &lsb);
         x += adv * sc + track;
         prev = c;
     }
     return x;
 }
-static int wrap(char lines[][160], int maxl, const char *s, float px, float width) {      /* word wrap */
+static float text(const stbtt_fontinfo *f, float x, int base, const char *s, float px, Rgb col, float track) { return text_a(f, x, base, s, px, col, track, 1); }
+static int wrap(const stbtt_fontinfo *f, char lines[][160], int maxl, const char *s, float px, float width) {      /* word wrap */
     int n = 0;
     while (*s && n < maxl) {
         char line[160] = "";
@@ -265,7 +416,7 @@ static int wrap(char lines[][160], int maxl, const char *s, float px, float widt
             if (*p == ' ' || !*p) {
                 char t[160]; size_t len = (size_t)(p - s) < sizeof t - 1 ? (size_t)(p - s) : sizeof t - 1;
                 memcpy(t, s, len); t[len] = 0;
-                if (text_w(t, px, 0) > width && best != s) break;
+                if (text_w(f, t, px, 0) > width && best != s) break;
                 memcpy(line, t, len + 1); best = p;
                 if (!*p) break;
             }
@@ -298,103 +449,210 @@ static int row_restart(int i) {                            /* a value that is no
     if (g_cur[i] == g_start[i]) return 0;
     return k_rows[i].apply == A_RESTART || (k_rows[i].apply == A_SCALE && g_open) || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
 }
-static void button(float x, int base, float px, const char *letter, const char *what, Rgb ring) {
-    float r = px * 0.62f, cx = x + r, cy = base - px * 0.36f;
-    disc(cx, cy, r, ring, px * 0.09f);
-    float lw = text_w(letter, px * 0.78f, 0);
-    text(cx - lw / 2, (int)(cy + px * 0.28f), letter, px * 0.78f, ring, 0);
-    text(x + 2 * r + px * 0.35f, base, what, px, C_GREY, 0);
+/* a button hint on the pale band: a dark disc with the letter cut pale, then the word; returns the width used */
+static float hint_glyph(float x, int base, float px, const char *letter, const char *what, Rgb disc_c, Rgb letter_c, Rgb text_c) {
+    float r = px * 0.6f, cx = x + r, cy = base - px * 0.33f;
+    disc(cx, cy, r, disc_c, 0);
+    float lw = text_w(&g_f_uib, letter, px * 0.72f, 0);
+    text(&g_f_uib, cx - lw / 2, (int)(cy + px * 0.26f), letter, px * 0.72f, letter_c, 0);
+    text(&g_f_ui, x + 2 * r + px * 0.4f, base, what, px, text_c, 0);
+    return 2 * r + px * 0.4f + text_w(&g_f_ui, what, px, 0);
 }
-static void draw_panel(int W, int H) {
-    float s = (float)W / 1920.0f < (float)H / 1080.0f ? (float)W / 1920.0f : (float)H / 1080.0f;
-    if (s < 0.45f) s = 0.45f;
-    int nshow = 0;
-    for (int i = 0; i < NROW; i++) nshow += row_on(i);
-    int pad = (int)(48 * s), rowh = (int)(58 * s), title_h = (int)(118 * s), help_h = (int)(116 * s), foot_h = (int)(78 * s), rest = title_h + help_h + foot_h + pad;
-    if (rest + nshow * rowh > H) rowh = (H - rest) / nshow;   /* the Controls page: every row in the window */
-    int pw = (int)(980 * s), ph = rest + nshow * rowh;
-    if (pw > W) pw = W;
-    if (ph > H) ph = H;
+static void alloc_panel(int pw, int ph) {
     if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
     g_pw = pw; g_ph = ph;
+}
+/* the stage every full screen shares: the pearl ground, the indigo panel from the left with its stripe and rules; its edge
+ * at x_top (1280-scale) at the top of the window */
+static void stage_ground(int W, int H) {
+    for (int y = 0; y < H; y++) rect(0, y, W, 1, mix(C_PEARL, C_PEARL_LO, (float)y / H), 1);
+    soft_disc(W * 0.7f, H * 0.45f, H * 0.9f, C_WHITE, 0.9f);
+}
+static void stage_panel(int W, int H, float s, float x_top) {
+    (void)W;
+    wedge(-300 * s, 660 * s, x_top, H, C_INDIGO0, C_INDIGO1, C_INDIGO2, 0.7f);
+    for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
+    stripe_text(&g_stripe, x_top, 40 * s, H, 1);
+    slant_line(x_top + 50 * s, H, 1, C_INK, 0.35f); slant_line(x_top + 55 * s, H, 1, C_INK, 0.35f);
+}
+static void bands(int W, int H, float s, Rgb band_c, float band_a, Rgb foot_c, float foot_a) {
+    rect(0, (int)(H - 126 * s), W, (int)(52 * s), band_c, band_a);
+    for (int j = 0; j < (int)(74 * s); j++) rect(0, (int)(H - 74 * s) + j, W, 1, mix(foot_c, mix(foot_c, C_INK, 0.06f), j / (74 * s)), foot_a);
+}
+static void draw_panel(int W, int H) {
+    float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f;
+    if (s < 0.45f) s = 0.45f;
+    art_init();
+    alloc_panel(W, H);
     if (!g_px) return;
-    g_rect[0] = (W - pw) / 2; g_rect[1] = (H - ph) / 2; g_rect[2] = pw; g_rect[3] = ph;
-    for (int y = 0; y < ph; y++) rect(0, y, pw, 1, mix(C_BG0, C_BG1, (float)y / ph), 1);
-    int b = s > 1.4f ? 3 : 2, in = (int)(9 * s);              /* gold frame, a thin inner line, lozenges at the corners */
-    rect(0, 0, pw, b, C_GOLD, 1); rect(0, ph - b, pw, b, C_GOLD, 1); rect(0, 0, b, ph, C_GOLD, 1); rect(pw - b, 0, b, ph, C_GOLD, 1);
-    rect(in, in, pw - 2 * in, 1, C_GOLD_DIM, 1); rect(in, ph - in - 1, pw - 2 * in, 1, C_GOLD_DIM, 1); rect(in, in, 1, ph - 2 * in, C_GOLD_DIM, 1); rect(pw - in - 1, in, 1, ph - 2 * in, C_GOLD_DIM, 1);
-    diamond((float)in, (float)in, 6 * s, C_GOLD); diamond((float)(pw - in - 1), (float)in, 6 * s, C_GOLD); diamond((float)in, (float)(ph - in - 1), 6 * s, C_GOLD); diamond((float)(pw - in - 1), (float)(ph - in - 1), 6 * s, C_GOLD);
-    /* title */
-    const char *title = g_page ? "CONTROLS" : "PC SETTINGS";
-    float tpx = 46 * s, tw = text_w(title, tpx, 7 * s);
-    int tb = (int)(74 * s);
-    text((pw - tw) / 2, tb, title, tpx, C_GOLD_HI, 7 * s);
-    int ly = (int)(98 * s);
-    hgrad(pad, ly, pw / 2 - pad - (int)(14 * s), 1, C_BG0, C_GOLD); hgrad(pw / 2 + (int)(14 * s), ly, pw / 2 - pad - (int)(14 * s), 1, C_GOLD, C_BG0);
-    diamond(pw / 2.0f, (float)ly, 7 * s, C_GOLD);
-    /* rows */
-    float rpx = rowh * 0.5f;
-    int y = title_h;
-    g_row_h = rowh; g_val_x0 = pw / 2; g_val_x1 = pw - pad;
+    g_rect[0] = 0; g_rect[1] = 0; g_rect[2] = W; g_rect[3] = H;
+    int nshow = 0;
+    for (int i = 0; i < NROW; i++) nshow += row_on(i);
+    /* the stage, the wheel on the pearl side and a lilac one on the indigo side (clipped to it) */
+    stage_ground(W, H);
+    wheel(&g_wheel, W - 300 * s, 360 * s, 360 * s, 0.34f, 0, -1);
+    stage_panel(W, H, s, 360 * s);
+    wheel(&g_wheel_dark, 170 * s, 430 * s, 240 * s, 0.4f, 1, 360 * s - 1);
+    /* the indigo side: where you are */
+    int ty = (int)(170 * s);
+    float ttl = 38 * s;
+    if (g_page) text(&g_f_ui, 56 * s, ty - (int)(30 * s), "PC Settings  \xE2\x80\xBA  Controls", 15 * s, C_LILAC, 2 * s);
+    text(&g_f_head, 56 * s, ty + (int)(ttl * 0.78f), g_page ? "Controls" : "PC Settings", ttl, C_WHITE, 0);
+    hgrad_a((int)(56 * s), ty + (int)(ttl * 1.05f), (int)(190 * s), 1, C_LAV, C_LAV, 1, 0.1f);
+    text(&g_f_ui, 56 * s, ty + (int)(ttl * 1.05f + 26 * s), g_page ? "Each character keeps a layout." : "The game waits while this is open.", 16 * s, C_LILAC, 1 * s);
+    /* the rows: a staircase down the diagonal, the right edge fixed */
+    float band_y = H - 126 * s, top = nshow > 9 ? 110 * s : 200 * s, rowh = 50 * s;
+    if (top + nshow * rowh > band_y - 40 * s) rowh = (band_y - 40 * s - top) / nshow;
+    float st = 26 * s, x0 = W - 590 * s, w0 = 540 * s;
+    if (nshow > 1 && st * (nshow - 1) > 240 * s) st = 240 * s / (nshow - 1);
+    float rpx = rowh * 0.46f, vpx = rowh * 0.44f;
+    g_row_h = (int)rowh; g_val_x0 = (int)(x0 + w0 - 232 * s); g_val_x1 = (int)(x0 + w0 - 22 * s);
+    int y = (int)top, k = 0;
     for (int i = 0; i < NROW; i++) {
         g_row_y[i] = -1;
         if (!row_on(i)) continue;
         g_row_y[i] = y;
+        float left = x0 + k * st, width = w0 - k * st;
         int sel = i == g_sel, base = y + (int)(rowh * 0.66f);
-        Rgb tc = g_lock_why[i] ? C_LOCK : sel ? C_TEXT : mix(C_TEXT, C_GREY, 0.35f);
-        if (sel) { hgrad(pad - (int)(16 * s), y + (int)(4 * s), pw - 2 * pad + (int)(32 * s), rowh - (int)(8 * s), C_SEL0, C_SEL1); rect(pad - (int)(16 * s), y + (int)(4 * s), (int)(4 * s) > 2 ? (int)(4 * s) : 2, rowh - (int)(8 * s), C_GOLD_HI, 1); }
-        text(pad + 10 * s, base, row_label(i), rpx, tc, 0);
+        if (sel) {
+            para(left, (float)y, width, rowh, C_VIOLET0, C_LAV2, C_LAV, 0.55f, 1, 0.55f);
+            text(&g_f_ui, left - 16 * s, base + (int)(rowh * 0.02f), "\xC2\xBB", rowh * 0.6f, C_WHITE, 0);
+        } else hgrad_a((int)left, y + (int)rowh - 1, (int)width, 1, C_INK, C_INK, 0.28f, 0);
+        Rgb tc = g_lock_why[i] ? C_MUTE : sel ? C_WHITE : C_INK;
+        text(&g_f_ui, left + 30 * s, base, row_label(i), rpx, tc, 0.5f * s);
         const char *v = val_name(i);
-        float vw = text_w(v, rpx, 0), cx = (g_val_x0 + g_val_x1) / 2.0f;
-        Rgb vc = g_lock_why[i] ? C_LOCK : sel ? C_GOLD_HI : C_GOLD;
-        text(cx - vw / 2, base, v, rpx, vc, 0);
-        if (sel && !g_lock_why[i]) { text((float)g_val_x0, base, "\xE2\x80\xB9", rpx * 1.25f, C_GOLD_HI, 0); text(g_val_x1 - text_w("\xE2\x80\xBA", rpx * 1.25f, 0), base, "\xE2\x80\xBA", rpx * 1.25f, C_GOLD_HI, 0); }
-        if (row_restart(i)) diamond(g_val_x0 - 18 * s, base - rpx * 0.33f, 6 * s, C_AMBER);
-        y += rowh;
+        float vx1 = left + width - 22 * s, vx0 = vx1 - 210 * s, vw = text_w(&g_f_uib, v, vpx, 0);
+        Rgb vc = g_lock_why[i] ? C_MUTE : sel ? C_WHITE : C_VIOLET;
+        text(&g_f_uib, (vx0 + vx1) / 2 - vw / 2, base, v, vpx, vc, 0);
+        if (!g_lock_why[i]) {
+            text_a(&g_f_ui, vx0, base, "\xE2\x80\xB9", vpx * 1.25f, sel ? C_WHITE : C_VIOLET, 0, sel ? 1 : 0.55f);
+            text_a(&g_f_ui, vx1 - text_w(&g_f_ui, "\xE2\x80\xBA", vpx * 1.25f, 0), base, "\xE2\x80\xBA", vpx * 1.25f, sel ? C_WHITE : C_VIOLET, 0, sel ? 1 : 0.55f);
+        }
+        if (row_restart(i)) disc(vx0 - 14 * s, base - rpx * 0.3f, 5 * s, C_RED, 0);
+        y += (int)rowh; k++;
     }
-    /* help and state of the chosen row */
-    rect(pad, y + (int)(10 * s), pw - 2 * pad, 1, C_GOLD_DIM, 1);
-    char lines[3][160];
-    float hpx = 23 * s;
-    int n = wrap(lines, 2, g_cap >= 0 ? "Press the button for this, on the pad. Esc: leave it as it is." : k_rows[g_sel].help, hpx, pw - 2 * pad - 20 * s), hy = y + (int)(46 * s);
-    for (int k = 0; k < n; k++) text(pad + 10 * s, hy + k * (int)(30 * s), lines[k], hpx, C_GREY, 0);
-    char st[160] = "";
-    Rgb sc = C_AMBER;
-    if (g_lock_why[g_sel] == 1) { snprintf(st, sizeof st, "Set by the environment variable %s", k_rows[g_sel].env); sc = C_LOCK; }
-    else if (g_lock_why[g_sel] == 2) { snprintf(st, sizeof st, "Set by profile = low in graphics.ini"); sc = C_LOCK; }
-    else if (row_restart(g_sel)) snprintf(st, sizeof st, "Saved \xE2\x80\x94 applies %s", k_rows[g_sel].apply == A_SCALE ? "when this panel closes" : "at the next start");
-    else if (g_cur[g_sel] != g_start[g_sel]) { snprintf(st, sizeof st, "Applied and saved"); sc = C_GOLD; }
-    if (st[0]) { diamond(pad + 16 * s, hy + 2 * (int)(30 * s) + 3 * s - hpx * 0.33f, 5 * s, sc); text(pad + 30 * s, hy + 2 * (int)(30 * s) + (int)(3 * s), st, hpx, sc, 0); }
-    /* footer */
-    int fy = ph - (int)(38 * s);
-    float fpx = 22 * s, x = pad + 6 * s;
-    rect(pad, ph - foot_h, pw - 2 * pad, 1, C_GOLD_DIM, 1);
-    button(x, fy, fpx, g_swap ? "B" : "A", "Change", C_GOLD); x += text_w("Change", fpx, 0) + 66 * s;
-    g_close_r[0] = (int)x; g_close_r[1] = fy - (int)(30 * s); g_close_r[3] = (int)(44 * s);
+    /* the state of the chosen row, under the rows at the right */
+    char st_txt[160] = "";
+    Rgb sc = C_INK; int dot = 0;
+    if (g_lock_why[g_sel] == 1) { snprintf(st_txt, sizeof st_txt, "Set by the environment variable %s", k_rows[g_sel].env); sc = C_MUTE; }
+    else if (g_lock_why[g_sel] == 2) { snprintf(st_txt, sizeof st_txt, "Set by profile = low in graphics.ini"); sc = C_MUTE; }
+    else if (row_restart(g_sel)) { snprintf(st_txt, sizeof st_txt, "Saved; applies %s", k_rows[g_sel].apply == A_SCALE ? "when this panel closes" : "at the next start"); dot = 1; }
+    else if (g_cur[g_sel] != g_start[g_sel]) snprintf(st_txt, sizeof st_txt, "Applied and saved");
+    if (st_txt[0]) {
+        float px = 16 * s, w = text_w(&g_f_ui, st_txt, px, 0.5f * s), xr = x0 + w0 - 22 * s;
+        int sb = y + (int)(28 * s);
+        if (dot) disc(xr - w - 14 * s, sb - px * 0.3f, 5 * s, C_RED, 0);
+        text(&g_f_ui, xr - w, sb, st_txt, px, sc, 0.5f * s);
+    }
+    /* the message band: the chosen row's help, one line; the hint band: the buttons */
+    bands(W, H, s, C_BAND, 0.78f, C_FOOT, 0.94f);
+    const char *help = g_cap >= 0 ? "Press the button for this, on the pad. Esc leaves it as it is." : k_rows[g_sel].help;
+    float hpx = 20 * s, hw = text_w(&g_f_ui, help, hpx, 1.5f * s);
+    if (hw > W - 60 * s) { hpx *= (W - 60 * s) / hw; hw = text_w(&g_f_ui, help, hpx, 1.5f * s); }
+    text(&g_f_ui, (W - hw) / 2, (int)(band_y + 26 * s + hpx * 0.35f), help, hpx, C_WHITE, 1.5f * s);
+    int fb = (int)(H - 37 * s + 7 * s);
+    float fpx = 20 * s;
+    text(&g_f_ui, 60 * s, fb, "F1  \xC2\xB7  Start + Select", 15 * s, C_MUTE, 1 * s);
     const char *close = g_page && !g_direct ? "Back" : "Close";
-    button(x, fy, fpx, g_swap ? "A" : "B", close, C_GOLD); x += text_w(close, fpx, 0) + 40 * s; g_close_r[2] = (int)x - g_close_r[0];
-    const char *keys = "F1 \xC2\xB7 Start + Select";
-    text(pw - pad - 6 * s - text_w(keys, fpx, 0), fy, keys, fpx, C_GOLD_DIM, 0);
+    float wc = 2 * fpx * 0.6f + fpx * 0.4f + text_w(&g_f_ui, "Change", fpx, 0), wb = 2 * fpx * 0.6f + fpx * 0.4f + text_w(&g_f_ui, close, fpx, 0), x = W - 60 * s - wc - 30 * s - wb;
+    hint_glyph(x, fb, fpx, g_swap ? "B" : "A", "Change", C_INK, C_PEARL, C_INK);
+    x += wc + 30 * s;
+    g_close_r[0] = (int)(x - 10 * s); g_close_r[1] = fb - (int)(30 * s); g_close_r[2] = (int)(wb + 20 * s); g_close_r[3] = (int)(44 * s);
+    hint_glyph(x, fb, fpx, g_swap ? "A" : "B", close, C_INK, C_PEARL, C_INK);
 }
 
-/* The hint: a small box at the bottom right for a few seconds when the game's pause menu opens (nnfs.c sees it load), the
- * way into the game's own Options. The Options screen itself is not recognised (its UI is loaded once at the start). */
+/* The hint: a small slanted bar at the bottom right for a few seconds when the game's pause menu opens (nnfs.c sees it
+ * load), the way into the game's own Options. The Options screen itself is not recognised (its UI is loaded once at the start). */
 static volatile ULONGLONG g_hint_until;
 static void draw_hint(int W, int H) {
     float s = (float)W / 1920.0f < (float)H / 1080.0f ? (float)W / 1920.0f : (float)H / 1080.0f;
     if (s < 0.45f) s = 0.45f;
-    const char *t1 = "PC SETTINGS", *t2 = "F1  \xC2\xB7  Start + Select";
-    float p1 = 21 * s, p2 = 19 * s, w1 = text_w(t1, p1, 3 * s), w2 = text_w(t2, p2, 0);
-    int pw = (int)((w1 > w2 ? w1 : w2) + 64 * s), ph = (int)(78 * s), b = s > 1.4f ? 3 : 2;
-    if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
-    g_pw = pw; g_ph = ph;
+    const char *t1 = "PC Settings", *t2 = "F1  \xC2\xB7  Start + Select";
+    float p1 = 24 * s, p2 = 17 * s, w1 = text_w(&g_f_head, t1, p1, 0), w2 = text_w(&g_f_ui, t2, p2, 1 * s);
+    int ph = (int)(78 * s), lean = (int)(ph * TAN22), pw = (int)((w1 > w2 ? w1 : w2) + 64 * s) + lean;
+    alloc_panel(pw, ph);
     if (!g_px) return;
     g_rect[0] = W - pw - (int)(40 * s); g_rect[1] = H - ph - (int)(96 * s); g_rect[2] = pw; g_rect[3] = ph;
-    for (int y = 0; y < ph; y++) rect(0, y, pw, 1, mix(C_BG0, C_BG1, (float)y / ph), 1);
-    rect(0, 0, pw, b, C_GOLD, 1); rect(0, ph - b, pw, b, C_GOLD, 1); rect(0, 0, b, ph, C_GOLD, 1); rect(pw - b, 0, b, ph, C_GOLD, 1);
-    diamond(22 * s, 31 * s - p1 * 0.33f, 5 * s, C_GOLD);
-    text(34 * s, (int)(31 * s), t1, p1, C_GOLD_HI, 3 * s);
-    text(34 * s, (int)(60 * s), t2, p2, C_TEXT, 0);
+    for (int y = 0; y < ph; y++) rect(0, y, pw, 1, C_PEARL, 1);      /* copied over the game opaque: a pale ground, the slanted bar on it */
+    para(0, 0, (float)(pw - lean - 1), (float)ph, C_INDIGO0, C_INDIGO1, C_INDIGO2, 0.7f, 1, 1);
+    text(&g_f_head, lean + 28 * s, (int)(34 * s), t1, p1, C_WHITE, 0);
+    text(&g_f_ui, lean + 28 * s, (int)(60 * s), t2, p2, C_LILAC, 1 * s);
+}
+
+/* The first-start screen (nvn_vk_draw.c prep_first_hold): the game is held at its first frame while every shader is
+ * prepared; the render thread sets the numbers here about ten times a second and copies the panel over the frame. The
+ * ground, the wheel and the words are drawn once a size (g_bg) and the numbers over a copy of it. */
+static struct { int on, pct, eta, reading; long long done, total; char info[96]; } g_prep;
+static uint8_t *g_bg; static int g_bg_w, g_bg_h;
+static void draw_prep(int W, int H) {
+    float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f;
+    if (s < 0.45f) s = 0.45f;
+    art_init();
+    alloc_panel(W, H);
+    if (!g_px) return;
+    g_rect[0] = 0; g_rect[1] = 0; g_rect[2] = W; g_rect[3] = H;
+    if (g_bg && (g_bg_w != W || g_bg_h != H)) { free(g_bg); g_bg = NULL; }
+    if (!g_bg) {
+        const Rgb c_in = {66, 33, 42}, c_mid = {31, 16, 21}, c_out = {20, 9, 12};
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {      /* the dark ground, lit a little behind the wheel */
+            float dx = (x + 0.5f - 0.62f * W) / (0.55f * W), dy = (y + 0.5f - 0.48f * H) / (0.7f * H), d = sqrtf(dx * dx + dy * dy);
+            put(x, y, d < 0.55f ? mix(c_in, c_mid, d / 0.55f) : mix(c_mid, c_out, d > 1 ? 1 : (d - 0.55f) / 0.45f), 1);
+        }
+        wheel(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1);
+        float x_top = W - 200 * s;                             /* the pearl panel at the right, its stripe and rules */
+        for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; int i0 = (int)e; for (int i = i0; i < W; i++) put(i, j, mix(C_PEARL, C_PEARL_LO, (float)(i - i0) / (W - x_top)), i == i0 ? 1 - (e - i0) : 1); }
+        for (int j = 0; j < H; j++) { float e = x_top - 40 * s + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
+        stripe_text(&g_stripe, x_top - 40 * s, 40 * s, H, 1);
+        slant_line(x_top + 18 * s, H, 1, C_LILAC, 0.35f); slant_line(x_top + 23 * s, H, 1, C_LILAC, 0.35f);
+        /* the plate and the title */
+        hgrad_a(0, (int)(30 * s), (int)(420 * s), (int)(44 * s), C_INDIGO0, C_INDIGO, 1, 0);
+        float px = 14 * s, x = 44 * s;
+        int pb = (int)(30 * s + 44 * s * 0.66f);
+        x = text(&g_f_ui, x, pb, "WITCH TIME", px, C_LILAC, 3 * s) + 12 * s;
+        { float r = 4 * s, cx = x + r, cy = pb - px * 0.33f; for (int j = (int)(cy - r - 1); j <= (int)(cy + r + 1); j++) for (int i = (int)(cx - r - 1); i <= (int)(cx + r + 1); i++) { float d = fabsf(i + 0.5f - cx) + fabsf(j + 0.5f - cy), a = r - d + 0.5f, b = d - (r - 1.2f * s) + 0.5f; a = a < b ? a : b; put(i, j, C_LILAC, a > 1 ? 1 : a); } x += 2 * r + 12 * s; }
+        text(&g_f_uib, x, pb, "FIRST START", 22 * s, C_WHITE, 3 * s);
+        float ttl = 54 * s;
+        text(&g_f_head, 72 * s, (int)(150 * s + ttl * 0.78f), "Preparing shaders", ttl, C_WHITE, 0);
+        hgrad_a((int)(72 * s), (int)(150 * s + ttl * 1.05f), (int)(260 * s), 1, C_LAV, C_LAV, 1, 0.1f);
+        char lines[4][160];
+        int n = wrap(&g_f_ui, lines, 3, "Every shader of your copy is compiled for this graphics card once. The next start goes straight to the game.", 19 * s, 440 * s);
+        for (int k = 0; k < n; k++) text(&g_f_ui, 72 * s, (int)(150 * s + ttl * 1.05f + 36 * s + k * 28 * s), lines[k], 19 * s, C_LILAC, 1 * s);
+        text(&g_f_ui, 72 * s, (int)(572 * s + 14 * s), "FIRST START ONLY  \xC2\xB7  CLOSING THE WINDOW KEEPS WHAT IS DONE", 14 * s, C_LILAC, 2 * s);
+        for (int j = 0; j < (int)(74 * s); j++) rect(0, (int)(H - 74 * s) + j, W, 1, mix(C_FOOT_DK, C_INDIGO0, j / (74 * s)), 0.94f);
+        text(&g_f_ui, 60 * s, (int)(H - 30 * s), g_prep.info, 15 * s, C_LILAC, 1 * s);
+        g_bg = malloc((size_t)W * H * 4); g_bg_w = W; g_bg_h = H;
+        if (g_bg) memcpy(g_bg, g_px, (size_t)W * H * 4);
+    } else memcpy(g_px, g_bg, (size_t)W * H * 4);
+    /* the numbers */
+    char t[64];
+    float big = 84 * s, x = 72 * s;
+    int pb = (int)(430 * s + big * 0.78f);
+    snprintf(t, sizeof t, "%d", g_prep.pct);
+    x = text(&g_f_head, x, pb, t, big, C_WHITE, 0);
+    x = text(&g_f_head, x + 2 * s, pb, "%", 36 * s, C_LILAC, 0) + 18 * s;
+    if (g_prep.reading) snprintf(t, sizeof t, "reading the game data");
+    else snprintf(t, sizeof t, "%lld of about %lld stages", g_prep.done, g_prep.total);
+    text(&g_f_ui, x, pb - (int)(24 * s), t, 18 * s, C_LILAC, 1 * s);
+    if (g_prep.eta >= 0) snprintf(t, sizeof t, "about %d:%02d left", g_prep.eta / 60, g_prep.eta % 60); else snprintf(t, sizeof t, "working out the time left");
+    text(&g_f_ui, x, pb, t, 18 * s, C_LILAC, 1 * s);
+    para(72 * s, 548 * s, 560 * s, 10 * s, C_LILAC, C_LILAC, C_LILAC, 0.5f, 0.18f, 0.18f);
+    float f = g_prep.pct / 100.0f;
+    if (f > 0.005f) para(72 * s, 548 * s, 560 * s * f, 10 * s, C_VIOLET0, C_LAV2, C_LAV, 0.6f, 1, 1);
+}
+/* the render thread (nvn_vk_draw.c): the first-start screen's numbers; reading: the game data is still being read */
+void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info) {
+    AcquireSRWLockExclusive(&g_lock);
+    if (!g_inited && fonts_init()) menu_init();
+    if (!g_prep.on || g_prep.pct != pct || g_prep.done != done || g_prep.total != total || g_prep.eta != eta || g_prep.reading != reading) g_ver++;
+    g_prep.on = 1; g_prep.pct = pct; g_prep.done = done; g_prep.total = total; g_prep.eta = eta; g_prep.reading = reading;
+    snprintf(g_prep.info, sizeof g_prep.info, "%s", info ? info : "");
+    ReleaseSRWLockExclusive(&g_lock);
+}
+void pcmenu_prep_hide(void) {
+    AcquireSRWLockExclusive(&g_lock);
+    g_prep.on = 0; g_ver++;
+    free(g_bg); g_bg = NULL;
+    ReleaseSRWLockExclusive(&g_lock);
 }
 static int hint_on(void) {
     ULONGLONG u = g_hint_until;
@@ -415,7 +673,7 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
     }
     if (g_open || !ms || (shown && _stricmp(when, "always"))) return;
     shown = 1;
-    if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
+    if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && fonts_init()) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
     if (!g_inited) return;
     g_hint_until = GetTickCount64() + (ULONGLONG)ms;
     printf("pcmenu: the game's pause menu opened: the hint is shown for %d s\n", ms / 1000);
@@ -425,15 +683,16 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
 
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
-int pcmenu_visible(void) { return g_open || hint_on(); }
+int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : hint_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, the hint */
+int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
-    static int drawn_open = -1;
-    int open = g_open != 0;
-    if (!open && !hint_on()) return 0;
+    static int drawn_kind = -1;
+    int kind = pcmenu_kind();
+    if (!kind) return 0;
     AcquireSRWLockExclusive(&g_lock);
-    if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_open != open) {
-        if (open) draw_panel(W, H); else draw_hint(W, H);
-        g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_open = open; g_gen++;
+    if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_kind != kind) {
+        if (kind == 1) draw_panel(W, H); else if (kind == 3) draw_prep(W, H); else draw_hint(W, H);
+        g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_kind = kind; g_gen++;
     }
     memcpy(r, g_rect, sizeof g_rect); *gen = g_gen;
     ReleaseSRWLockExclusive(&g_lock);
@@ -607,7 +866,7 @@ static void menu_open(const char *why, int controls, int ch) {
     g_hint_until = 0;
     if (g_log < 0) g_log = getenv("SSBU_PCMENU_LOG") && atoi(getenv("SSBU_PCMENU_LOG"));
     AcquireSRWLockExclusive(&g_lock);
-    if (!g_font.data && !stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
+    if (!g_f_ui.data && !fonts_init()) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
     if (!g_inited) menu_init();
     g_swap = nnpad_menu_swapped();
     g_fam = nnpad_button_prompts();

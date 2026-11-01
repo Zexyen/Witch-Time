@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -184,13 +185,9 @@ bool App::create_ui()
 	// by file, with the family named here: the files of one family do not all carry the same family name
 	struct Font { const char *file, *family; Rml::Style::FontStyle style; int weight; };
 	const Font fonts[] = {
-		{"Cinzel-Medium.ttf", "Cinzel", Rml::Style::FontStyle::Normal, 500},
-		{"Cinzel-SemiBold.ttf", "Cinzel", Rml::Style::FontStyle::Normal, 600},
-		{"CormorantGaramond-Medium.ttf", "Cormorant Garamond", Rml::Style::FontStyle::Normal, 500},
-		{"CormorantGaramond-MediumItalic.ttf", "Cormorant Garamond", Rml::Style::FontStyle::Italic, 500},
-		{"BarlowSemiCondensed-Regular.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 400},
-		{"BarlowSemiCondensed-Medium.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 500},
-		{"BarlowSemiCondensed-SemiBold.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 600},
+		{"Marcellus-Regular.ttf", "Marcellus", Rml::Style::FontStyle::Normal, 400},
+		{"SourceSans3-Regular.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 400},
+		{"SourceSans3-SemiBold.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 600},
 	};
 	for (const Font& f : fonts)
 	{
@@ -248,6 +245,12 @@ void App::bind_model()
 		h.RegisterMember("kind", &ModRow::kind);
 		h.RegisterMember("on", &ModRow::on);
 	}
+	if (auto h = c.RegisterStruct<MenuRow>())
+	{
+		h.RegisterMember("label", &MenuRow::label);
+		h.RegisterMember("tag", &MenuRow::tag);
+		h.RegisterMember("dim", &MenuRow::dim);
+	}
 	if (auto h = c.RegisterStruct<SettingRow>())
 	{
 		h.RegisterMember("name", &SettingRow::name);
@@ -258,9 +261,12 @@ void App::bind_model()
 	c.RegisterArray<std::vector<StepRow>>();
 	c.RegisterArray<std::vector<ModRow>>();
 	c.RegisterArray<std::vector<SettingRow>>();
+	c.RegisterArray<std::vector<MenuRow>>();
 	c.RegisterArray<std::vector<Rml::String>>();
 	c.Bind("screen", &screen);
 	c.Bind("built", &built);
+	c.Bind("menu", &menu);
+	c.Bind("version", &version);
 	c.Bind("stale", &stale);
 	c.Bind("hour_deg", &hour_deg);
 	c.Bind("minute_deg", &minute_deg);
@@ -281,6 +287,8 @@ void App::bind_model()
 	c.Bind("percent", &percent);
 	c.Bind("phase", &phase);
 	c.Bind("build_aside", &build_aside);
+	c.Bind("build_line", &build_line);
+	c.Bind("show_log", &show_log);
 	c.Bind("build_error", &build_error);
 	c.Bind("steps", &steps);
 	c.Bind("log", &log);
@@ -293,14 +301,31 @@ void App::bind_model()
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_remove", &tex_remove);
 	// footer hints: by the label on the button, as confirm and back in handle() go
-	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter" : prompts == 2 ? "gen:glyph?n=cross" : "gen:glyph?n=a"); });
-	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc" : prompts == 2 ? "gen:glyph?n=circle" : "gen:glyph?n=b"); });
+	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
+	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=26222f" : prompts == 2 ? "gen:glyph?n=circle&c=26222f" : "gen:glyph?n=b&c=26222f"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
 			go(a[0].Get<Rml::String>());
 	});
 	c.BindEventCallback("play", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { want_play = true; });
+	c.BindEventCallback("menu", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
+		const int i = arg_int(a, 0);
+		if (i < 0 || i >= int(menu.size()))
+			return;
+		const std::string act = menu[size_t(i)].action;
+		if (act == "play")
+			want_play = true;
+		else if (act == "update")
+		{
+			if (!runner.running())
+				update::start(paths);
+		}
+		else if (act == "quit")
+			running = false;
+		else
+			go(act);
+	});
 	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		if (!runner.running())
 			update::start(paths);
@@ -323,6 +348,10 @@ void App::bind_model()
 	});
 	c.BindEventCallback("start_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { start_build(); });
 	c.BindEventCallback("stop_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { runner.stop(); });
+	c.BindEventCallback("toggle_log", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		show_log = !show_log;
+		model.DirtyVariable("show_log");
+	});
 	c.BindEventCallback("open_mods", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		SetupState st = SetupState::read(paths.build);
 		std::string dir = st.mods_dir.empty() ? paths.mods : st.mods_dir;
@@ -389,7 +418,7 @@ void App::draw()
 	}
 	SDL_GPUColorTargetInfo clear{};
 	clear.texture = target;
-	clear.clear_color = {10 / 255.f, 6 / 255.f, 16 / 255.f, 1};
+	clear.clear_color = {238 / 255.f, 237 / 255.f, 242 / 255.f, 1};   // pearl, the screens' ground
 	clear.load_op = SDL_GPU_LOADOP_CLEAR;
 	clear.store_op = SDL_GPU_STOREOP_STORE;
 	SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr));
@@ -592,6 +621,16 @@ void App::refresh_title()
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
 	update_tag = us == update::State::available || us == update::State::failed ? tag : "";
+	// the message band: one sentence on where things stand
+	std::string when_built;
+	if (built)
+	{
+		struct stat st;
+		char when[64] = "";
+		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
+			std::strftime(when, sizeof when, "%e %b", std::localtime(&st.st_mtime));
+		when_built = when[0] == ' ' ? when + 1 : when;
+	}
 	if (us == update::State::working)
 	{
 		status_title = "UPDATING";
@@ -606,32 +645,57 @@ void App::refresh_title()
 	else if (stale)
 	{
 		status_title = "UPDATED";
-		status_line = "Now " WT_VERSION ". Rebuild before you play";
+		status_line = "Now " WT_VERSION ". Rebuild before you play.";
 	}
 	else if (returned_code > 0)
 	{
 		status_bad = true;
 		status_title = "THE GAME STOPPED";
-		status_line = "Exit code " + std::to_string(returned_code) + ". Its log is in build/run.";
+		status_line = "The game stopped with exit code " + std::to_string(returned_code) + ". Its log is in build/run.";
 	}
 	else if (built)
 	{
-		struct stat st;
-		char when[64] = "";
-		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
-			std::strftime(when, sizeof when, "%e %b, %H:%M", std::localtime(&st.st_mtime));
-		std::string scale = ini_get(paths.config + "/graphics.ini", "", "resolution_scale", "1.0");
 		status_title = returned_code == 0 ? "WELCOME BACK" : "READY";
-		status_line = std::string("Built ") + (when[0] == ' ' ? when + 1 : when) + " · " + scale + "× internal";
+		status_line = returned_code == 0 ? "Welcome back." : "Ready to play.";
 	}
 	else
 	{
 		status_title = "NOT BUILT YET";
-		status_line = "Set up the build to play";
+		status_line = "Set up the build to play.";
 	}
 	const char* driver = gpu ? SDL_GetGPUDeviceDriver(gpu) : nullptr;
+	int mods_on = 0;
+	const SetupState st = SetupState::read(paths.build);
+	std::string mods_err;
+	for (const ModEntry& m : list_mods(paths, st.mods_dir.empty() ? paths.mods : st.mods_dir, mods_err))
+		mods_on += m.on;
 	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
+	if (built)
+	{
+		footer_info += " · Built " + when_built + " from your dump";
+		if (mods_on)
+			footer_info += ", " + std::to_string(mods_on) + (mods_on == 1 ? " mod on" : " mods on");
+	}
+	if (!update_tag.empty() && us == update::State::available)
+		footer_info += " · Update " + update_tag + " available";
+	version = WT_VERSION;
+	// the staircase of bars
+	menu.clear();
+	if (built)
+		menu.push_back({"Play", "", "play", false});
+	else
+		menu.push_back({"Set up", "", "setup", false});
+	if (!update_tag.empty() && us != update::State::working)
+		menu.push_back({"Update", update_tag, "update", false});
+	menu.push_back({"Mods", "", "mods", false});
+	menu.push_back({"Settings", "", "settings", false});
+	if (built)
+	{
+		menu.push_back({"Rebuild", "", "build", false});
+		menu.push_back({"Change dump", "", "setup", false});
+	}
+	menu.push_back({"Quit", "", "quit", true});
 	model.DirtyVariable("built");
 	model.DirtyVariable("stale");
 	model.DirtyVariable("status_bad");
@@ -639,6 +703,8 @@ void App::refresh_title()
 	model.DirtyVariable("status_line");
 	model.DirtyVariable("footer_info");
 	model.DirtyVariable("update_tag");
+	model.DirtyVariable("menu");
+	model.DirtyVariable("version");
 }
 
 void App::refresh_build()
@@ -649,11 +715,12 @@ void App::refresh_build()
 		progress = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
 		percent = int(progress * 100 + .5f);
 		phase = "converting textures";
-		build_aside = "Archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
+		build_aside = "archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
+		build_line = "Converting textures. Close the window any time; it resumes.";
 		log.clear();
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "log"})
+		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "build_line", "log"})
 			model.DirtyVariable(v);
 		return;
 	}
@@ -713,12 +780,23 @@ void App::refresh_build()
 	}
 	building = run;
 	phase = run ? phase_of(runner.current) : complete ? "ready" : !runner.failed.empty() ? "stopped" : progress > 0 ? "paused" : "not started";
-	build_aside = run ? "Step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : "";
+	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
+	if (run)
+	{
+		std::string doing = phase_of(runner.current);
+		doing[0] = char(std::toupper(static_cast<unsigned char>(doing[0])));
+		if (runner.current == "compile" && runner.to_compile > 0)
+			doing += " " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " files";
+		build_line = doing + ". Close the window any time; it resumes.";
+	}
+	else
+		build_line = complete ? "Built from your dump. Ready to play." : !runner.failed.empty() ? "The build stopped. Show the log to see why, then build again." :
+			progress > 0 ? "Paused part way. Build to go on from where it stopped." : "Not built yet.";
 	log.clear();
 	if (job == Job::build || !runner.lines.empty())
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-	for (const char* v : {"progress", "percent", "steps", "building", "phase", "build_aside", "log", "build_error"})
+	for (const char* v : {"progress", "percent", "steps", "building", "phase", "build_aside", "build_line", "log", "build_error"})
 		model.DirtyVariable(v);
 }
 

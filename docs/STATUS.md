@@ -1004,9 +1004,9 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
   the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
   through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
-- **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
-  stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
-  game's textures). Sized by the window: 980 x 824 at 1080p, 1960 x 1648 at 4K.
+- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below): the whole window, drawn on the CPU into
+  BGRA when something changes and copied over the presented picture (never into the game's textures); Marcellus and
+  Source Sans 3 subsets (SIL OFL 1.1) through stb_truetype.
 - **The game's own Options screen** (2026-10-26; since 2026-10-27 seven native rows above it, next section): **a "PC Settings" row** on its Screen Display page, before Restore
   Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
   that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
@@ -1183,6 +1183,37 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
   repeat (the same shaders, 4.1 and 82.5 us): compare later runs only. #4943 / #4945 went from 51 to 98 us a draw in one run
   and not in another; not explained.
 - Not run on AMD's Windows driver, NVIDIA or Intel.
+## Launcher and in-game look (2026-11-01)
+
+One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's
+design page (project files, `design/witch-time-design-language.html`; mockups `design/mockup-*.png`): a pearl ground
+(#EEEDF2) crossed by an indigo panel (#1B1628) on a 22 degree diagonal with a stripe of runic text on its edge, lists as
+a staircase of dark bars stepping down the diagonal, the chosen one a violet to lavender to white glow with a » chevron,
+a clockwork wheel with ornate hands at the local time, a dark message band (one sentence) and a pale hint band (dark
+glyph discs) at the bottom. Marcellus for titles, Source Sans 3 Regular and SemiBold for the rest; red (#E5334B) marks
+a value saved for the next start. The launcher never names the game: the code name and the logo.
+
+- **Launcher** (`launcher/ui/witch.rcss`, `launcher.rml`): every screen is absolute boxes on a 1280 x 800 dp stage. The
+  diagonal is `transform: skewX(22deg)` on plain boxes; gradients come from a new `gen:grad` texture (up to four
+  stops, `ui_render.cpp`); the pictures are 8-bit BMPs in `launcher/ui/img` whose palette carries alpha (premultiplied)
+  in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel, the two hands, the
+  runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
+  build screen's log hides behind Show log; the settings are a staircase of rows. Fonts: Marcellus, Source Sans 3
+  (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.
+- **PC settings panel** (`runtime/pcmenu.c`): the same stage over the whole window (the held frame is covered; the
+  copy is opaque), the light wheel behind the rows, a lilac one on the indigo side, the rows at the right edge stepping
+  down the diagonal (the Controls page's 18 rows with a smaller step and row), the chosen row's help in the message
+  band, the state ("Saved; applies at the next start", a lock) under the rows. The pictures are `runtime/art/*.bmp`
+  `#embed`ded; fonts `runtime/third_party/*-pcmenu.ttf` (subsets, OFL). The mouse map (`g_row_y`, `g_val_x0/1`,
+  `g_close_r`) follows. The pause-menu hint is a slanted indigo bar.
+- **First-start screen** (`pcmenu.c` `draw_prep`, `nvn_vk_draw.c` `prep_first_hold`): drawn by the panel's code too
+  (title, the count of stages and the time left, a slanted bar, the dark wheel, a pearl panel at the right), copied over
+  the held frame by `pcm_vk_draw` (`pcmenu_kind` 3; `nvn_vk_pcmenu.c` `pcm_upload`). The 5 x 7 dot font and the
+  overlay's own bar are gone from that screen (the thin loading bar of normal frames stays).
+- **Checked**: the launcher built here (SDL3 3.4.18 from conda-forge, RmlUi 6.3) and all five screens screenshotted
+  under Xvfb with lavapipe; the panel, the Controls page, the hint and the first-start screen rendered through a
+  stand-alone harness that includes `pcmenu.c` (1280 x 720 and 1920 x 1080). Not run: the game itself (no dump here),
+  so the panel over a real frame, its input, and the first-start screen's timing are untested; a Windows build.
 
 ## Performance report (2026-10-26)
 
