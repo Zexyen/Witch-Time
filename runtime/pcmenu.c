@@ -350,8 +350,18 @@ static void put_pre(int x, int y, const float c[4], float a) {          /* premu
  * only where x < xmax(y) when clip_top >= 0 (a slanted edge: xmax = clip_top + y * TAN22) */
 static float g_ann0, g_ann1;                                /* set: only the ring between these fractions of the box's half is drawn */
 static int g_clip_right;                                     /* set: clip_top keeps what is right of the slanted edge instead */
+/* The GPU path (nvn_vk_pcmenu.c, pcmenu_gpu): the ground and the layers are still drawn here, once a version; the moving
+ * parts are not drawn but listed as sprites (PcmSprite: the same box, turn, opacity, ring and slanted clip as art_blit's)
+ * for the renderer to draw every frame with the art as textures. While g_emit is set, art_blit lists instead of drawing. */
+typedef struct { int art; float x, y, w, h, deg, alpha, ann0, ann1, clip_top; int clip_right; } PcmSprite;      /* art: pcmenu_art_pixels' id; -1 the hubs layer, -2 the words layer */
+static PcmSprite *g_emit; static int g_emit_n, g_emit_max, g_gpu;
+static int art_id(const Art *a);
 static void art_blit(const Art *a, float x, float y, float w, float h, float alpha, float deg, float clip_top) {
     if (!a->w) return;
+    if (g_emit) {
+        if (g_emit_n < g_emit_max) { PcmSprite e = {art_id(a), x, y, w, h, deg, alpha, g_ann0, g_ann1, clip_top, g_clip_right}; g_emit[g_emit_n++] = e; }
+        return;
+    }
     float cx = x + w / 2, cy = y + h / 2, cs = cosf(deg * 3.14159265f / 180), sn = sinf(deg * 3.14159265f / 180), sx = a->w / w, sy = a->h / h;
     /* the window's box of the picture's alpha box, turned */
     float bx[2] = {x + a->bx0 / sx, x + a->bx1 / sx}, by[2] = {y + a->by0 / sy, y + a->by1 / sy}, fx0 = 1e9f, fy0 = 1e9f, fx1 = -1e9f, fy1 = -1e9f;
@@ -453,6 +463,25 @@ static void art_init(void) {
 #undef LOAD
     g_hand_minute = art_load(k_art_hand_minute, sizeof k_art_hand_minute); g_hand_hour = art_load(k_art_hand_hour, sizeof k_art_hand_hour);
     g_stripe = art_load(k_art_stripe, sizeof k_art_stripe);
+}
+static int art_id(const Art *a) {                           /* the art's number for the GPU path: the light wheel's 7 layers, the dark wheel's, the two hands */
+    const Art *k[16] = {&g_wheel.ring1, &g_wheel.ring2, &g_wheel.base, &g_wheel.gear1, &g_wheel.gear2, &g_wheel.gear3, &g_wheel.top,
+                        &g_wheel_dark.ring1, &g_wheel_dark.ring2, &g_wheel_dark.base, &g_wheel_dark.gear1, &g_wheel_dark.gear2, &g_wheel_dark.gear3, &g_wheel_dark.top, &g_hand_minute, &g_hand_hour};
+    for (int i = 0; i < 16; i++) if (k[i] == a) return i;
+    return -3;
+}
+/* the art as premultiplied BGRA, the top row first, for the renderer's textures (malloc'd; NULL: no such art) */
+void *pcmenu_art_pixels(int id, int *w, int *h) {
+    const Art *k[16] = {&g_wheel.ring1, &g_wheel.ring2, &g_wheel.base, &g_wheel.gear1, &g_wheel.gear2, &g_wheel.gear3, &g_wheel.top,
+                        &g_wheel_dark.ring1, &g_wheel_dark.ring2, &g_wheel_dark.base, &g_wheel_dark.gear1, &g_wheel_dark.gear2, &g_wheel_dark.gear3, &g_wheel_dark.top, &g_hand_minute, &g_hand_hour};
+    art_init();
+    if (id < 0 || id >= 16 || !k[id]->w) return NULL;
+    const Art *a = k[id];
+    uint8_t *px = malloc((size_t)a->w * a->h * 4);
+    if (!px) return NULL;
+    for (int y = 0; y < a->h; y++) for (int x = 0; x < a->w; x++) memcpy(px + ((size_t)y * a->w + x) * 4, art_entry(a, x, y), 4);
+    *w = a->w; *h = a->h;
+    return px;
 }
 /* The wheel of radius R at (cx, cy), in three passes, as the launcher's layers: wheel_still draws the base once into the
  * ground; wheel_turn draws, each frame, the rings (once round in 120 s, the inner one the other way in 160 s), the gears
@@ -590,14 +619,17 @@ static void bands(int W, int H, float s, Rgb band_c, float band_a, Rgb foot_c, f
 static void draw_panel_words(int W, int H, float s);
 static uint8_t *g_pbg; static int g_pbg_w, g_pbg_h; static unsigned g_pbg_ver = ~0u;     /* the panel's ground, once a size */
 static Layer g_hubs, g_words;                                                          /* over the wheels: the hubs, then the words, once a version */
+static float scale_of(int W, int H) { float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f; return s < 0.45f ? 0.45f : s; }
+/* the panel's wheels: the light one (centre, radius) on the pearl side, right of the slanted edge; the dark one on the indigo panel, left of it */
+static void panel_wheels(int W, float s, float wl[3], float wd[3], float *edge) { wl[0] = W - 300 * s; wl[1] = 360 * s; wl[2] = 360 * s; wd[0] = 170 * s; wd[1] = 430 * s; wd[2] = 240 * s; *edge = 360 * s; }
 static void draw_panel(int W, int H) {
-    float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f;
-    if (s < 0.45f) s = 0.45f;
+    float s = scale_of(W, H), wl[3], wd[3], edge;
     art_init();
     alloc_panel(W, H);
     if (!g_px) return;
     g_rect[0] = 0; g_rect[1] = 0; g_rect[2] = W; g_rect[3] = H;
-    const float wl_x = W - 300 * s, wl_y = 360 * s, wl_r = 360 * s, wd_x = 170 * s, wd_y = 430 * s, wd_r = 240 * s, edge = 360 * s;
+    panel_wheels(W, s, wl, wd, &edge);
+    const float wl_x = wl[0], wl_y = wl[1], wl_r = wl[2], wd_x = wd[0], wd_y = wd[1], wd_r = wd[2];
     if (g_pbg && (g_pbg_w != W || g_pbg_h != H)) { free(g_pbg); g_pbg = NULL; }
     if (g_pbg && g_pbg_ver == g_ver) {
         memcpy(g_px, g_pbg, (size_t)W * H * 4);
@@ -620,6 +652,7 @@ static void draw_panel(int W, int H) {
         g_to = NULL;
         g_pbg_ver = g_ver;
     }
+    if (g_gpu) return;                             /* the renderer draws the moving parts and the layers over this ground */
     double t = anim_t();
     g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, 0, edge, t); g_clip_right = 0;
     layer_over(&g_hubs);
@@ -723,8 +756,7 @@ static void draw_hint(int W, int H) {
 static struct { int on, pct, eta, reading; long long done, total; char info[96]; } g_prep;
 static uint8_t *g_bg; static int g_bg_w, g_bg_h;
 static void draw_prep(int W, int H) {
-    float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f;
-    if (s < 0.45f) s = 0.45f;
+    float s = scale_of(W, H);
     art_init();
     alloc_panel(W, H);
     if (!g_px) return;
@@ -759,8 +791,7 @@ static void draw_prep(int W, int H) {
         if (g_bg) memcpy(g_bg, g_px, (size_t)W * H * 4);
         layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, -1); g_to = NULL;
     } else memcpy(g_px, g_bg, (size_t)W * H * 4);
-    wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1, anim_t());
-    layer_over(&g_hubs);
+    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1, anim_t()); layer_over(&g_hubs); }      /* else the renderer draws them over the numbers */
     /* the numbers */
     char t[64];
     float big = 84 * s, x = 72 * s;
@@ -831,7 +862,7 @@ int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     AcquireSRWLockExclusive(&g_lock);
     static ULONGLONG took = 33;
     ULONGLONG now = GetTickCount64();
-    int turn = (kind == 1 || kind == 3) && now - drawn_at >= (took > 33 ? took : 33);     /* the wheel turns: up to 30 frames a second, never more than half a core */
+    int turn = !g_gpu && (kind == 1 || kind == 3) && now - drawn_at >= (took > 33 ? took : 33);     /* the wheel turns: up to 30 frames a second, never more than half a core (the GPU path turns it every frame) */
     if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_kind != kind || turn) {
         if (kind == 1) draw_panel(W, H); else if (kind == 3) draw_prep(W, H); else draw_hint(W, H);
         g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_kind = kind; g_gen++; drawn_at = now;
@@ -847,6 +878,48 @@ void pcmenu_panel_read(void *dst, int w, int h) {
     ReleaseSRWLockExclusive(&g_lock);
 }
 int pcmenu_take_work(void) { InterlockedExchange(&g_job, 0); return (int)InterlockedExchange(&g_work, 0); }
+/* The GPU path (nvn_vk_pcmenu.c): on, the panel and the first-start screen stop composing their moving parts here; the
+ * renderer draws them every frame from pcmenu_gpu_scene over the ground it copies, with the layers (pcmenu_layer_read:
+ * 1 the hubs, 2 the words; premultiplied BGRA of the panel's size, drawn once a version) between. Changing the mode draws
+ * the panel again. */
+void pcmenu_gpu(int on) {
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_gpu != (on != 0)) { g_gpu = on != 0; g_drawn_ver = ~0u; }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max) {        /* the sprites to draw over the ground, in order, for the window (W, H) now */
+    int kind = pcmenu_kind();
+    if (kind != 1 && kind != 3) return 0;
+    AcquireSRWLockExclusive(&g_lock);
+    float s = scale_of(W, H);
+    double t = anim_t();
+    g_emit = out; g_emit_n = 0; g_emit_max = max;
+    PcmSprite hubs = {-1, 0, 0, (float)W, (float)H, 0, 1, 0, 0, -1, 0}, words = hubs;
+    words.art = -2;
+    if (kind == 1) {
+        float wl[3], wd[3], edge;
+        panel_wheels(W, s, wl, wd, &edge);
+        g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
+        if (g_emit_n < max) out[g_emit_n++] = hubs;
+        wheel_turn(&g_wheel_dark, wd[0], wd[1], wd[2], 0.4f, 1, edge - 1, t);
+        if (g_emit_n < max) out[g_emit_n++] = words;
+    } else {
+        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1, t);
+        if (g_emit_n < max) out[g_emit_n++] = hubs;
+    }
+    int n = g_emit_n;
+    g_emit = NULL; g_emit_n = g_emit_max = 0;
+    ReleaseSRWLockExclusive(&g_lock);
+    return n;
+}
+int pcmenu_layer_read(int which, void *dst, int w, int h) {          /* the layer's pixels (w x h, the panel's size): 0 when there are none */
+    const Layer *l = which == 1 ? &g_hubs : which == 2 ? &g_words : NULL;
+    int ok = 0;
+    AcquireSRWLockExclusive(&g_lock);
+    if (l && l->px && w == g_pw && h == g_ph && l->n == w * h && l->x1 > l->x0) { memcpy(dst, l->px, (size_t)w * h * 4); ok = 1; }
+    ReleaseSRWLockExclusive(&g_lock);
+    return ok;
+}
 
 /* ---------------------------------------------------------------- changes */
 static void add_work(LONG bit) { LONG o; do o = g_work; while (InterlockedCompareExchange(&g_work, o | bit, o) != o); }

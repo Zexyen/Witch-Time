@@ -1004,9 +1004,10 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
   the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
   through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
-- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below): the whole window, drawn on the CPU into
-  BGRA when something changes and copied over the presented picture (never into the game's textures); Marcellus and
-  Source Sans 3 subsets (SIL OFL 1.1) through stb_truetype.
+- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below): the whole window, its ground drawn on the
+  CPU into BGRA when something changes, composed on the GPU every frame with the turning wheel over it (`pcm_gpu_draw`,
+  below) and copied over the presented picture (never into the game's textures); Marcellus and Source Sans 3 subsets
+  (SIL OFL 1.1) through stb_truetype.
 - **The game's own Options screen** (2026-10-26; since 2026-10-27 seven native rows above it, next section): **a "PC Settings" row** on its Screen Display page, before Restore
   Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
   that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
@@ -1215,11 +1216,28 @@ a value saved for the next start. The launcher never names the game: the code na
   launcher's seven layers a set (`runtime/art/wheel-*.bmp`, `wheel-dark-*.bmp`, 5.6 MB embedded). A frame is the
   cached ground (`g_pbg`: ground, wedge, the wheels' bases) plus the rings and gears turned by the clock
   (`wheel_turn`, `anim_t`: `GetTickCount64`), the hubs and then the words composed over it from two layers drawn once
-  a version (`Layer`, `g_to`: `put` and `put_pre` draw into a layer while it is set). `pcmenu_panel_size` draws a new
-  frame up to 30 times a second, never more often than a frame takes (`took`), so the thread keeps half a core at
-  most; `pcm_upload` copies it each time. Measured with the harness at -O2 on the cloud machine: 18 ms a frame at
-  1280x720, 36 ms at 1080p, 132 ms at 4K (about 8 frames a second there; the rings move 3 degrees a second, the gears
-  36 and 26, so 4K is visibly stepped). The rotating blits sample only the ring's annulus and a picture's alpha box.
+  a version (`Layer`, `g_to`: `put` and `put_pre` draw into a layer while it is set).
+- **Composed on the GPU** (same day, Kevin's ask): `nvn_vk_pcmenu.c` `pcm_gpu_draw`. The CPU draws only what changes
+  with a version: the ground (`g_pbg`, and the first-start screen's numbers over `g_bg`) and the two layers; they go
+  up in one staging buffer (`pcm_upload`, ground + hubs + words). Every present copies the ground into a canvas of
+  the panel's size (B8G8R8A8_UNORM, so the stored values are the CPU's, whatever the swapchain's colour class), draws
+  the moving parts over it as turned textured quads (`pcmenu_gpu_scene`: `art_blit` lists a `PcmSprite` instead of
+  drawing while `g_emit` is set, so the geometry is the CPU path's own: the same box, turn, opacity, ring annulus
+  and slanted clip; the hubs and the words are two more quads between them), then copies the canvas over the picture
+  at the panel's place. One pipeline (dynamic rendering, premultiplied blend ONE / ONE_MINUS_SRC_ALPHA as `put_pre`,
+  push constants, a linear sampler with a transparent border; the annulus and the clip edge are `discard`s in the
+  fragment stage), 16 art textures uploaded once from `pcmenu_art_pixels` (the staging buffer freed at the next
+  job), the layer textures made again at a new size (`pcm_gpu_canvas`, after `cmd_wait_all`). `pcmenu_gpu(1)` stops
+  the CPU path's 30 frames a second; `SSBU_PCMENU_CPU=1` keeps it, and so does a refused pipeline (the log says which).
+  The hint is still copied as drawn. Verified on lavapipe (`tests/pcmenu_vk/`: the GPU picture against the CPU
+  composition at the same clock, under the Khronos validation layer, no messages): mean channel difference 0.05-0.07
+  at 720p, 1080p and 800x450, the worst pixels at ring edges; the first-start screen the same (its only difference
+  the minute hand, when the second changed between the two renders). Not run on a real GPU yet.
+- The CPU path, kept as the fallback: `pcmenu_panel_size` draws a new frame up to 30 times a second, never more often
+  than a frame takes (`took`), so the thread keeps half a core at most; `pcm_upload` copies it each time. Measured
+  with the harness at -O2 on the cloud machine: 18 ms a frame at 1280x720, 36 ms at 1080p, 132 ms at 4K (about 8
+  frames a second there; the rings move 3 degrees a second, the gears 36 and 26, so 4K is visibly stepped). The
+  rotating blits sample only the ring's annulus and a picture's alpha box.
 - **First-start screen** (`pcmenu.c` `draw_prep`, `nvn_vk_draw.c` `prep_first_hold`): drawn by the panel's code too
   (title, the count of stages and the time left, a slanted bar, the dark wheel, a pearl panel at the right), copied over
   the held frame by `pcm_vk_draw` (`pcmenu_kind` 3; `nvn_vk_pcmenu.c` `pcm_upload`). The 5 x 7 dot font and the
