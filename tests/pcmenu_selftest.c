@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     s = slurp(ini);
     assert(strstr(s, "resolution_scale = 1.0\r\naspect = stretch\r\n") && strstr(s, "mystery = 7\r\n"));
     free(s);
-    assert(gfx_option_set("resolution_scale", "2.4") && gfx_options()->scale == 1.0f);      /* not a live key: the running value stays */
+    assert(gfx_option_set("resolution_scale", "2.4") && gfx_options()->scale == 2.4f);
     spit(ini, "window = windowed\nwidth = 1280\nheight = 720\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n");      /* LF file */
     assert(gfx_option_set("width", "1920") && gfx_option_set("height", "1080") && gfx_options()->width == 1920 && gfx_options()->height == 1080);
     s = slurp(ini);
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     change(7, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(7));
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
-    change(5, 1, 0); assert(row_restart(5));                  /* 1.6 -> 2.0: applies at the next start */
+    pcmenu_take_work(); change(5, 1, 0); assert(row_restart(5) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */
     change(6, -1, 0); assert(gfx_options()->aniso == 4 && (g_work & 1));
     change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); assert(g_cur[5] == 10);      /* 3.0, the last: right stops there */
     change(5, 1, 1); assert(g_cur[5] == 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0);      /* A goes round */
@@ -93,7 +93,8 @@ int main(int argc, char **argv) {
     panel(dir, "pcmenu_1920x1080", 1920, 1080);
     /* closing: every player reads an idle pad until that player has let go (player 2 = a keyboard holding Esc = Plus) */
     InterlockedExchange(&g_open, 0); Sleep(200);           /* the menu's thread ends: what it does at a close */
-    assert(g_release == 0xff && !g_guest_frozen);
+    assert(g_release == 0xff && !g_guest_frozen && (g_work & 4) && !row_restart(5));
+    pcmenu_take_work();
     assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 2 still holds Plus: not given */
     assert(pcmenu_gate(0, 0) == 0);                        /* player 1 let go: its input is back at once */
     assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 1's release does not free player 2 */
@@ -103,8 +104,8 @@ int main(int argc, char **argv) {
     int pending;
     pcmenu_key_set("aspect", "keep"); assert(gfx_options()->aspect_stretch == 0 && !strcmp(pcmenu_key_get("aspect", NULL), "keep"));
     pcmenu_key_set("anisotropic_filtering", "16"); assert(gfx_options()->aniso == 16 && !strcmp(pcmenu_key_get("anisotropic_filtering", NULL), "16"));
-    pcmenu_key_set("resolution_scale", "1.6"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "1.6") && !pending);      /* the running one */
-    pcmenu_key_set("resolution_scale", "2.4"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "2.4") && pending);
+    pcmenu_key_set("resolution_scale", "1.6"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "1.6") && !pending && (g_work & 4));      /* at once */
+    pcmenu_key_set("resolution_scale", "2.4"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "2.4") && !pending && gfx_options()->scale == 2.4f);
     pcmenu_key_set("resolution_scale", "7"); assert(!strcmp(pcmenu_key_get("resolution_scale", NULL), "2.4"));      /* none of the row's */
     s = slurp(ini); assert(strstr(s, "resolution_scale = 2.4\n") && strstr(s, "anisotropic_filtering = 16\n")); free(s);
     assert(!strcmp(pcmenu_key_get("no_such_key", NULL), ""));
