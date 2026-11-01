@@ -38,6 +38,7 @@ typedef struct {
     int mouse_cam, mouse_inv;           /* [Recomps#1] [keyboard] mouse_camera (default on), mouse_invert_y */
     float mouse_sens;                   /* [Recomps#1] [keyboard] mouse_sensitivity (default 1.0) */
     int prompts;                        /* [Recomps#1] [general] button_prompts: 0 auto, 1 switch, 2 playstation, 3 xbox */
+    int menu_swap;                      /* [witchtime] [general] swap_confirm */
     int input;                          /* [Recomps#1] [general] input: 0 both, 1 keyboard (pads unused), 2 controller (keyboard and mouse unused) */
 } Cfg;
 typedef struct {
@@ -163,6 +164,9 @@ static const char *const g_default_ini =
 ";   other pads -> switch, keyboard or mouse -> keyboard, and no pad -> keyboard), switch, playstation, xbox, keyboard (the keys\r\n"
 ";   bound in [keyboard] below). All built in, no mod needed.\r\n"
 "button_prompts = auto\r\n"
+"; Menus confirm with B and go back with A, and their button prompts show it: on / off. Gameplay keeps its buttons, and the\r\n"
+";   keyboard its keys. Which button is B depends on layout above: with positional, the bottom one (A on an Xbox pad).\r\n"
+"swap_confirm = off\r\n"
 "; Which input the game takes: both (pads and the keyboard + mouse, merged), keyboard (pads are ignored), controller (the\r\n"
 ";   keyboard and mouse are ignored). The keyboard part takes effect when the game starts, the pads part at once.\r\n"
 "input = both\r\n"
@@ -340,6 +344,7 @@ static void cfg_parse(Cfg *c, char *text) {
             c->input = !_stricmp(val, "keyboard") ? 1 : !_stricmp(val, "controller") ? 2 : 0;
         else if (sect == 1 && !_stricmp(key, "button_prompts"))                                /* [Recomps#1] */
             c->prompts = prompts_value(val);
+        else if (sect == 1 && !_stricmp(key, "swap_confirm")) c->menu_swap = !_stricmp(val, "on");
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
         else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
@@ -770,10 +775,9 @@ const char *nnpad_prompts_setting(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); const char *s = g_prompts_name[g_cfg.prompts]; unlock();
     return s;
 }
-int nnpad_prompts_set(const char *val) {
-    lock();
+static int cfg_key_set(const char *key, const char *val) {      /* lock held */
     if (!g_cfg.path[0]) cfg_load(1);
-    size_t len = 0, done = 0;
+    size_t len = 0, done = 0, kn = strlen(key);
     char *b = read_file(g_cfg.path, &len), tmp[MAX_PATH + 8];
     snprintf(tmp, sizeof tmp, "%s.tmp", g_cfg.path);
     FILE *f = fopen(tmp, "wb");
@@ -783,21 +787,44 @@ int nnpad_prompts_set(const char *val) {
         while (e < len && b[e] != '\n') e++;
         if (e < len) e++;
         while (k < e && (b[k] == ' ' || b[k] == '\t')) k++;
-        if (!done && e - k > 14 && !_strnicmp(b + k, "button_prompts", 14) && (b[k + 14] == ' ' || b[k + 14] == '\t' || b[k + 14] == '=')) {
-            fprintf(f, "button_prompts = %s%s", val, b[e - 1] != '\n' ? "" : e - s > 1 && b[e - 2] == '\r' ? "\r\n" : "\n");
+        if (!done && e - k > kn && !_strnicmp(b + k, key, kn) && (b[k + kn] == ' ' || b[k + kn] == '\t' || b[k + kn] == '=')) {
+            fprintf(f, "%s = %s%s", key, val, b[e - 1] != '\n' ? "" : e - s > 1 && b[e - 2] == '\r' ? "\r\n" : "\n");
             done = 1;
         } else fwrite(b + s, 1, e - s, f);
         s = e;
     }
     free(b);
-    if (f) { if (!done) fprintf(f, "\r\n[general]\r\nbutton_prompts = %s\r\n", val); ok = !fclose(f); }
+    if (f) { if (!done) fprintf(f, "\r\n[general]\r\n%s = %s\r\n", key, val); ok = !fclose(f); }
     if (ok) ok = MoveFileExA(tmp, g_cfg.path, MOVEFILE_REPLACE_EXISTING) != 0;
-    if (ok) g_cfg.prompts = prompts_value(val); else DeleteFileA(tmp);
+    if (!ok) DeleteFileA(tmp);
+    return ok;
+}
+int nnpad_prompts_set(const char *val) {
+    lock();
+    int ok = cfg_key_set("button_prompts", val);
+    if (ok) g_cfg.prompts = prompts_value(val);
+    unlock();
+    return ok;
+}
+/* [witchtime] swap_confirm, the same way */
+const char *nnpad_menu_swap_setting(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); const char *s = g_cfg.menu_swap ? "on" : "off"; unlock();
+    return s;
+}
+int nnpad_menu_swap_set(const char *val) {
+    lock();
+    int ok = cfg_key_set("swap_confirm", val);
+    if (ok) g_cfg.menu_swap = !_stricmp(val, "on");
     unlock();
     return ok;
 }
 static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
 void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }
+/* swap_confirm in force: only for a pad, or Enter would go back and the keyboard's prompts (its keys, on the A and B pictures) would lie */
+int nnpad_menu_swapped(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); int on = g_cfg.menu_swap; unlock();
+    return on && nnpad_button_prompts() != 4;
+}
 int nnpad_button_prompts(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); int p = g_cfg.prompts, kb_only = g_cfg.input == 1; unlock();
     if (p) return p;
@@ -1263,7 +1290,7 @@ int nnpad_selftest(const NnHidHooks *h) {
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_SOUTH, true); settle(); h->state(0, &btn, st, &attr);
         int before = btn == 1ull << 1;
         snprintf(text, sizeof text,
-                 "[general]\r\nlayout = positional\r\ndeadzone = 0.10\r\n[keyboard]\r\nplayer = none\r\n"
+                 "[general]\r\nlayout = positional\r\ndeadzone = 0.10\r\nswap_confirm = on\r\n[keyboard]\r\nplayer = none\r\n"
                  "[device %s]\r\nlayout = labels\r\nmap.PLUS = north, button14\r\nmap.MINUS = none\r\nmap.Y = none\r\naxis.RX = leftx\r\ninvert.LY = on\r\nrumble = off\r\n", g5);
         Sleep(1100);
         write_text(path, text);
@@ -1282,6 +1309,9 @@ int nnpad_selftest(const NnHidHooks *h) {
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 0);
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTY, -32768); settle(); h->state(0, &btn, st, &attr);
         check(st[1] == -32767, "remap: invert.LY = on flips the up/down axis");
+        int ok = !strcmp(nnpad_menu_swap_setting(), "on") && nnpad_menu_swap_set("off") && !strcmp(nnpad_menu_swap_setting(), "off");
+        { size_t n = 0; char *t = read_file(g_cfg.path, &n); ok = ok && t && strstr(t, "swap_confirm = off\r\n[keyboard]") && strstr(t, "deadzone = 0.10\r\n"); free(t); }
+        check(ok, "swap_confirm read from the ini; set keeps the file's other lines");
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTY, 0);
         h->vibrate(0, 1.0f, 1.0f);
         check(g_vj[0].lo == 0 && g_vj[0].hi == 0, "rumble = off for this device: nothing reaches the pad");

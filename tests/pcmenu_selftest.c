@@ -9,7 +9,7 @@
 volatile LONG g_guest_frozen, g_display_close;
 volatile int game_cutscene_fps;
 static int g_vsync_applied, g_win_applied;
-void nnhid_menu_read(uint64_t *b, int *lx, int *ly) { *b = 0; *lx = *ly = 0; }
+void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int swap_ab) { (void)swap_ab; *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
 int nvn_front_post_pcmenu(void) { return 1; }
 void display_vsync_apply(void) { g_vsync_applied++; }
@@ -19,6 +19,10 @@ int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
 static const char *g_prompts = "playstation";
 const char *nnpad_prompts_setting(void) { return g_prompts; }
 int nnpad_prompts_set(const char *val) { g_prompts = val; return 1; }
+static const char *g_menu_swap = "off";
+const char *nnpad_menu_swap_setting(void) { return g_menu_swap; }
+int nnpad_menu_swap_set(const char *val) { g_menu_swap = val; return 1; }
+int nnpad_menu_swapped(void) { return !strcmp(g_menu_swap, "on"); }
 int display_mouse_pixels(int *x, int *y) { *x = *y = -1; return 0; }
 SHORT GetAsyncKeyState(int vk) { (void)vk; return 0; }
 
@@ -109,6 +113,8 @@ int main(int argc, char **argv) {
     pcmenu_key_set("resolution_scale", "7"); assert(!strcmp(pcmenu_key_get("resolution_scale", NULL), "2.4"));      /* none of the row's */
     s = slurp(ini); assert(strstr(s, "resolution_scale = 2.4\n") && strstr(s, "anisotropic_filtering = 16\n")); free(s);
     assert(!strcmp(pcmenu_key_get("no_such_key", NULL), ""));
+    pcmenu_key_set("swap_confirm", "on"); assert(!strcmp(g_menu_swap, "on") && !strcmp(pcmenu_key_get("swap_confirm", NULL), "on"));      /* a key of controllers.ini */
+    pcmenu_key_set("swap_confirm", "off"); assert(!strcmp(g_menu_swap, "off"));
     /* a new version over a player's file: its comments and keys, the player's values and keys, the old file kept */
     char old[320], bak[330];
     snprintf(old, sizeof old, "%s/graphics_old.ini", dir); snprintf(bak, sizeof bak, "%s.bak", old);

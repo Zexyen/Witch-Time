@@ -25,6 +25,7 @@
 #include "plat.h"
 #include "runtime.h"
 #include "hostrt.h"
+#include "nnpad.h"
 
 #define OPTX_BASE   0x7105a00000ULL      /* lifter/recomp_eh.py OPTX_PAGE */
 #define ROWS        0x7101c2b1a8ULL      /* the Options screen's row objects */
@@ -64,6 +65,27 @@ static const PcRow k_pc[] = {
 static uint32_t g_label[NPC], g_text[NPC][6], g_custom;
 static int g_text_mod;
 static uint64_t g_obj0;                  /* the guest address of row 26's object */
+
+/* controllers.ini swap_confirm (docs/RE_NOTES.md section 8): the game's two variables behind DECIDE_MASK and its "cancel" twin, which
+ * every menu reads and gameplay does not, and the pictures of the button guide. Set by the game once, at its start: 0 before. */
+#define CONFIRM_BITS 0x7104dc8590ULL
+#define CANCEL_BITS  0x7104dc8594ULL
+#define PAD_A 0x10u
+#define PAD_B 0x20u
+#define GUIDE_PICS   0x710184b4ccULL     /* u32[32] by the guide's button number: [0] A, [1] B, which gameplay's prompts never use (they use [4], [5]) */
+#define PIC_A 0x1760995eu                /* crc32("btn_002") & 0x7fffffff */
+#define PIC_B 0x0e69c8e4u                /* btn_001 */
+static int g_swap_known;
+void menu_swap_tick(void) {              /* nnhid.c, from player 1's pad poll */
+    if (!g_swap_known) return;
+    uint32_t confirm = nnpad_menu_swapped() ? PAD_B : PAD_A, now = rd32(CONFIRM_BITS);
+    if (now == confirm || (now != PAD_A && now != PAD_B)) return;
+    wr32(CONFIRM_BITS, confirm);
+    wr32(CANCEL_BITS, confirm ^ (PAD_A | PAD_B));
+    if (!plat_protect((void *)(uintptr_t)(GUIDE_PICS & ~0xfffULL), 0x1000, PLAT_RW)) return;      /* this page of main's read-only data stays writable: pad polls can overlap */
+    wr32(GUIDE_PICS, confirm == PAD_A ? PIC_A : PIC_B);
+    wr32(GUIDE_PICS + 4, confirm == PAD_A ? PIC_B : PIC_A);
+}
 
 static uint32_t msg_hash(const char *name, const char *suffix) {      /* crc32 of the lower-case name, as the MCD's events */
     char s[64];
@@ -112,6 +134,7 @@ static void pc_list_count(Ctx *c) { int r = row_of(c); c->x[0] = (uint32_t)(nval
 static void pc_list_reset(Ctx *c) { int r = row_of(c); pcmenu_key_set(k_pc[r].key, k_pc[r].val[k_pc[r].dflt]); }        /* +0x68 */
 
 void options_row_install(void) {
+    g_swap_known = rd32(GUIDE_PICS) == PIC_A && rd32(GUIDE_PICS + 4) == PIC_B;
     uint8_t *page = plat_map_fixed(OPTX_BASE, 0x1000);
     if (!page) { fprintf(stderr, "options row: cannot map 0x%llx (the Options screen reads its Screen Display rows there)\n", OPTX_BASE); exit(1); }
     uint32_t *rows = (uint32_t *)page;

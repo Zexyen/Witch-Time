@@ -321,3 +321,17 @@ every per-category choice (row table, count, Controller's own table) is a 4-case
 the 13 files (font 7, or the CJK font in cn / tw / kr). nl and pt messcore are stubs (40 / 44 symbols; CORE_SETTING_003
 "ON" is an empty text there, and the game shows blank ON / OFF and button guides with SSBU_LANGUAGE=nl). A glyph of
 another font than the paragraph's is drawn at its own size.
+
+**Confirm and cancel** (2026-11-01; `swap_confirm`). The menu layer keeps a pad state of its own (0x38 bytes per pad, guest
+0x7104d8f4f8: +0 held, +4 pressed, in game bits: 0x10 A, 0x20 B, 0x40 X, 0x80 Y; A and B checked by tracing a press) and tests
+buttons through four variables: confirm 0x7104dc8590 (getter 0x7100983930), cancel 0x7104dc8594 (0x7100983940), 0x7104dc8598
+(0x7100983960, default 0x80) and 0x7104dc859c (0x7100983950, default 0x40). 0x7100983590 sets them once at the game's start:
+0x7100cc4780 says whether to swap both pairs, and on this console it is a stub returning 0. No call of the pad helpers
+0x7100983660 / 0x7100983630 passes 0x10 or 0x20 as a constant, and every caller of the two getters is menu code; the one
+action -> mask helper that reaches them (0x7100b22ee0) is only called with action 34, which cannot lead there. So writing the
+two variables swaps every menu and no gameplay.
+The button guide (0x7100a8abbc, 7 entries {u32 buttons, u32 message, u32 bank}; 79 callers) turns each bit of an entry's
+buttons into a picture through 0x7100960870, a table of u32 hashes at 0x710184b4cc, crc32("btn_NNN") & 0x7fffffff. [0], [1] are
+A (btn_002) and B (btn_001), and [4], [5] the same two pictures: gameplay's prompts come through 0x7100b22cc0, whose results
+never include 0 or 1, so only the guides read [0] and [1]. Of the 55 sites whose entries could be read statically, bit 0 only
+ever says OK, Confirm, Next, Start, Unlock or Disable and bit 1 only Back, Cancel or Close.
