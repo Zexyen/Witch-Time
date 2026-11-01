@@ -1011,7 +1011,7 @@ Screen Display page** (the fallback asked for when a tab is not possible), below
 
 | row | values | applies |
 |---|---|---|
-| Internal Resolution | 1.0 / 1.2 / 1.6 / 2.4 | at once (nvn_vk_draw.c rs_apply; "Resolution scale, live") |
+| Internal Resolution | 900p / 1080p / 1440p / 2160p | at once (nvn_vk_draw.c rs_apply; "Resolution scale, live") |
 | Cutscene Frame Rate | 30 / 60 | at once |
 | Vertical Sync | Auto / Monitor (display) / Timer (clock) / ON / OFF | at once |
 | Display Mode | Windowed / Borderless / Fullscreen | at once (Linux; Windows at the next start, as the panel) |

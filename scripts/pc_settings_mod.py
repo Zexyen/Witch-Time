@@ -91,7 +91,7 @@ CORE = [
     ('CORE_PC_LOD_M1', ALL('-1')), ('CORE_PC_LOD_M05', ALL('-0.5')), ('CORE_PC_LOD_0', ALL('0')), ('CORE_PC_LOD_P05', ALL('+0.5')),
     ('CORE_PC_LOD_P1', ALL('+1')),
 ]
-CORE += [('CORE_PC_RES_' + v.replace('.', ''), ALL(v)) for v in ('1.0', '1.2', '1.6', '2.4')]
+CORE += [('CORE_PC_RES_' + v, ALL(h + 'p', h)) for v, h in (('10', '900'), ('12', '1080'), ('16', '1440'), ('24', '2160'))]
 CORE += [('CORE_PC_FPS_90', ALL('90')), ('CORE_PC_FPS_120', ALL('120'))]
 LANGS = list(MENU[0][1])
 MOD = 'witchtime-pc-settings'

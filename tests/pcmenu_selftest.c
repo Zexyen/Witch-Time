@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     InterlockedExchange(&g_open, 0); Sleep(200);
     /* the menu's rows from that file; changes through the menu */
     menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
-    assert(g_cur[5] == 7 && !strcmp(val_name(5), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
+    assert(g_cur[5] == 7 && !strcmp(val_name(5), "1440p"));
     assert(g_shown[7] && g_cur[7] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
     change(7, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(7));
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
