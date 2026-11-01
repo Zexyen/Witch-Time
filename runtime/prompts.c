@@ -1,6 +1,8 @@
 /* [witchtime] PlayStation / Xbox button prompts, no mod needed. Every prompt of the game comes from one atlas, core_sys_btn
- * (ui/ui_core*.dtt, texture 0 of core.wtp): white pictures in straight alpha on black, 40 x 40 cells on a 4 x 4 block grid, named
- * btn_NNN in core.uvd. Most are neutral (d-pad, sticks, the coloured action icons); the 10 below are the Switch's. When the
+ * (ui/ui_core*.dtt, texture 0 of core.wtp), 40 x 40 cells on a 4 x 4 block grid, named btn_NNN in core.uvd. A cell holds two
+ * pictures: alpha is the button, RGB its backing (white on black): the same outline with its holes filled, 2 texels wider.
+ * uibaseshader takes alpha from RGB when a vertex asks for it (in_attr14.y), so the action guides ("Climax") can draw a cell
+ * in black behind the button. Most are neutral (d-pad, sticks, the coloured action icons); the 10 below are the Switch's. When the
  * game makes that texture (nvn_gl.c tex_initialize) they are painted over in its memory, in the texture's own format, and
  * again whenever the choice changes: the renderers see an ordinary texture the game has written to. Only the two atlases known by hash are touched, so a mod's atlas stays as it is.
  * Which family: controllers.ini button_prompts (nnpad_button_prompts). The pictures are drawn from plain shapes (prompt_art.h);
@@ -29,6 +31,7 @@ void prompts_tick(void);
 #define ATLAS_H 512
 #define ATLAS_SIZE 0x20000
 
+enum { WMAX = 52 };                                         /* the widest cell */
 typedef struct { int x, y, w; } Cell;                       /* w: 0 = CELL */
 static const Cell MINUS = {160, 0}, PLUS = {0, 132}, A = {204, 0}, B = {160, 44}, Y = {204, 44}, X = {0, 88};
 static const Cell L1 = {56, 88}, R1 = {112, 88}, L2 = {160, 88}, R2 = {204, 88};
@@ -72,20 +75,16 @@ static void keys(uint8_t *s, const int *idx, int n) {
 static void put(uint8_t *b, int pos, int n, unsigned v) {
     for (int i = 0; i < n; i++) if (v >> i & 1) b[(pos + i) / 8] |= (uint8_t)(1 << ((pos + i) & 7));
 }
-/* ASTC 4 x 4, LDR: one partition, luminance + alpha endpoints (CEM 4), 16 weights of 4 bits. The pictures are white, so the
- * luminance is fixed and only the alpha needs the weights. Block mode 0x242: weight grid 4 x 4, range 0..15. */
-void prompts_astc_block(const uint8_t *alpha, int stride, uint8_t *out) {
-    int lo = 255, hi = 0;
+/* ASTC 4 x 4, LDR: one partition, luminance + alpha endpoints (CEM 4), fixed at transparent black and opaque white, two planes
+ * of 16 weights of 3 bits: luminance and alpha (ccs 3) are separate pictures, one plane cannot hold both. Block mode 0x453:
+ * weight grid 4 x 4, dual plane, range 0..7. */
+void prompts_astc_block(const uint8_t *rgba, int stride, uint8_t *out) {
     memset(out, 0, 16);
-    for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) {
-        int a = alpha[y * stride + x];
-        lo = a < lo ? a : lo; hi = a > hi ? a : hi;
-    }
-    put(out, 0, 11, 0x242); put(out, 13, 4, 4);             /* bits 11-12 stay 0: one partition */
-    put(out, 17, 8, 255); put(out, 25, 8, 255); put(out, 33, 8, (unsigned)lo); put(out, 41, 8, (unsigned)hi);
-    for (int i = 0; i < 16; i++) {
-        int a = alpha[(i >> 2) * stride + (i & 3)], w = hi > lo ? ((a - lo) * 15 + (hi - lo) / 2) / (hi - lo) : 0;
-        for (int j = 0; j < 4; j++) if (w >> j & 1) { int p = 127 - (i * 4 + j); out[p / 8] |= (uint8_t)(1 << (p & 7)); }   /* weights run from the top, bit-reversed */
+    put(out, 0, 11, 0x453); put(out, 13, 4, 4);             /* bits 11-12 stay 0: one partition */
+    put(out, 20, 3, 7); put(out, 26, 3, 7); put(out, 30, 2, 3);   /* endpoints of 3 bits at 17: 0, 7, 0, 7; ccs */
+    for (int i = 0; i < 32; i++) {
+        int w = (rgba[((i >> 3) * stride + (i >> 1 & 3)) * 4 + (i & 1) * 3] * 7 + 127) / 255;
+        for (int j = 0; j < 3; j++) if (w >> j & 1) { int p = 127 - (i * 3 + j); out[p / 8] |= (uint8_t)(1 << (p & 7)); }   /* weights run from the top, bit-reversed */
     }
 }
 
@@ -98,31 +97,37 @@ static void cell_swap(uint8_t *mem, Cell a, Cell b, int bh_log2) {
         memcpy(t, p, 16); memcpy(p, q, 16); memcpy(q, t, 16);
     }
 }
+/* rgba holds the picture in alpha: RGB becomes its backing (top of this file). Anything but this shape shows as a black shape behind the button. */
+static void cell_backing(uint8_t *rgba, int w) {
+    uint8_t v[WMAX * CELL];
+    int x0[CELL], x1[CELL], y0[WMAX], y1[WMAX];             /* where the outline starts and ends on a row, in a column */
+    for (int i = 0; i < CELL; i++) { x0[i] = w; x1[i] = -1; }
+    for (int i = 0; i < w; i++) { y0[i] = CELL; y1[i] = -1; }
+    for (int y = 0; y < CELL; y++) for (int x = 0; x < w; x++) {
+        int m = 0;
+        for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) if (i * i + j * j <= 5 && y + j >= 0 && y + j < CELL && x + i >= 0 && x + i < w) {
+            int a = rgba[((y + j) * w + x + i) * 4 + 3];
+            m = a > m ? a : m;
+        }
+        v[y * w + x] = (uint8_t)m;
+        if (m > 127) { x0[y] = x < x0[y] ? x : x0[y]; x1[y] = x; y0[x] = y < y0[x] ? y : y0[x]; y1[x] = y; }
+    }
+    for (int y = 0; y < CELL; y++) for (int x = 0; x < w; x++) memset(rgba + (y * w + x) * 4, x > x0[y] && x < x1[y] && y > y0[x] && y < y1[x] ? 255 : v[y * w + x], 3);
+}
 static void cell_draw(uint8_t *mem, int format, int bh_log2, Cell c, const uint8_t *s) {
-    enum { WMAX = 52 };                                     /* the widest cell; a picture is centred in its cell */
-    int w = c.w ? c.w : CELL, bw = (w + 3) / 4, ox = (CELL - w) / 2;
-    static const uint8_t none[16] = {0xfc, 0xfd, 255, 255, 255, 255, 255, 255};   /* ASTC: transparent black */
-    uint8_t alpha[WMAX * CELL], rgba[WMAX * CELL * 4], bc3[13 * 10 * 16];
+    int w = c.w ? c.w : CELL, bw = (w + 3) / 4, ox = (CELL - w) / 2;   /* a picture is centred in its cell */
+    uint8_t rgba[WMAX * CELL * 4], bc3[13 * 10 * 16];
     for (int y = 0; y < CELL; y++) for (int x = 0; x < bw * 4; x++) {
         int n = 0, sx = x + ox;
         if (sx >= 0 && sx < CELL) for (int j = 0; j < SS; j++) for (int i = 0; i < SS; i++) n += s[(y * SS + j) * S + sx * SS + i];
-        alpha[y * bw * 4 + x] = (uint8_t)(n * 255 / (SS * SS));
-        memset(rgba + (y * bw * 4 + x) * 4, 255, 3);
-        rgba[(y * bw * 4 + x) * 4 + 3] = alpha[y * bw * 4 + x];
+        rgba[(y * bw * 4 + x) * 4 + 3] = (uint8_t)(n * 255 / (SS * SS));
     }
-    /* around the picture the game's cells are black, not white: combo prompts seem to darken from the colour (not traced),
-     * and all white shows as a square. A block keeps white when ink is in it or a texel from it, so filtering leaves no dark fringe. */
-    for (int y = 0; y < CELL; y += 4) for (int x = 0; x < bw * 4; x += 4) {
-        int ink = 0;
-        for (int j = y > 0 ? y - 1 : 0; j < CELL && j < y + 5; j++) for (int i = x > 0 ? x - 1 : 0; i < bw * 4 && i < x + 5; i++) ink |= alpha[j * bw * 4 + i];
-        if (!ink) for (int j = 0; j < 4; j++) memset(rgba + ((y + j) * bw * 4 + x) * 4, 0, 16);
-    }
+    cell_backing(rgba, bw * 4);
     if (format == FMT_BC3) tex_encode_bc3(rgba, bw * 4, CELL, bc3);
     for (int y = 0; y < CELL; y += 4) for (int x = 0; x < bw * 4; x += 4) {
         uint8_t *to = block_at(mem, c.x + x, c.y + y, bh_log2);
         if (format == FMT_BC3) memcpy(to, bc3 + (y / 4 * bw + x / 4) * 16, 16);
-        else if (rgba[(y * bw * 4 + x) * 4]) prompts_astc_block(alpha + y * bw * 4 + x, bw * 4, to);
-        else memcpy(to, none, 16);
+        else prompts_astc_block(rgba + (y * bw * 4 + x) * 4, bw * 4, to);
     }
 }
 
