@@ -214,6 +214,8 @@ static void fres(Mx *e, uint64_t i, const char *expr, int sat, int cc) {
     emit(e, " %s = U(f);", DST);
     if (cc) { e->uses_cc = 1; emit(e, " cz = f == 0.0 || isnan(f); cs = f < 0.0 || isnan(f); ccf = false; cov = false;"); }
 }
+/* [issue 66] a killed pixel runs on (see KIL) but, as a helper invocation would, stores nothing any more */
+static const char *kg(const Mx *e) { return e->in->stage == MX_FRAGMENT ? "if (!mx_kill) " : ""; }
 static const char *fmz_mul(Mx *e, const char *a, const char *b, int fmz) {
     if (!fmz) return S(e, "%s * %s", a, b);
     return S(e, "((%s == 0.0 || %s == 0.0) ? 0.0 : %s * %s)", a, b, a, b);
@@ -1333,7 +1335,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (cls == 3 || aop > 8 || (cls == 2 && aop != 0)) { fail(e, mx_op_name[op], "%s size %u op %u", mx_op_name[op], sz, aop); break; }
         if (MXB(i, 8, 8) == 255) { fail(e, mx_op_name[op], "global atomic at an absolute address"); break; }
         e->uses_gmem = 1; e->uses_gstore = 1; e->gatom |= 1ull << (aop + 11 * cls);
-        emit(e, "uint old = mx_atom%u_%u(%s + 0x%08xu, %s);", cls, aop, A8, (uint32_t)rel, X(e, rb));
+        emit(e, "uint old = 0u; %sold = mx_atom%u_%u(%s + 0x%08xu, %s);", kg(e), cls, aop, A8, (uint32_t)rel, X(e, rb));
         if (rd != 255) emit(e, " %s = old;", D(e, rd));
         break;
     }
@@ -1439,8 +1441,8 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             unsigned n = typed ? (szf == 5 ? 2 : szf == 6 ? 4 : 1) : 4;
             if (!typed && swz != 15) { fail(e, "SUST.P (partial)", "typeless image store with component mask %u", swz); break; }
             for (unsigned q = 0; q < n; q++) v[q] = X(e, r == 255 ? 255 : r + q);
-            if (cls == 0) emit(e, "imageStore(mx_img%u, %s, vec4(F(%s), F(%s), F(%s), F(%s)));", k, coords, v[0], v[1], v[2], v[3]);
-            else emit(e, "imageStore(mx_img%u, %s, %svec4(%s, %s, %s, %s));", k, coords, cls == 1 ? "u" : "i", v[0], v[1], v[2], v[3]);
+            if (cls == 0) emit(e, "%simageStore(mx_img%u, %s, vec4(F(%s), F(%s), F(%s), F(%s)));", kg(e), k, coords, v[0], v[1], v[2], v[3]);
+            else emit(e, "%simageStore(mx_img%u, %s, %svec4(%s, %s, %s, %s));", kg(e), k, coords, cls == 1 ? "u" : "i", v[0], v[1], v[2], v[3]);
         }
         break;
     }
@@ -1455,7 +1457,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
                                               "bitfieldExtract(w, int((ad & 2u) * 8u), 16)", "uint(bitfieldExtract(int(w), int((ad & 2u) * 8u), 16))"};
             if (!ld) {                                             /* replaces 8 or 16 bits of the word (not atomic, like the hardware's byte store seen through 32-bit blocks) */
                 e->uses_gstore = 1;
-                emit(e, " mx_stg(ad, bitfieldInsert(mx_ldg(ad), %s, %s, %u));", X(e, r), sz < 2 ? "int((ad & 3u) * 8u)" : "int((ad & 2u) * 8u)", sz < 2 ? 8u : 16u);
+                emit(e, " %smx_stg(ad, bitfieldInsert(mx_ldg(ad), %s, %s, %u));", kg(e), X(e, r), sz < 2 ? "int((ad & 3u) * 8u)" : "int((ad & 2u) * 8u)", sz < 2 ? 8u : 16u);
                 break;
             }
             emit(e, " uint w = mx_ldg(ad); %s = %s;", DST, fm[sz]);
@@ -1464,16 +1466,19 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned n = sz == 4 ? 1 : sz == 5 ? 2 : 4;
         for (unsigned k = 0; k < n; k++) {
             if (ld) { if (r != 255) emit(e, " %s = mx_ldg(ad + %uu);", D(e, r + k), k * 4); }
-            else { e->uses_gstore = 1; emit(e, " mx_stg(ad + %uu, %s);", k * 4, X(e, r == 255 ? 255 : r + k)); }
+            else { e->uses_gstore = 1; emit(e, " %smx_stg(ad + %uu, %s);", kg(e), k * 4, X(e, r == 255 ? 255 : r + k)); }
         }
         break;
     }
     case MXOP_KIL:
         if (e->in->stage != MX_FRAGMENT) { fail(e, "KIL", "KIL outside a fragment shader"); break; }
-        /* [issue 26] in the dispatcher: a flag and out of the loop, discarded after it (ScarletNX PR #512, kirikae #48: a pixel
-         * demoted inside the loop, the quad's others still in it, hung the GPU; Vulkan's discard only demotes) */
-        if (e->any_jump) { e->uses_kill = 1; emit(e, "if (%s) { mx_kill = true; pc = 0u; continue; }", FLOW(e, MXB(i, 0, 5))); }
-        else emit(e, "if (%s) discard;", FLOW(e, MXB(i, 0, 5)));
+        /* [issue 26] a flag, discarded after the dispatcher (ScarletNX PR #512, kirikae #48: a pixel demoted inside the loop, the
+         * quad's others still in it, hung the GPU; Vulkan's discard only demotes). [issue 66] The killed pixel runs on to EXIT as
+         * on Maxwell (KIL only marks it): the quad's later SHFL / FSWZADD reads from it (the light-mask words, derivatives) see the
+         * values it computes. Leaving the loop at the KIL froze them: AMD's Windows driver then read 0 (no hit flash on a
+         * dissolving Homunculus) or stale words (a white flash). Its stores are suppressed from here on (kg), as a helper
+         * invocation's are, and its outputs discarded after the loop. */
+        e->uses_kill = 1; emit(e, "if (%s) mx_kill = true;", FLOW(e, MXB(i, 0, 5)));
         break;
 
     /* ---- textures */
@@ -1928,7 +1933,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         for (unsigned p = 0; p < 7; p++) if (e->preds[p]) { emit(&h, "%s p%u = false", any ? "," : " bool", p); any = 1; }
         if (any) emit(&h, ";\n");
         if (e->uses_guard) emit(&h, " uint mx_back = 0u;\n");
-        if (e->uses_kill) emit(&h, " bool mx_kill = false;\n");
+        if (e->uses_kill || in->stage == MX_FRAGMENT) emit(&h, " bool mx_kill = false;\n");
         if (e->uses_spun) emit(&h, " bool mx_spun = false;\n");
         /* [issue 26] every way out of the dispatcher (EXIT, KIL, the loop limit, a pc no case has) sets pc = 0 and leaves through the
          * loop's own exit; the outputs, the alpha test and KIL's discard happen once, after it. No return or discard inside the loop:
@@ -1941,7 +1946,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         size_t n = h.len + e->len;
         if (e->any_jump) n += (size_t)sprintf(res + n, " default: pc = 0u; continue;\n } }\n%s %s%s\n%s}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "",
                                               e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
-        else n += (size_t)sprintf(res + n, " %s\n}\n", e->exitcode);
+        else n += (size_t)sprintf(res + n, "%s %s%s\n}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "", e->exitcode, e->uses_kill ? " }" : "");
         res[n] = 0;
         free(h.s);
     }
