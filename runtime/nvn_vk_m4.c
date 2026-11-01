@@ -26,7 +26,7 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
-#define MX_VK_VERSION 17u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 18u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)

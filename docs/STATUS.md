@@ -1137,6 +1137,24 @@ Not tested: a person with a real pad or keyboard; Windows (not built); en-GB, pt
 borderless); a profile = low or environment-locked key from the rows (the set is refused and logged, the row keeps its
 value; not seen in a run).
 
+## The goo and the dispatcher (2026-11-01; issue 92)
+
+The green liquid of a dying giant Homunculus: 8 blobs of one 1272-index mesh, each drawn in 3 passes (vertex programs #620, #89,
+#3747), for 121 frames. Its skinning vertex stage has 98 dispatcher cases and up to about 120 jumps, each one a trip through
+`while (pc) switch (pc)`. RX 9070 XT, RADV: 5.65 ms a frame in those draws, whatever the resolution and on screen or not; an
+RX 6600 on Windows gave about 63 ms a frame more (12 fps).
+- **Vertex stages with no step back** (every target is known: BRA, the tokens, the BRX tables) run their blocks once, in order:
+  `do { if (pc != N) continue; ... } while (false);`, and a jump leaves its block. Vertex stages with a real loop keep the
+  dispatcher, and so do fragment stages, whose quad reads depend on how a quad's lanes move through the blocks.
+- **`invariant gl_Position` is the rule now** (`SSBU_VK_INVARIANT=0` off). #3747 is a colour pass with a depth test for equality
+  after depth pass #620. Without the dispatcher between the sums the two compiled differently and #3747 lost a third of its
+  fragments (8,327,501 to 5,541,822). With it the count is exact.
+- **Measuring**: GPU timestamps come out in order, so 8 overlapping draws look like one slow draw and seven near zero.
+  "wait for the GPU" also rises with another game on the GPU. Speedups of other programs in first runs on a new cache did not
+  repeat (the same shaders, 4.1 and 82.5 us): compare later runs only. #4943 / #4945 went from 51 to 98 us a draw in one run
+  and not in another; not explained.
+- Not run on AMD's Windows driver, NVIDIA or Intel.
+
 ## Performance report (2026-10-26)
 
 **Method**: `scripts/perf_bench.py run <scene> <scale>` then `report <run dirs>`. Each run: a copy of the save, audio
