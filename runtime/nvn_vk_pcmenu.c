@@ -18,7 +18,7 @@
  *     while it is closed.
  *   - WT_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
  *     pcmenu_<n>.bmp (needs swapchain images with TRANSFER_SRC; the log says when they have none). */
-int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void);      /* kind: 1 the menu, 2 the hint, 3 the first-start screen */
+int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void), pcmenu_settled(void);      /* kind: 1 the menu, 2 the hint, 3 the first-start screen */
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
@@ -272,7 +272,7 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     vkCmdCopyImage(R.cmd, g_gpu.canvas, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
 }
 static void pcm_shot_write(void) {                 /* the picture copied by the last present (the GPU has finished: cmd_wait_all) */
-    if (!g_pcm_shot.pending) return;
+    if (g_pcm_shot.pending != 1) return;           /* (-1: a picture asked for, not yet copied by a present) */
     g_pcm_shot.pending = 0;
     char path[300];
     snprintf(path, sizeof path, "%s/pcmenu_%03d.bmp", getenv("WT_PCMENU_SHOT"), g_pcm_shot.n++);
@@ -348,7 +348,7 @@ static void pcm_vk_draw(VkImage tgt) {
         xfer_wait();                               /* over the blit of the game's picture */
         vkCmdCopyBufferToImage(R.cmd, g_pcm.buf, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     }
-    if (g_pcm_shot.pending == -1) {
+    if (g_pcm_shot.pending == -1 && pcmenu_settled()) {      /* (the menu: once it has opened, not its slide's first frame) */
         g_pcm_shot.pending = 0;
         if (V.hdr || !g_sc_src) { if (!g_pcm_shot.said++) printf("pcmenu: WT_PCMENU_SHOT: the swapchain images cannot be read (no TRANSFER_SRC, or HDR): no picture\n"); return; }
         uint64_t need = (uint64_t)W * H * 4;

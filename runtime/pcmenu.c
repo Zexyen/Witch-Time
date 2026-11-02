@@ -906,6 +906,7 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
 int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : hint_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, the hint */
+int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): WT_PCMENU_SHOT waits for it */
 int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_kind = -1;
