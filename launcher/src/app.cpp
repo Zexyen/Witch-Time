@@ -80,7 +80,7 @@ const std::vector<SettingDef>& setting_defs()
 			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
 			1, "1.0"},
 		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}, 1},
-		{"texture_lod_bias", "Texture detail", "Below 0 sharper in the distance, above 0 blurrier",
+		{"texture_lod_bias", "Texture detail", "Below 0 sharper far away, above 0 blurrier",
 			{{"-1", "–1"}, {"-0.5", "–0.5"}, {"0", "0 — game"}, {"0.5", "+0.5"}, {"1", "+1"}}, 1, "0"},
 		{"model_lod", "Model detail", "Highest keeps the finest detail at any distance", {{"game", "Game"}, {"highest", "Highest"}}, 1},
 		{"film_grain", "Film grain", "The game's moving noise; the vignette stays", {{"on", "On"}, {"off", "Off"}}, 1},
@@ -89,7 +89,7 @@ const std::vector<SettingDef>& setting_defs()
 		{"hud_area", "HUD layout", "Wider than 16:9: HUD at the edges, or centred", {{"screen", "Full Screen"}, {"16:9", "Centered"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Menus confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -199,6 +199,7 @@ bool App::init(int argc, char** argv)
 		return false;
 	SetupState st = SetupState::read(paths.build);
 	dump = st.dump;
+	model.DirtyVariable("dump");            // (the folder box was made when the model was, still empty)
 	refresh_title();
 	refresh_build();
 	update::check(paths);
@@ -366,6 +367,8 @@ void App::bind_model()
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
 	c.Bind("tab", &tab);
+	c.Bind("row_step", &row_step);
+	c.Bind("row_pitch", &row_pitch);
 	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
@@ -400,7 +403,7 @@ void App::bind_model()
 		else if (act == "quit")
 			running = false;
 		else
-			go(act);
+			go(act == "build" && runner.running() && job == Job::verify ? "setup" : act);   // (a dump check shows on the dump screen)
 	});
 	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		if (!runner.running())
@@ -616,6 +619,8 @@ void App::handle(SDL_Event& ev)
 	case SDL_EVENT_KEY_DOWN:
 	{
 		prompts_use(4);
+		if (Rml::Element* f = ctx->GetFocusElement(); f && f->GetTagName() == "input")
+			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
 		if (k == Rml::Input::KI_ESCAPE)
 		{
@@ -629,8 +634,25 @@ void App::handle(SDL_Event& ev)
 	default: break;
 	}
 	RmlSDL::InputEventHandler(ctx, window, ev);
+	if (ev.type == SDL_EVENT_MOUSE_MOTION)
+		hover_focus();
 	if (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || ev.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
 		rescale();
+}
+
+// the control under the mouse takes the focus (not shown as the keys' focus), so one row is lit, not the hovered one and
+// the one the keys left, and the keys go on from where the mouse is. Not once the dump folder's box has been typed in.
+void App::hover_focus()
+{
+	auto control = [](Rml::Element* e) {
+		while (e && e->GetComputedValues().tab_index() != Rml::Style::TabIndex::Auto)
+			e = e->GetParentNode();
+		return e;
+	};
+	Rml::Element* h = control(ctx->GetHoverElement());
+	Rml::Element* f = control(ctx->GetFocusElement());
+	if (h && h != f && h->IsVisible(true) && h->GetTagName() != "input" && !(typed && f && f->GetTagName() == "input"))
+		h->Focus(false);
 }
 
 // keys with a meaning of their own here; true when used. The rest go to RmlUi (arrows move the focus: `nav`).
@@ -720,6 +742,7 @@ void App::go(const Rml::String& to)
 void App::go_now(const Rml::String& to)
 {
 	leaving = false;
+	typed = false;
 	model.DirtyVariable("leaving");
 	screen = to;
 	if (to == "title")
@@ -991,8 +1014,16 @@ void App::refresh_settings()
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
 			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
+	// the staircase (rows 500 dp wide from 620 dp) ends 20 dp inside the 1280 dp stage, however many rows a section has.
+	// Rows that step less than the diagonal (22.6 dp a 56 dp row) close in on its rule, 40 dp from the first row's corner:
+	// they come closer together too, so the last stays 12 dp clear (Graphics' nine, the converted textures' row too)
+	const float rows = float(settings.size() + (tab == 1 ? 1 : 0)), tan22 = 0.4040f;
+	row_step = rows > 1 ? std::min(26.f, 140.f / (rows - 1)) : 26.f;
+	row_pitch = rows > 1 ? std::clamp((row_step + 28.f / (rows - 1)) / tan22, 50.f, 56.f) : 56.f;
 	model.DirtyVariable("settings");
 	model.DirtyVariable("tab");
+	model.DirtyVariable("row_step");
+	model.DirtyVariable("row_pitch");
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;

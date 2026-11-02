@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <time.h>
 volatile LONG g_guest_frozen, g_display_close;
-volatile int game_cutscene_fps = 30;
+volatile int game_cutscene_fps = 30, game_model_lod, game_hud_centre;
 static GfxOptions g_o = {.width = 1920, .height = 1080, .shader_prepare = 0};
 const GfxOptions *gfx_options(void) { return &g_o; }
 int gfx_ini_get(const char *k, char *v, size_t n) { (void)k; (void)v; (void)n; return 0; }

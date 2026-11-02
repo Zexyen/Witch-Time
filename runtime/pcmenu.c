@@ -251,7 +251,7 @@ static void layer_blend(int x, int y, float b, float g, float r, float a) {   /*
     if (x < l->x0) l->x0 = x; if (y < l->y0) l->y0 = y; if (x + 1 > l->x1) l->x1 = x + 1; if (y + 1 > l->y1) l->y1 = y + 1;
 }
 static unsigned g_drawn_ver = ~0u, g_gen;
-static int g_row_y[NROW], g_row_h, g_val_x0[NROW], g_val_x1[NROW], g_close_r[4];
+static int g_row_y[NROW], g_row_h, g_row_x0[NROW], g_row_x1[NROW], g_val_x0[NROW], g_val_x1[NROW], g_close_r[4];   /* row_x: a row's own span (hover, clicks) */
 typedef struct { uint8_t b, g, r; } Rgb;
 static const Rgb C_PEARL = {242, 237, 238}, C_PEARL_LO = {218, 209, 211}, C_INK = {46, 32, 36}, C_MUTE = {104, 88, 93},
                  C_INDIGO = {40, 22, 27}, C_INDIGO0 = {28, 15, 18}, C_INDIGO1 = {54, 27, 34}, C_INDIGO2 = {66, 33, 42}, C_STRIPE0 = {72, 33, 43}, C_STRIPE1 = {98, 45, 58},
@@ -556,7 +556,7 @@ static float text_a(const stbtt_fontinfo *f, float x, int base, const char *s, f
     return x;
 }
 static float text(const stbtt_fontinfo *f, float x, int base, const char *s, float px, Rgb col, float track) { return text_a(f, x, base, s, px, col, track, 1); }
-static int wrap(const stbtt_fontinfo *f, char lines[][160], int maxl, const char *s, float px, float width) {      /* word wrap */
+static int wrap(const stbtt_fontinfo *f, char lines[][160], int maxl, const char *s, float px, float track, float width) {      /* word wrap; track: the letter spacing it is drawn with */
     int n = 0;
     while (*s && n < maxl) {
         char line[160] = "";
@@ -565,7 +565,7 @@ static int wrap(const stbtt_fontinfo *f, char lines[][160], int maxl, const char
             if (*p == ' ' || !*p) {
                 char t[160]; size_t len = (size_t)(p - s) < sizeof t - 1 ? (size_t)(p - s) : sizeof t - 1;
                 memcpy(t, s, len); t[len] = 0;
-                if (text_w(f, t, px, 0) > width && best != s) break;
+                if (text_w(f, t, px, track) > width && best != s) break;
                 memcpy(line, t, len + 1); best = p;
                 if (!*p) break;
             }
@@ -731,7 +731,7 @@ static void draw_panel_words(int W, int H, float s) {
         if (!row_on(i)) continue;
         g_row_y[i] = y;
         float left = x0 + k * st, width = w0;
-        g_val_x0[i] = (int)(left + width - 232 * s); g_val_x1[i] = (int)(left + width - 22 * s);
+        g_val_x0[i] = (int)(left + width - 232 * s); g_val_x1[i] = (int)(left + width - 22 * s); g_row_x0[i] = (int)left; g_row_x1[i] = (int)(left + width);
         int sel = i == g_sel, base = y + (int)(rowh * 0.66f);
         if (sel) {
             para(left, (float)y, width, rowh, C_VIOLET0, C_LAV2, C_LAV, 0.55f, 1, 0.55f);
@@ -769,9 +769,10 @@ static void draw_panel_words(int W, int H, float s) {
     float hpx = 20 * s, hw = text_w(&g_f_ui, help, hpx, 1.5f * s), bx = edge + (band_y + 26 * s) * TAN22 + 60 * s, bw = W - 40 * s - bx;
     if (hw <= bw) text(&g_f_ui, bx + (bw - hw) / 2, (int)(band_y + 26 * s + hpx * 0.35f), help, hpx, C_WHITE, 1.5f * s);
     else {
-        char ln[2][160];
-        hpx = 17 * s;
-        int n = wrap(&g_f_ui, ln, 2, help, hpx, bw * 0.92f);      /* (wrap measures without the tracking) */
+        char ln[3][160];
+        int n;                                             /* the band holds two lines: smaller type until all of it fits */
+        for (hpx = 17 * s; (n = wrap(&g_f_ui, ln, 3, help, hpx, 1 * s, bw * 0.92f)) > 2 && hpx > 14 * s; hpx -= 0.5f * s) {}
+        if (n > 2) n = 2;
         for (int l = 0; l < n; l++) { float w = text_w(&g_f_ui, ln[l], hpx, 1 * s); text(&g_f_ui, bx + (bw - w) / 2, (int)(band_y + (n == 1 ? 26 * s + hpx * 0.35f : 17 * s + l * 21 * s + hpx * 0.35f)), ln[l], hpx, C_WHITE, 1 * s); }
     }
     int fb = (int)(H - 37 * s + 7 * s);
@@ -1113,8 +1114,10 @@ static void mouse_at(int *x, int *y, int *down) {          /* window pixels; -1 
     *x = *y = -1;
     *down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 #ifdef _WIN32
-    POINT p; HWND h = GetForegroundWindow();
-    if (h && GetCursorPos(&p) && ScreenToClient(h, &p)) { *x = p.x; *y = p.y; }
+    POINT p; HWND h = GetForegroundWindow(); DWORD pid = 0;
+    if (h) GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId()) { *down = 0; return; }       /* another program in front: its pointer and clicks are not ours (as nnhid.c's keyboard_ours) */
+    if (GetCursorPos(&p) && ScreenToClient(h, &p)) { *x = p.x; *y = p.y; }
 #else
     { extern int display_mouse_pixels(int *x, int *y); display_mouse_pixels(x, y); }
 #endif
@@ -1159,7 +1162,11 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         if (ok && !prev_ok) { activate(g_sel, 1); g_ver++; }
         int px = mx - g_rect[0], py = my - g_rect[1], click = md && !prev_click;
         if (mx >= 0 && (mx != mx0 || my != my0 || click) && px >= 0 && px < g_pw && py >= 0 && py < g_ph) {      /* the mouse: hover chooses, a click changes */
-            for (int i = 0; i < NROW; i++) if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h && g_cap < 0) { g_sel = i; if (click && px >= g_val_x0[i] - g_row_h) { activate(i, px < g_val_x0[i] + g_row_h ? -1 : 1); g_ver++; break; } }
+            for (int i = 0; i < NROW; i++)                 /* a row's own span: the panel covers the window, its rows step down the diagonal */
+                if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h && px >= g_row_x0[i] && px < g_row_x1[i] && g_cap < 0) {
+                    g_sel = i;
+                    if (click && px >= g_val_x0[i] - g_row_h) { activate(i, px < g_val_x0[i] + g_row_h ? -1 : 1); g_ver++; break; }
+                }
             if (click && px >= g_close_r[0] && px < g_close_r[0] + g_close_r[2] && py >= g_close_r[1] && py < g_close_r[1] + g_close_r[3]) back = 1, prev_back = 0;
         }
         mx0 = mx; my0 = my;
