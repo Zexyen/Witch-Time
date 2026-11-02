@@ -90,14 +90,7 @@ std::vector<std::string> build_command(const std::string& repo, const std::strin
 	for (const std::string& exe : {repo + "/build/wtbuild" WT_EXE, repo + "/tools/wtbuild/target/release/wtbuild" WT_EXE})
 		if (is_program(exe))
 			return {exe, command, "--repo", repo};
-#ifdef _WIN32
-	const char* python = "python";
-#else
-	const char* python = "python3";
-#endif
-	if (command == "mods-tree")
-		return {python, repo + "/scripts/pchtxt.py", "tree"};
-	return {python, repo + "/scripts/setup.py"};
+	return {};
 }
 
 Paths Paths::find(const char* argv0)
@@ -265,6 +258,11 @@ std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir,
 		return mods;
 	int code = 0;
 	std::vector<std::string> argv = build_command(paths.repo, "mods-tree");
+	if (argv.empty())
+	{
+		error = NO_BUILD_TOOL;
+		return mods;
+	}
 	argv.push_back(mods_dir);
 	std::string out = run_capture(argv, paths.repo, &code);
 	if (code)

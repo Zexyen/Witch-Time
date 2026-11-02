@@ -3,7 +3,7 @@
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
- * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
+ * Screen Display the 7 of a table in main's read-only data. The lift (tools/wtbuild/src/lifter/eh.rs, options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
  *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 36, 25, Restore Defaults (24); +0xffc their count
  *   +0x100  the row table: the game's 25, row 25, rows 26 .. 36
@@ -17,7 +17,7 @@
  *           and "decide" opens the panel's Controls page. Their objects follow row 35's. The list they were is the game's four
  *           control types, which that page has as presets. The page's picture of the pad is kept, and shows the layout (labels_tick)
  * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
- * scripts/pc_settings_mod.py; the names here are theirs (the frame rate's label says it applies at the next start and is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
+ * the text step (tools/wtbuild/src/text.rs); the names here are theirs (the frame rate's label says it applies at the next start and is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
  * more value, until left / right leave it). The game's Restore Defaults does not touch these rows (its reset is the game's
  * own settings); the list row's reset button sets the row's default. Values change through pcmenu.c (pcmenu_key_set), so
  * the file is written and the live keys applied as from the panel. */
@@ -33,7 +33,7 @@
 __declspec(dllimport) extern uint8_t game_rebind[2][16], game_rebind_on[2];      /* game_shim_eh.c (the game library) */
 __declspec(dllimport) extern volatile int game_rebind_live;
 
-#define OPTX_BASE   0x7105a00000ULL      /* lifter/recomp_eh.py OPTX_PAGE */
+#define OPTX_BASE   0x7105a00000ULL      /* tools/wtbuild/src/lifter/eh.rs OPTX_PAGE */
 #define ROWS        0x7101c2b1a8ULL      /* the Options screen's row objects */
 #define SCREEN_ROWS 0x71018511bcULL      /* Screen Display's 7 row numbers (18 .. 24) in main */
 #define BRIGHTNESS  18
@@ -199,7 +199,7 @@ void options_row_install(void) {
     }
     g_text_mod = fs_rom_mod_serves("ui_000.pkz", "witchtime-pc-settings");
     if (!g_text_mod)
-        printf("options row: the rows' text is not there (mods/witchtime-pc-settings: python scripts/setup.py --only text): "
+        printf("options row: the rows' text is not there (mods/witchtime-pc-settings: wtbuild setup --only text): "
                "only the \"PC Settings\" row (called \"Options\"), which opens the panel\n");
     uint64_t *mvt = (uint64_t *)(page + 0x310), *lmvt = (uint64_t *)(page + 0x370);      /* each after the table's two header words, 0 */
     for (int i = 0; i < 9; i++) mvt[i] = rd64(vt + 8 * (uint64_t)i);

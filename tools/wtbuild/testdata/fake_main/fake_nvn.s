@@ -1,4 +1,4 @@
-/* tables comparison: an nvnDeviceGetInteger-shaped pair for make_gen.py's nvn_devinfo search (no sdk code; shapes only):
+/* tables test: an nvnDeviceGetInteger-shaped pair for tables.rs's nvn_devinfo search (no sdk code; shapes only):
  * a getter switch whose cases are "mov w8, #imm" into a shared "*out = w8" tail, and its one caller: a compact jump
  * table whose cases are a fixed number, the preset w0 at the shared return, the getter's answer, or a device field. */
     .text

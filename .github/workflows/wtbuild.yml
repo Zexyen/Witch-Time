@@ -1,12 +1,13 @@
-# Checks that wtbuild (tools/wtbuild, the Rust build) still writes exactly what the Python scripts it replaced write, and
-# that the lifted code compiles to the same objects without system headers. Runs on stand-in programs built from
-# tools/wtbuild/testdata (no game code): nothing of a dump is needed. The link step is checked by release.yml.
+# Builds and tests wtbuild (tools/wtbuild, the Rust build): its regression tests compare against committed goldens
+# (tools/wtbuild/testdata/golden) made from stand-in programs in tools/wtbuild/testdata (no game code), and the lifted
+# code must compile to the same objects without system headers. Nothing of a dump is needed. The link step is checked by
+# release.yml (wtbuild smoke).
 name: wtbuild
 
 on:
   pull_request:
-    paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/rebind_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+    paths: ['tools/wtbuild/**', 'lifter/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/rebind_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -15,31 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld libssl-dev
-          pip install lz4 Pillow
 
       - name: Build and unit tests
         run: |
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
 
-      - name: Compare with the Python
-        run: |
-          python3 tools/wtbuild/compare_lifter.py 1000000 --seed 1
-          python3 tools/wtbuild/compare_lift.py --functions 2500 --seed 1
-          python3 tools/wtbuild/compare_tables.py
-          python3 tools/wtbuild/compare_mods.py 300 --seed 1
-          python3 tools/wtbuild/compare_text.py 20 --seed 1
-
       - name: Freestanding compile (runtime/freestanding against the system's headers)
-        run: python3 tools/wtbuild/compare_freestanding.py --words 200000 --seed 1
+        run: tools/wtbuild/target/release/wtbuild check-freestanding --words 200000 --seed 1 --jobs 4
 
       - name: The runtime's own SHA-1 and MD5 (runtime/plat_hash.h) against OpenSSL
         run: |
@@ -78,3 +66,21 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime -I runtime/posix '-D__declspec(x)=' tests/presence_test.c -lpthread -o "$RUNNER_TEMP/presence_test"
           "$RUNNER_TEMP/presence_test"
+
+  lifter-check:
+    # the shipped lifter against Unicorn: random words of the forms added to the lifter, run in Unicorn and as their lifted C
+    # (no dump needed)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev cmake ninja-build
+
+      - name: Lifter against Unicorn (tools/lifter-check)
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/lifter-check/Cargo.toml
+          cargo run --release --locked --manifest-path tools/lifter-check/Cargo.toml -- --synthetic 2000 --seed 1

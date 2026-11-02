@@ -1,4 +1,4 @@
-/* Shim of the game DLL generated WITH landing-pad resume entries (recomp_eh.py; build with RECOMP_SHIM=game_shim_eh.c).
+/* Shim of the game DLL generated WITH landing-pad resume entries (tools/wtbuild/src/lifter/eh.rs).
  * Everything of game_shim.c, plus what the exception unwinder needs from main: the resume table, and the host's
  * nro_catch_call for the functions that have a catch handler. The host finds game_eh_bind with GetProcAddress
  * (nncxxrt.c), so an exe works with either kind of DLL. */
@@ -125,7 +125,7 @@ void h_text_symbol(Ctx *c) {
     }
     f_7100c0f960(c);
 }
-/* [witchtime] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
+/* [witchtime] Host versions of game functions (tools/wtbuild/src/lifter/eh.rs HOST_OVERRIDES: their direct calls come here).
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
  * instructions). Outputs that overlap go to the lifted original (its order of stores decides there).
@@ -268,8 +268,8 @@ void h_step_kind(Ctx *c) {
  * same update (a loop), or later; and visits from another guest thread than the clock's. Every 1,200 updates the file
  * gets one line per site (rewritten whole): site visits fields consec same later offthread updates_with_a_visit, then
  * what a visit adds (the value stored - the field's value: code 1 / 2 / 4 an integer of that size, 0 a float): the mean
- * of its size, its least and its largest; and a first line with the updates counted. scripts/fps_census.py compares a
- * run at 60 with one above 60. */
+ * of its size, its least and its largest; and a first line with the updates counted. `wtbuild fps-census`
+ * (tools/wtbuild/src/fps_census.rs) compares a run at 60 with one above 60. */
 static volatile uint64_t g_upd;                 /* the clock's updates so far */
 static Ctx *volatile g_clock_ctx;               /* the guest thread that runs the clock */
 typedef struct { uint64_t site, field, last; } FcRec;

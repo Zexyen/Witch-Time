@@ -1,5 +1,5 @@
-//! Python's own spellings where the output has to be the one the Python scripts printed or hashed: repr() of a string,
-//! json.dumps() of a string, str.splitlines(), int(s, 0).
+//! Python's own spellings, where an output keeps the bytes the Python build printed or hashed (so stamps, state files
+//! and the goldens stay the same): repr() of a string, json.dumps() of a string, str.splitlines(), int(s, 0), "%g".
 
 /// repr(s) of a Python str
 pub fn repr_str(s: &str) -> String {
@@ -135,6 +135,24 @@ pub fn int0(s: &str) -> Option<i128> {
     Some(if neg { -v } else { v })
 }
 
+/// "%.<p>g" % v, as C writes it: p significant digits, the exponent form when the exponent is below -4 or from p on,
+/// no trailing zeros
+pub fn fmt_g(v: f64, p: usize) -> String {
+    if !v.is_finite() {
+        return if v.is_nan() { "nan" } else if v > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    let p = p.max(1);
+    let e = format!("{:.*e}", p - 1, v);
+    let (m, x) = e.split_once('e').unwrap();
+    let x: i32 = x.parse().unwrap();
+    let trim = |s: &str| if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s.to_string() };
+    if x < -4 || x >= p as i32 {
+        format!("{}e{}{:02}", trim(m), if x < 0 { '-' } else { '+' }, x.abs())
+    } else {
+        trim(&format!("{:.*}", (p as i32 - 1 - x) as usize, v))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +172,21 @@ mod tests {
         assert_eq!(int0("256"), Some(256));
         assert_eq!(int0("0100"), None);
         assert_eq!(int0("0"), Some(0));
+        // "%.4g" / "%.1g" as Python writes them
+        let g = [
+            (0.1656, 4, "0.1656"),
+            (123456.0, 4, "1.235e+05"),
+            (1e-5, 4, "1e-05"),
+            (0.0001, 4, "0.0001"),
+            (100.0, 4, "100"),
+            (1234.5, 4, "1234"),
+            (9.99995, 4, "10"),
+            (-0.0, 4, "-0"),
+            (0.25, 1, "0.2"),
+            (f64::NAN, 4, "nan"),
+        ];
+        for (v, p, want) in g {
+            assert_eq!(fmt_g(v, p), want, "{}", v);
+        }
     }
 }

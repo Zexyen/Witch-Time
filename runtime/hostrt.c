@@ -638,7 +638,7 @@ void runtime_init(const char *elf, const char *trace_path) {
                 uint64_t s;
                 if (dyn_syms[sym].defined) { s = GUEST_BASE + dyn_syms[sym].value; sym_int++; }
                 /* An undefined WEAK symbol is null unless a module defines it. main has 14 (__rel_dyn/plt_start/end, nu::VirtualAllocHook,
-                 * nu::VirtualFreeHook, 8 glslc*; .dynsym of main at 0x4197610, recomp.py) and neither sdk nor subsdk0 exports any of them
+                 * nu::VirtualFreeHook, 8 glslc*; .dynsym of main at 0x4197610) and neither sdk nor subsdk0 exports any of them
                  * (dynsym of both read 2026-10-08): the game's `if (hook)` tests are false, as on the console. */
                 else if ((rd8(GUEST_BASE + MAIN_SYMTAB + (uint64_t)sym * 24 + 4) >> 4) == 2 && !(g_import_addr && g_import_addr[sym])) { s = 0; sym_weak++; }
                 else { s = g_import_addr && g_import_addr[sym] ? g_import_addr[sym] : IMPORT_BASE + (uint64_t)sym * IMPORT_SLOT; sym_ext++; }

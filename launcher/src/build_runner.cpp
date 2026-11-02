@@ -34,10 +34,11 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 	partial.clear();
 	compiled = to_compile = 0;
 	exit_code = 0;
-#ifdef _WIN32
-	set_env("PYTHONUNBUFFERED", "1", true);
 	std::vector<std::string> argv = build_command(repo, command);
+	if (argv.empty())
+		return false;
 	argv.insert(argv.end(), args.begin(), args.end());
+#ifdef _WIN32
 	if (!child.start(argv, repo))
 		return false;
 #else
@@ -54,9 +55,6 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 		close(p[1]);
 		if (chdir(repo.c_str()))
 			_exit(127);
-		setenv("PYTHONUNBUFFERED", "1", 1);
-		std::vector<std::string> argv = build_command(repo, command);
-		argv.insert(argv.end(), args.begin(), args.end());
 		std::vector<char*> a;
 		for (std::string& s : argv)
 			a.push_back(s.data());
@@ -134,7 +132,7 @@ void BuildRunner::read_compile_log()
 	std::streamoff size = f.tellg();
 	f.seekg(std::max<long long>(compile_log_start, size > 4096 ? size - 4096 : 0));
 	std::string tail((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-	// the last "[done/total] 12s" line compile_main.py printed
+	// the last "[done/total] 12s" line the compile step printed
 	for (size_t at = tail.find("\n["); at != std::string::npos; at = tail.find("\n[", at + 1))
 	{
 		int n = 0, total = 0;

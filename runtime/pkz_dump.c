@@ -120,7 +120,7 @@ static DWORD WINAPI worker(LPVOID arg) {
     return 0;
 }
 
-/* entries of one archive appended to g_ent (layout: docs/RE_NOTES.md section 4, scripts/pkz.py); 0 = ok */
+/* entries of one archive appended to g_ent (layout: docs/RE_NOTES.md section 4); 0 = ok */
 static int read_archive(int arc, char **filters, int nfilters) {
     char path[2048];
     snprintf(path, sizeof path, "%s/%s", g_romfs, g_arcs[arc]);
@@ -167,7 +167,7 @@ static int by_size(const void *a, const void *b) {          /* biggest first: th
 }
 
 int pkz_dump(const char *out, char **filters, int nfilters) {
-    /* the decoder entry must be the one this build has (setup.py verifies main's build id; this guards a stale image) */
+    /* the decoder entry must be the one this build has (the build's verify step checks main's build id; this guards a stale image) */
     if (rd32(OO_DECODE_SOME) != 0xd103c3ffu || rd32(OO_CREATE) != 0xa9bc5ff8u) {
         printf("pkz-dump: main's Oodle decoder is not at the expected address (another build of the game?)\n");
         return 1;

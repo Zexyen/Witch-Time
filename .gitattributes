@@ -1,0 +1,2 @@
+# the regression tests compare these byte for byte: no CRLF on a Windows checkout
+tools/wtbuild/testdata/** -text

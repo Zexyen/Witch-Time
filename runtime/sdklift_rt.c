@@ -1,4 +1,4 @@
-/* Loader and glue for the code lifted out of the real SDK module (sdklift_gen.c, made by sdklift.py).
+/* Loader and glue for the code lifted out of the real SDK module (sdklift_gen.c, made by tools/wtbuild/src/sdklift.rs).
  *
  * The SDK image (binaries\13.0.4\sdk.elf, the user's own dump converted with nso2elf) is mapped at
  * SDK_BASE with its three PT_LOAD segments and relocated like the game image, so the lifted functions
@@ -9,7 +9,7 @@
  *
  * Relocations ([sdk] .rela.dyn 0x541010, .rela.plt 0x5ce118): R_AARCH64_RELATIVE (0x403),
  * GLOB_DAT (0x401), JUMP_SLOT (0x402), ABS64 (0x101). The 13 undefined symbols (malloc, free, calloc,
- * realloc, aligned_alloc, nnMain, ...) are left 0: lifted code never calls through the GOT, sdklift.py
+ * realloc, aligned_alloc, nnMain, ...) are left 0: lifted code never calls through the GOT, the sdk lift
  * binds PLT stubs statically (to lifted code or to the host handler of the same name). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -152,7 +152,7 @@ void sdk_dispatch(Ctx *c, uint64_t addr) {
             uint64_t off;
             const char *n = sdk_name_of(addr, &off);
             printf("\nsdklift: lifted SDK code (f_%llx) calls SDK address %llx (%s+0x%llx) through a pointer, and that function was not lifted.\n"
-                   "Add `addr %llx` to sdklift_roots.txt and run `python sdklift.py gen`.\n",
+                   "Add `addr %llx` to sdklift_roots.txt and run `wtbuild setup --from tables`.\n",
                    (unsigned long long)c->fn, (unsigned long long)(addr - SDK_BASE), n, (unsigned long long)off, (unsigned long long)(addr - SDK_BASE));
             guest_trap("indirect call to an SDK function that was not lifted", addr);
         }

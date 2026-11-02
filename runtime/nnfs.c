@@ -123,7 +123,7 @@ static void remove_tree(const char *dir) {
  * else <exe folder>\..\mods; WT_MODS=none turns them off) that holds a romfs\ folder, itself or one level down (an
  * emulator pack's <mod>\romfs\..., or an archive unpacked into a folder of its own). Its files replace the game's file at
  * the same rom: path, or are added; the game sees them because it lists rom:/ at boot (CRI's loose files beside the CPKs).
- * Order: a mod whose name sorts later wins, as for the code mods (scripts/pchtxt.py). config\mods.ini (beside
+ * Order: a mod whose name sorts later wins, as for the code mods (tools/wtbuild/src/pchtxt.rs). config\mods.ini (beside
  * controllers.ini): [mods] <name> = off leaves a mod out; [prompts] playstation = <name> / xbox = <name> names the button
  * prompt mods (else guessed from the folder name: a word starting ds4, ds5, dualshock, dualsense, playstation, ps4, ps5 /
  * xbox, or the word ps; so DS4Prompts / XBOXPrompts of the GameBanana prompt mod 360121 need no [prompts] line). Prompt
@@ -298,7 +298,7 @@ static void rom_mods_init(void) {
     for (int i = 0; i < n; i++) {
         char val[32], mod[MAX_PATH], romfs[MAX_PATH];
         snprintf(mod, sizeof mod, "%s\\%s", dir, names[i]);
-        if (!find_romfs(mod, romfs)) continue;            /* a code-only mod (exefs\): scripts/setup.py's business */
+        if (!find_romfs(mod, romfs)) continue;            /* a code-only mod (exefs\): the build's mods step */
         mods_ini_get(ini ? ini : "", "mods", names[i], val, sizeof val);
         if (!_stricmp(val, "off") || !_stricmp(val, "0") || !_stricmp(val, "false") || !_stricmp(val, "no")) {
             printf("romfs mods: %s is off (mods.ini)\n", names[i]);
@@ -794,7 +794,7 @@ static void prompt_swap_close(HANDLE h) {
 
 /* [witchtime] The PC menu's hint (pcmenu.c): B3's pause menu reads ui/ui_photomode.dat from ui_000.pkz each time it opens (the
  * Options screen itself is loaded once at the start). The entry's offset is read from the archive's table at its first open
- * (format: scripts/pkz.py); a read at that offset through a handle of that archive shows the hint. */
+ * (format: docs/RE_NOTES.md section 4); a read at that offset through a handle of that archive shows the hint. */
 void pcmenu_hint(void);
 static HANDLE g_ui_h[4];
 static volatile LONG g_ui_n;

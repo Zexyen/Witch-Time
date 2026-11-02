@@ -1,0 +1,2024 @@
+== case 0
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	1	block 1
+mod	notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)	
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Zeta/exefs/patch.pchtxt :: FPS	1	0	0	FPS
+block	Zeta/exefs/patch.pchtxt :: Camera	1	1	2	Camera
+file	Zeta/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Zeta/readme.pchtxt	1	readme.pchtxt	Zeta/readme.pchtxt line 12: not an even number of hex digits: '9107816b944dea1'
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	
+block	Ünicode mod/patch.pchtxt :: #1	1	1	4	Fix
+block	Ünicode mod/patch.pchtxt :: #2	1	1	1	Fix
+block	Ünicode mod/patch.pchtxt :: 視点	1	1	0	視点
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	1	block 1
+mod	notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)	
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Zeta/exefs/patch.pchtxt :: FPS	1	0	0	FPS
+block	Zeta/exefs/patch.pchtxt :: Camera	1	1	2	Camera
+file	Zeta/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Zeta/readme.pchtxt	1	readme.pchtxt	Zeta/readme.pchtxt line 12: not an even number of hex digits: '9107816b944dea1'
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	
+block	Ünicode mod/patch.pchtxt :: #1	1	1	4	Fix
+block	Ünicode mod/patch.pchtxt :: #2	1	1	1	Fix
+block	Ünicode mod/patch.pchtxt :: 視点	1	1	0	視点
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 1
+-- tree
+mod	Patch2.pchtxt	0	Patch2.pchtxt	Patch2.pchtxt line 3: expected "<hex offset> <hex bytes>" or <hex offset> "string": '80f "//101//7"zz'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: FPS	1	1	1	FPS
+block	Speed Mod/exefs/patch.pchtxt :: Speed	0	0	0	Speed
+block	Speed Mod/exefs/patch.pchtxt :: #3	1	1	4	Fix
+block	Speed Mod/exefs/patch.pchtxt :: #4	1	1	0	Fix
+file	Speed Mod/Extra/readme.pchtxt	1	Extra/readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Speed Mod/patch.pchtxt	1	patch.pchtxt	Speed Mod/patch.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '137e c8b95df79a3f95d5zz'
+mod	x	1	x		
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	x/Extra/main.pchtxt line 20: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	x/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	x/Extra/patch.pchtxt :: #1	1	1	1	block 1
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	Ünicode mod/exefs/notabuildid.ips	0	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	Speed Mod/Extra/readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	Patch2.pchtxt	0	Patch2.pchtxt	Patch2.pchtxt line 3: expected "<hex offset> <hex bytes>" or <hex offset> "string": '80f "//101//7"zz'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: FPS	1	1	1	FPS
+block	Speed Mod/exefs/patch.pchtxt :: Speed	0	0	0	Speed
+block	Speed Mod/exefs/patch.pchtxt :: #3	1	1	4	Fix
+block	Speed Mod/exefs/patch.pchtxt :: #4	1	1	0	Fix
+file	Speed Mod/Extra/readme.pchtxt	1	Extra/readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Speed Mod/patch.pchtxt	1	patch.pchtxt	Speed Mod/patch.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '137e c8b95df79a3f95d5zz'
+mod	x	1	x		
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	x/Extra/main.pchtxt line 20: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	x/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	x/Extra/patch.pchtxt :: #1	1	1	1	block 1
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	Ünicode mod/exefs/notabuildid.ips	0	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	Speed Mod/Extra/readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: Speed Mod/Extra/readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 2
+-- tree
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: 視点	0	0	1	視点
+block	patch.pchtxt :: #2	1	1	0	Speed
+block	patch.pchtxt :: #3	0	0	1	Speed
+mod	x	1	x		
+file	x/c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	for build ID c1675e0bb980a575a89661fec08aa83b, not your main: another version of the game or another module
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: Fix	1	1	1	Fix
+file	x/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	x/Extra/main.pchtxt :: #1	0	0	4	block 1
+block	x/Extra/main.pchtxt :: #2	1	1	0	block 2
+state	error	x/c1675e0bb980a575a89661fec08aa83b.ips is for build ID c1675e0bb980a575a89661fec08aa83b, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- tree without main
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: 視点	0	0	1	視点
+block	patch.pchtxt :: #2	1	1	0	Speed
+block	patch.pchtxt :: #3	0	0	1	Speed
+mod	x	1	x		
+file	x/c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	IPS, 0 record(s)
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: Fix	1	1	1	Fix
+file	x/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	x/Extra/main.pchtxt :: #1	0	0	4	block 1
+block	x/Extra/main.pchtxt :: #2	1	1	0	block 2
+state	error	x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: x/c1675e0bb980a575a89661fec08aa83b.ips is for build ID c1675e0bb980a575a89661fec08aa83b, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- elf none
+== case 3
+-- tree
+mod	alpha	1	alpha		
+file	alpha/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	main.pchtxt	1	main.pchtxt	for build ID d2a21971ffe7036e652abe89112d992afc86c2ce, not your main: another version of the game or another module	
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: FPS	1	1	3	FPS
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/Patch2.pchtxt	0	exefs/Patch2.pchtxt	
+block	Zeta/exefs/Patch2.pchtxt :: Fix	1	1	0	Fix
+file	Zeta/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Zeta/Extra/patch.pchtxt :: #1	1	1	2	block 1
+state	error	alpha/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	0	0	3	Speed
+block	main.pchtxt :: #2	1	1	0	Speed
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: FPS	1	1	3	FPS
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/Patch2.pchtxt	0	exefs/Patch2.pchtxt	
+block	Zeta/exefs/Patch2.pchtxt :: Fix	1	1	0	Fix
+file	Zeta/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Zeta/Extra/patch.pchtxt :: #1	1	1	2	block 1
+state	error	alpha/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: alpha/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 4
+-- tree
+mod	alpha	1	alpha		
+file	alpha/main.pchtxt	1	main.pchtxt	alpha/main.pchtxt line 9: not an even number of hex digits: '88bfb5346e6c9e5'
+file	alpha/Patch2.pchtxt	1	Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: Unlock = all	1	1	3	Unlock = all
+block	patch.pchtxt :: #2	1	1	0	Fix
+block	patch.pchtxt :: No HUD	1	1	3	No HUD
+block	patch.pchtxt :: #4	1	1	0	Fix
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	1	1	4	Infinite magic
+block	Patch2.pchtxt :: #2	0	0	3	Infinite magic
+block	Patch2.pchtxt :: No HUD	1	1	3	No HUD
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/main.pchtxt line 9: not an even number of hex digits: '88bfb5346e6c9e5'
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/main.pchtxt	1	main.pchtxt	alpha/main.pchtxt line 9: not an even number of hex digits: '88bfb5346e6c9e5'
+file	alpha/Patch2.pchtxt	1	Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: Unlock = all	1	1	3	Unlock = all
+block	patch.pchtxt :: #2	1	1	0	Fix
+block	patch.pchtxt :: No HUD	1	1	3	No HUD
+block	patch.pchtxt :: #4	1	1	0	Fix
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	1	1	4	Infinite magic
+block	Patch2.pchtxt :: #2	0	0	3	Infinite magic
+block	Patch2.pchtxt :: No HUD	1	1	3	No HUD
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/main.pchtxt line 9: not an even number of hex digits: '88bfb5346e6c9e5'
+-- apply exit 1
+error: alpha/main.pchtxt line 9: not an even number of hex digits: '88bfb5346e6c9e5'
+-- elf none
+== case 5
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 5 record(s)
+mod	x	1	x		romfs
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	x/exefs/readme.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b34 1b1dc5e5ddd16e9dzz'
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/readme.pchtxt	0	exefs/readme.pchtxt	for build ID 38e8f9dcc9b44e2ae195bfaabc6aa4da23f13898, not your main: another version of the game or another module
+file	Zeta/main.pchtxt	1	main.pchtxt	for build ID 49afa44e0f204e17fe489bfd4ab778bcf94f3858, not your main: another version of the game or another module
+state	error	x/exefs/readme.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b34 1b1dc5e5ddd16e9dzz'
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 5 record(s)
+mod	x	1	x		romfs
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	x/exefs/readme.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b34 1b1dc5e5ddd16e9dzz'
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/readme.pchtxt	0	exefs/readme.pchtxt	
+block	Zeta/exefs/readme.pchtxt :: #1	1	1	0	Größe
+block	Zeta/exefs/readme.pchtxt :: #2	1	1	0	Größe
+block	Zeta/exefs/readme.pchtxt :: Fix	1	1	1	Fix
+file	Zeta/main.pchtxt	1	main.pchtxt	
+block	Zeta/main.pchtxt :: #1	0	0	2	block 1
+block	Zeta/main.pchtxt :: Fix	1	1	4	Fix
+block	Zeta/main.pchtxt :: #3	1	1	4	Speed
+block	Zeta/main.pchtxt :: #4	1	1	1	Speed
+state	error	x/exefs/readme.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b34 1b1dc5e5ddd16e9dzz'
+-- apply exit 1
+error: x/exefs/readme.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b34 1b1dc5e5ddd16e9dzz'
+-- elf none
+== case 6
+-- tree
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	alpha/exefs/main.pchtxt :: Unlock = all	1	1	1	Unlock = all
+block	alpha/exefs/main.pchtxt :: Größe	0	0	1	Größe
+mod	x	1	x		romfs
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	x/exefs/Patch2.pchtxt line 7: not an even number of hex digits: '97212f5fdd7dde3'
+state	error	x/exefs/Patch2.pchtxt line 7: not an even number of hex digits: '97212f5fdd7dde3'
+-- tree without main
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	alpha/exefs/main.pchtxt :: Unlock = all	1	1	1	Unlock = all
+block	alpha/exefs/main.pchtxt :: Größe	0	0	1	Größe
+mod	x	1	x		romfs
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	x/exefs/Patch2.pchtxt line 7: not an even number of hex digits: '97212f5fdd7dde3'
+state	error	x/exefs/Patch2.pchtxt line 7: not an even number of hex digits: '97212f5fdd7dde3'
+-- apply exit 1
+error: x/exefs/Patch2.pchtxt line 7: not an even number of hex digits: '97212f5fdd7dde3'
+-- elf none
+== case 7
+-- tree
+mod	main.pchtxt	1	main.pchtxt	for build ID c921661bcd462105dbb150f68e2da52517936ef5, not your main: another version of the game or another module	
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	1	1	4	block 1
+block	Patch2.pchtxt :: #2	0	0	0	block 2
+block	Patch2.pchtxt :: FPS	1	1	1	FPS
+state	error	main.pchtxt is for build ID c921661bcd462105dbb150f68e2da52517936ef5, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: Größe	1	1	4	Größe
+block	main.pchtxt :: #2	0	0	1	視点
+block	main.pchtxt :: #3	1	1	4	視点
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	1	1	4	block 1
+block	Patch2.pchtxt :: #2	0	0	0	block 2
+block	Patch2.pchtxt :: FPS	1	1	1	FPS
+state	5325cd1acb09270f72a811d3ee604071445f5496ef457e07b4b0a2f0e99c3a99	
+-- apply exit 1
+error: main.pchtxt is for build ID c921661bcd462105dbb150f68e2da52517936ef5, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- elf none
+== case 8
+-- tree
+mod	alpha	1	alpha		
+file	alpha/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	alpha/Extra/patch.pchtxt :: #1	1	1	0	block 1
+block	alpha/Extra/patch.pchtxt :: 視点	0	0	1	視点
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	3	block 1
+block	readme.pchtxt :: 視点	1	1	3	視点
+block	readme.pchtxt :: Speed	1	1	1	Speed
+mod	x	1	x		
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	x/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	x/exefs/Patch2.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	alpha/Extra/patch.pchtxt :: #1	1	1	0	block 1
+block	alpha/Extra/patch.pchtxt :: 視点	0	0	1	視点
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	3	block 1
+block	readme.pchtxt :: 視点	1	1	3	視点
+block	readme.pchtxt :: Speed	1	1	1	Speed
+mod	x	1	x		
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	x/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	x/exefs/Patch2.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: x/exefs/Patch2.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 9
+-- tree
+mod	x	1	x		
+file	x/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	x/exefs/main.pchtxt :: #2	1	1	3	Fix
+block	x/exefs/main.pchtxt :: #3	1	1	1	Fix
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: Speed	1	1	4	Speed
+block	x/exefs/readme.pchtxt :: FPS	0	0	2	FPS
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	x/Extra/main.pchtxt line 13: not an even number of hex digits: 'abc'
+file	x/main.pchtxt	1	main.pchtxt	x/main.pchtxt line 9: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	x/Patch2.pchtxt	1	Patch2.pchtxt	x/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+state	error	x/Extra/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- tree without main
+mod	x	1	x		
+file	x/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	x/exefs/main.pchtxt :: #2	1	1	3	Fix
+block	x/exefs/main.pchtxt :: #3	1	1	1	Fix
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: Speed	1	1	4	Speed
+block	x/exefs/readme.pchtxt :: FPS	0	0	2	FPS
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	x/Extra/main.pchtxt line 13: not an even number of hex digits: 'abc'
+file	x/main.pchtxt	1	main.pchtxt	x/main.pchtxt line 9: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	x/Patch2.pchtxt	1	Patch2.pchtxt	x/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+state	error	x/Extra/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- apply exit 1
+error: x/Extra/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- elf none
+== case 10
+-- tree
+mod	patch.pchtxt	1	patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	x	1	x		
+file	x/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	0	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EEOF
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	for build ID 8c3ff559d14477a5eaebc0dc2e37f509ee736a57, not your main: another version of the game or another module
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 4 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: Größe	1	1	0	Größe
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	patch.pchtxt	1	patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	x	1	x		
+file	x/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	0	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EEOF
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	x/Extra/Patch2.pchtxt :: #1	1	1	4	block 1
+block	x/Extra/Patch2.pchtxt :: FPS	0	0	1	FPS
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 4 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: Größe	1	1	0	Größe
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 11
+-- tree
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	3	Speed
+block	main.pchtxt :: #2	1	1	1	Speed
+block	main.pchtxt :: Größe	1	1	0	Größe
+block	main.pchtxt :: No HUD	1	1	1	No HUD
+mod	x	1	x		romfs
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: Unlock = all	1	1	4	Unlock = all
+block	x/exefs/Patch2.pchtxt :: No HUD	0	0	4	No HUD
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/main.pchtxt	1	Extra/main.pchtxt	Ünicode mod/Extra/main.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '10d8 "abc"zz'
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: #1	1	1	4	FPS
+block	Ünicode mod/Extra/patch.pchtxt :: #2	0	0	0	FPS
+block	Ünicode mod/Extra/patch.pchtxt :: #3	1	1	1	FPS
+state	error	Ünicode mod/Extra/main.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '10d8 "abc"zz'
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	3	Speed
+block	main.pchtxt :: #2	1	1	1	Speed
+block	main.pchtxt :: Größe	1	1	0	Größe
+block	main.pchtxt :: No HUD	1	1	1	No HUD
+mod	x	1	x		romfs
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: Unlock = all	1	1	4	Unlock = all
+block	x/exefs/Patch2.pchtxt :: No HUD	0	0	4	No HUD
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/main.pchtxt	1	Extra/main.pchtxt	Ünicode mod/Extra/main.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '10d8 "abc"zz'
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: #1	1	1	4	FPS
+block	Ünicode mod/Extra/patch.pchtxt :: #2	0	0	0	FPS
+block	Ünicode mod/Extra/patch.pchtxt :: #3	1	1	1	FPS
+state	error	Ünicode mod/Extra/main.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '10d8 "abc"zz'
+-- apply exit 1
+error: Ünicode mod/Extra/main.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '10d8 "abc"zz'
+-- elf none
+== case 12
+-- tree
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	1	Fix
+block	main.pchtxt :: #2	1	1	0	Fix
+state	a160d31d25f399e6a00b9f1301b4035906ab09ec0272a2db6a1a36ad3020e9d3	
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	1	Fix
+block	main.pchtxt :: #2	1	1	0	Fix
+state	a160d31d25f399e6a00b9f1301b4035906ab09ec0272a2db6a1a36ad3020e9d3	
+-- apply exit 0
+  main.pchtxt: Fix
+    0x00001a72  486785c81e96364c -> d47533bdc50ee905
+8 bytes patched -> out.elf
+-- elf a98fed757802439f2de66b1c6e940089b4fa495358657d4607a7b250023cd907
+== case 13
+-- tree
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/main.pchtxt	1	exefs/main.pchtxt	for build ID fdae17bf3673662c8fd8f8dc5bc021c0ac76dca4, not your main: another version of the game or another module
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	Ünicode mod/patch.pchtxt line 9: expected "<hex offset> <hex bytes>" or <hex offset> "string": '1f2d 297876e02a21820azz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Ünicode mod/exefs/main.pchtxt is for build ID fdae17bf3673662c8fd8f8dc5bc021c0ac76dca4, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- tree without main
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Ünicode mod/exefs/main.pchtxt :: #1	0	0	1	Fix
+block	Ünicode mod/exefs/main.pchtxt :: #2	1	1	1	Fix
+block	Ünicode mod/exefs/main.pchtxt :: No HUD	1	1	3	No HUD
+block	Ünicode mod/exefs/main.pchtxt :: FPS	1	1	1	FPS
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	Ünicode mod/patch.pchtxt line 9: expected "<hex offset> <hex bytes>" or <hex offset> "string": '1f2d 297876e02a21820azz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Ünicode mod/patch.pchtxt line 9: expected "<hex offset> <hex bytes>" or <hex offset> "string": '1f2d 297876e02a21820azz'
+-- apply exit 1
+error: Ünicode mod/exefs/main.pchtxt is for build ID fdae17bf3673662c8fd8f8dc5bc021c0ac76dca4, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- elf none
+== case 14
+-- tree
+mod	c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	for build ID c1675e0bb980a575a89661fec08aa83b, not your main: another version of the game or another module	
+mod	cam	1	cam		
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: #1	0	0	0	block 1
+block	cam/exefs/patch.pchtxt :: #2	1	1	4	block 2
+block	cam/exefs/patch.pchtxt :: #3	0	0	0	block 3
+block	cam/exefs/patch.pchtxt :: No HUD	0	0	1	No HUD
+mod	readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	1	1	1	block 1
+block	x/exefs/main.pchtxt :: Größe	0	0	1	Größe
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	for build ID fe5c08bb244700f1b5a243a5ed1b58b7c567f6f4, not your main: another version of the game or another module
+file	x/readme.pchtxt	1	readme.pchtxt	
+block	x/readme.pchtxt :: #1	1	1	2	block 1
+state	error	c1675e0bb980a575a89661fec08aa83b.ips is for build ID c1675e0bb980a575a89661fec08aa83b, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- tree without main
+mod	c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	IPS, 0 record(s)	
+mod	cam	1	cam		
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: #1	0	0	0	block 1
+block	cam/exefs/patch.pchtxt :: #2	1	1	4	block 2
+block	cam/exefs/patch.pchtxt :: #3	0	0	0	block 3
+block	cam/exefs/patch.pchtxt :: No HUD	0	0	1	No HUD
+mod	readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	1	1	1	block 1
+block	x/exefs/main.pchtxt :: Größe	0	0	1	Größe
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: Unlock = all	1	1	1	Unlock = all
+file	x/readme.pchtxt	1	readme.pchtxt	
+block	x/readme.pchtxt :: #1	1	1	2	block 1
+state	error	readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: c1675e0bb980a575a89661fec08aa83b.ips is for build ID c1675e0bb980a575a89661fec08aa83b, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- elf none
+== case 15
+-- tree
+mod	notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)	
+mod	Speed Mod	1	Speed Mod		romfs-only
+state	error	notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)	
+mod	Speed Mod	1	Speed Mod		romfs-only
+state	error	notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 16
+-- tree
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Ünicode mod/exefs/main.pchtxt :: #1	1	1	3	Größe
+block	Ünicode mod/exefs/main.pchtxt :: #2	1	1	0	Größe
+block	Ünicode mod/exefs/main.pchtxt :: #3	0	0	0	Größe
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Ünicode mod/exefs/readme.pchtxt :: #1	1	1	4	block 1
+block	Ünicode mod/exefs/readme.pchtxt :: #2	1	1	2	Speed
+block	Ünicode mod/exefs/readme.pchtxt :: #3	0	0	1	Speed
+file	Ünicode mod/main.pchtxt	1	main.pchtxt	
+block	Ünicode mod/main.pchtxt :: FPS	1	1	3	FPS
+block	Ünicode mod/main.pchtxt :: Camera	0	0	4	Camera
+block	Ünicode mod/main.pchtxt :: Unlock = all	1	1	1	Unlock = all
+block	Ünicode mod/main.pchtxt :: Infinite magic	1	1	0	Infinite magic
+state	error	x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Ünicode mod/exefs/main.pchtxt :: #1	1	1	3	Größe
+block	Ünicode mod/exefs/main.pchtxt :: #2	1	1	0	Größe
+block	Ünicode mod/exefs/main.pchtxt :: #3	0	0	0	Größe
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Ünicode mod/exefs/readme.pchtxt :: #1	1	1	4	block 1
+block	Ünicode mod/exefs/readme.pchtxt :: #2	1	1	2	Speed
+block	Ünicode mod/exefs/readme.pchtxt :: #3	0	0	1	Speed
+file	Ünicode mod/main.pchtxt	1	main.pchtxt	
+block	Ünicode mod/main.pchtxt :: FPS	1	1	3	FPS
+block	Ünicode mod/main.pchtxt :: Camera	0	0	4	Camera
+block	Ünicode mod/main.pchtxt :: Unlock = all	1	1	1	Unlock = all
+block	Ünicode mod/main.pchtxt :: Infinite magic	1	1	0	Infinite magic
+state	error	x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 17
+-- tree
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	cam	1	cam		
+file	cam/readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	0	0	0	Fix
+block	main.pchtxt :: #2	1	1	4	Fix
+block	main.pchtxt :: #3	1	1	2	Fix
+block	main.pchtxt :: #4	1	1	4	Fix
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Speed Mod/Extra/main.pchtxt :: #1	1	1	4	Fix
+block	Speed Mod/Extra/main.pchtxt :: #2	0	0	0	Fix
+block	Speed Mod/Extra/main.pchtxt :: Infinite magic	1	1	3	Infinite magic
+state	error	alpha/exefs/patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	cam	1	cam		
+file	cam/readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	0	0	0	Fix
+block	main.pchtxt :: #2	1	1	4	Fix
+block	main.pchtxt :: #3	1	1	2	Fix
+block	main.pchtxt :: #4	1	1	4	Fix
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Speed Mod/Extra/main.pchtxt :: #1	1	1	4	Fix
+block	Speed Mod/Extra/main.pchtxt :: #2	0	0	0	Fix
+block	Speed Mod/Extra/main.pchtxt :: Infinite magic	1	1	3	Infinite magic
+state	error	alpha/exefs/patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: alpha/exefs/patch.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 18
+-- tree
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	2	block 1
+block	readme.pchtxt :: #2	1	1	1	block 2
+block	readme.pchtxt :: Infinite magic	1	1	3	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: 視点	1	1	4	視点
+block	Ünicode mod/Extra/patch.pchtxt :: No HUD	1	1	3	No HUD
+block	Ünicode mod/Extra/patch.pchtxt :: Camera	1	1	4	Camera
+file	Ünicode mod/Extra/readme.pchtxt	1	Extra/readme.pchtxt	
+block	Ünicode mod/Extra/readme.pchtxt :: #1	0	0	1	block 1
+block	Ünicode mod/Extra/readme.pchtxt :: FPS	1	1	1	FPS
+block	Ünicode mod/Extra/readme.pchtxt :: Unlock = all	0	0	3	Unlock = all
+mod	Texture pack	1	Texture pack		romfs-only
+state	85ea271aebc962f575c695eb67b0e48744fff8db8f8f7b484c941deaf2f059d3	
+-- tree without main
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	2	block 1
+block	readme.pchtxt :: #2	1	1	1	block 2
+block	readme.pchtxt :: Infinite magic	1	1	3	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: 視点	1	1	4	視点
+block	Ünicode mod/Extra/patch.pchtxt :: No HUD	1	1	3	No HUD
+block	Ünicode mod/Extra/patch.pchtxt :: Camera	1	1	4	Camera
+file	Ünicode mod/Extra/readme.pchtxt	1	Extra/readme.pchtxt	
+block	Ünicode mod/Extra/readme.pchtxt :: #1	0	0	1	block 1
+block	Ünicode mod/Extra/readme.pchtxt :: FPS	1	1	1	FPS
+block	Ünicode mod/Extra/readme.pchtxt :: Unlock = all	0	0	3	Unlock = all
+mod	Texture pack	1	Texture pack		romfs-only
+state	85ea271aebc962f575c695eb67b0e48744fff8db8f8f7b484c941deaf2f059d3	
+-- apply exit 0
+  readme.pchtxt
+    0x000012be  7fc535a6 -> b4e97c5b
+    0x00002487  e63b5ddb7d36e3ec -> 118c5472f3d4236a
+  readme.pchtxt
+    0x00001ad8  62678826460a3b4a -> 6c8f8051473dac3d
+  readme.pchtxt: Infinite magic
+    0x0000145f  bfd3cb45 -> 8bd7c0eb
+    0x00001168  6e515929a2769620 -> 8c8af42da2eae675
+    0x000003c2  3510eab427130cec -> ed07771e272f45c8
+  Ünicode mod/Extra/patch.pchtxt: 視点
+    0x00000858  4cd9d8c7 -> b2b32938
+    0x000024f3  2909c1df -> d90bc9e6
+    0x00002527  7f7666bbf3423005 -> 61eefd79620fb425
+    0x00000fdf  7e0731a3 -> fd29f499
+  Ünicode mod/Extra/patch.pchtxt: No HUD
+    0x00001205  d03d4863595232ba -> 702ab36024be2f87
+    0x000026b6  9479f520cebb8e83 -> 33dfe0e17b5c0859
+    0x000019de  b3e447901e65ba47 -> c05683748a816d68
+  Ünicode mod/Extra/patch.pchtxt: Camera
+    0x00000192  e11ed85c9be578 -> 18eed53fe6d27d
+    0x00002e26  de9ae8b4bc671a77 -> 84ba9927f19e5552
+    0x00002b06  f650599f7061199f -> 1b7e816b40bc2734
+    0x000015c6  7a -> e9
+  Ünicode mod/Extra/readme.pchtxt: FPS
+    0x000027a4  718ee8e56baaf426 -> e1400b606955d091
+116 bytes patched -> out.elf
+-- elf a7397d94e1164a4fe38bce933786ab6ab0b0d4b2af4e51fd81d4f6f094ca5b15
+== case 19
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)	
+mod	cam	1	cam		romfs
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	cam/exefs/main.pchtxt line 10: expected "<hex offset> <hex bytes>" or <hex offset> "string": '8d7 eeb2116c7b6eb306zz'
+file	cam/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: #1	1	1	1	Fix
+block	Ünicode mod/exefs/patch.pchtxt :: Camera	0	0	0	Camera
+block	Ünicode mod/exefs/patch.pchtxt :: #3	0	0	3	Fix
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Ünicode mod/exefs/Patch2.pchtxt line 9: not an even number of hex digits: '86f9ab647d6b2a9'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)	
+mod	cam	1	cam		romfs
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	cam/exefs/main.pchtxt line 10: expected "<hex offset> <hex bytes>" or <hex offset> "string": '8d7 eeb2116c7b6eb306zz'
+file	cam/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: #1	1	1	1	Fix
+block	Ünicode mod/exefs/patch.pchtxt :: Camera	0	0	0	Camera
+block	Ünicode mod/exefs/patch.pchtxt :: #3	0	0	3	Fix
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Ünicode mod/exefs/Patch2.pchtxt line 9: not an even number of hex digits: '86f9ab647d6b2a9'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 20
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EOF
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 4 record(s)
+file	cam/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	cam/Extra/Patch2.pchtxt :: Unlock = all	0	0	4	Unlock = all
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: #1	1	1	1	block 1
+file	Speed Mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Speed Mod/Extra/patch.pchtxt :: #1	0	0	0	Fix
+block	Speed Mod/Extra/patch.pchtxt :: #2	1	1	0	Fix
+block	Speed Mod/Extra/patch.pchtxt :: FPS	0	0	2	FPS
+state	error	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EOF
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EOF
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 4 record(s)
+file	cam/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	cam/Extra/Patch2.pchtxt :: Unlock = all	0	0	4	Unlock = all
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: #1	1	1	1	block 1
+file	Speed Mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Speed Mod/Extra/patch.pchtxt :: #1	0	0	0	Fix
+block	Speed Mod/Extra/patch.pchtxt :: #2	1	1	0	Fix
+block	Speed Mod/Extra/patch.pchtxt :: FPS	0	0	2	FPS
+state	error	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EOF
+-- apply exit 1
+error: cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EOF
+-- elf none
+== case 21
+-- tree
+mod	cam	1	cam		romfs
+file	cam/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: #1	1	1	0	block 1
+block	cam/exefs/patch.pchtxt :: #2	0	0	1	Fix
+block	cam/exefs/patch.pchtxt :: #3	1	1	1	Fix
+block	cam/exefs/patch.pchtxt :: #4	1	1	3	Fix
+file	cam/main.pchtxt	1	main.pchtxt	cam/main.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2756 157345ce7d7d3de6zz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	cam/main.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2756 157345ce7d7d3de6zz'
+-- tree without main
+mod	cam	1	cam		romfs
+file	cam/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: #1	1	1	0	block 1
+block	cam/exefs/patch.pchtxt :: #2	0	0	1	Fix
+block	cam/exefs/patch.pchtxt :: #3	1	1	1	Fix
+block	cam/exefs/patch.pchtxt :: #4	1	1	3	Fix
+file	cam/main.pchtxt	1	main.pchtxt	cam/main.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2756 157345ce7d7d3de6zz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	cam/main.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2756 157345ce7d7d3de6zz'
+-- apply exit 1
+error: cam/main.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2756 157345ce7d7d3de6zz'
+-- elf none
+== case 22
+-- tree
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+file	alpha/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	alpha/exefs/readme.pchtxt :: Größe	1	1	3	Größe
+block	alpha/exefs/readme.pchtxt :: #2	0	0	4	Fix
+block	alpha/exefs/readme.pchtxt :: #3	1	1	4	Fix
+block	alpha/exefs/readme.pchtxt :: #4	1	1	3	Fix
+mod	x	1	x		romfs
+file	x/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: #1	0	0	1	block 1
+block	x/exefs/Patch2.pchtxt :: #2	1	1	1	Camera
+block	x/exefs/Patch2.pchtxt :: #3	0	0	0	Camera
+block	x/exefs/Patch2.pchtxt :: #4	1	1	1	Camera
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: #1	1	1	0	block 1
+state	a3bc49da8133aa1b9f2653e19ddcd05e94b4e898c4d296df1cc15977ee974f3d	
+-- tree without main
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+file	alpha/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	alpha/exefs/readme.pchtxt :: Größe	1	1	3	Größe
+block	alpha/exefs/readme.pchtxt :: #2	0	0	4	Fix
+block	alpha/exefs/readme.pchtxt :: #3	1	1	4	Fix
+block	alpha/exefs/readme.pchtxt :: #4	1	1	3	Fix
+mod	x	1	x		romfs
+file	x/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: #1	0	0	1	block 1
+block	x/exefs/Patch2.pchtxt :: #2	1	1	1	Camera
+block	x/exefs/Patch2.pchtxt :: #3	0	0	0	Camera
+block	x/exefs/Patch2.pchtxt :: #4	1	1	1	Camera
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: #1	1	1	0	block 1
+state	a3bc49da8133aa1b9f2653e19ddcd05e94b4e898c4d296df1cc15977ee974f3d	
+-- apply exit 0
+  alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips
+    0x00001aca  db350f5ba5ecb157c1e8d9e874386267.. (21 bytes) -> e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6.. (21 bytes)
+    0x00001a12  e2ffb55a65f2 -> aeb8f359b71e
+  alpha/exefs/readme.pchtxt: Größe
+    0x00002838  3cd4da90506809d5 -> 3707f29d8909f99c
+    0x00000bc5  bb61c74ae040eaa0 -> 7461620968657265
+    0x00001602  6b4e0e -> 712278
+  alpha/exefs/readme.pchtxt: Fix
+    0x00002579  6d20 -> 4142
+    0x000003ac  25f801f4ea8dfcf3 -> aaf40008605078ec
+    0x00001cd0  025447 -> 610a62
+    0x00001f12  b2c8755147a3546e -> 274a252ce1507757
+  alpha/exefs/readme.pchtxt: Fix
+    0x00001b6a  179f191b8381b273 -> a9535a4443b71614
+    0x00000409  88d0ba061da279c5 -> 92cbf206fe3823b8
+    0x00002472  726c51e0 -> 0da04a20
+  x/exefs/Patch2.pchtxt: Camera
+    0x00002191  4b7657ca71d64b52 -> 84a4f7092c2e81ee
+  x/exefs/Patch2.pchtxt: Camera
+    0x00000a94  a019 -> 4142
+97 bytes patched -> out.elf
+-- elf fb92f1fa4178a99f17965fe6085d5c357f461e86e38150f7dbcd5fd0fd34bb0d
+== case 23
+-- tree
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: No HUD	1	1	2	No HUD
+block	Speed Mod/exefs/patch.pchtxt :: 視点	0	0	1	視点
+block	Speed Mod/exefs/patch.pchtxt :: Infinite magic	0	0	4	Infinite magic
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: Fix	0	0	3	Fix
+state	error	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- tree without main
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: No HUD	1	1	2	No HUD
+block	Speed Mod/exefs/patch.pchtxt :: 視点	0	0	1	視点
+block	Speed Mod/exefs/patch.pchtxt :: Infinite magic	0	0	4	Infinite magic
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: Fix	0	0	3	Fix
+state	error	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- apply exit 1
+error: Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- elf none
+== case 24
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	alpha/readme.pchtxt	1	readme.pchtxt	
+block	alpha/readme.pchtxt :: Infinite magic	1	1	4	Infinite magic
+state	error	alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	alpha/readme.pchtxt	1	readme.pchtxt	
+block	alpha/readme.pchtxt :: Infinite magic	1	1	4	Infinite magic
+state	error	alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 25
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	alpha/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: FPS	1	1	0	FPS
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: Fix	1	1	2	Fix
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 7: not an even number of hex digits: 'e7014d1d55ee112'
+state	error	alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	alpha/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: FPS	1	1	0	FPS
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: Fix	1	1	2	Fix
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 7: not an even number of hex digits: 'e7014d1d55ee112'
+state	error	alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: alpha/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 26
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	cam/exefs/readme.pchtxt	0	exefs/readme.pchtxt	cam/exefs/readme.pchtxt line 5: not an even number of hex digits: '9469a2b590f2ff5'
+file	cam/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	cam/Extra/Patch2.pchtxt :: #1	1	1	1	block 1
+block	cam/Extra/Patch2.pchtxt :: Unlock = all	1	1	2	Unlock = all
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	1	1	4	Infinite magic
+block	patch.pchtxt :: #2	1	1	2	Infinite magic
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: Infinite magic	1	1	3	Infinite magic
+block	Patch2.pchtxt :: FPS	0	0	0	FPS
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	0	0	0	block 1
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: Fix	0	0	1	Fix
+block	Speed Mod/exefs/patch.pchtxt :: No HUD	0	0	1	No HUD
+file	Speed Mod/readme.pchtxt	1	readme.pchtxt	Speed Mod/readme.pchtxt line 8: not an even number of hex digits: 'd6a7eeae82baccb'
+state	error	Speed Mod/readme.pchtxt line 8: not an even number of hex digits: 'd6a7eeae82baccb'
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	cam/exefs/readme.pchtxt	0	exefs/readme.pchtxt	cam/exefs/readme.pchtxt line 5: not an even number of hex digits: '9469a2b590f2ff5'
+file	cam/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	cam/Extra/Patch2.pchtxt :: #1	1	1	1	block 1
+block	cam/Extra/Patch2.pchtxt :: Unlock = all	1	1	2	Unlock = all
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	1	1	4	Infinite magic
+block	patch.pchtxt :: #2	1	1	2	Infinite magic
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: Infinite magic	1	1	3	Infinite magic
+block	Patch2.pchtxt :: FPS	0	0	0	FPS
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	0	0	0	block 1
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: Fix	0	0	1	Fix
+block	Speed Mod/exefs/patch.pchtxt :: No HUD	0	0	1	No HUD
+file	Speed Mod/readme.pchtxt	1	readme.pchtxt	Speed Mod/readme.pchtxt line 8: not an even number of hex digits: 'd6a7eeae82baccb'
+state	error	Speed Mod/readme.pchtxt line 8: not an even number of hex digits: 'd6a7eeae82baccb'
+-- apply exit 1
+error: Speed Mod/readme.pchtxt line 8: not an even number of hex digits: 'd6a7eeae82baccb'
+-- elf none
+== case 27
+-- tree
+mod	cam	1	cam		romfs
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	cam/exefs/main.pchtxt :: FPS	0	0	0	FPS
+file	cam/Patch2.pchtxt	1	Patch2.pchtxt	
+block	cam/Patch2.pchtxt :: Fix	0	0	1	Fix
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: FPS	1	1	0	FPS
+block	main.pchtxt :: Größe	1	1	3	Größe
+block	main.pchtxt :: #3	1	1	2	No HUD
+block	main.pchtxt :: #4	1	1	1	No HUD
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	0	2	block 1
+block	patch.pchtxt :: #2	0	0	1	block 2
+block	patch.pchtxt :: Speed	1	1	4	Speed
+block	patch.pchtxt :: FPS	1	1	3	FPS
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Ünicode mod/Extra/main.pchtxt :: #1	1	1	1	block 1
+block	Ünicode mod/Extra/main.pchtxt :: Infinite magic	1	1	1	Infinite magic
+block	Ünicode mod/Extra/main.pchtxt :: 視点	0	0	1	視点
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Ünicode mod/Extra/Patch2.pchtxt line 9: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	Ünicode mod/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	cam	1	cam		romfs
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	cam/exefs/main.pchtxt :: FPS	0	0	0	FPS
+file	cam/Patch2.pchtxt	1	Patch2.pchtxt	
+block	cam/Patch2.pchtxt :: Fix	0	0	1	Fix
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: FPS	1	1	0	FPS
+block	main.pchtxt :: Größe	1	1	3	Größe
+block	main.pchtxt :: #3	1	1	2	No HUD
+block	main.pchtxt :: #4	1	1	1	No HUD
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	0	2	block 1
+block	patch.pchtxt :: #2	0	0	1	block 2
+block	patch.pchtxt :: Speed	1	1	4	Speed
+block	patch.pchtxt :: FPS	1	1	3	FPS
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Ünicode mod/Extra/main.pchtxt :: #1	1	1	1	block 1
+block	Ünicode mod/Extra/main.pchtxt :: Infinite magic	1	1	1	Infinite magic
+block	Ünicode mod/Extra/main.pchtxt :: 視点	0	0	1	視点
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Ünicode mod/Extra/Patch2.pchtxt line 9: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	Ünicode mod/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 28
+-- tree
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	x/exefs/Patch2.pchtxt :: Fix	1	1	4	Fix
+block	x/exefs/Patch2.pchtxt :: Speed	0	0	1	Speed
+mod	Zeta	0	Zeta		
+file	Zeta/c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	for build ID c1675e0bb980a575a89661fec08aa83b, not your main: another version of the game or another module
+file	Zeta/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Zeta/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	for build ID c1675e0bb980a575a89661fec08aa83b, not your main: another version of the game or another module
+file	Zeta/main.pchtxt	1	main.pchtxt	Zeta/main.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b21 c7e134e99a4f9141zz'
+state	error	x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	x/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	x/exefs/Patch2.pchtxt :: Fix	1	1	4	Fix
+block	x/exefs/Patch2.pchtxt :: Speed	0	0	1	Speed
+mod	Zeta	0	Zeta		
+file	Zeta/c1675e0bb980a575a89661fec08aa83b.ips	1	c1675e0bb980a575a89661fec08aa83b.ips	IPS, 4 record(s)
+file	Zeta/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Zeta/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	IPS, 4 record(s)
+file	Zeta/main.pchtxt	1	main.pchtxt	Zeta/main.pchtxt line 19: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'b21 c7e134e99a4f9141zz'
+state	error	x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: x/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 29
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	alpha/exefs/main.pchtxt :: #1	0	0	0	block 1
+block	alpha/exefs/main.pchtxt :: Größe	1	1	4	Größe
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/notabuildid.ips	0	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: #1	0	0	0	block 1
+block	Speed Mod/Patch2.pchtxt :: #2	1	1	2	block 2
+block	Speed Mod/Patch2.pchtxt :: Infinite magic	1	1	2	Infinite magic
+state	886f52f4cca5aca0755c7fd0843d6507e89a6a70a0955af22b768c96ef9d70f4	
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 2 record(s)
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	alpha/exefs/main.pchtxt :: #1	0	0	0	block 1
+block	alpha/exefs/main.pchtxt :: Größe	1	1	4	Größe
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/notabuildid.ips	0	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: #1	0	0	0	block 1
+block	Speed Mod/Patch2.pchtxt :: #2	1	1	2	block 2
+block	Speed Mod/Patch2.pchtxt :: Infinite magic	1	1	2	Infinite magic
+state	886f52f4cca5aca0755c7fd0843d6507e89a6a70a0955af22b768c96ef9d70f4	
+-- apply exit 0
+  alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips
+    0x00001417  238dde1c2cd5d95a571bb19c16485ec7.. (28 bytes) -> 71717171717171717171717171717171.. (28 bytes)
+    0x00002629  76d837e9cb3545f46e5a96 -> 1531226bc52ee127e962d6
+  alpha/exefs/main.pchtxt: Größe
+    0x000016d0  036a4e64712fbf52 -> 67eb65f826999656
+    0x0000255f  522e -> 4107
+    0x0000250c  43 -> e9
+    0x0000171e  a1eb1504a4a907b0 -> c27cfc10919f49d3
+  Speed Mod/Patch2.pchtxt
+    0x00001774  703ae8ffa765a8a6 -> bc27eb2f63d8fda2
+    0x00000067  7070d39d4485f8ed -> 970e50ab78bea2c8
+  Speed Mod/Patch2.pchtxt: Infinite magic
+    0x000002dc  131d66aa -> 9be40f6f
+    0x0000130f  f0713fdebbc86b10 -> 2d4c0b40d73e6084
+86 bytes patched -> out.elf
+-- elf 29fb7de09348fd9b601b96f6a90c0de36467814eb356cd099e827b5a1929fe91
+== case 30
+-- tree
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	alpha/exefs/patch.pchtxt :: Camera	0	0	3	Camera
+block	alpha/exefs/patch.pchtxt :: 視点	1	1	0	視点
+block	alpha/exefs/patch.pchtxt :: Infinite magic	0	0	0	Infinite magic
+file	alpha/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	alpha/exefs/Patch2.pchtxt :: #1	0	0	3	block 1
+block	alpha/exefs/Patch2.pchtxt :: #2	1	1	0	Fix
+block	alpha/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	alpha/exefs/Patch2.pchtxt :: #4	0	0	1	Fix
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	0	0	4	block 1
+block	main.pchtxt :: Infinite magic	1	1	2	Infinite magic
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: Speed	1	1	2	Speed
+block	Speed Mod/exefs/main.pchtxt :: 視点	0	0	3	視点
+block	Speed Mod/exefs/main.pchtxt :: #3	1	1	4	Infinite magic
+block	Speed Mod/exefs/main.pchtxt :: #4	0	0	2	Infinite magic
+file	Speed Mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	Speed Mod/Extra/patch.pchtxt line 7: not an even number of hex digits: 'c4a426bd6873baf'
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	for build ID 6e1394afa0d030f6bab95fd064835e30d6633389, not your main: another version of the game or another module
+file	Speed Mod/readme.pchtxt	1	readme.pchtxt	Speed Mod/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '1e00 96cbf23504a27224zz'
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Speed Mod/Extra/patch.pchtxt line 7: not an even number of hex digits: 'c4a426bd6873baf'
+-- tree without main
+mod	alpha	1	alpha		romfs
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	alpha/exefs/patch.pchtxt :: Camera	0	0	3	Camera
+block	alpha/exefs/patch.pchtxt :: 視点	1	1	0	視点
+block	alpha/exefs/patch.pchtxt :: Infinite magic	0	0	0	Infinite magic
+file	alpha/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	alpha/exefs/Patch2.pchtxt :: #1	0	0	3	block 1
+block	alpha/exefs/Patch2.pchtxt :: #2	1	1	0	Fix
+block	alpha/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	alpha/exefs/Patch2.pchtxt :: #4	0	0	1	Fix
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	0	0	4	block 1
+block	main.pchtxt :: Infinite magic	1	1	2	Infinite magic
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: Speed	1	1	2	Speed
+block	Speed Mod/exefs/main.pchtxt :: 視点	0	0	3	視点
+block	Speed Mod/exefs/main.pchtxt :: #3	1	1	4	Infinite magic
+block	Speed Mod/exefs/main.pchtxt :: #4	0	0	2	Infinite magic
+file	Speed Mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	Speed Mod/Extra/patch.pchtxt line 7: not an even number of hex digits: 'c4a426bd6873baf'
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: #1	1	1	3	block 1
+block	Speed Mod/Extra/Patch2.pchtxt :: #2	1	1	4	Camera
+block	Speed Mod/Extra/Patch2.pchtxt :: FPS	1	1	3	FPS
+block	Speed Mod/Extra/Patch2.pchtxt :: #4	1	1	1	Camera
+file	Speed Mod/readme.pchtxt	1	readme.pchtxt	Speed Mod/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '1e00 96cbf23504a27224zz'
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Speed Mod/Extra/patch.pchtxt line 7: not an even number of hex digits: 'c4a426bd6873baf'
+-- apply exit 1
+error: Speed Mod/Extra/patch.pchtxt line 7: not an even number of hex digits: 'c4a426bd6873baf'
+-- elf none
+== case 31
+-- tree
+mod	readme.pchtxt	1	readme.pchtxt	readme.pchtxt line 4: not an even number of hex digits: 'dee51a376dfc2ce'	
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	Speed Mod/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	Speed Mod/exefs/main.pchtxt :: #2	0	0	2	block 2
+block	Speed Mod/exefs/main.pchtxt :: No HUD	0	0	0	No HUD
+file	Speed Mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	readme.pchtxt line 4: not an even number of hex digits: 'dee51a376dfc2ce'
+-- tree without main
+mod	readme.pchtxt	1	readme.pchtxt	readme.pchtxt line 4: not an even number of hex digits: 'dee51a376dfc2ce'	
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+file	Speed Mod/exefs/main.pchtxt	0	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: #1	1	1	3	block 1
+block	Speed Mod/exefs/main.pchtxt :: #2	0	0	2	block 2
+block	Speed Mod/exefs/main.pchtxt :: No HUD	0	0	0	No HUD
+file	Speed Mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	readme.pchtxt line 4: not an even number of hex digits: 'dee51a376dfc2ce'
+-- apply exit 1
+error: readme.pchtxt line 4: not an even number of hex digits: 'dee51a376dfc2ce'
+-- elf none
+== case 32
+-- tree
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+file	Speed Mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	ends without EOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: Infinite magic	1	1	3	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Ünicode mod/readme.pchtxt	1	readme.pchtxt	
+block	Ünicode mod/readme.pchtxt :: #1	0	0	3	block 1
+block	Ünicode mod/readme.pchtxt :: #2	1	1	4	block 2
+state	error	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- tree without main
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)
+file	Speed Mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	ends without EOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: Infinite magic	1	1	3	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Ünicode mod/readme.pchtxt	1	readme.pchtxt	
+block	Ünicode mod/readme.pchtxt :: #1	0	0	3	block 1
+block	Ünicode mod/readme.pchtxt :: #2	1	1	4	block 2
+state	error	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- apply exit 1
+error: C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- elf none
+== case 33
+-- tree
+mod	alpha	1	alpha		
+file	alpha/Extra/main.pchtxt	1	Extra/main.pchtxt	alpha/Extra/main.pchtxt line 18: not an even number of hex digits: '48ab768698a6cbf'
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: Unlock = all	1	1	4	Unlock = all
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Speed Mod/exefs/readme.pchtxt :: #1	0	0	2	Speed
+block	Speed Mod/exefs/readme.pchtxt :: #2	1	1	3	Speed
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Speed Mod/Extra/Patch2.pchtxt line 5: not an even number of hex digits: '21d5b02d595f40a'
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: #1	1	1	0	block 1
+block	Speed Mod/Patch2.pchtxt :: Infinite magic	0	0	3	Infinite magic
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Zeta/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Zeta/Patch2.pchtxt :: #1	0	0	1	block 1
+state	error	alpha/Extra/main.pchtxt line 18: not an even number of hex digits: '48ab768698a6cbf'
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/Extra/main.pchtxt	1	Extra/main.pchtxt	alpha/Extra/main.pchtxt line 18: not an even number of hex digits: '48ab768698a6cbf'
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: Unlock = all	1	1	4	Unlock = all
+mod	Speed Mod	1	Speed Mod		romfs
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Speed Mod/exefs/readme.pchtxt :: #1	0	0	2	Speed
+block	Speed Mod/exefs/readme.pchtxt :: #2	1	1	3	Speed
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Speed Mod/Extra/Patch2.pchtxt line 5: not an even number of hex digits: '21d5b02d595f40a'
+file	Speed Mod/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Speed Mod/Patch2.pchtxt :: #1	1	1	0	block 1
+block	Speed Mod/Patch2.pchtxt :: Infinite magic	0	0	3	Infinite magic
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Zeta/Patch2.pchtxt	1	Patch2.pchtxt	
+block	Zeta/Patch2.pchtxt :: #1	0	0	1	block 1
+state	error	alpha/Extra/main.pchtxt line 18: not an even number of hex digits: '48ab768698a6cbf'
+-- apply exit 1
+error: alpha/Extra/main.pchtxt line 18: not an even number of hex digits: '48ab768698a6cbf'
+-- elf none
+== case 34
+-- tree
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	0	0	2	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: #1	0	0	3	block 1
+block	Speed Mod/exefs/Patch2.pchtxt :: Fix	1	1	1	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: Unlock = all	0	0	0	Unlock = all
+file	Speed Mod/Extra/Patch2.pchtxt	0	Extra/Patch2.pchtxt	for build ID 2752d54e04d11bf1286b9c338214c8af0eba8ac2, not your main: another version of the game or another module
+mod	x	1	x		romfs
+file	x/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 0 record(s)
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	x/Extra/main.pchtxt :: #1	1	1	1	block 1
+file	x/patch.pchtxt	1	patch.pchtxt	
+block	x/patch.pchtxt :: #1	1	1	4	block 1
+block	x/patch.pchtxt :: #2	1	1	0	視点
+block	x/patch.pchtxt :: #3	1	1	1	視点
+block	x/patch.pchtxt :: #4	0	0	2	視点
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 4 record(s)
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Ünicode mod/exefs/Patch2.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '279f 4771529fzz'
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 5: not an even number of hex digits: '7cc58146ce9068b'
+file	Ünicode mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	for build ID 63bfdc98d6c4e9d8e35a4a63f67a81dbfc3866cd, not your main: another version of the game or another module
+state	error	Ünicode mod/exefs/Patch2.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '279f 4771529fzz'
+-- tree without main
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	0	0	2	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: #1	0	0	3	block 1
+block	Speed Mod/exefs/Patch2.pchtxt :: Fix	1	1	1	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: Unlock = all	0	0	0	Unlock = all
+file	Speed Mod/Extra/Patch2.pchtxt	0	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: #1	1	1	1	block 1
+block	Speed Mod/Extra/Patch2.pchtxt :: Größe	1	1	1	Größe
+block	Speed Mod/Extra/Patch2.pchtxt :: Unlock = all	0	0	4	Unlock = all
+block	Speed Mod/Extra/Patch2.pchtxt :: Fix	0	0	1	Fix
+mod	x	1	x		romfs
+file	x/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 0 record(s)
+file	x/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	x/Extra/main.pchtxt :: #1	1	1	1	block 1
+file	x/patch.pchtxt	1	patch.pchtxt	
+block	x/patch.pchtxt :: #1	1	1	4	block 1
+block	x/patch.pchtxt :: #2	1	1	0	視点
+block	x/patch.pchtxt :: #3	1	1	1	視点
+block	x/patch.pchtxt :: #4	0	0	2	視点
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 4 record(s)
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Ünicode mod/exefs/Patch2.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '279f 4771529fzz'
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 5: not an even number of hex digits: '7cc58146ce9068b'
+file	Ünicode mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Ünicode mod/Extra/Patch2.pchtxt :: #1	0	1	1	視点
+block	Ünicode mod/Extra/Patch2.pchtxt :: #2	1	1	1	視点
+state	error	Ünicode mod/exefs/Patch2.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '279f 4771529fzz'
+-- apply exit 1
+error: Ünicode mod/exefs/Patch2.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": '279f 4771529fzz'
+-- elf none
+== case 35
+-- tree
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: Fix	1	1	3	Fix
+file	x/main.pchtxt	1	main.pchtxt	x/main.pchtxt line 13: not an even number of hex digits: 'abc'
+file	x/Patch2.pchtxt	1	Patch2.pchtxt	x/Patch2.pchtxt line 7: expected "<hex offset> <hex bytes>" or <hex offset> "string": '29cb 9d79d3b1zz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	x/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- tree without main
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: Fix	1	1	3	Fix
+file	x/main.pchtxt	1	main.pchtxt	x/main.pchtxt line 13: not an even number of hex digits: 'abc'
+file	x/Patch2.pchtxt	1	Patch2.pchtxt	x/Patch2.pchtxt line 7: expected "<hex offset> <hex bytes>" or <hex offset> "string": '29cb 9d79d3b1zz'
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	x/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- apply exit 1
+error: x/main.pchtxt line 13: not an even number of hex digits: 'abc'
+-- elf none
+== case 36
+-- tree
+mod	x	1	x		
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: Speed	1	1	0	Speed
+block	x/exefs/readme.pchtxt :: 視点	0	0	4	視点
+block	x/exefs/readme.pchtxt :: Camera	1	1	0	Camera
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	6d30ab1efdb10b758c84dece2a58852e0ea3b2e6c4bd5227799c2be17ae9006e	
+-- tree without main
+mod	x	1	x		
+file	x/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	x/exefs/readme.pchtxt :: Speed	1	1	0	Speed
+block	x/exefs/readme.pchtxt :: 視点	0	0	4	視点
+block	x/exefs/readme.pchtxt :: Camera	1	1	0	Camera
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	6d30ab1efdb10b758c84dece2a58852e0ea3b2e6c4bd5227799c2be17ae9006e	
+-- apply exit 0
+  Ünicode mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS
+    0x000019b8  7939c36ce864786d0e -> 6951b24a010071be36
+9 bytes patched -> out.elf
+-- elf fe7cb966daeeb25adae071e65cf55b1ab3c50596e86015a910bf4c27b1e9326c
+== case 37
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Extra/patch.pchtxt	1	Extra/patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Patch2.pchtxt	0	Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	cam	1	cam		
+file	cam/Extra/readme.pchtxt	1	Extra/readme.pchtxt	cam/Extra/readme.pchtxt line 4: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	cam/main.pchtxt	1	main.pchtxt	
+block	cam/main.pchtxt :: #1	1	1	1	block 1
+block	cam/main.pchtxt :: Camera	1	1	0	Camera
+block	cam/main.pchtxt :: Unlock = all	0	0	4	Unlock = all
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	1	0	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	for build ID c89c5f9bb3f3fef933b37b12387cfb0f1657c7a6, not your main: another version of the game or another module
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/main.pchtxt	1	exefs/main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Extra/patch.pchtxt	1	Extra/patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+file	alpha/Patch2.pchtxt	0	Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	cam	1	cam		
+file	cam/Extra/readme.pchtxt	1	Extra/readme.pchtxt	cam/Extra/readme.pchtxt line 4: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	cam/main.pchtxt	1	main.pchtxt	
+block	cam/main.pchtxt :: #1	1	1	1	block 1
+block	cam/main.pchtxt :: Camera	1	1	0	Camera
+block	cam/main.pchtxt :: Unlock = all	0	0	4	Unlock = all
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	1	0	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: Unlock = all	0	0	2	Unlock = all
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: alpha/exefs/main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 38
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: Camera	0	0	2	Camera
+block	cam/exefs/patch.pchtxt :: 視点	1	1	0	視点
+block	cam/exefs/patch.pchtxt :: FPS	1	1	1	FPS
+file	cam/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	cam/exefs/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	cam/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	patch.pchtxt	1	patch.pchtxt	patch.pchtxt line 13: not an even number of hex digits: 'd1e723856db284a'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: FPS	0	0	3	FPS
+block	Speed Mod/exefs/Patch2.pchtxt :: #2	1	1	0	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: #3	0	0	2	Fix
+state	error	cam/exefs/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	cam/exefs/patch.pchtxt :: Camera	0	0	2	Camera
+block	cam/exefs/patch.pchtxt :: 視点	1	1	0	視点
+block	cam/exefs/patch.pchtxt :: FPS	1	1	1	FPS
+file	cam/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	cam/exefs/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+file	cam/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	patch.pchtxt	1	patch.pchtxt	patch.pchtxt line 13: not an even number of hex digits: 'd1e723856db284a'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: FPS	0	0	3	FPS
+block	Speed Mod/exefs/Patch2.pchtxt :: #2	1	1	0	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: #3	0	0	2	Fix
+state	error	cam/exefs/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+-- apply exit 1
+error: cam/exefs/Patch2.pchtxt line 12: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+-- elf none
+== case 39
+-- tree
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)	
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 2 record(s)
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 5 record(s)
+file	Zeta/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Zeta/Extra/Patch2.pchtxt :: Camera	0	0	4	Camera
+state	eb088b631d6a63bc5dbffc7f04c768ab454f4f827caa8fd35723d7b76a650dee	
+-- tree without main
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 2 record(s)	
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 2 record(s)
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 5 record(s)
+file	Zeta/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Zeta/Extra/Patch2.pchtxt :: Camera	0	0	4	Camera
+state	eb088b631d6a63bc5dbffc7f04c768ab454f4f827caa8fd35723d7b76a650dee	
+-- apply exit 0
+  C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS
+    0x00000ad9  24cc04f43c2e45 -> b3a8d0b42adb11
+    0x000022eb  5a02 -> 3e4f
+  cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips
+    0x00000633  9c3d2360028217f8f57f -> 8ba733c997f9440566a0
+    0x00000b1d  26441caada0c3f4f -> bf1c683532ff61f3
+  Zeta/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips
+    0x000001ea  84b3b39a68113b97b084af -> edac6c6de46fd3ecddfae9
+    0x000023d4  45aa1b894e -> 5094329c63
+    0x00002f96  7abab9290a0b9337f05acf366b70fd8a.. (27 bytes) -> 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f.. (27 bytes)
+    0x00001dee  8ad981f3c3ecd3d02061364dad067f78.. (32 bytes) -> 03030303030303030303030303030303.. (32 bytes)
+    0x000006fb  8b0b381201fd299bdb59ea3a471b17d7.. (32 bytes) -> 4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c.. (32 bytes)
+134 bytes patched -> out.elf
+-- elf acf51b0b21e2fde082568f275304e87d5481b9961939bc76af18b0bb6829cb6e
+== case 40
+-- tree
+mod	x	1	x		romfs
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	x/Extra/patch.pchtxt	1	Extra/patch.pchtxt	for build ID dab97aaec8240541790c0a27745cba72c9acc7af, not your main: another version of the game or another module
+file	x/Extra/readme.pchtxt	1	Extra/readme.pchtxt	x/Extra/readme.pchtxt line 8: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Zeta/exefs/patch.pchtxt :: FPS	1	1	3	FPS
+block	Zeta/exefs/patch.pchtxt :: No HUD	1	1	2	No HUD
+file	Zeta/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Zeta/exefs/readme.pchtxt :: #1	1	1	2	Unlock = all
+block	Zeta/exefs/readme.pchtxt :: #2	1	1	1	Unlock = all
+block	Zeta/exefs/readme.pchtxt :: Infinite magic	1	1	1	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	x/Extra/patch.pchtxt is for build ID dab97aaec8240541790c0a27745cba72c9acc7af, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- tree without main
+mod	x	1	x		romfs
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	x/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	x/Extra/patch.pchtxt :: Camera	0	0	0	Camera
+block	x/Extra/patch.pchtxt :: Unlock = all	0	0	2	Unlock = all
+file	x/Extra/readme.pchtxt	1	Extra/readme.pchtxt	x/Extra/readme.pchtxt line 8: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Zeta/exefs/patch.pchtxt :: FPS	1	1	3	FPS
+block	Zeta/exefs/patch.pchtxt :: No HUD	1	1	2	No HUD
+file	Zeta/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Zeta/exefs/readme.pchtxt :: #1	1	1	2	Unlock = all
+block	Zeta/exefs/readme.pchtxt :: #2	1	1	1	Unlock = all
+block	Zeta/exefs/readme.pchtxt :: Infinite magic	1	1	1	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	x/Extra/readme.pchtxt line 8: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+-- apply exit 1
+error: x/Extra/patch.pchtxt is for build ID dab97aaec8240541790c0a27745cba72c9acc7af, but your main is c1675e0bb980a575a89661fec08aa83b63f1ee08: it was written for another version of the game (or another module, e.g. sdk / subsdk). Remove it from the mods folder or switch it off.
+-- elf none
+== case 41
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/readme.pchtxt	1	exefs/readme.pchtxt	cam/exefs/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bdc "//x4"zz'
+file	cam/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	cam/Patch2.pchtxt	1	Patch2.pchtxt	cam/Patch2.pchtxt line 18: not an even number of hex digits: 'abc'
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	3	Größe
+block	main.pchtxt :: #2	0	0	1	Größe
+block	main.pchtxt :: No HUD	1	1	1	No HUD
+block	main.pchtxt :: Infinite magic	1	1	2	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	ends without EEOF
+state	error	cam/exefs/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bdc "//x4"zz'
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/readme.pchtxt	1	exefs/readme.pchtxt	cam/exefs/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bdc "//x4"zz'
+file	cam/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	cam/Patch2.pchtxt	1	Patch2.pchtxt	cam/Patch2.pchtxt line 18: not an even number of hex digits: 'abc'
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	3	Größe
+block	main.pchtxt :: #2	0	0	1	Größe
+block	main.pchtxt :: No HUD	1	1	1	No HUD
+block	main.pchtxt :: Infinite magic	1	1	2	Infinite magic
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	ends without EEOF
+state	error	cam/exefs/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bdc "//x4"zz'
+-- apply exit 1
+error: cam/exefs/readme.pchtxt line 6: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bdc "//x4"zz'
+-- elf none
+== case 42
+-- tree
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	1	block 1
+block	cam/exefs/main.pchtxt :: #2	1	1	0	block 2
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/main.pchtxt	1	main.pchtxt	
+block	Speed Mod/main.pchtxt :: #1	1	1	1	Fix
+block	Speed Mod/main.pchtxt :: #2	0	0	1	Fix
+state	df2132faf86ae1353b00f756613b542bc6abc312ef0326f242285fc8038cd946	
+-- tree without main
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	1	1	1	block 1
+block	cam/exefs/main.pchtxt :: #2	1	1	0	block 2
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/main.pchtxt	1	main.pchtxt	
+block	Speed Mod/main.pchtxt :: #1	1	1	1	Fix
+block	Speed Mod/main.pchtxt :: #2	0	0	1	Fix
+state	df2132faf86ae1353b00f756613b542bc6abc312ef0326f242285fc8038cd946	
+-- apply exit 0
+  cam/exefs/main.pchtxt
+    0x00000002  cdac9f -> 712278
+  Speed Mod/main.pchtxt: Fix
+    0x00002bf1  54dd0028 -> 67771422
+7 bytes patched -> out.elf
+-- elf 3828c9050c71c1402b5433b843cfb8c024464027903715653aa92b86b0c9186a
+== case 43
+-- tree
+mod	main.pchtxt	1	main.pchtxt	main.pchtxt line 11: not an even number of hex digits: '978175c5ef20a08'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: Speed	1	1	1	Speed
+block	Speed Mod/exefs/patch.pchtxt :: #2	1	1	2	FPS
+block	Speed Mod/exefs/patch.pchtxt :: #3	1	1	1	FPS
+block	Speed Mod/exefs/patch.pchtxt :: Fix	1	1	0	Fix
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Speed Mod/exefs/Patch2.pchtxt line 3: not an even number of hex digits: 'abc'
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	0	0	1	block 1
+block	x/exefs/main.pchtxt :: #2	1	1	1	block 2
+block	x/exefs/main.pchtxt :: #3	0	0	0	Camera
+block	x/exefs/main.pchtxt :: #4	1	1	4	Camera
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 5 record(s)
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Ünicode mod/exefs/Patch2.pchtxt :: #1	1	1	1	Fix
+block	Ünicode mod/exefs/Patch2.pchtxt :: #2	0	0	1	Fix
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Ünicode mod/exefs/readme.pchtxt :: Größe	0	0	3	Größe
+block	Ünicode mod/exefs/readme.pchtxt :: Fix	1	1	3	Fix
+block	Ünicode mod/exefs/readme.pchtxt :: Unlock = all	0	0	2	Unlock = all
+file	Ünicode mod/readme.pchtxt	1	readme.pchtxt	Ünicode mod/readme.pchtxt line 10: not an even number of hex digits: 'c1aa74a02e0a918'
+state	error	main.pchtxt line 11: not an even number of hex digits: '978175c5ef20a08'
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt	main.pchtxt line 11: not an even number of hex digits: '978175c5ef20a08'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: Speed	1	1	1	Speed
+block	Speed Mod/exefs/patch.pchtxt :: #2	1	1	2	FPS
+block	Speed Mod/exefs/patch.pchtxt :: #3	1	1	1	FPS
+block	Speed Mod/exefs/patch.pchtxt :: Fix	1	1	0	Fix
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	Speed Mod/exefs/Patch2.pchtxt line 3: not an even number of hex digits: 'abc'
+mod	x	1	x		
+file	x/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	x/exefs/main.pchtxt :: #1	0	0	1	block 1
+block	x/exefs/main.pchtxt :: #2	1	1	1	block 2
+block	x/exefs/main.pchtxt :: #3	0	0	0	Camera
+block	x/exefs/main.pchtxt :: #4	1	1	4	Camera
+file	x/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 5 record(s)
+file	Ünicode mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Ünicode mod/exefs/Patch2.pchtxt :: #1	1	1	1	Fix
+block	Ünicode mod/exefs/Patch2.pchtxt :: #2	0	0	1	Fix
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Ünicode mod/exefs/readme.pchtxt :: Größe	0	0	3	Größe
+block	Ünicode mod/exefs/readme.pchtxt :: Fix	1	1	3	Fix
+block	Ünicode mod/exefs/readme.pchtxt :: Unlock = all	0	0	2	Unlock = all
+file	Ünicode mod/readme.pchtxt	1	readme.pchtxt	Ünicode mod/readme.pchtxt line 10: not an even number of hex digits: 'c1aa74a02e0a918'
+state	error	main.pchtxt line 11: not an even number of hex digits: '978175c5ef20a08'
+-- apply exit 1
+error: main.pchtxt line 11: not an even number of hex digits: '978175c5ef20a08'
+-- elf none
+== case 44
+-- tree
+mod	Ünicode mod	0	Ünicode mod		romfs
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	none	
+-- tree without main
+mod	Ünicode mod	0	Ünicode mod		romfs
+file	Ünicode mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	none	
+-- apply exit 0
+0 bytes patched -> out.elf
+-- elf 027fbfe105e90fa1cbc09ebcd4f687176b32cfcdcaaa91aa4061587889590c86
+== case 45
+-- tree
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	0	0	1	block 1
+block	Patch2.pchtxt :: #2	1	1	2	FPS
+block	Patch2.pchtxt :: #3	0	0	1	FPS
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: #1	1	1	3	block 1
+block	Speed Mod/exefs/Patch2.pchtxt :: #2	1	1	1	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: #3	1	1	4	Fix
+file	Speed Mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	0	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Speed Mod/patch.pchtxt	1	patch.pchtxt	Speed Mod/patch.pchtxt line 11: not an even number of hex digits: 'd0d52de1a2a8907'
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/patch.pchtxt	1	exefs/patch.pchtxt	for build ID 99242659b043fb676239501ea852ab6ed5ae8504, not your main: another version of the game or another module
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2251 "//x41//x42"zz'
+state	error	Speed Mod/patch.pchtxt line 11: not an even number of hex digits: 'd0d52de1a2a8907'
+-- tree without main
+mod	Patch2.pchtxt	1	Patch2.pchtxt		
+block	Patch2.pchtxt :: #1	0	0	1	block 1
+block	Patch2.pchtxt :: #2	1	1	2	FPS
+block	Patch2.pchtxt :: #3	0	0	1	FPS
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	Speed Mod/exefs/Patch2.pchtxt :: #1	1	1	3	block 1
+block	Speed Mod/exefs/Patch2.pchtxt :: #2	1	1	1	Fix
+block	Speed Mod/exefs/Patch2.pchtxt :: #3	1	1	4	Fix
+file	Speed Mod/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	0	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Speed Mod/patch.pchtxt	1	patch.pchtxt	Speed Mod/patch.pchtxt line 11: not an even number of hex digits: 'd0d52de1a2a8907'
+mod	x	1	x		
+file	x/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	x/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	x/exefs/patch.pchtxt :: Fix	1	1	1	Fix
+file	x/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Ünicode mod/exefs/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": '2251 "//x41//x42"zz'
+state	error	Speed Mod/patch.pchtxt line 11: not an even number of hex digits: 'd0d52de1a2a8907'
+-- apply exit 1
+error: Speed Mod/patch.pchtxt line 11: not an even number of hex digits: 'd0d52de1a2a8907'
+-- elf none
+== case 46
+-- tree
+mod	alpha	1	alpha		
+file	alpha/readme.pchtxt	1	readme.pchtxt	alpha/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'fa7 ecedfe93ad61064bzz'
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	0	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 0 record(s)
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Speed Mod/exefs/readme.pchtxt line 10: not an even number of hex digits: 'dc87a4fee49cfa4'
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+file	Zeta/patch.pchtxt	1	patch.pchtxt	Zeta/patch.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '498 "//101//7"zz'
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: Unlock = all	1	1	1	Unlock = all
+state	error	alpha/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'fa7 ecedfe93ad61064bzz'
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/readme.pchtxt	1	readme.pchtxt	alpha/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'fa7 ecedfe93ad61064bzz'
+mod	readme.pchtxt	1	readme.pchtxt		
+block	readme.pchtxt :: #1	1	1	0	block 1
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 0 record(s)
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	Speed Mod/exefs/readme.pchtxt line 10: not an even number of hex digits: 'dc87a4fee49cfa4'
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+file	Zeta/patch.pchtxt	1	patch.pchtxt	Zeta/patch.pchtxt line 4: expected "<hex offset> <hex bytes>" or <hex offset> "string": '498 "//101//7"zz'
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 4 record(s)
+file	Ünicode mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Ünicode mod/exefs/patch.pchtxt :: Unlock = all	1	1	1	Unlock = all
+state	error	alpha/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'fa7 ecedfe93ad61064bzz'
+-- apply exit 1
+error: alpha/readme.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'fa7 ecedfe93ad61064bzz'
+-- elf none
+== case 47
+-- tree
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Zeta	1	Zeta		romfs
+file	Zeta/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Zeta/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	Zeta/Extra/main.pchtxt	1	Extra/main.pchtxt	Zeta/Extra/main.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": '20d8 38fc28359b9c1d73zz'
+state	error	Speed Mod/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+mod	Zeta	1	Zeta		romfs
+file	Zeta/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 5 record(s)
+file	Zeta/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 1 record(s)
+file	Zeta/Extra/main.pchtxt	1	Extra/main.pchtxt	Zeta/Extra/main.pchtxt line 5: expected "<hex offset> <hex bytes>" or <hex offset> "string": '20d8 38fc28359b9c1d73zz'
+state	error	Speed Mod/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: Speed Mod/exefs/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 48
+-- tree
+mod	main.pchtxt	1	main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	patch.pchtxt	1	patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: #1	1	1	4	Speed
+block	Speed Mod/exefs/main.pchtxt :: #2	1	1	2	Speed
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Speed Mod/Extra/Patch2.pchtxt line 9: not an even number of hex digits: '4858ce311b9db42'
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Zeta/exefs/readme.pchtxt :: #1	1	1	0	block 1
+block	Zeta/exefs/readme.pchtxt :: 視点	1	1	0	視点
+block	Zeta/exefs/readme.pchtxt :: Fix	1	1	0	Fix
+block	Zeta/exefs/readme.pchtxt :: Camera	0	0	4	Camera
+file	Zeta/Extra/readme.pchtxt	1	Extra/readme.pchtxt	
+block	Zeta/Extra/readme.pchtxt :: #1	1	1	4	block 1
+block	Zeta/Extra/readme.pchtxt :: #2	1	1	0	Fix
+block	Zeta/Extra/readme.pchtxt :: #3	1	1	0	Fix
+block	Zeta/Extra/readme.pchtxt :: Camera	1	1	1	Camera
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	patch.pchtxt	1	patch.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	Speed Mod/exefs/main.pchtxt :: #1	1	1	4	Speed
+block	Speed Mod/exefs/main.pchtxt :: #2	1	1	2	Speed
+file	Speed Mod/exefs/notabuildid.ips	1	exefs/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	Speed Mod/Extra/Patch2.pchtxt line 9: not an even number of hex digits: '4858ce311b9db42'
+mod	Zeta	1	Zeta		romfs
+file	Zeta/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Zeta/exefs/readme.pchtxt :: #1	1	1	0	block 1
+block	Zeta/exefs/readme.pchtxt :: 視点	1	1	0	視点
+block	Zeta/exefs/readme.pchtxt :: Fix	1	1	0	Fix
+block	Zeta/exefs/readme.pchtxt :: Camera	0	0	4	Camera
+file	Zeta/Extra/readme.pchtxt	1	Extra/readme.pchtxt	
+block	Zeta/Extra/readme.pchtxt :: #1	1	1	4	block 1
+block	Zeta/Extra/readme.pchtxt :: #2	1	1	0	Fix
+block	Zeta/Extra/readme.pchtxt :: #3	1	1	0	Fix
+block	Zeta/Extra/readme.pchtxt :: Camera	1	1	1	Camera
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: main.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 49
+-- tree
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EEOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Speed Mod/Extra/main.pchtxt :: 視点	1	1	1	視点
+block	Speed Mod/Extra/main.pchtxt :: Fix	1	1	0	Fix
+state	error	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EEOF
+-- tree without main
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	ends without EEOF
+file	Speed Mod/Extra/main.pchtxt	1	Extra/main.pchtxt	
+block	Speed Mod/Extra/main.pchtxt :: 視点	1	1	1	視点
+block	Speed Mod/Extra/main.pchtxt :: Fix	1	1	0	Fix
+state	error	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EEOF
+-- apply exit 1
+error: Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips: ends without EEOF
+-- elf none
+== case 50
+-- tree
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: Fix	0	0	3	Fix
+block	patch.pchtxt :: #2	1	1	1	FPS
+block	patch.pchtxt :: #3	1	1	1	FPS
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: 視点	1	1	3	視点
+block	Ünicode mod/Extra/patch.pchtxt :: Fix	1	1	0	Fix
+state	error	Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- tree without main
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: Fix	0	0	3	Fix
+block	patch.pchtxt :: #2	1	1	1	FPS
+block	patch.pchtxt :: #3	1	1	1	FPS
+mod	Ünicode mod	1	Ünicode mod		romfs
+file	Ünicode mod/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+file	Ünicode mod/Extra/patch.pchtxt	1	Extra/patch.pchtxt	
+block	Ünicode mod/Extra/patch.pchtxt :: 視点	1	1	3	視点
+block	Ünicode mod/Extra/patch.pchtxt :: Fix	1	1	0	Fix
+state	error	Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- apply exit 1
+error: Ünicode mod/Extra/notabuildid.ips: an .ips file is named after the build ID it patches (<build id>.ips)
+-- elf none
+== case 51
+-- tree
+mod	readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: #1	0	0	1	block 1
+file	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	ends without EEOF
+file	Speed Mod/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- tree without main
+mod	readme.pchtxt	1	readme.pchtxt	no @nsobid-<build id> line, so it is not known which program it patches	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	Speed Mod/exefs/patch.pchtxt :: #1	0	0	1	block 1
+file	Speed Mod/Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	ends without EEOF
+file	Speed Mod/notabuildid.ips	1	notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- apply exit 1
+error: readme.pchtxt: no @nsobid-<build id> line, so it is not known which program it patches
+-- elf none
+== case 52
+-- tree
+mod	cam	1	cam		
+file	cam/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	0	0	2	block 1
+block	cam/exefs/main.pchtxt :: #2	0	0	1	block 2
+file	cam/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	cam/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- tree without main
+mod	cam	1	cam		
+file	cam/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: #1	0	0	2	block 1
+block	cam/exefs/main.pchtxt :: #2	0	0	1	block 2
+file	cam/Extra/notabuildid.ips	1	Extra/notabuildid.ips	an .ips file is named after the build ID it patches (<build id>.ips)
+state	error	cam/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- apply exit 1
+error: cam/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- elf none
+== case 53
+-- tree
+mod	Speed Mod	0	Speed Mod		
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Speed Mod/exefs/readme.pchtxt :: #1	1	1	0	Infinite magic
+block	Speed Mod/exefs/readme.pchtxt :: #2	0	0	1	Infinite magic
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: #1	0	0	4	block 1
+file	Speed Mod/main.pchtxt	1	main.pchtxt	Speed Mod/main.pchtxt line 17: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bff 8ec5e35fzz'
+state	none	
+-- tree without main
+mod	Speed Mod	0	Speed Mod		
+file	Speed Mod/exefs/readme.pchtxt	1	exefs/readme.pchtxt	
+block	Speed Mod/exefs/readme.pchtxt :: #1	1	1	0	Infinite magic
+block	Speed Mod/exefs/readme.pchtxt :: #2	0	0	1	Infinite magic
+file	Speed Mod/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	Speed Mod/Extra/Patch2.pchtxt :: #1	0	0	4	block 1
+file	Speed Mod/main.pchtxt	1	main.pchtxt	Speed Mod/main.pchtxt line 17: expected "<hex offset> <hex bytes>" or <hex offset> "string": 'bff 8ec5e35fzz'
+state	none	
+-- apply exit 0
+0 bytes patched -> out.elf
+-- elf 027fbfe105e90fa1cbc09ebcd4f687176b32cfcdcaaa91aa4061587889590c86
+== case 54
+-- tree
+mod	Patch2.pchtxt	1	Patch2.pchtxt	Patch2.pchtxt line 9: not an even number of hex digits: '4223912bac7b4e1'	
+mod	x	1	x		
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 0 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Patch2.pchtxt line 9: not an even number of hex digits: '4223912bac7b4e1'
+-- tree without main
+mod	Patch2.pchtxt	1	Patch2.pchtxt	Patch2.pchtxt line 9: not an even number of hex digits: '4223912bac7b4e1'	
+mod	x	1	x		
+file	x/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08.ips	IPS, 0 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Patch2.pchtxt line 9: not an even number of hex digits: '4223912bac7b4e1'
+-- apply exit 1
+error: Patch2.pchtxt line 9: not an even number of hex digits: '4223912bac7b4e1'
+-- elf none
+== case 55
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 3 record(s)
+file	alpha/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	alpha/Extra/Patch2.pchtxt line 5: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	
+block	Ünicode mod/patch.pchtxt :: #1	1	1	0	Infinite magic
+block	Ünicode mod/patch.pchtxt :: #2	1	1	2	Infinite magic
+block	Ünicode mod/patch.pchtxt :: #3	0	0	3	Infinite magic
+state	error	alpha/Extra/Patch2.pchtxt line 5: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 3 record(s)
+file	alpha/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	alpha/Extra/Patch2.pchtxt line 5: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/patch.pchtxt	1	patch.pchtxt	
+block	Ünicode mod/patch.pchtxt :: #1	1	1	0	Infinite magic
+block	Ünicode mod/patch.pchtxt :: #2	1	1	2	Infinite magic
+block	Ünicode mod/patch.pchtxt :: #3	0	0	3	Infinite magic
+state	error	alpha/Extra/Patch2.pchtxt line 5: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+-- apply exit 1
+error: alpha/Extra/Patch2.pchtxt line 5: 'unicodeescape' codec can't decode bytes in position 0-2: truncated /xXX escape
+-- elf none
+== case 56
+-- tree
+mod	alpha	1	alpha		
+file	alpha/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EEOF	
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: Infinite magic	1	1	0	Infinite magic
+block	cam/exefs/main.pchtxt :: #2	1	1	0	Fix
+block	cam/exefs/main.pchtxt :: #3	0	0	4	Fix
+file	cam/main.pchtxt	1	main.pchtxt	
+block	cam/main.pchtxt :: #1	1	1	3	block 1
+block	cam/main.pchtxt :: #2	1	1	1	block 2
+block	cam/main.pchtxt :: No HUD	1	1	1	No HUD
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: 視点	1	1	2	視点
+block	main.pchtxt :: #2	1	1	3	Größe
+block	main.pchtxt :: #3	1	1	4	Größe
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	0	4	block 1
+mod	Patch2.pchtxt	1	Patch2.pchtxt	Patch2.pchtxt line 11: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)	
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/patch.pchtxt	1	Extra/patch.pchtxt	Zeta/Extra/patch.pchtxt line 3: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+state	error	alpha/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EOF
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	ends without EEOF	
+mod	cam	1	cam		
+file	cam/exefs/main.pchtxt	1	exefs/main.pchtxt	
+block	cam/exefs/main.pchtxt :: Infinite magic	1	1	0	Infinite magic
+block	cam/exefs/main.pchtxt :: #2	1	1	0	Fix
+block	cam/exefs/main.pchtxt :: #3	0	0	4	Fix
+file	cam/main.pchtxt	1	main.pchtxt	
+block	cam/main.pchtxt :: #1	1	1	3	block 1
+block	cam/main.pchtxt :: #2	1	1	1	block 2
+block	cam/main.pchtxt :: No HUD	1	1	1	No HUD
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: 視点	1	1	2	視点
+block	main.pchtxt :: #2	1	1	3	Größe
+block	main.pchtxt :: #3	1	1	4	Größe
+mod	patch.pchtxt	1	patch.pchtxt		
+block	patch.pchtxt :: #1	0	0	4	block 1
+mod	Patch2.pchtxt	1	Patch2.pchtxt	Patch2.pchtxt line 11: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)	
+mod	Zeta	1	Zeta		
+file	Zeta/Extra/patch.pchtxt	1	Extra/patch.pchtxt	Zeta/Extra/patch.pchtxt line 3: 'latin-1' codec can't encode character '/u4e2d' in position 0: ordinal not in range(256)
+state	error	alpha/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- apply exit 1
+error: alpha/Extra/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS: ends without EOF
+-- elf none
+== case 57
+-- tree
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: Camera	1	1	0	Camera
+block	main.pchtxt :: #2	1	1	1	Größe
+block	main.pchtxt :: #3	1	1	1	Größe
+block	main.pchtxt :: #4	0	0	1	Größe
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	Zeta/exefs/patch.pchtxt line 15: not an even number of hex digits: 'abc'
+file	Zeta/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	for build ID c1675e0bb980a575a89661fec08aa83b, not your main: another version of the game or another module
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Zeta/exefs/patch.pchtxt line 15: not an even number of hex digits: 'abc'
+-- tree without main
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: Camera	1	1	0	Camera
+block	main.pchtxt :: #2	1	1	1	Größe
+block	main.pchtxt :: #3	1	1	1	Größe
+block	main.pchtxt :: #4	0	0	1	Größe
+mod	Zeta	1	Zeta		
+file	Zeta/exefs/patch.pchtxt	1	exefs/patch.pchtxt	Zeta/exefs/patch.pchtxt line 15: not an even number of hex digits: 'abc'
+file	Zeta/Extra/c1675e0bb980a575a89661fec08aa83b.ips	1	Extra/c1675e0bb980a575a89661fec08aa83b.ips	IPS, 3 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	error	Zeta/exefs/patch.pchtxt line 15: not an even number of hex digits: 'abc'
+-- apply exit 1
+error: Zeta/exefs/patch.pchtxt line 15: not an even number of hex digits: 'abc'
+-- elf none
+== case 58
+-- tree
+mod	alpha	1	alpha		
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	alpha/exefs/patch.pchtxt :: #1	1	1	3	block 1
+block	alpha/exefs/patch.pchtxt :: Fix	1	1	2	Fix
+file	alpha/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	alpha/Extra/Patch2.pchtxt :: Unlock = all	0	0	0	Unlock = all
+block	alpha/Extra/Patch2.pchtxt :: Infinite magic	0	0	1	Infinite magic
+file	alpha/main.pchtxt	1	main.pchtxt	
+block	alpha/main.pchtxt :: #1	0	0	4	Speed
+block	alpha/main.pchtxt :: #2	0	1	3	Speed
+block	alpha/main.pchtxt :: #3	1	1	3	Speed
+mod	cam	1	cam		
+file	cam/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	cam/exefs/Patch2.pchtxt :: Infinite magic	1	1	1	Infinite magic
+block	cam/exefs/Patch2.pchtxt :: Speed	1	1	0	Speed
+block	cam/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	cam/exefs/Patch2.pchtxt :: Unlock = all	1	1	2	Unlock = all
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	2	block 1
+block	main.pchtxt :: FPS	1	1	1	FPS
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	bd87ba04181558849258d0ce63c1febfcb17084c7ca74f57b990741ce5880127	
+-- tree without main
+mod	alpha	1	alpha		
+file	alpha/exefs/patch.pchtxt	1	exefs/patch.pchtxt	
+block	alpha/exefs/patch.pchtxt :: #1	1	1	3	block 1
+block	alpha/exefs/patch.pchtxt :: Fix	1	1	2	Fix
+file	alpha/Extra/Patch2.pchtxt	1	Extra/Patch2.pchtxt	
+block	alpha/Extra/Patch2.pchtxt :: Unlock = all	0	0	0	Unlock = all
+block	alpha/Extra/Patch2.pchtxt :: Infinite magic	0	0	1	Infinite magic
+file	alpha/main.pchtxt	1	main.pchtxt	
+block	alpha/main.pchtxt :: #1	0	0	4	Speed
+block	alpha/main.pchtxt :: #2	0	1	3	Speed
+block	alpha/main.pchtxt :: #3	1	1	3	Speed
+mod	cam	1	cam		
+file	cam/exefs/Patch2.pchtxt	1	exefs/Patch2.pchtxt	
+block	cam/exefs/Patch2.pchtxt :: Infinite magic	1	1	1	Infinite magic
+block	cam/exefs/Patch2.pchtxt :: Speed	1	1	0	Speed
+block	cam/exefs/Patch2.pchtxt :: FPS	1	1	2	FPS
+block	cam/exefs/Patch2.pchtxt :: Unlock = all	1	1	2	Unlock = all
+mod	main.pchtxt	1	main.pchtxt		
+block	main.pchtxt :: #1	1	1	2	block 1
+block	main.pchtxt :: FPS	1	1	1	FPS
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 0 record(s)
+mod	Texture pack	1	Texture pack		romfs-only
+state	bd87ba04181558849258d0ce63c1febfcb17084c7ca74f57b990741ce5880127	
+-- apply exit 1
+  alpha/exefs/patch.pchtxt
+    0x0000086a  b600d1b48b033a17 -> eff4d9337a3a7529
+    0x00002754  c03a -> 4142
+    0x00002cfa  5f2cc1 -> 712278
+  alpha/exefs/patch.pchtxt: Fix
+    0x00000571  be27ad1b -> ca1336c2
+    0x00001aa6  dd7618e6 -> 71a14a7f
+  alpha/main.pchtxt: Speed
+    0x000007a0  22dede06 -> 9f48a77f
+    0x000014cc  0096320727ebbec7 -> fffb5f7bb4140e79
+    0x00001c47  026dc983 -> 837113c7
+  cam/exefs/Patch2.pchtxt: Infinite magic
+    0x00000412  90e324100a642eaa -> 18c40ed58ef84ef4
+  cam/exefs/Patch2.pchtxt: FPS
+error: cam/exefs/Patch2.pchtxt:10: image offset 0xc0000 (+2 bytes) is outside the program's code and data in the file (offset_shift wrong, or the patch is for another program)
+-- elf none
+== case 59
+-- tree
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)	
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 3 record(s)
+mod	readme.pchtxt	1	readme.pchtxt	readme.pchtxt line 4: not an even number of hex digits: 'ffc0eae585c3b29'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Patch2.pchtxt	1	Patch2.pchtxt	Ünicode mod/Patch2.pchtxt line 11: not an even number of hex digits: 'febc1d3ab0e96e3'
+state	error	readme.pchtxt line 4: not an even number of hex digits: 'ffc0eae585c3b29'
+-- tree without main
+mod	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 1 record(s)	
+mod	cam	1	cam		
+file	cam/exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	1	exefs/c1675e0bb980a575a89661fec08aa83b63f1ee08000000000000000000000000.ips	IPS, 3 record(s)
+mod	readme.pchtxt	1	readme.pchtxt	readme.pchtxt line 4: not an even number of hex digits: 'ffc0eae585c3b29'	
+mod	Speed Mod	1	Speed Mod		
+file	Speed Mod/exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	1	exefs/C1675E0BB980A575A89661FEC08AA83B63F1EE0800000000.IPS	IPS, 3 record(s)
+mod	Ünicode mod	1	Ünicode mod		
+file	Ünicode mod/Patch2.pchtxt	1	Patch2.pchtxt	Ünicode mod/Patch2.pchtxt line 11: not an even number of hex digits: 'febc1d3ab0e96e3'
+state	error	readme.pchtxt line 4: not an even number of hex digits: 'ffc0eae585c3b29'
+-- apply exit 1
+error: readme.pchtxt line 4: not an even number of hex digits: 'ffc0eae585c3b29'
+-- elf none

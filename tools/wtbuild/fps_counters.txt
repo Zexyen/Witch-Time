@@ -1,5 +1,5 @@
 # Frame counters that move by the 60 Hz frames of game time due to them above 60 fps (lifter/fps.rs patch_op; the rules
-# are runtime/game_shim_eh.c fps_ci / fps_cf). Found by the census (docs/STATUS.md, "Frame rates above 60"; scripts/fps_census.py)
+# are runtime/game_shim_eh.c fps_ci / fps_cf). Found by the census (docs/STATUS.md, "Frame rates above 60"; `wtbuild fps-census`)
 # and read one by one. <store address> <what it counts>
 # First batch (2026-10-27; census at 60 and 120, Shibuya street fight): frame-locked on the game's thread, visited
 # once per update, the add per visit a constant (or 1). Not read in the game's code yet beyond that.

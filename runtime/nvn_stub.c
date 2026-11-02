@@ -41,7 +41,7 @@ static void nvn_generic(Ctx *c) {
 }
 /* nvnDeviceGetInteger(device, pname, int *out): device capabilities.
  * [Recomps#1] 2026-10-17: the answers come from the player's own sdk. Its NVN code answers most pnames with a fixed
- * number; runtime/gen/make_gen.py reads those out of targets/exefs/sdk.elf into gen/nvn_devinfo.h (generated on the
+ * number; `wtbuild tables` (tools/wtbuild/src/tables.rs) reads those out of targets/exefs/sdk.elf into gen/nvn_devinfo.h (generated on the
  * player's PC, never published), and they are used first. This file only holds what the sdk does not answer with a
  * fixed number (it reads its live device object for them) plus, as documented fallback, the publicly sourced values of
  * the parameters the game asks for. Every other pname answers 0 and is counted (print_devinfo_summary, and a trace line

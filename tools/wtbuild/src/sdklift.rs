@@ -1,4 +1,4 @@
-//! Lifts selected functions of YOUR sdk module to C with the same lifter: a port of lifter/sdklift.py (`gen`).
+//! Lifts selected functions of YOUR sdk module to C with the same lifter (part of the `tables` step).
 //!
 //! The SDK image is mapped by sdklift_rt.c at SDK_BASE; a call from a lifted function goes to another lifted SDK
 //! function, to the host handler of the same name (an exported SDK function the game imports: a "cut"), or to a trap.
@@ -39,7 +39,7 @@ fn load(d: Vec<u8>, gen: &Path) -> Result<Sdk, String> {
         if tag == 0 {
             break;
         }
-        dynt.insert(tag, val); // sdklift.py: the last value of a tag
+        dynt.insert(tag, val); // the last value of a tag wins
     }
     let g = |t: i64| dynt.get(&t).copied().ok_or(format!("sdk.elf: DYNAMIC has no tag {}", t));
     let text_size = loads.iter().find(|p| p.0 == 1 && p.2 == 0).ok_or("sdk.elf: no text segment")?.3 as i64;
@@ -476,7 +476,7 @@ fn lift_function(env: &mut Env, starts: &[i64], entry: i64) -> (String, usize, V
     (out, lines.len(), bad, has_svc)
 }
 
-/// `python lifter/sdklift.py gen`: runtime/gen/sdklift_gen.c, nvn_sdk_addrs.h, sdklift_report.txt
+/// runtime/gen/sdklift_gen.c, nvn_sdk_addrs.h, sdklift_report.txt
 pub fn gen(sdk_elf: &Path, roots_file: &Path, gen_dir: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let d = fs::read(sdk_elf).map_err(|e| format!("{}: {}", sdk_elf.display(), e))?;
     let sdk = load(d, gen_dir)?;

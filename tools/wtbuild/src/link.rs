@@ -7,7 +7,7 @@
 //! headers or libraries (runtime/freestanding). A checkout without prebuilt/, or whose runtime sources changed since,
 //! builds the runtime here, against the system's SDL3, FFmpeg, glslang and GL.
 //!
-//! Windows: the runtime is one program, witch-time-game.exe, as scripts/build_runtime.py makes it, importing game.dll's
+//! Windows: the runtime is one program, witch-time-game.exe, importing game.dll's
 //! tables (GAME_EXPORTS) through an import library made from game.def. game.dll imports nothing from it: the calls back
 //! into the runtime go through the pointers game_bind hands over (game_shim.c). It is linked without the C runtime's
 //! start-up code and imports the few C functions it calls from the UCRT, which every Windows 10 and 11 has, through
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-/// build_runtime.py HOST_SOURCES, without the player's tables; on Linux also the POSIX platform layer (POSIX_SOURCES)
+/// the runtime's sources, without the player's tables; on Linux also the POSIX platform layer (POSIX_SOURCES)
 const HOST_SOURCES: &[&str] = &[
     "hostrt.c",
     "boot.c",
@@ -77,7 +77,7 @@ const HOST_SOURCES: &[&str] = &[
 const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
 /// the runtime reads (runtime/split)
-const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];
+pub const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];
 /// SDL3, OpenGL and FFmpeg (movies): the system's, or in CI the ones a release ships beside the runtime
 const LIBS: &[&str] = &[
     "-lSDL3",
@@ -91,7 +91,7 @@ const LIBS: &[&str] = &[
     "-lswresample",
     "-lavutil",
 ];
-/// Windows (build_runtime.py's mingw LIBS): SDL3, FFmpeg (movies), and the system's libraries (Media Foundation for the
+/// Windows: SDL3, FFmpeg (movies), and the system's libraries (Media Foundation for the
 /// album's clips, waveOut)
 const WIN_LIBS: &[&str] = &[
     "-lSDL3",
@@ -193,6 +193,15 @@ fn strs(v: &[&str]) -> Vec<String> {
 /// clang flags for code compiled on the player's PC: no system headers, runtime/freestanding instead
 pub fn freestanding(repo: &Path) -> Vec<String> {
     vec!["-nostdlibinc".into(), "-isystem".into(), s(&repo.join("runtime").join("freestanding"))]
+}
+
+/// the player's tables' flags after the target's, without the header folders (check-freestanding uses them too)
+pub fn table_flags(t: Target) -> Vec<String> {
+    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]);
+    if !t.windows() {
+        flags.extend(strs(&["-fPIC", "-D__declspec(x)="]));
+    }
+    flags
 }
 
 /// sha256 of what the runtime is built from: runtime/ except its generated gen/, and lifter/sdklift_install.txt
@@ -318,7 +327,7 @@ pub fn build_runtime(
         "-Ddyn_sym_count=(*game_dyn_sym_count_p)",
     ]));
     if t.windows() {
-        // build_runtime.py's mingw flags: mingw-w64 defaults to Windows 7; every thread-local must stay one (finding 100)
+        // mingw-w64 defaults to Windows 7; every thread-local must stay one (finding 100)
         flags.extend(strs(&["-D_WIN32_WINNT=0x0A00", "-Werror=unknown-attributes"]));
     } else {
         flags.extend(strs(&["-D_GNU_SOURCE", "-fPIC", "-D__declspec(x)=", "-D__stdcall=", "-D__cdecl="]));
@@ -457,8 +466,8 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
         return Err(format!("{} could not make game.dll's import library", dlltool.display()));
     }
 
-    // 4. witch-time-game.exe: the whole runtime (build_runtime.py's program), with its debug information in a PDB and
-    // build_runtime.py's fixed base (crash addresses as the logs print them), and its manifest (runtime/win32: UTF-8 as
+    // 4. witch-time-game.exe: the whole runtime, with its debug information in a PDB and a fixed base (crash addresses
+    // as the logs print them), and its manifest (runtime/win32: UTF-8 as
     // its code page, for paths with any letters in them)
     let res = objdir.join("witch-time-game.res");
     let rc = Path::new(cl.path).with_file_name(crate::target::exe("llvm-rc"));
@@ -530,10 +539,7 @@ fn link_game(
     let (obj, objt) = (build.join("obj"), build.join("obj_tables"));
     fs::create_dir_all(&objt).map_err(|e| e.to_string())?;
 
-    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]);
-    if !t.windows() {
-        flags.extend(strs(&["-fPIC", "-D__declspec(x)="]));
-    }
+    let mut flags = table_flags(t);
     flags.extend(freestanding(repo));
     flags.extend(["-I".into(), s(&rt), "-I".into(), s(&rt.join("gen"))]);
     let jobs: Vec<(PathBuf, PathBuf)> = TABLE_SOURCES
@@ -756,4 +762,16 @@ pub fn pe_imports(b: &[u8]) -> Vec<String> {
         d += 20;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_flags_unchanged() {
+        let win = ["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"];
+        assert_eq!(table_flags(Target::Windows), win);
+        assert_eq!(table_flags(Target::Linux), [&win[..], &["-fPIC", "-D__declspec(x)="]].concat());
+    }
 }

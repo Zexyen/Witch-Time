@@ -1,0 +1,13 @@
+seg 0 vaddr 0 size 11740 sha256 OK
+seg 1 vaddr 12000 size 309420 sha256 OK
+seg 2 vaddr 31c000 size 858 sha256 OK
+build id 8f3d3cb8619f582de183a39c94d7d9af709ba2e4
+dynamic 31c558 dynsym 312fd0 (338 syms) dynstr 314f80
+wrote <tmp>/targets/exefs/sdk.elf 3267432
+image_layout.h: FILE_IMAGE=0x26890, IMAGE_SIZE=0x28000, GUEST_RO_END=0x26000, RELA=0x1d548, RELASZ=0xd98, JMPREL=0x1e2e0, PLTRELSZ=0x8a0, MAIN_SYMTAB=0x1a2e0, MAIN_STRTAB=0x1cc08, INIT_ARRAY_OFF=0x26448, INIT_ARRAY_SIZE=0x8, DT_INIT_OFF=0x183a0, SDK_IMAGE_SPAN=0x31d000, NNINIT_STARTUP_OFF=0x183a0, NN_MAIN_OFF=0x37c, GAME_ALIGNED_ALLOC_OFF=0x183bc, GAME_FREE_OFF=0x183d4, GAME_OPDELETE_OFF=0x183e0
+sdkdata.c: 2 data symbols from our sdk
+nvn_devinfo: getter switch and nvnDeviceGetInteger (caller sdk 0x11248) found by their constants
+nvn_devinfo.h: 51 of 70 nvnDeviceGetInteger answers are fixed numbers in our sdk
+sdklift: not_a_symbol_here is not a symbol of sdk.elf
+functions lifted: 20   instructions: 631   not translated: 0   with svc: 0   host names: 10
+generated inputs written to <tmp>/runtime/gen

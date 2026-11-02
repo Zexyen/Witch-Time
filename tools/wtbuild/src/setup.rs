@@ -1,6 +1,17 @@
-//! `wtbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The steps, their output lines,
-//! build/setup_state.json and build/logs/ are scripts/setup.py's (the launcher follows them); every step runs inside
-//! this program, so the build needs no Python. scripts/setup.py's module comment describes the steps and the dump.
+//! `wtbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The launcher follows
+//! the step lines, build/setup_state.json and build/logs/; every step runs inside this program. The dump is one folder:
+//! exefs/ (main, sdk, subsdk0, rtld, main.npdm: plain NSO files of the build in VERSION) and romfs/ (*.pkz, movie/).
+//! Steps, resumable (a finished one is skipped; --from <step> repeats it and the rest; tools/wtbuild/README.md "Steps"):
+//!   deps     the compiler and the libraries the link step needs (always runs)
+//!   verify   the dump is the exact version this port handles (SHA-256, NSO build ID, RomFS manifest)
+//!   convert  main, sdk, subsdk0 -> targets/exefs/*.elf (nso.rs); the ExeFS and RomFS placed under targets/
+//!   mods     emulator-style code mods patched into targets/exefs/main.elf (pchtxt.rs; always runs)
+//!   tables   runtime/gen/ from YOUR sdk and main (tables.rs)
+//!   lift     main.elf -> build/gen_eh (lifter/)
+//!   compile  build/gen_eh -> build/obj (compile.rs; the longest step)
+//!   link     build/game.so and the runtime (link.rs)
+//!   text     the PC settings rows' texts in the game's own glyphs, mods/witchtime-pc-settings/ (text.rs)
+//!   check    skipped: the lifter against Unicorn is a developer's tool (tools/lifter-check)
 
 use crate::compile::{self, which};
 use crate::target::{self, Target};
@@ -20,7 +31,7 @@ const STEPS: [&str; 10] = ["deps", "verify", "convert", "mods", "tables", "lift"
 const ALWAYS: [&str; 2] = ["deps", "mods"];
 const REDO_ON_UPDATE: [&str; 6] = ["tables", "lift", "compile", "link", "text", "check"];
 
-// ---- the one version this port handles (scripts/setup.py VERSION / EXEFS / ROMFS_*)
+// ---- the one version this port handles
 const VERSION: &str = "the build with main build ID b47cc79b88b7091e";
 /// name, size, sha256, NSO build id
 const EXEFS: [(&str, u64, &str, Option<&str>); 5] = [
@@ -85,7 +96,7 @@ const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
 
 const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
                      [--mods <folder>] [--llvm <folder>] [--repo <folder>]
-steps: deps verify convert mods tables lift compile link text check (scripts/setup.py describes them)";
+steps: deps verify convert mods tables lift compile link text check (tools/wtbuild/README.md, \"Steps\", describes them)";
 
 struct Fail(String);
 
@@ -270,8 +281,8 @@ pub fn child_env(c: &mut Command) {
     }
 }
 
-/// json.dump(v, indent=1), as setup.py writes build/setup_state.json
-fn dump_json(v: &Value, level: usize, out: &mut String) {
+/// Python's json.dump(v, indent=1), the spelling of build/setup_state.json
+pub fn dump_json(v: &Value, level: usize, out: &mut String) {
     match v {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -936,7 +947,7 @@ fn step_text(cx: &mut Ctx) -> Result<(), Fail> {
 }
 
 fn step_check(_cx: &mut Ctx) -> Result<(), Fail> {
-    say("  skipped (the lifter self-tests need Python and Unicorn: python3 lifter/test_ext.py, a developer's check)");
+    say("  skipped (a developer's check of the lifter against Unicorn: cargo run --release --manifest-path tools/lifter-check/Cargo.toml)");
     Ok(())
 }
 
@@ -944,14 +955,13 @@ fn step_check(_cx: &mut Ctx) -> Result<(), Fail> {
 /// A newer Witch Time unpacked over a finished build: the files the later steps read have changed, so tables, lift,
 /// compile, link, text and check run again (compile then compiles only the C files that changed). This program itself
 /// stands for the lifter and the build scripts.
-const SOURCE_GLOBS: [(&str, &[&str]); 9] = [
+const SOURCE_GLOBS: [(&str, &[&str]); 8] = [
     ("lifter", &[".txt", ".h"]),
     ("runtime", &[".c", ".h", ".inc"]),
     ("runtime/gen_static", &[""]),
     ("runtime/linux", &[".c", ".h"]),
     ("runtime/linux/GL", &[".h"]),
     ("runtime/posix", &[".c", ".h"]),
-    ("runtime/gen", &["make_gen.py"]),
     ("runtime/split", &[".h"]),
     ("runtime/freestanding", &[".h"]),
 ];

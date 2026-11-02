@@ -1,4 +1,4 @@
-/// generated from scripts/pc_settings_mod.py MENU / CORE: message name -> language -> candidate texts (the first a file can spell)
+/// the PC settings rows' texts (once scripts/pc_settings_mod.py's MENU / CORE): message name -> language -> candidate texts (the first a file can spell)
 pub const LANGS: [&str; 13] = ["", "de", "fr", "es", "it", "ru", "cn", "tw", "kr", "us", "gb", "nl", "pt"];
 pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
     (

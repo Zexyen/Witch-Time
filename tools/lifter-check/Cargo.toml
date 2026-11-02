@@ -1,0 +1,10 @@
+[package]
+name = "lifter-check"
+version = "0.1.0"
+edition = "2021"
+description = "Developer check of the shipped lifter: lifted words run in C against Unicorn (never released: Unicorn is GPL-2.0)"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+unicorn-engine = { version = "2.1.5", default-features = false, features = ["arch_aarch64"] }

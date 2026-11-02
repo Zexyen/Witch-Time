@@ -1,5 +1,5 @@
-// A stand-in "main" for wtbuild's lifter comparison: no game code. Built for AArch64 into an NSO-shaped ELF by
-// make_fake.py, so lifter/recomp_eh.py and wtbuild can lift the same program and their outputs be compared.
+// A stand-in "main" for wtbuild's lift test: no game code. Built for AArch64 by `wtbuild fake-nso` (src/fake.rs),
+// into the committed main.nso and sdk.nso that the golden tests lift.
 extern "C" {
 void ext_log(int);
 int ext_value(void);

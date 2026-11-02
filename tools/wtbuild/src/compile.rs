@@ -1,9 +1,13 @@
-//! The `compile` step (scripts/compile_main.py): build/gen_eh/*.c -> build/obj/*.obj with clang -O2, only the
-//! files whose object is out of date. The up-to-date record (build/obj/_stamps.json, _funcs.h.prev) is the one
-//! compile_main.py keeps; compile_main.py's module comment has the rules. Unlike compile_main.py, the code is compiled
-//! against runtime/freestanding instead of the system's C library headers (the same objects, without a libc development
-//! package: tools/wtbuild/compare_freestanding.py), so the configuration hash differs and a build made by setup.py is
-//! compiled once more. On Windows the objects are MinGW ones (target.rs), for game.dll.
+//! The `compile` step: build/gen_eh/*.c -> build/obj/*.obj with clang -O2, only the files whose object is out of date.
+//! build/obj/_stamps.json keeps, per file, the SHA-256 of the C source, the times of source and object, and a hash of
+//! everything else its object depends on (Cfg::hash: the compiler's path, size and time, the flags, the optnone
+//! threshold, RULES and the headers the lifted files include, found by following #include "..."). funcs.h, which the
+//! lifter rewrites on every run, is compared with the copy kept from the last compile (_funcs.h.prev): an added
+//! prototype cannot change an unchanged file's object, a removed or changed one compiles the files that name it again.
+//! Objects without a C file are deleted. Functions over OPTNONE statements get optnone; a file over the time limit is
+//! tried again with smaller thresholds, then at -O0. The code is compiled against runtime/freestanding instead of the
+//! system's C library headers (the same objects, without a libc development package: `wtbuild check-freestanding`).
+//! On Windows the objects are MinGW ones (target.rs), for game.dll.
 
 use crate::target::{self, mtime_ns, Target};
 use crate::util::sha256_file;
@@ -19,12 +23,12 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const FORCE_INLINE: &str = "-Dinline=inline __attribute__((always_inline))";
-const OPT: &str = "-O2";
+pub const OPT: &str = "-O2";
 const OPTNONE: usize = 5000; // statements: a bigger function gets optnone (clang 23 is slow on the largest)
 const TIME_LIMIT: u64 = 900; // seconds for one file at -O2
-const RULES: i64 = 1; // compile_main.py RULES
+const RULES: i64 = 1; // in every stamp: raising it compiles every file again
 
-/// clang, found as scripts/toolchain.py finds it: $LLVM_ROOT/bin/clang, <repo>/deps/llvm/bin/clang, else clang on PATH
+/// clang: $LLVM_ROOT/bin/clang, <repo>/deps/llvm/bin/clang, else clang on PATH
 /// (clang.exe on Windows: the bundled one in a release, llvm-mingw's in a checkout)
 pub fn find_clang(repo: &Path) -> String {
     let deps = repo.join("deps").join("llvm");
@@ -160,7 +164,7 @@ impl Cfg {
         self.obj.join(format!("{}.obj", &name[..name.len() - 2]))
     }
 
-    /// everything an object depends on besides its C file and funcs.h, as compile_main.py config_hash
+    /// everything an object depends on besides its C file and funcs.h
     fn hash(&self, names: &[String]) -> Result<(String, Vec<String>), String> {
         let st = fs::metadata(&self.clang).map_err(|e| format!("{}: {}", self.clang, e))?;
         let mtime_ns = mtime_ns(&st);
@@ -387,16 +391,25 @@ fn compile_one(c: &Cfg, name: &str, env: &dyn Fn(&mut Command)) -> (Option<i32>,
     (code, out, total + secs, "WHOLE FILE -O0 (time limit hit 3x)".into())
 }
 
-/// compile_main.py <jobs>: Err(the failure) when a file did not compile
+/// the lifted code's flags after `-c OPT`, without the target's and the header folders (check-freestanding uses them
+/// too). They are hashed into every player's object stamps: a change compiles every build again
+pub fn lifted_flags(t: Target) -> Vec<String> {
+    let mut flags: Vec<String> = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from).into();
+    flags.extend(t.pic());
+    flags.push(FORCE_INLINE.into());
+    flags
+}
+
+/// the compile step with `jobs` clang processes: Err(the failure) when a file did not compile
 pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
-    let root = format!("{}/scripts/..", repo); // compile_main.py's ROOT, as its paths (and the stamps' hash) spell it
+    let root = format!("{}/scripts/..", repo); // the spelling every player's stamps hold: another compiles everything again
+    fs::create_dir_all(Path::new(repo).join("scripts")).map_err(|e| format!("scripts: {}", e))?; // so the spelling resolves
     let gen = format!("{}/build/gen_eh", root);
     let inc = format!("{}/runtime", root);
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
-    flags.extend(["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from));
-    flags.extend(t.pic());
-    flags.extend([FORCE_INLINE, "-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
+    flags.extend(lifted_flags(t));
+    flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     let c = Cfg {
         target: t,
         clang: clang.to_string(),
@@ -538,5 +551,18 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
         Ok(())
     } else {
         Err(format!("{} C file(s) did not compile", failed.len()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifted_flags_unchanged() {
+        // these strings are in every player's _stamps.json hash
+        let linux = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16", "-fPIC", "-Dinline=inline __attribute__((always_inline))"];
+        assert_eq!(lifted_flags(Target::Linux), linux);
+        assert_eq!(lifted_flags(Target::Windows), [&linux[..4], &linux[5..]].concat());
     }
 }

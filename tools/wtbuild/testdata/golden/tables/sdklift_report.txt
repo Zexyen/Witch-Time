@@ -1,0 +1,33 @@
+lifted 20 functions, 631 instructions
+host calls:
+  ext_value
+  ext_log
+  __cxa_allocate_exception
+  __cxa_throw
+  __cxa_begin_catch
+  __cxa_end_catch
+  __cxa_rethrow
+  _Unwind_Resume
+  sqrt
+  _ZSt9terminatev
+functions:
+  28 caught
+  4b4 nested
+  56c no_throw
+  5a4 rethrow
+  654 sub_654
+  664 g0
+  874 g3
+  fe8 sub_fe8
+  1000 sub_1000
+  4ecc g40
+  5098 g41
+  f558 g270
+  1102c sdk_uses_helper
+  11060 sub_11060
+  11224 nvn_fake_get_integer
+  11324 nvnDeviceGetInteger
+  1134c nvnTextureBuilderGetStorageSize
+  11364 sub_11364
+  1136c hal_method0
+  11384 device_method1

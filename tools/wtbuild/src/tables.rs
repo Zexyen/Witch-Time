@@ -1,6 +1,6 @@
-//! The `tables` step: every generated input of the runtime, read from YOUR main and sdk (a port of
-//! runtime/gen/make_gen.py; the files are byte for byte the ones it writes). The dump-independent test vectors are
-//! committed in runtime/gen_static/ and copied, so this needs no Python and no Pillow.
+//! The `tables` step: every generated input of the runtime, read from YOUR main and sdk into runtime/gen/ (byte for byte
+//! what the former runtime/gen/make_gen.py wrote; tests::stand_ins pins them). The dump-independent test vectors are
+//! committed in runtime/gen_static/ and copied.
 
 use crate::nso;
 use crate::sdklift;
@@ -72,6 +72,8 @@ pub fn run(root: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let exefs = root.join("targets").join("exefs");
     let rd = |p: &Path| fs::read(p).map_err(|e| format!("{}: {}", p.display(), e));
     let wr = |name: &str, s: &[u8]| fs::write(gen.join(name), s).map_err(|e| format!("{}: {}", name, e));
+    // a release (git archive) or a fresh checkout has no runtime/gen/: nothing in it is tracked
+    fs::create_dir_all(&gen).map_err(|e| format!("{}: {}", gen.display(), e))?;
     // sdk.elf beside main.elf, where sdklift_rt.c looks for it at run time
     let sdk_elf = exefs.join("sdk.elf");
     let c = nso::nso2elf(&rd(&exefs.join("sdk"))?)?;
@@ -226,7 +228,7 @@ pub fn run(root: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     Ok(())
 }
 
-// ---- nvn_devinfo (make_gen.py): the switch over the pname in nvnDeviceGetInteger and its getter
+// ---- nvn_devinfo: the switch over the pname in nvnDeviceGetInteger and its getter
 
 const NVN_GETINT_ENTRY: i64 = 0x2bfe0c;
 const NVN_GETINT: i64 = 0x2c0f30;
@@ -397,7 +399,7 @@ impl Sdk<'_> {
         Ok(None)
     }
 
-    /// nvnDeviceGetInteger's answer for every pname (-1 = from the live device), and the line make_gen.py printed
+    /// nvnDeviceGetInteger's answer for every pname (-1 = from the live device), and the line the step prints
     fn devinfo(&self) -> Result<(Vec<i128>, Option<String>), String> {
         let mut out = Vec::new();
         let mut note = None;
@@ -504,4 +506,70 @@ pub fn install_header(root: &Path) -> Result<Vec<u8>, String> {
     }
     f += "};\n";
     Ok(f.into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::golden;
+
+    /// what runtime/gen gets from the dump (and sdklift_install.txt), checked against testdata/golden/tables
+    const GOLDEN: [&str; 8] = [
+        "image_layout.h",
+        "imports_all.txt",
+        "sdkdata.c",
+        "nvn_devinfo.h",
+        "sdklift_install.h",
+        "sdklift_gen.c",
+        "nvn_sdk_addrs.h",
+        "sdklift_report.txt",
+    ];
+
+    /// the step on the committed stand-in main and sdk (testdata/fake_main), in a temporary tree with no runtime/gen/
+    #[test]
+    fn stand_ins() {
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let (repo, fake) = (here.join("../.."), here.join("testdata/fake_main"));
+        let st = repo.join("runtime/gen_static");
+        let t = std::env::temp_dir().join(format!("wtbuild-tables-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&t);
+        let put = |rel: &str, b: &[u8]| {
+            let p = t.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, b).unwrap();
+        };
+        put("targets/exefs/main.elf", &nso::nso2elf(&fs::read(fake.join("main.nso")).unwrap()).unwrap().elf);
+        put("targets/exefs/sdk", &fs::read(fake.join("sdk.nso")).unwrap());
+        put("lifter/sdklift_install.txt", &fs::read(repo.join("lifter/sdklift_install.txt")).unwrap());
+        put("lifter/sdklift_roots.txt", &fs::read(fake.join("roots.txt")).unwrap());
+        for n in STATIC {
+            put(&format!("runtime/gen_static/{}", n), &fs::read(st.join(n)).unwrap());
+        }
+
+        let (root, mut log) = (t.display().to_string(), String::new());
+        run(&t, &mut |l| log += &format!("{}\n", l.replace(&root, "<tmp>").replace('\\', "/"))).unwrap();
+        golden::check("tables/log.txt", &log);
+        let gen = t.join("runtime/gen");
+        for n in GOLDEN {
+            golden::check(&format!("tables/{}", n), &fs::read_to_string(gen.join(n)).unwrap());
+        }
+        for n in STATIC {
+            assert!(
+                fs::read(gen.join(n)).unwrap() == fs::read(st.join(n)).unwrap(),
+                "{} differs from runtime/gen_static's",
+                n
+            );
+        }
+        let mut names: Vec<String> = fs::read_dir(&gen)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut want: Vec<&str> = GOLDEN.iter().chain(&STATIC).copied().collect();
+        names.sort();
+        want.sort();
+        assert_eq!(names, want);
+        let sdk_elf = crate::util::sha256_file(&t.join("targets/exefs/sdk.elf")).unwrap();
+        golden::check("tables/sdk.elf.sha256", &format!("{}\n", sdk_elf));
+        fs::remove_dir_all(&t).unwrap();
+    }
 }

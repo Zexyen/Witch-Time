@@ -94,7 +94,7 @@ void eh_set_unwinder(EhRaiseFn raise);
 void eh_terminate(Ctx *c, const char *why);
 
 /* ---- resume entries of MAIN (added after the first version of this header; everything above is unchanged)
- * When the game DLL was generated with landing-pad resume entries (`RECOMP_EH=1 python recomp.py full gen_eh`, same
+ * When the game DLL was generated with landing-pad resume entries (tools/wtbuild/src/lifter/eh.rs, same
  * scheme as the modules: `u_<fn>(c, landing pad)`, and `nro_catch_call(c, u_<fn>)` for functions with a real catch
  * handler), this returns the entry to call for a landing pad of main, exactly like a module's resume table does;
  * NULL when the pad is not in main or the DLL in use has no resume entries (the default build today). */

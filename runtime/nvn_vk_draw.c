@@ -5376,7 +5376,7 @@ static int frstat_cmp(const void *a, const void *b) { float x = *(const float *)
 /* Session 9: battle frames only (dispatches and more than 120 draws: the fight and the result screen's fighters); the first 30 are left out (their buffers were recorded
  * while the stage was still being set up). GPU ms = sum of the spans of the frame's command buffers (WT_VK_GPUTIME=1). */
 /* [witchtime] TEST ONLY: WT_GPUTIMES=<file> (with WT_VK_GPUTIME=1): at exit a line per frame "<frame> <GPU ms>" (the spans of the
- * frame's command buffers), for scripts/perf_bench.py */
+ * frame's command buffers), for wtbuild perf-bench (tools/wtbuild/src/perf_bench.rs) */
 static void gputimes_dump(void) {
     const char *e = getenv("WT_GPUTIMES");
     if (!e || g_ts_on <= 0) return;

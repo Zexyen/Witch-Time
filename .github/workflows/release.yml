@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
   # a pull request that changes what the archive is built from builds it too, as a check
   pull_request:
-    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'lifter/sdklift_install.txt', '.github/workflows/release.yml']
+    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'lifter/sdklift_install.txt', '.gitattributes', '.github/workflows/release.yml']
 
 permissions:
   contents: write
@@ -69,7 +69,6 @@ jobs:
             libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
             libgl-dev libvulkan-dev
-          python3 -m pip install --user lz4
 
       # the compiler players get: clang, lld and clang's own headers and builtins from LLVM's release, nothing else
       - name: LLVM cache
@@ -181,9 +180,7 @@ jobs:
 
       # the link step on stand-in modules, with this prebuilt runtime and the bundled compiler, run until the image is mapped
       - name: Smoke test of the link step
-        run: |
-          PATH="$PWD/deps/llvm/bin:$PATH" LLVM_ROOT="$PWD/deps/llvm" \
-            python3 tools/wtbuild/smoke_link.py --prebuilt prebuilt --lib "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0"
+        run: LLVM_ROOT="$PWD/deps/llvm" tools/wtbuild/target/release/wtbuild smoke --prebuilt prebuilt --lib "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0"
 
       - name: Package
         run: |
@@ -455,10 +452,6 @@ jobs:
           name: ${{ steps.version.outputs.name }}
           path: dist
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: wtbuild tests (Windows)
         shell: bash
         run: cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
@@ -469,10 +462,7 @@ jobs:
           name="${{ steps.version.outputs.name }}"
           (cd dist && sha256sum -c "$name.zip.sha256" && unzip -q "$name.zip")
           p="$PWD/dist/$name"
-          pip install lz4
-          # make_fake.py builds the stand-in modules with the bundled clang and ld.lld too
-          export PATH="$p/deps/llvm/bin:$PATH"
-          python "$p/tools/wtbuild/smoke_link.py" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll" --wtbuild "$p/build/wtbuild.exe"
+          "$p/build/wtbuild.exe" smoke --repo "$p" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll"
 
       - name: Release
         if: github.ref_type == 'tag'

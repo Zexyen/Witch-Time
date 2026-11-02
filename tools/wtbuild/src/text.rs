@@ -1,11 +1,11 @@
 //! The `text` step: the labels and values of the PC settings rows of the game's Options screen, spelled with the game's
-//! own glyphs, as a RomFS mod made from YOUR dump (mods/witchtime-pc-settings/romfs/ui_000.pkz). A port of
-//! scripts/pc_settings_mod.py with its readers scripts/pkz.py and scripts/pgdat.py; the archive is byte for byte the one
-//! it writes. The MCD layout is in pc_settings_mod.py and docs/RE_NOTES.md section 8.
+//! own glyphs, as a RomFS mod made from YOUR dump (mods/witchtime-pc-settings/romfs/ui_000.pkz). The MCD layout is in
+//! docs/RE_NOTES.md section 8; the DAT layout is at dat_entries. Also the developer commands `pkz list` and
+//! `dat list|extract` over the same readers.
 
 use crate::py;
 use crate::text_strings::{CORE, LANGS, MENU};
-use crate::util::{u16_at, u32_at, u64_at};
+use crate::util::{hex, u16_at, u32_at, u64_at};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{Read, Seek};
@@ -27,7 +27,7 @@ fn rd32(d: &[u8], o: usize) -> R<u32> {
 
 // ---- pkz / DAT
 
-/// (file size, [(name, codec, size, offset, stored size)]) of a pkz archive (pkz.py read_pkz)
+/// (file size, [(name, codec, size, offset, stored size)]) of a pkz archive
 pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
     let mut f = fs::File::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let mut d = Vec::new();
@@ -66,8 +66,19 @@ pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
     Ok((fsize, out))
 }
 
-/// (name, extension, offset, size) of every member of a PlatinumGames DAT (pgdat.py entries)
-fn dat_entries(b: &[u8]) -> R<Vec<(String, String, usize, usize)>> {
+/// `wtbuild pkz list`: codec, size, stored size, offset and name per entry
+pub fn pkz_list(path: &Path) -> R<Vec<String>> {
+    let (fsize, entries) = read_pkz(path)?;
+    let mut out: Vec<String> =
+        entries.iter().map(|(name, codec, size, off, csize)| format!("{:<11} {:>10} {:>10}  0x{:09x}  {}", codec, size, csize, off, name)).collect();
+    out.push(format!("{} entries, {} bytes", entries.len(), fsize));
+    Ok(out)
+}
+
+/// (name, extension, offset, size) of every member of a PlatinumGames DAT. Little endian: 0x00 'DAT\0', 0x04 u32 member
+/// count, 0x08 u32 offset of the offsets table, 0x0c the extensions table (4 bytes a member, NUL-padded), 0x10 the names
+/// table (a u32 slot width, then one NUL-padded slot of that width per member), 0x14 the sizes table, 0x18 the hash map
+pub fn dat_entries(b: &[u8]) -> R<Vec<(String, String, usize, usize)>> {
     if b.len() < 0x1c || &b[..4] != b"DAT\0" {
         return Err("DAT: bad magic".into());
     }
@@ -88,6 +99,32 @@ fn dat_entries(b: &[u8]) -> R<Vec<(String, String, usize, usize)>> {
         out.push((latin1(name), latin1(ext), rd32(b, off_t + 4 * i)? as usize, rd32(b, size_t + 4 * i)? as usize));
     }
     Ok(out)
+}
+
+/// `wtbuild dat list`: size, extension, name and the first 4 bytes of each member
+pub fn dat_list(b: &[u8]) -> R<Vec<String>> {
+    let head = |o: usize| hex(&b[o.min(b.len())..(o + 4).min(b.len())]);
+    Ok(dat_entries(b)?.iter().map(|(name, ext, off, size)| format!("{:>8}  {:<5} {}  [{}]", size, ext, name, head(*off))).collect())
+}
+
+/// `wtbuild dat extract`: every member to `dir`/<name>; nothing is written when a name would leave `dir` or a member
+/// lies outside the file
+pub fn dat_extract(b: &[u8], dir: &Path) -> R<usize> {
+    let es = dat_entries(b)?;
+    for (name, _, off, size) in &es {
+        if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+            return Err(format!("DAT: unsafe member name {}", py::repr_str(name)));
+        }
+        if off + size > b.len() {
+            return Err(format!("DAT: {} lies past the end of the file", name));
+        }
+    }
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
+    for (name, _, off, size) in &es {
+        let p = dir.join(name);
+        fs::write(&p, &b[*off..off + size]).map_err(|e| format!("{}: {}", p.display(), e))?;
+    }
+    Ok(es.len())
 }
 
 /// the DAT with `member` appended at the end (16-byte aligned) and its offset / size pointed there
@@ -413,7 +450,7 @@ fn add_msgs(d: &[u8], msgs: &[(&str, &[(&str, &[&str])])], lang: &str, font_of: 
 }
 
 /// <mods>/witchtime-pc-settings/romfs/ui_000.pkz from <romfs>/ui_000.pkz; the text files from `dump` (a --pkz-dump
-/// folder), else from build/witch-time-game --pkz-dump. Logs what pc_settings_mod.py printed.
+/// folder), else from build/witch-time-game --pkz-dump. Logs the texts it could not spell and the archive written.
 pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dyn Fn(&mut Command), log: &mut dyn FnMut(String)) -> R<()> {
     let arc = romfs.join("ui_000.pkz");
     let out = mods.join(MOD).join("romfs").join("ui_000.pkz");
@@ -549,4 +586,403 @@ fn dump_texts(repo: &Path, romfs: &Path, tmp: &Path, env: &dyn Fn(&mut Command))
         return Err(format!("witch-time-game --pkz-dump failed:\n{}{}", tail(&r.stdout), tail(&r.stderr)));
     }
     Ok(tmp.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::hex;
+    use sha2::{Digest, Sha256};
+    use std::path::PathBuf;
+
+    /// splitmix64
+    struct Rng(u64);
+    impl Rng {
+        fn u(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e3779b97f4a7c15);
+            let z = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            let z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            z ^ (z >> 31)
+        }
+        fn f(&mut self) -> f64 {
+            (self.u() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn p(&mut self, x: f64) -> bool {
+            self.f() < x
+        }
+        fn range(&mut self, lo: usize, hi: usize) -> usize {
+            lo + (self.u() % (hi - lo) as u64) as usize
+        }
+        fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
+            xs[self.range(0, xs.len())]
+        }
+        fn shuffle<T>(&mut self, xs: &mut [T]) {
+            for i in (1..xs.len()).rev() {
+                let j = self.range(0, i + 1);
+                xs.swap(i, j);
+            }
+        }
+        /// lo..hi random bytes
+        fn bytes(&mut self, lo: usize, hi: usize) -> Vec<u8> {
+            let n = self.range(lo, hi);
+            (0..n).map(|_| self.u() as u8).collect()
+        }
+    }
+
+    const LATIN: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-+.()'éèàäöüßçñ";
+    const OTHER: &str = "АБВГДЕЖЗИКЛМНОПРСТУФабвгдежзиклмнопрстуфхцчшщыьэюя設定画面サイズスタート時に変更表示モード自動标准缩放其他固定显示器计时器動畫大小內部해상도다음시작설정자동기본고정확대";
+    const CASES: usize = 10;
+
+    fn hash(name: &str) -> u32 {
+        crc32fast::hash(name.to_lowercase().as_bytes()) & 0x7fffffff
+    }
+
+    fn name32(s: &str) -> [u8; 32] {
+        let mut n = [0u8; 32];
+        n[..s.len()].copy_from_slice(s.as_bytes());
+        n
+    }
+
+    /// k of `s`'s characters, in a random order
+    fn sample(r: &mut Rng, s: &str, k: usize) -> Vec<char> {
+        let mut cs: Vec<char> = s.chars().collect();
+        r.shuffle(&mut cs);
+        cs.truncate(k);
+        cs
+    }
+
+    /// a random MCD whose message `anchor` (hash) carries the font the rows take
+    fn mcd(r: &mut Rng, anchor: u32) -> Vec<u8> {
+        let mut fonts = vec![3u16, 5, 7, 9, 11];
+        r.shuffle(&mut fonts);
+        fonts.truncate(r.range(1, 4));
+        let font = fonts[0];
+        let mut syms = Vec::new();
+        for &f in &fonts {
+            let (nl, no) = (r.range(10, LATIN.chars().count()), r.range(0, OTHER.chars().count()));
+            let mut chars = sample(r, LATIN, nl);
+            chars.extend(sample(r, OTHER, no)); // OTHER repeats some characters: the same (font, char) twice
+            for c in chars {
+                syms.push((f, c as u32 as u16, r.u() as u16 as u32));
+            }
+        }
+        r.shuffle(&mut syms);
+        if r.p(0.3) {
+            syms.extend(syms[..3].to_vec()); // the same glyph twice: the first counts
+        }
+        let glyphs = (0..r.range(1, 6)).map(|_| r.bytes(40, 41)).collect();
+        let fnts = fonts.iter().map(|_| r.bytes(20, 21)).collect();
+        let (mut msgs, mut evs, mut off) = (Vec::new(), Vec::new(), 0u64);
+        for i in 0..r.range(3, 12) {
+            let name = format!("MSG_{}", i);
+            let mut pars = Vec::new();
+            for _ in 0..r.range(1, 3) {
+                let f = if r.p(0.7) { font } else { r.pick(&fonts) };
+                let mut lines = Vec::new();
+                for _ in 0..r.range(1, 3) {
+                    let mut us = Vec::new();
+                    for _ in 0..r.range(0, 12) {
+                        if r.p(0.15) {
+                            us.extend([0x8001, r.pick(&[4, 6, 6, 8])]);
+                        } else {
+                            us.extend([r.range(0, syms.len()) as u16, r.pick(&[0, 1, 2, 2, 3, 0xfffe])]);
+                        }
+                    }
+                    us.push(0x8000);
+                    if r.p(0.1) {
+                        us.push(0); // an odd count
+                    }
+                    let (pad, extra) = (r.pick(&[0, 0, 2]), r.pick(&[0, 0, 1]));
+                    let below = ((r.f() * 100.0 - 50.0) as f32).to_bits();
+                    let horiz = r.pick(&[0.0f32, 12.5]).to_bits();
+                    lines.push(Line {
+                        us,
+                        pad,
+                        extra,
+                        below,
+                        horiz,
+                        off,
+                    });
+                    off += 1;
+                }
+                let (vp, hp) = (r.range(0, 100) as u32, r.range(0, 100) as u32);
+                pars.push(Par { vp, hp, font: f as u32, lines });
+            }
+            msgs.push(Msg {
+                seq: i as u32 + 1,
+                ev: hash(&name),
+                pars,
+            });
+            evs.push((hash(&name), i as u32, name32(&name)));
+        }
+        let one = |off| {
+            vec![Par {
+                vp: 0,
+                hp: 0,
+                font: font as u32,
+                lines: vec![Line {
+                    us: vec![0, 1, 0x8000],
+                    pad: 0,
+                    extra: 0,
+                    below: 0,
+                    horiz: 0,
+                    off,
+                }],
+            }]
+        };
+        msgs.push(Msg {
+            seq: msgs.len() as u32 + 1,
+            ev: anchor,
+            pars: one(off),
+        });
+        evs.push((anchor, msgs.len() as u32 - 1, name32("ANCHOR")));
+        if r.p(0.2) {
+            // a row's message is already there: it is not added again
+            let rows: Vec<&str> = MENU.iter().chain(CORE).map(|m| m.0).collect();
+            let name = r.pick(&rows);
+            msgs.push(Msg {
+                seq: msgs.len() as u32 + 1,
+                ev: hash(name),
+                pars: one(off + 1),
+            });
+            evs.push((hash(name), msgs.len() as u32 - 1, name32(name)));
+        }
+        evs.sort_by_key(|e| e.0);
+        mcd_write(&Mcd {
+            msgs,
+            syms,
+            glyphs,
+            fonts: fnts,
+            evs,
+        })
+    }
+
+    /// a DAT with the extension table, members 16-byte aligned
+    fn dat(members: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let (n, width) = (members.len(), 16);
+        let (off_t, ext_t, name_t) = (0x20, 0x20 + 4 * n, 0x20 + 8 * n);
+        let size_t = name_t + 4 + width * n;
+        let mut out = vec![0u8; (size_t + 4 * n).next_multiple_of(16)];
+        out[..4].copy_from_slice(b"DAT\0");
+        put(&mut out, 4, &[n as u32, off_t as u32, ext_t as u32, name_t as u32, size_t as u32, 0]);
+        put(&mut out, name_t, &[width as u32]);
+        for (i, (name, data)) in members.iter().enumerate() {
+            let at = out.len() as u32;
+            put(&mut out, off_t + 4 * i, &[at]);
+            put(&mut out, size_t + 4 * i, &[data.len() as u32]);
+            let ext = name.rsplit('.').next().unwrap().as_bytes();
+            out[ext_t + 4 * i..][..ext.len().min(3)].copy_from_slice(&ext[..ext.len().min(3)]);
+            out[name_t + 4 + width * i..][..name.len()].copy_from_slice(name.as_bytes());
+            out.extend_from_slice(data);
+            out.resize(out.len().next_multiple_of(16), 0);
+        }
+        out
+    }
+
+    /// a pkz of (name, codec, data), the data `align`-aligned
+    fn pkz(entries: &[(String, &str, Vec<u8>)], align: usize) -> Vec<u8> {
+        let mut names = b"OodleKraken\0None\0".to_vec();
+        let mut table = vec![0u8; entries.len() * 0x20];
+        let pos = (0x20 + table.len() + names.len() + entries.iter().map(|e| e.0.len() + 1).sum::<usize>()).next_multiple_of(align);
+        let mut body = Vec::new();
+        for (i, (name, codec, data)) in entries.iter().enumerate() {
+            let t = &mut table[i * 0x20..];
+            put(t, 0, &[names.len() as u32, if *codec == "None" { 12 } else { 0 }]);
+            for (k, v) in [data.len(), pos + body.len(), data.len()].into_iter().enumerate() {
+                t[8 + 8 * k..16 + 8 * k].copy_from_slice(&(v as u64).to_le_bytes());
+            }
+            names.extend(name.as_bytes().iter().chain(&[0]));
+            body.extend_from_slice(data);
+            body.resize(body.len().next_multiple_of(align), 0);
+        }
+        let mut f = b"pkzl".to_vec();
+        f.extend(0x20000u32.to_le_bytes());
+        f.extend(((pos + body.len()) as u64).to_le_bytes());
+        for v in [entries.len(), 0x20, names.len(), align] {
+            f.extend((v as u32).to_le_bytes());
+        }
+        f.extend(table);
+        f.extend(names);
+        f.resize(pos, 0);
+        f.extend(body);
+        f
+    }
+
+    /// <romfs>/ui_000.pkz and the 26 text files in <dump>, as `witch-time-game --pkz-dump` leaves them
+    fn make_case(r: &mut Rng, romfs: &Path, dump: &Path) {
+        let mut entries: Vec<(String, &str, Vec<u8>)> = Vec::new();
+        for k in 0..r.range(0, 4) {
+            let codec = r.pick(&["None", "OodleKraken"]);
+            entries.push((format!("ui/ui_other{}.dat", k), codec, r.bytes(1, 300)));
+        }
+        for l in LANGS {
+            for (k, anchor) in [("menu", BRIGHTNESS), ("core", ON)] {
+                let n = format!("ui/ui_{}{}.dat", k, if l.is_empty() { String::new() } else { format!("_{}", l) });
+                let blob = dat(&[(&format!("mess{}.mcd", k), mcd(r, anchor)), ("other.bin", r.bytes(1, 64))]);
+                let p = dump.join(&n);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, blob).unwrap();
+                entries.push((n, "OodleKraken", r.bytes(10, 200))); // compressed: not read
+            }
+        }
+        r.shuffle(&mut entries);
+        fs::create_dir_all(romfs).unwrap();
+        let align = r.pick(&[0x10, 0x1000]);
+        fs::write(romfs.join("ui_000.pkz"), pkz(&entries, align)).unwrap();
+    }
+
+    /// what the game needs of the new archive, and what must stay the dump's
+    fn check_archive(old: &Path, new: &Path) {
+        let (a, b) = (fs::read(old).unwrap(), fs::read(new).unwrap());
+        let ((old_size, es), (size, ns)) = (read_pkz(old).unwrap(), read_pkz(new).unwrap());
+        let align = u32_at(&a, 0x1c) as u64;
+        assert!(size == b.len() as u64 && size % align == 0);
+        assert!(a[..8] == b[..8] && a[0x10..0x20] == b[0x10..0x20]);
+        let names_at = u32_at(&a, 0x14) as usize + 0x20 * es.len();
+        assert!(
+            a[names_at..old_size as usize] == b[names_at..old_size as usize],
+            "the names and the data are the dump's"
+        );
+        assert_eq!(es.len(), ns.len());
+        let mut rows = 0;
+        for (e, n) in es.iter().zip(&ns) {
+            let kind = &e.0[e.0.len().min(6)..e.0.len().min(10)];
+            if !(kind == "menu" || kind == "core") {
+                assert_eq!(e, n);
+                continue;
+            }
+            rows += 1;
+            assert!(e.0 == n.0 && n.1 == "None" && n.2 == n.4 && n.3 >= old_size && n.3 % align == 0, "{:?}", n);
+            let blob = &b[n.3 as usize..][..n.2 as usize];
+            let (_, _, o, s) = dat_entries(blob).unwrap().into_iter().find(|x| x.0 == format!("mess{}.mcd", kind)).unwrap();
+            let d = &blob[o..o + s];
+            let m = mcd_read(d).unwrap();
+            assert!(mcd_write(&m) == d);
+            assert!(m.evs.windows(2).all(|w| w[0].0 <= w[1].0));
+            for (name, _) in if kind == "menu" { MENU } else { CORE } {
+                assert_eq!(m.evs.iter().filter(|x| x.0 == hash(name)).count(), 1, "{} in {}", name, e.0);
+            }
+        }
+        assert_eq!(rows, 26);
+    }
+
+    /// made-up message banks (random glyph sets, fonts, kerning) in a stand-in ui_000.pkz; the golden was
+    /// pc_settings_mod.py's output on the same files
+    #[test]
+    fn random_message_banks() {
+        // WTBUILD_CASES=<dir> keeps the cases there
+        let keep = std::env::var_os("WTBUILD_CASES").map(|d| PathBuf::from(d).join("text"));
+        let t = keep
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("wt_text_{}", std::process::id())));
+        let _ = fs::remove_dir_all(&t);
+        let mut r = Rng(1);
+        let mut g = String::new();
+        for i in 0..CASES {
+            let d = t.join(format!("case{}", i));
+            let (romfs, dump, mods) = (d.join("romfs"), d.join("dump"), d.join("mods"));
+            make_case(&mut r, &romfs, &dump);
+            fs::create_dir_all(mods.join(OLD_MOD)).unwrap();
+            let mut lines = Vec::new();
+            run(&d, &romfs, Some(&dump), &mods, &|_| {}, &mut |l| lines.push(l)).unwrap();
+            assert!(!mods.join(OLD_MOD).exists());
+            let out = mods.join(MOD).join("romfs").join("ui_000.pkz");
+            check_archive(&romfs.join("ui_000.pkz"), &out);
+            g += &format!("== case {}\n{}\n", i, hex(&Sha256::digest(fs::read(&out).unwrap())));
+            for l in lines {
+                g += &(l.replace(&mods.display().to_string(), "OUT") + "\n");
+            }
+        }
+        if keep.is_none() {
+            let _ = fs::remove_dir_all(&t);
+        }
+        // out.display() writes '\\' on Windows
+        crate::golden::check("text_banks.txt", &g.replace('\\', "/"));
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn le(v: &[u32]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+    fn pad(s: &str, n: usize) -> Vec<u8> {
+        let mut v = s.as_bytes().to_vec();
+        v.resize(n, 0);
+        v
+    }
+
+    /// a DAT of (name, extension, data), names in 8-byte slots
+    fn dat(files: &[(&str, &str, &[u8])]) -> Vec<u8> {
+        let n = files.len() as u32;
+        let (off_t, ext_t, name_t) = (0x20, 0x20 + 4 * n, 0x20 + 8 * n);
+        let size_t = name_t + 4 + 8 * n;
+        let mut at = size_t + 4 * n;
+        let mut b = b"DAT\0".to_vec();
+        b.extend(le(&[n, off_t, ext_t, name_t, size_t, 0]));
+        b.resize(0x20, 0);
+        for f in files {
+            b.extend(le(&[at]));
+            at += f.2.len() as u32;
+        }
+        for f in files {
+            b.extend(pad(f.1, 4));
+        }
+        b.extend(le(&[8]));
+        for f in files {
+            b.extend(pad(f.0, 8));
+        }
+        for f in files {
+            b.extend(le(&[f.2.len() as u32]));
+        }
+        for f in files {
+            b.extend_from_slice(f.2);
+        }
+        b
+    }
+
+    #[test]
+    fn pkz_listing() {
+        let names = b"a.dat\0None\0OodleKraken\0ui/b.wtp\0";
+        let mut b = b"pkzl".to_vec();
+        b.extend(le(&[0x20000]));
+        b.extend(0x1234u64.to_le_bytes());
+        b.extend(le(&[2, 0x20, names.len() as u32, 0x1000]));
+        for (name, codec, size, off, csize) in [(0, 6, 5u64, 0x1000u64, 5u64), (23, 11, 0x40000, 0x1010, 0x8000)] {
+            b.extend(le(&[name, codec]));
+            for v in [size, off, csize] {
+                b.extend(v.to_le_bytes());
+            }
+        }
+        b.extend(names);
+        let p = std::env::temp_dir().join(format!("wtbuild_pkz_{}.pkz", std::process::id()));
+        fs::write(&p, &b).unwrap();
+        let got = pkz_list(&p);
+        fs::remove_file(&p).unwrap();
+        assert_eq!(
+            got.unwrap(),
+            [
+                "None                 5          5  0x000001000  a.dat",
+                "OodleKraken     262144      32768  0x000001010  ui/b.wtp",
+                "2 entries, 4660 bytes"
+            ]
+        );
+    }
+
+    #[test]
+    fn dat_list_extract() {
+        let d = dat(&[("a.bin", "bin", b"\x01\x02\x03\x04\x05"), ("mes.mcd", "mcd", b"MC")]);
+        assert_eq!(dat_list(&d).unwrap(), ["       5  bin   a.bin  [01020304]", "       2  mcd   mes.mcd  [4d43]"]);
+        let dir = std::env::temp_dir().join(format!("wtbuild_dat_{}", std::process::id()));
+        assert_eq!(dat_extract(&d, &dir), Ok(2));
+        assert_eq!(fs::read(dir.join("a.bin")).unwrap(), b"\x01\x02\x03\x04\x05");
+        assert_eq!(fs::read(dir.join("mes.mcd")).unwrap(), b"MC");
+        for bad in ["../x", "a/b", "a\\b", "c:x", "..", ""] {
+            assert!(dat_extract(&dat(&[(bad, "bin", b"x")]), &dir).unwrap_err().contains("unsafe"), "{}", bad);
+        }
+        assert!(dat_extract(&d[..d.len() - 1], &dir).unwrap_err().contains("past the end"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

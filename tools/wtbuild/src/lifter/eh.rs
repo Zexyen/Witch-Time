@@ -1,6 +1,6 @@
-//! The whole-program lift of main with C++ landing-pad resume entries: a port of lifter/recomp_eh.py. Writes
-//! <outdir>/c_<bucket>.c, funcs.h, table.c and imports.c, byte for byte as recomp_eh.py does (RECOMPS_REGCACHE off, as
-//! setup.py always ran it).
+//! The whole-program lift of main with C++ landing-pad resume entries, ported from ssbu-recomp's
+//! tools/lifter/recomp_eh.py (GPL-3.0). Writes <outdir>/c_<bucket>.c, funcs.h, table.c and imports.c, byte for byte
+//! what it wrote with RECOMPS_REGCACHE off (tests::lift_fake_main pins them).
 //!
 //!   - a function with landing pads becomes u_<entry>(Ctx *c, uint64_t rp) (rp = 0 from the top, else the pad to resume
 //!     at) plus f_<entry>(Ctx *c) { u_<entry>(c, 0); }
@@ -14,7 +14,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-/// Game functions whose direct calls go to a host function instead (runtime/game_shim_eh.c): see recomp_eh.py.
+/// [witchtime] Game functions whose direct calls (BL) go to a host function instead (runtime/game_shim_eh.c); the lifted
+/// body stays (indirect calls, the check WT_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd
+/// bits with three bit reversals and a 32-step loop; a tree walk of B3 calls it so often that the main thread spent
+/// 115-130 ms a frame in it in trains of frames in Tokyo. 0x7100d02de0: the main loop's frame-rate mode setter (one
+/// caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame
+/// clock, whose fixed step is then halved (real time).
 pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100b382c0, "morton_split32"),
     (0x7100d02de0, "fps_mode_set"),
@@ -95,7 +100,7 @@ const UI_MARK_SITES: &[(i64, u32, u32, &str)] = &[(0x71009a83e8, 1, 0, "&c->v[1]
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
 
-/// [witchtime] the PC settings rows of the Options screen: instruction patches (recomp_eh._options_row_patches).
+/// [witchtime] the PC settings rows of the Options screen: instruction patches.
 pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
     fn adrp(rd: u32, pc: i64, target: i64) -> u32 {
         let imm = (((target >> 12) - (pc >> 12)) & 0x1fffff) as u32;
@@ -444,7 +449,7 @@ struct Ctx<'a> {
 fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (String, usize, usize, Vec<(i64, i64)>) {
     let im = cx.im;
     if let Some((sym, shndx, value)) = plt.entry(im, entry) {
-        // recomp.lift_function on a PLT stub (env.full)
+        // a PLT stub: a jump to the function it binds, or to the host import
         if shndx != 0 {
             env.want(im.base + value as i64);
             return (format!("void f_{}(Ctx *c) {{ f_{}(c); }}", hx(entry), hx(im.base + value as i64)), 0, 0, vec![]);
@@ -543,7 +548,7 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     (out, n, bad.len(), pads.iter().map(|&lp| (lp, entry)).collect())
 }
 
-/// recomp_eh.main: lift every function of main into outdir.
+/// lift every function of main into outdir.
 pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let t0 = std::time::Instant::now();
     let el = || t0.elapsed().as_secs_f64();
@@ -674,7 +679,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
         f += &format!("void u_{}(Ctx *c, uint64_t rp);\n", hx(a));
     }
     if !im.fps_counters.is_empty() {
-        // runtime/game_shim_eh.c; a stand-in's funcs.h stays what recomp_eh.py writes
+        // runtime/game_shim_eh.c; without counters (a stand-in) funcs.h has none of them
         f += "uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int sign);\n";
         f += "int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign);\n";
         f += "float fps_fs(Ctx *c, uint64_t key, uint64_t field);\n";
@@ -753,4 +758,45 @@ fn imports_c(im: &Image) -> String {
     }
     f += &format!("}};\nconst int dyn_sym_count = {};\n", nsym);
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::hex;
+    use sha2::{Digest, Sha256};
+
+    /// the committed stand-in main (testdata/fake_main) as `wtbuild nso2elf` and `wtbuild lift --no-patches` make it: the
+    /// conversion's report and ELF, every file of the lift and the counts it logs
+    #[test]
+    fn lift_fake_main() {
+        assert!(!fps::census_on(), "WTBUILD_FPS_CENSUS=1 adds the census to the lift: run the tests without it");
+        let nso = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/fake_main/main.nso")).unwrap();
+        let c = crate::nso::nso2elf(&nso).unwrap();
+        let mut m = format!("{}\n{}  main.elf\n", c.report.join("\n"), hex(&Sha256::digest(&c.elf)));
+        let dir = std::env::temp_dir().join(format!("wtbuild-lift-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut log = Vec::new();
+        lift_main(&Image::main(c.elf), &dir, &mut |l| log.push(l)).unwrap();
+        let mut names: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        for n in names {
+            m += &format!("{}  {}\n", hex(&Sha256::digest(fs::read(dir.join(&n)).unwrap())), n);
+        }
+        for l in &log {
+            // without the "(3s)" each step took
+            let t = match l.rfind(" (") {
+                Some(i) if l.ends_with("s)") && l[i + 2..l.len() - 2].bytes().all(|b| b.is_ascii_digit()) => l[..i].trim_end(),
+                _ => l,
+            };
+            m += t;
+            m += "\n";
+        }
+        if fs::read_to_string(crate::golden::path("lift_main.txt")).map_or(false, |g| g == m) || std::env::var_os("WTBUILD_BLESS").is_some() {
+            let _ = fs::remove_dir_all(&dir);
+        } else {
+            eprintln!("{}the lift is kept in {}: diff -r it with an older build's `wtbuild lift <ELF> <dir> --no-patches`", m, dir.display());
+        }
+        crate::golden::check("lift_main.txt", &m);
+    }
 }

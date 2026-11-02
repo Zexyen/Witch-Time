@@ -1,8 +1,8 @@
 /* [witchtime] NVN texture storage rules answered by the SDK's own code, ported to Bayonetta 3's sdk (nnSdk / NVN 13.3.2,
  * API 55.12). Same API as B2recomp's port (nvn_sdk.h); the SDK code is lifted from targets/exefs/sdk.elf by
- * lifter/sdklift.py. Every address comes from runtime/gen/nvn_sdk_addrs.h, which sdklift.py writes from the player's
+ * tools/wtbuild/src/sdklift.rs. Every address comes from runtime/gen/nvn_sdk_addrs.h, which it writes from the player's
  * own sdk: NVN entry points by name from the proc table, the vtables by their typeinfo names, the format table and
- * chip descriptor by shape (scripts/nvn_procs.py gpu_model). Nothing here is a hard-coded sdk address.
+ * chip descriptor by shape (tools/wtbuild/src/nvn_procs.rs gpu_model). Nothing here is a hard-coded sdk address.
  *
  * The memory kind comes from the GPU library: nvnTextureBuilderGetStorageClass and the layout function call the NVN
  * chooser (device +0x990 -> NvRmGpuDeviceChooseKind on the object at device +0x998) -> NvRmNvgpuDevice method +0x30
