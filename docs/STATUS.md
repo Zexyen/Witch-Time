@@ -1115,7 +1115,7 @@ Screen Display page** (the fallback asked for when a tab is not possible), below
 | Display Mode | Windowed / Borderless / Fullscreen | at once (Linux; Windows at the next start, as the panel) |
 | Anisotropic Filtering | Default (the game's) / 2x / 4x / 8x / 16x | at once (new samplers) |
 | Texture Detail | -1 / -0.5 / 0 / +0.5 / +1 | at once (new samplers) |
-| Aspect Ratio | Original / Stretch | at once |
+| Aspect Ratio | Original / Stretch (later Fixed / Unlocked, next start; "Aspect ratios" below) | at once |
 
 then "PC Settings" (opens the panel, which keeps window size and the values these rows do not list; F1 / Start + Select as
 before) and Restore Defaults. Left / right go round the values with the game's sounds and key repeat (the game's own list
@@ -1276,6 +1276,195 @@ where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bou
   49 frames over 50 ms in three Tokyo 1.0 runs of the same build). Not fixed.
 - No other hot spot stood out: render(host) is the top thread at 4.3-6.5 ms a frame.
 
+## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
+
+`aspect_ratio = 16:9 | auto | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own
+picture at any shape. `auto` takes the window's shape at the start (its client size in pixels; borderless and fullscreen:
+the monitor's desktop mode), told before the game starts (`gfx_aspect_window`, from `display.c` before the game's thread
+runs). In game: **Aspect Ratio (next start): Fixed / Unlocked** (16:9 / auto), a row of the Options screen's Screen
+Display page (it was the Original / Stretch row of `aspect`) and of the PC panel; `aspect` (Keep shape / Stretch) is the
+PC panel's "Picture fit" now. Checked at 21:9: a 2100x900 window (2625x1125 pixels at 125 %) with `auto` gave the game a
+2100x900 screen; the row showed Unlocked, left made it Fixed and wrote `aspect_ratio = 16:9` ("applies at the next
+start"). Wider than 16:9 shows more at the sides (Hor+), narrower more above and below (Vert+); the interface stays
+a 16:9 block in the middle (it is drawn with the same cameras). Checked on the title screen at 9:10, 1.85, 2.0, 21:9
+(2100x900) and 32:9 (3200x900), resolution_scale 1.0 and 1.2; `aspect = keep` puts the result in the window.
+**In game** (the save, `SSBU_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
+the fight with the HUD; 16:9, 21:9, 32:9, 9:10; muted, frames every 600 saved): no crash, 10,177-10,282 frames presented
+in each (the same as 16:9); the 3D view is Hor+ (32:9: much more of the street at the sides) or Vert+ (9:10: more sky
+and street); the cutscene fills the screen (no bars); subtitles, "Break Free" prompts and the boss's bar stay centred.
+**The HUD at the screen's edges** (`hud_area = screen`, the default; `16:9` keeps it in the middle): the UI layouts
+(`ui/*.dat`, .uid) are in a 1280x720 space around the centre; each layout's root (element 0) has its place (health
+-492, 269; gauges -572, -316; score 260, 297 ...). `0x7100c0ef04(layout, state, element, time)` evaluates an element
+every frame (elements of 0x1b4 bytes from layout + [layout + 0xc]: position +0, +4 into state + 0x10; then its animation
+tracks; found with a read watchpoint on hud0020's root in memory). The menus spanned 21:9 by being stretched (later:
+"The stretched menus"; they are in the middle now). Override `ui_element` moves only a root of a layout
+named `hud*` (its DAT archive found backwards from the layout in memory, once per layout) placed 200 or more from the
+centre in the file, out by (720 * ratio - 1280) / 2. (Moving every such root pushed the Options rows, which their
+screen places itself, off the left edge.) Checked at 21:9 and 32:9: health and gauges at the left edge, score, Verse,
+combo points and the halo counter at the right; the pause menu and Options (Controller, Camera, Sound, Screen Display)
+whole, no row cut; `hud_area = 16:9` as before. Elements placed by code (lock-on markers, damage numbers) were not seen
+to move.
+**In-game option**: "HUD Layout" (Full Screen / Centered) is a row of the Options screen's Screen Display page (after
+Aspect Ratio; label and values in the text mod, all 13 languages: `text_strings.rs`, `pc_settings_mod.py`) and of the PC
+settings panel. It writes `hud_area` and applies at once (`game_hud_centre`, exported by the game library like
+`game_cutscene_fps`). Checked at 21:9 with the virtual pad: the row shows Full Screen, right makes it Centered
+(`pcmenu: hud_area = 16:9 (applied)`), and after leaving the menus the HUD is in the 16:9 area in the middle.
+
+**Shaders for another scale or ratio, made ahead**: a run at 16:9 and resolution_scale 1.0 translates its fragment stages
+without the screen scale; every other scale or ratio uses one other set (the factors are push constants), which the first
+such run translated behind held loading screens. Measured on the 4-minute route (title, Shibuya, a fight; empty cache):
+16:9 20.9 / 22.7 s of holds; 21:9 after that 29.5 s more (3,755 fragment stages; the driver's pipelines are a few ms of
+it). Now (`nvn_vk_m4.c` `rs_pre_*`, `SSBU_VK_RS_PREP=0` off) each fragment stage of an unscaled run is copied and its scaled
+translation written to the cache by one thread at the lowest priority, which waits while the workers have jobs or a fight
+is near (without that wait it added 3-5 s to the 16:9 first run: 25.9 s twice). Measured: 16:9 first run 21.4 s of holds
+(2,623 of the 3,755 made ahead in its 4 minutes; the exit line says how many); 21:9 after it 7.0 s (the 1,132 not
+reached), against 29.5 s. Stages read from an older cache are queued too, so a 16:9 player's cache gets them over time.
+
+**Movies** (1600x900 VP9, e.g. the opening `ev0000.webm`): drawn by one full-screen pass into the window texture that samples the
+frame's Y plane (R8, 1600x900) and UV plane (RG8, 800x450); the game's draw call (`0x7100cd88a0`: x 0, y 0, the screen's
+width and height to `0x7100cbbe50/60/70`) goes to empty functions. At 21:9 the picture was stretched (the moon an oval).
+Now (`nvn_vk_draw.c` `g_movie_draw`) a draw that samples an R8 texture of the game's 16:9 screen size into a window texture
+of another shape keeps a centred 16:9 box and the rest is cleared to black. Checked on the opening movie (a new game,
+`SSBU_USERDATA` empty): 21:9 pillarboxed, the moon round, subtitles inside the picture; 9:10 letterboxed, the subtitles in
+the black band below (they are placed by the screen's height, not by the interface's 16:9 area).
+
+**Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
+at those seconds through the game's own start, `0x71007a2894(manager *0x710249c470, 0, 0, 0, 0, 0, speed 0.02, 180
+frames, 0)` (the arguments of the dodge at `0x710039d86c`; found by the sound events `core_Mov_WitchtimeIn` and
+`BGM_Witchtime_On` it plays), called from the main loop's clock between frames. In Shibuya at 70 s: the blue starfield
+and darkening for about 3 s at 16:9, 21:9 and 32:9, over the whole width (no unlit band at the sides), its stars the same
+size and shape at all three (not stretched); a few of them show the small crosses of the fractional pixel mapping (see
+the dither above). **The dither** of objects near the camera (a fine checkerboard at 16:9) became a coarser pattern of crosses at 21:9: the
+fragment stage samples a small tiled texture at gl_FragCoord / its size and discards against it, and gl_FragCoord was given
+in the game's pixels, 1600 of them over 2100 image pixels. Now (`nvn_vk_draw.c` `g_fs_screen` / `g_fs_small`) a draw
+whose fragment stage samples no screen-class image (scaled or kept at the game's size) and samples a texture of 64 x 64 or
+less gets the image's own pixels (`mx_fcs` 1): the faded demon in Shibuya shows an even checkerboard again, at the
+image's resolution (also at a resolution_scale that is not a whole number). Pause menu, Options and Witch Time
+unchanged; the few X-shaped Witch Time stars are the game's own (the same at 16:9). **Not checked yet**: movies,
+a real ultrawide monitor. 
+
+**The chapter select's aim** (seen by hand on a 3440x1440 monitor, borderless, Unlocked): the aim ring sat right of where
+the dart lands (290 units at 21:9, on the wall instead of the chapter's disc). The aim (`0x7100920570`) is a point on the
+map moved by the stick, projected with the camera's viewport (1720x720 at 21:9: the screen getters' width), and kept on
+screen by the screen's corners mapped back with `0x7100d02d70` / `0x7100d02d80`, which stay 1280x720 (+304 / +308 of the
+graphics object; found with gdb on a run it starts, counting calls of the projection's users while the chapter select
+is up). `0x710091c298` stores the aim's position on screen through `0x7100a6f5a0` for the ring, whose drawing takes it as
+1280 wide. Overrides `screen_w` (only for the call at `0x71009207f8`: the getter's other 50 callers are not checked) and
+`aim_pos` (x times 1280 / the viewport's width). Checked at 21:9 (scripted pad, the save's chapter select): the ring on
+the disc at the start, at the right and top edges when pushed there, the dart lands at the ring (as at 16:9). `774b4c`
+(below) read from the screen's ratio did not move or round it.
+
+**The stretched menus** (the chapter select's ring an oval 1.34 wide at 21:9, its text, icons and prompts, the pause menu): the
+game has two projections for the UI. In a fight its camera, which `h_camera_perspective` makes wider; on flat screens 0 to
+1280 and 0 to 720 (`0x7100d07610`, one caller, `0x7100640218`), which filled the screen. Override `ui_ortho` gives the flat one
+the camera's space: the 1280 x 720 in the middle, unstretched, with more around it (x -220 to 1500 at 21:9). So the menus are in
+the middle now. What that needed besides:
+- **Sprites in the UI's screen mode** (+0x4c = 1: the dims, 16 x 9 in `core0030`, 100 x 100 in `menu0103`) are as large as the
+  screen by 1280.0 and 720.0, immediates: 32 loads in `eh.rs` `UI_SIZE_SITES` read `wt_ui_w_bits` / `wt_ui_h_bits`. Rust lifter
+  only: the stand-in of `compare_lift` has none of them, `--main` on a real dump will differ.
+- **What is 1280 across in its layout** (size at the element's +0x1a4, kinds 1 and 2, not screen mode, not turned, within 30 of
+  the middle; 1240 for thin bands): `h_ui_element` widens it. None has children. A whole screen keeps its shape and loses a
+  little at the edges, except the capture types 1000 and 1021, which are the screen's shape already. The cutscene bars are
+  this case. `h_clip_cmd` widens a rectangle over all of the 1280; only a heading's wipe clip is scaled (`ui_rule`), its child does not inherit that.
+- **Turned a quarter** the same strips (kind 2, the vignettes of `menu0034`, `menu0040`, `menu1010` ...) have their length in y.
+- **Named cases**: `menu000b` elements 1, 2 (a picture with a diagonal edge: the chapter select's banner and the Shop's two panels)
+  scaled evenly around a point of the diagonal, which stays; `menu006a` 20 to 23 (Play History's side strips, and all four when
+  narrower); `hud0430` and `hud0450` 2, 3 (the lines at the ends of their bands); `event0020` 7, 8 when narrower; `event0015`
+  (the credits' ring of pictures, widened as a whole; not seen). `ui_name` keeps a signature of the layout, so another
+  layout loaded at the same address is not taken for the old one, and it evicts instead of rescanning when full.
+- **The capture effects** (types 1000, 1011, 1020, 1021): they copy the window to a texture and draw it back with u = UI x / 1280,
+  v = UI y / 720, and u = 1 is the window's right edge. In the wider space that squeezed the picture into the middle 1280 by
+  0.744, and 1021's shader (`uiradialchromaticwithblack`) paints outside 0..1 black. That was the Yes / No dialog, `core0030`
+  element 25, its last: not a clip (a clip change did nothing). Overrides `capture_quad`, `gauss_quad` correct the rectangle.
+- **Points of the 3D view placed on the UI** (a reticle, an icon and a small gauge, hud0340, hud0360, hud0380, and the off-screen
+  arrow, hud0420): `0x7100626004` gives them in the camera's viewport, and they took that for UI x, 220 right of their target at
+  21:9, and culled at 1280. `ui_pos`, `ui_w`, `h_screen_w`; markers kept on screen (`0x71009a81f4`, `0x71009b0444`) by `ui_w`,
+  `ui_h`, `wt_ui_mark`. `h_screen_w` also answers the tests of a projected point (on screen? picks around the middle, the ray
+  through the middle: at 21:9 the right quarter of the screen counted as off screen) and the stick-aim cursor (`+0x17c40`, half
+  the getter's width at rest, so its ray left the middle), whose reticle (HUD `+0x173e0`) goes through `ui_pos`. Seen: enemy
+  gauges on their enemies out to 97 % of the width at 21:9, clamped to the real edges at 9:10; the lock-on marker on its enemy at
+  21:9.
+- **Narrower than 16:9**: `target_h` as `target_w`, and the two `720` loads in `UI_SIZE_SITES` (`0x7100c1a808`, `0x7100c1a8f4`)
+  that cut every plain dim at half the screen.
+- **Movies** are a UI quad of 1280 x 720, so `ui_ortho` puts them in the box: the viewport the movie pass set squeezed them twice.
+- **Screen filters** (the Clouds of Erasure's tint, a fight's opening): effect quads in front of the camera, sized for a 16:9 view
+  (`vs` FNV `ad7d2a1f`, `044ea2e3`, strips into the half-size target that bloom reads), so they stopped at hard edges, two sets
+  of them in a fight's opening. `stage_fnv` finds them, their viewport is as much wider. Their fragment stages read the screen
+  by `gl_FragCoord`. Wider than 16:9 only, tested on the game's viewport height, as the pass grows with the scale. The Practice
+  loading screen's haze is one too, though in the UI's flat projection (`vs` `9f4eba97`, x -8 to 1288, a gradient: a tone step of 5
+  to 7 / 255 at columns 265 and 1885 of 2150). That stage is the game's general effect quad, also the world's and in a 128 x 128
+  target, so it is taken only under a flat camera (`cb3_flat`, the camera's last row 0 0 0 1).
+- **Game Over** (`hud0100`, children of el 2; not `vs 7871`, which only draws the dotted lines): plain sprites at alpha 0.2 in the
+  1280 x 720's corners (el 17 to 20) and bands along its top and bottom, anchored at their ends (el 21, 22), a step of 56 levels at
+  the old edges (hiding them measured it). They go to the screen's corners, the bands as much longer; the speckles (el 11, 12) get
+  the rule's scale, as they drift 200 and their edge came to the 1280's.
+- **The rule under a heading** (10 elements in 377 layouts, `ui_rule`): one nine-grid picture, `0x7100c1b25c` keeps its caps' size,
+  so scale lengthens only the middle and the ornament stays. Half are wiped in by a clip whose rectangle cut them at the old left
+  edge; a child inherits a kind 6 clip's position, not its scale. Left end by `ui_x0`, right end unmoved, the wipe starts at the
+  screen's left. The tip goes with the line, away from the heading's text; on the Shop the parchment is drawn over it.
+
+Found by a survey of the screens and an audit of the code (the capture UV came from reading `0x710097308c`, the squeeze from
+measuring text against 16:9: 0.744 = 1280 / 1720, 0.5 at 32:9). Checked by screenshots on Linux at 21:9: chapter select, Chapter
+Menu, Difficulty, Play History, Options, the Yes / No dialog, the Shop, movies, a fight of Verse 7 with its opening and gauges, the
+ride's filter; at 32:9 the dialog; at 9:10 chapter select, Options, the dialog, a fight's HUD; at 16:9 the menus and that fight.
+From `graphics.ini`: 21:9 at scale 2.0 (dialog, the ride's filter), 16:10 at scale 2.0 (Play History). On an empty cache at 21:9
+the second start translated no fragment stage. The ride's prompts and HUD were seen at 21:9; the band of noise as its fight starts
+is the game's own wipe, 16:9 has it too. Game Over at 21:9, 32:9 and 9:10: no step at the old edges beyond the picture's own (1.3
+levels at most); the Practice loading screen at 21:9, also at scale 2.0: 0.7 / 255 at most; the rule at 21:9, 32:9, unmoved at 9:10.
+UK English (`SSBU_LANGUAGE=en-GB`, a language with 144 layouts of its own) at 21:9: Main Menu, Practice, the ride; its Game Over not seen.
+Not seen since: the verse result, the cutscene
+bars on the ride (not in its first 110 s), the stick-aim cursor, Windows.
+
+**The cutscene bars** (seen by hand on the spider ride, 3440x1440): the black bars are UI elements 1280 across, at y = -360 and
+360 of `huda02a` (the ride) and `event0020`, so they stopped at the 16:9 block. `h_ui_element` widens those two by the
+screen's ratio to 16:9, with the HUD at the edges or centred. Confirmed by hand on the ride; `event0020` was not seen.
+
+**The HUD's gauges** (health, Demon Slave, enemy bars; seen by hand): their fill is a scissor, made by the UI's clip
+element `0x7100c1dfe8` as (x + 640) * the target's width (`0x7100d02d90`) / 1280. Wider than 16:9 the UI is 720 * ratio
+wide around the middle, so a full health bar showed 74 % (HUD at the edges) or 20 % (centred) at 21:9. Found by logging
+the scissors per draw (16:9: `107 43 200 10`; 21:9: `0 43 268 10`), then gdb up from the game's scissor setter
+`0x7100cf0e08` through its callback `0x7100c03880` (a pointer at `0x71024abb98`, taken at `0x7100c1e3b0`). Overrides
+`target_w` (that width times 1280 / (720 * ratio), only for its two calls there) and `clip_cmd` (`0x7100d04414`, only for
+its call at `0x7100c1e388`: the rectangle on the stack moved right by half the extra width before it is copied). Checked
+at 21:9 in a Verse 3 fight: the scissors equal 16:9's, the three bars full, with the HUD at the edges and centred.
+Wider than 16:9 only. **Verse results screen**: reported not reaching the right edge; not reproduced yet (a scripted
+run does not finish a verse).
+
+What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
+- **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
+  callers: the NVN window set-up `0x7100d0c990` (the window textures) and the per-frame docked / handheld check
+  `0x7100cfdc50`. Host overrides `screen_docked` / `screen_handheld` (`runtime/game_shim_eh.c`): the height stays,
+  the width follows the ratio. Alone, this squeezes or stretches the picture: the scene is still drawn at 1600x896 and
+  put into the window texture.
+- **The render-target heap**: from 1944x900 up the start-up failed (`HOST SIGNAL 11` at address 8 in `f_7100b845a0`:
+  the main loop's object list was never made). The renderer set-up `0x710069c698` gave up when its 84th render target
+  (`0x7100cfa5c8`, 1600x896) did not fit the heap the targets and the window textures share: 0x10400000 bytes, an
+  immediate at `0x710069d164`, in the config passed to the graphics set-up `0x7100d01380` (+0x90). Override
+  `gfx_setup` makes it grow with the width (21:9: 0x15600000, 32:9: 0x20a00000), and `r2_imports.c` tells the game it
+  has as much more memory (it sizes its heap from that; the blocks it takes are fixed).
+- **The cameras**: `0x7100cba90c(camera, fov, near, far, width, height)` sets a perspective with aspect = width / height
+  (camera + 0x3d8; the projection is `0x7100cb9920`; +0x3d0 near, +0x3d4 far, +0x3dc vertical angle). Its callers give
+  fixed 1280x720 (`0x7100624e10`, `0x7100c04b00`), 256 high (`0x7100646b64`), or their own. Override
+  `camera_perspective`: a 16:9 size gets the screen's shape; narrower than 16:9 the vertical angle grows too
+  (2 atan(tan(fov / 2) * (16/9) / ratio)), as in `camera_fov` for `0x7100cba97c`, the angle alone, which the scenes'
+  cameras call every frame. All cameras seen on the title had aspect 16/9 exactly before.
+- **The scene's resolution**: the game keeps making its scene targets at 16:9 sizes (1600x896, 1440x816 and their halves
+  are immediates in `0x710069c698` and the dynamic resolution's code). The Vulkan backend makes those (a 16:9 shape,
+  not the window's) `ratio * 9/16` times wider (`nvn_vk_draw.c` `rs_xstretch`, `rs_169_class`), on top of
+  resolution_scale; scaling is on at 1.0 then too. `gl_FragCoord` takes an x and a y factor now (`mx_fcs`, `mx_fcs_y`;
+  push constants 20 bytes; the fragment stages' hash key `rs1` became `rs2`, so a run with a scale translates its
+  fragment stages once again: about two minutes of held loading screens, once). 21:9 at 1.0: 47 images scaled, 138 MB;
+  at 1.2: 196 MB.
+- **16/9 as a constant**: `mov/movk 0x3fe38e39` at 8 places (`0x7100706b70`, a getter; `774b4c`, `c2abe8`, `c30668`,
+  `c81288`, `c826e8`, `ca8dd4`, `ca921c`; most divide it by a width / height). Reading all eight from the screen's
+  ratio changed nothing on the title; they are left as they are (candidates if gameplay shows a screen-space effect or
+  a pointer out of place). theboy181's 21:9 patch for 1.1.0 (one `fmov s1, #2.375`, made for emulators that stretch the
+  picture) is at one of these.
+- Measured at 16:9 without the key: the same pictures as before (two runs differ by 0.1 % of pixels, stars); the overrides
+  only pass through.
+
+Next: a run on a 21:9 monitor.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
@@ -1308,6 +1497,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - `nvnCommandBufferDispatchComputeIndirect` (Vulkan) reads the group counts from guest memory after a sync.
 - `nn::os` ReaderWriterLock has no writer preference.
 - Preparation adds one integer key (attribute 2, `job_prep`): another key in a later chapter still compiles at its first draw.
+- `aspect_ratio` (`game_shim_eh.c`): checked on the title screen and 4 minutes of Shibuya (section "Aspect ratios").
 - The device fields the sdk's texture code reads are modelled (`nvn_sdk.c`); "compression supported" (+0x1b34 = 1) is
   inferred, its writer was not found.
 - Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel

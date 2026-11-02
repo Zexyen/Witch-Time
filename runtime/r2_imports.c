@@ -39,10 +39,18 @@ static SRWLOCK g_heap_lock = SRWLOCK_INIT;
 
 static uint64_t used_memory(void) { return IMAGE_SIZE + 0x100000ull; }   /* program image + main thread stack */
 
+/* [witchtime] RECOMPS_ASPECT wider than 16:9 (game_shim_eh.c h_gfx_setup): the render-target heap, 0x10400000, grows with the
+ * width; the game is told it has as much more memory (it sizes its heap from this; the blocks it takes are fixed) */
+static uint64_t aspect_extra(void) {
+    const char *e = getenv("RECOMPS_ASPECT");
+    double a = e ? atof(e) : 0.0;
+    return a > 16.0 / 9.0 && a <= 8.0 ? ((uint64_t)(0x10400000 * (a * 9.0 / 16.0 - 1.0)) + 0x1fffff) & ~0x1fffffull : 0;
+}
+
 static void os_QueryMemoryInfo(Ctx *c) {
     uint64_t out = A0;
     AcquireSRWLockShared(&g_heap_lock);
-    wr64(out + 0x00, g_total_available);
+    wr64(out + 0x00, g_total_available + aspect_extra());
     wr64(out + 0x08, used_memory() + g_heap_size);
     wr64(out + 0x10, g_heap_size);
     wr64(out + 0x18, g_heap_used);

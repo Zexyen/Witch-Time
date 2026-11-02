@@ -215,3 +215,7 @@ list), `gen/make_gen.py` (layout from DYNAMIC, DT_INIT, NVN 13.3.2 device answer
   process name (`prctl(PR_SET_NAME)`, Linux; threads inherit it), SDL app metadata (name "Witch Time", app id `witchtime`),
   window title "Witch Time" (SSBU_TITLE still overrides), class `witchtime_window`, software keyboard dialog
   "Software keyboard (Witch Time)", the online-mode message box.
+- 2026-10-28, aspect ratios (`[witchtime]`, docs/STATUS.md "Aspect ratios"): `gfx_options.c|h` `aspect_ratio` (handed on as
+  RECOMPS_ASPECT); `r2_imports.c` more application memory for the wider render-target heap; `nvn_vk_draw.c` 16:9 targets in a
+  wider window made wider (`rs_xstretch`, `rs_169_class`), `mx_fcs_y` (push constants 16 -> 20 bytes, also `nvn_vk_m4.c`);
+  `mx_translate.c` `gl_FragCoord.y` scaled by `mx_fcs_y`; `nvn_vk_m4.c` fragment-stage key `rs1` -> `rs2`.
