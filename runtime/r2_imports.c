@@ -74,7 +74,7 @@ static void os_SetMemoryHeapSize(Ctx *c) {
         if (size) {
             /* MEM_WRITE_WATCH: the renderer asks the OS which texture pages the game wrote (nvn_gl.c ww_newest). Without it
              * every texture in this heap was hashed in full every batch: 40-54 MB, 2-4 ms of the render thread per frame in
-             * a fight (finding 88). SSBU_NO_WRITEWATCH=1 (nvn_gl.c) still turns the use of it off. */
+             * a fight (finding 88). WT_NO_WRITEWATCH=1 (nvn_gl.c) still turns the use of it off. */
             g_heap = VirtualAlloc(NULL, (SIZE_T)size, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE);
             if (!g_heap) g_heap = VirtualAlloc(NULL, (SIZE_T)size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             if (g_heap) { g_heap_size = size; void watch_heap_created(uint64_t); void watch_heap_bounds(uint64_t, uint64_t); watch_heap_bounds((uint64_t)(uintptr_t)g_heap, size); watch_heap_created((uint64_t)(uintptr_t)g_heap); }

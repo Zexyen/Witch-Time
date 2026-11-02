@@ -14,7 +14,7 @@ scaling, 1.25 here).
 A run takes /tmp/b3_bench.lock (another session sharing the PC starts no game run while it is there) and waits while
 the lock of someone else is there or any "Witch Time" process runs (it never stops one). It records the load average
 and the other processes that have the GPU open, before and after. Results: build/perf/<scene>_<scale>[_<tag>]/:
-log.txt, frametimes.txt (SSBU_FRAMETIMES), gputimes.txt (SSBU_VK_GPUTIME + SSBU_GPUTIMES), meta.json.
+log.txt, frametimes.txt (WT_FRAMETIMES), gputimes.txt (WT_VK_GPUTIME + WT_GPUTIMES), meta.json.
 """
 import json, os, re, shutil, subprocess, sys, time
 
@@ -25,7 +25,7 @@ FIGHT = ('0.00+0.15:V 0.35+0.15:V 0.70+0.15:V 1.05+0.15:C 1.40+0.15:C 1.90+0.15:
          '4.00+0.60:l 4.70+0.15:C 5.00+0.40:VS').split()        # one 5.6 s cycle of the stage-5 fight pattern
 SCENES = {'shibuya': dict(secs=330, fight_from=40, first=1500),
           'tokyo': dict(secs=700, fight_from=560, first=19800),
-          'cutscene': dict(secs=300, fight_from=None, first=None, env={'SSBU_CUTSCENE_FPS': '60'})}
+          'cutscene': dict(secs=300, fight_from=None, first=None, env={'WT_CUTSCENE_FPS': '60'})}
 
 
 DESKTOP = {'kwin_wayland', 'Xwayland', 'plasmashell', 'WebKitWebProces', 'monocode', 'xdg-desktop-por', 'kded6', 'krunner',
@@ -95,13 +95,13 @@ def cmd_run(argv):
     ud = '/tmp/b3_perf_userdata_' + name
     shutil.rmtree(ud, ignore_errors=True); shutil.copytree(save, ud)
     w, h = round(1600 * float(scale) / dscale), round(900 * float(scale) / dscale)
-    env = dict(os.environ, SSBU_AUDIO_MUTE='1', SSBU_PRESS='Z,25,3', SSBU_SHOW='0', SSBU_FOCUS_NOTIFY='0',
-               SSBU_GRAPHICS_CONFIG=ini, SSBU_VK_SCALE=scale, SSBU_WINDOW='%dx%d' % (w, h),
-               SSBU_FRAMETIMES=os.path.join(out, 'frametimes.txt'), SSBU_VK_GPUTIME='1', SSBU_GPUTIMES=os.path.join(out, 'gputimes.txt'),
-               SSBU_ROMFS=os.path.join(ROOT, 'targets', 'romfs'), SSBU_USERDATA=ud)
+    env = dict(os.environ, WT_AUDIO_MUTE='1', WT_PRESS='Z,25,3', WT_SHOW='0', WT_FOCUS_NOTIFY='0',
+               WT_GRAPHICS_CONFIG=ini, WT_VK_SCALE=scale, WT_WINDOW='%dx%d' % (w, h),
+               WT_FRAMETIMES=os.path.join(out, 'frametimes.txt'), WT_VK_GPUTIME='1', WT_GPUTIMES=os.path.join(out, 'gputimes.txt'),
+               WT_ROMFS=os.path.join(ROOT, 'targets', 'romfs'), WT_USERDATA=ud)
     env.update(sc.get('env', {}))
     if sc['fight_from'] is not None:
-        env['SSBU_SCRIPT'] = fight_script(sc['fight_from'], sc['secs'])
+        env['WT_SCRIPT'] = fight_script(sc['fight_from'], sc['secs'])
     env.update(extra)
     while True:                                     # wait for the PC: someone else's lock, or any game running
         if not os.path.exists(LOCK) and not game_pids():

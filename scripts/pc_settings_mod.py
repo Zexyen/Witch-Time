@@ -252,7 +252,7 @@ def main(argv):
         tmp = dump = tempfile.mkdtemp(prefix='wtpcmod_')
         exe = os.path.join(REPO, 'build', 'witch-time-game' + ('.exe' if os.name == 'nt' else ''))
         r = subprocess.run([exe, os.path.join(REPO, 'targets', 'exefs', 'main.elf'), '--pkz-dump', tmp, 'ui/ui_menu', 'ui/ui_core'],
-                           cwd=os.path.join(REPO, 'build'), env=dict(os.environ, SSBU_ROMFS=romfs), capture_output=True, text=True)
+                           cwd=os.path.join(REPO, 'build'), env=dict(os.environ, WT_ROMFS=romfs), capture_output=True, text=True)
         if r.returncode:
             sys.exit('witch-time-game --pkz-dump failed:\n' + r.stdout[-2000:] + r.stderr[-2000:])
     try:

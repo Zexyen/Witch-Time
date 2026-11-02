@@ -37,7 +37,7 @@ static void die(const char *fmt, ...) {
 
 static int load_image(void) {
     char path[1024];
-    const char *env = getenv("SSBU_SDK_ELF");
+    const char *env = getenv("WT_SDK_ELF");
     const char *g_elf = __argc > 1 ? __argv[1] : NULL;       /* same argument boot.c uses for main.elf */
     if (env && env[0]) snprintf(path, sizeof path, "%s", env);
     else {
@@ -47,7 +47,7 @@ static int load_image(void) {
         snprintf(slash ? slash + 1 : path, 16, "sdk.elf");
     }
     FILE *f = fopen(path, "rb");
-    if (!f) { printf("sdklift: cannot open %s (set SSBU_SDK_ELF): lifted SDK functions are unavailable\n", path); return 0; }
+    if (!f) { printf("sdklift: cannot open %s (set WT_SDK_ELF): lifted SDK functions are unavailable\n", path); return 0; }
     fseek(f, 0, SEEK_END);
     g_file_size = (size_t)ftell(f);
     fseek(f, 0, SEEK_SET);

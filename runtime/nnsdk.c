@@ -27,29 +27,19 @@ static void os_GetHostArgv(Ctx *c) { RET(g_argv); }
 
 /* ---- nn::os: time. The Switch system tick runs at 19.2 MHz. */
 #define TICK_HZ 19200000ULL
-/* Test aid SSBU_TICK_CALLERS=1 (track V session 4, looking for what seeds the game's random numbers): every distinct
+/* Test aid WT_TICK_CALLERS=1 (track V session 4, looking for what seeds the game's random numbers): every distinct
  * return address of a caller of the clock functions is printed once. */
 void host_clock_caller(const char *what, uint64_t lr) {
     static int on = -1, n;
     static uint64_t seen[512];
-    if (on < 0) on = getenv("SSBU_TICK_CALLERS") != NULL;
+    if (on < 0) on = getenv("WT_TICK_CALLERS") != NULL;
     if (!on) return;
     for (int i = 0; i < n && i < 512; i++) if (seen[i] == lr) return;
     if (n < 512) { seen[n++] = lr; printf("clock caller: %s from %llx\n", what, (unsigned long long)lr); }
 }
-/* SSBU_FIXED_SEED (test switch): the clock reads that the game turns into random-number seeds give a constant. Found
- * with SSBU_TICK_CALLERS: the return addresses below are followed within 0x90 bytes by the Mersenne-twister
- * initialisation constant 0x6C078965 (main 13.0.4: tick at 7100047d20 -> generator at 7100047d60; tick at 7100138534
- * -> three generators at 710013853c / 8588 / 85e4; time at 710366d1f0 / 710366d388 -> generators at 710366d12c / d418). */
-int host_fixed_clock(uint64_t lr) {
-    static int on = -1;
-    if (on < 0) { const char *e = getenv("SSBU_FIXED_SEED"); on = e && *e; if (on) printf("fixed seed: the clock reads at 7100047d20, 7100138534, 710366d1f0, 710366d388 return a constant (SSBU_FIXED_SEED)\n"); }
-    return on && (lr == 0x7100047d20ULL || lr == 0x7100138534ULL || lr == 0x710366d1f0ULL || lr == 0x710366d388ULL);
-}
 static void os_GetSystemTick(Ctx *c) {
     LARGE_INTEGER now, freq;
     host_clock_caller("GetSystemTick", c->x[30]);
-    if (host_fixed_clock(c->x[30])) { RET(0x123456789ULL); return; }
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
     RET((uint64_t)((double)now.QuadPart * (double)TICK_HZ / (double)freq.QuadPart));
@@ -87,8 +77,8 @@ static void os_AllocateAddressRegion(Ctx *c) {
     RET(p ? 0 : 0x1015);                                 /* any non-zero nn::Result means failure */
 }
 /* Track V session 14 (the stalls at a match end: thousands of page faults in the game's allocator): what these two calls
- * cost is COUNTED (SSBU_MEMSTAT=1: a line every 2,000 calls: calls, megabytes, milliseconds inside the two handlers).
- * SSBU_MEM_KEEP=1 (OFF by default, not proven): FreeMemoryPages leaves the pages committed and clears them (the game's
+ * cost is COUNTED (WT_MEMSTAT=1: a line every 2,000 calls: calls, megabytes, milliseconds inside the two handlers).
+ * WT_MEM_KEEP=1 (OFF by default, not proven): FreeMemoryPages leaves the pages committed and clears them (the game's
  * allocator takes pages it commits again as zero-filled), so nothing is decommitted, no page comes back through a fault
  * and no other CPU is interrupted for the unmapping; the price is that freed memory stays in the working set. */
 static volatile LONG64 g_mp_calls[2], g_mp_bytes[2], g_mp_ticks[2];
@@ -104,14 +94,13 @@ static void mp_note(int i, uint64_t bytes, LARGE_INTEGER t0) {
                g_mp_keep ? " (kept committed, cleared)" : " (decommitted)", (long long)g_mp_calls[1], (long long)(g_mp_bytes[1] >> 20), (double)g_mp_ticks[1] * 1000.0 / (double)fq.QuadPart);
     }
 }
-static void mp_init(void) { const char *e = getenv("SSBU_MEM_KEEP"), *s = getenv("SSBU_MEMSTAT"); g_mp_stat = s && atoi(s); g_mp_keep = e && atoi(e); }
+static void mp_init(void) { const char *e = getenv("WT_MEM_KEEP"), *s = getenv("WT_MEMSTAT"); g_mp_stat = s && atoi(s); g_mp_keep = e && atoi(e); }
 static void os_AllocateMemoryPages(Ctx *c) {
     LARGE_INTEGER t0;
     if (g_mp_keep < 0) mp_init();
     QueryPerformanceCounter(&t0);
     uint64_t n = A1;
     int ok = VirtualAlloc(P(0), (SIZE_T)A1, MEM_COMMIT, PAGE_READWRITE) != NULL;
-    { void r1_on_commit(void *, size_t); r1_on_commit(P(0), (size_t)A1); }      /* R1 (r1_state.c): nothing without SSBU_R1_MARK */
     mp_note(0, n, t0);
     RET(ok ? 0 : 0x1015);
 }
@@ -129,8 +118,7 @@ static void os_FreeMemoryPages(Ctx *c) {
             if (mi.State == MEM_COMMIT && (mi.Protect & PAGE_READWRITE)) memset(p, 0, (size_t)(re - p));
             p = re;
         }
-    } else { void r1_on_decommit(void *, size_t); r1_on_decommit(P(0), (size_t)A1);      /* R1 (r1_state.c): marks the pages (nothing without SSBU_R1_MARK) */
-             cxxrt_mem_changed(A0, A1); VirtualFree(P(0), (SIZE_T)A1, MEM_DECOMMIT); cxxrt_mem_changed(A0, A1); }      // PR #2 (jfb112697): report the decommitted range, before and after
+    } else { cxxrt_mem_changed(A0, A1); VirtualFree(P(0), (SIZE_T)A1, MEM_DECOMMIT); cxxrt_mem_changed(A0, A1); }      // PR #2 (jfb112697): report the decommitted range, before and after
     mp_note(1, n, t0);
     RET(0);
 }
@@ -470,10 +458,10 @@ static void mii_Calc_GetSize(Ctx *c) { RET(rd64(A0)); }
 /* ---- nn::util string and bit helpers */
 static void util_SNPrintf(Ctx *c) {                       /* (char *buf, size_t size, const char *fmt, ...) */
     const char *fmt = (const char *)(uintptr_t)A2;
-    /* Session 8 (track V), SSBU_SNPRINTF_LOG=1: how often the game formats and what one call costs. A line per 2,000 calls:
+    /* Session 8 (track V), WT_SNPRINTF_LOG=1: how often the game formats and what one call costs. A line per 2,000 calls:
      * the frame, the time those calls took, the slowest one with its format and caller. */
     static int lg = -1; static LONG64 n_calls, tk_sum, tk_max; static char max_fmt[64]; static uint64_t max_ra;
-    if (lg < 0) lg = getenv("SSBU_SNPRINTF_LOG") && atoi(getenv("SSBU_SNPRINTF_LOG"));
+    if (lg < 0) lg = getenv("WT_SNPRINTF_LOG") && atoi(getenv("WT_SNPRINTF_LOG"));
     LARGE_INTEGER q0, q1;
     if (lg) QueryPerformanceCounter(&q0);
     if (format_has_float(fmt)) guest_trap("nn::util::SNPrintf with a floating-point conversion is not supported", c->x[30] - 4);

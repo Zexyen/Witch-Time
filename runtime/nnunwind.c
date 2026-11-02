@@ -26,7 +26,7 @@ ecomp_nro.py) gives
  *     function that called back into the guest): no handler before that point = terminate.
  *   - Frames of the main executable are walked like any other but cannot be resumed: main is lifted without resume
  *     entries. A clean-up pad there is skipped with a warning; a handler there stops with a report.
- * Environment: SSBU_UNWIND_LOG=1 prints every frame of every throw (the first 3 throws are always summarised). */
+ * Environment: WT_UNWIND_LOG=1 prints every frame of every throw (the first 3 throws are always summarised). */
 #include <windows.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -36,8 +36,6 @@ ecomp_nro.py) gives
 #include "hostrt.h"
 #include "eh_runtime.h"
 
-typedef struct { uint64_t lp; void (*fn)(Ctx *, uint64_t); } NroResume;
-int nro_unwind_module(uint64_t pc, uint64_t *base, uint64_t *size, const NroResume **tab, int *count, const char **name);   /* nnro.c */
 int cxxrt_readable(uint64_t p, size_t n);               /* nncxxrt.c */
 
 static int g_log;
@@ -225,17 +223,8 @@ void nro_catch_call(Ctx *c, void (*body)(Ctx *, uint64_t)) {
 
 /* ---------------------------------------------------------------- the unwinder (eh_runtime.h: EhRaiseFn) */
 static void (*resume_entry(uint64_t lp, const char **name))(Ctx *, uint64_t) {
-    uint64_t base, size; const NroResume *tab = NULL; int count = 0;
     *name = "main";
-    if (!nro_unwind_module(lp, &base, &size, &tab, &count, name)) return eh_main_resume_entry(lp);     /* main: NULL unless it was lifted with resume entries (ssbu_game_eh.dll) */
-    if (!tab) return NULL;
-    int lo = 0, hi = count - 1;
-    while (lo <= hi) {
-        int mid = (lo + hi) / 2;
-        if (tab[mid].lp == lp) return tab[mid].fn;
-        if (tab[mid].lp < lp) lo = mid + 1; else hi = mid - 1;
-    }
-    return NULL;
+    return eh_main_resume_entry(lp);     /* NULL unless main was lifted with resume entries */
 }
 
 static void regs_from(Ctx *c, Regs *r) {
@@ -327,6 +316,6 @@ void unwind_report(FILE *out) {
 }
 
 void register_unwind_imports(void) {
-    g_log = getenv("SSBU_UNWIND_LOG") != NULL;
+    g_log = getenv("WT_UNWIND_LOG") != NULL;
     eh_set_unwinder(eh_raise);
 }

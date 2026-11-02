@@ -5,7 +5,7 @@
  * does not have the other four. A directory that is never found is wrong for save data the game has
  * written itself, so OpenDirectory is REPLACED here (this file registers after nnfs.c) and the rest added.
  * The mount-name mapping is the one documented at the top of nnfs.c and must stay identical to it:
- *   rom   -> %SSBU_ROMFS% or ..\romfs,   any other mount -> ..\userdata\<mount name>
+ *   rom   -> %WT_ROMFS% or ..\romfs,   any other mount -> ..\userdata\<mount name>
  *
  * [game] 0x71037c4360: OpenDirectory(&handle, path, 3); GetDirectoryEntryCount(&count, handle);
  * allocates count * 0x310 bytes; ReadDirectory(&read, entries, handle, count); so DirectoryHandle is one
@@ -41,7 +41,7 @@ int fs_dir_roots(const char *guest, char roots[][MAX_PATH], uint32_t *result);  
 int fs_dir_hidden(const char *guest_dir, const char *name);
 uint32_t fs_delete_directory(const char *guest);
 static int dir_host_path(const char *guest, char *out) {  /* superseded by fs_dir_roots (kept for the self-test's scratch folder) */
-    const char *env = getenv("SSBU_ROMFS");
+    const char *env = getenv("WT_ROMFS");
     const char *colon = guest ? strchr(guest, ':') : NULL;
     if (!colon) return 0;
     size_t n = (size_t)(colon - guest);
@@ -166,7 +166,7 @@ int nnfsdir_selftest(Ctx *c) {
     char base[MAX_PATH], p[MAX_PATH];
     uint32_t fs_mount_plain(const char *name, const char *host_dir);
     GetTempPathA(MAX_PATH - 64, base);
-    snprintf(base + strlen(base), 64, "ssbu_fsdir_selftest_%lu", (unsigned long)GetCurrentProcessId());
+    snprintf(base + strlen(base), 64, "wt_fsdir_selftest_%lu", (unsigned long)GetCurrentProcessId());
     CreateDirectoryA(base, NULL);
     snprintf(p, sizeof p, "%s\\d", base); CreateDirectoryA(p, NULL);
     snprintf(p, sizeof p, "%s\\d\\sub", base); CreateDirectoryA(p, NULL);

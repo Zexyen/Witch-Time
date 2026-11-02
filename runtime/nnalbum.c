@@ -1,4 +1,4 @@
-/* nn::album: the console's screenshot / video album, kept in <userdata>\album (<userdata> = %SSBU_USERDATA% or ..\userdata).
+/* nn::album: the console's screenshot / video album, kept in <userdata>\album (<userdata> = %WT_USERDATA% or ..\userdata).
  *
  * LIFTED from the SDK (sdklift_gen.c), not here: MovieMakerMovieParameter (constructor, setters, GetAudioBitRate),
  * GetMovieMakerRequiredWorkMemorySize / Alignment, GetAlbumFileCreatedTime, ConvertAlbumEntry::ConvertToCapsrv.
@@ -80,7 +80,7 @@
 
 #define CAPS_FILE_NOT_FOUND ((uint32_t)(206 | (23 << 9)))
 #define CAPS_OUT_OF_RANGE ((uint32_t)(206 | (8 << 9)))
-const char *fs_user_root(void);                           /* nnfs.c: %SSBU_USERDATA% or ..\userdata */
+const char *fs_user_root(void);                           /* nnfs.c: %WT_USERDATA% or ..\userdata */
 static char g_album_dir[MAX_PATH];
 static const char *album_dir(void) {
     if (!g_album_dir[0]) snprintf(g_album_dir, sizeof g_album_dir, "%s\\album", fs_user_root());
@@ -692,7 +692,7 @@ static int album_selftest_files(Ctx *c) {
     uint8_t user_in[16], user_out[0x200], work[64];
     strcpy(saved_dir, g_album_dir);
     GetTempPathA(MAX_PATH, tmp);
-    snprintf(g_album_dir, MAX_PATH, "%sssbu_album_selftest2_%lu", tmp, (unsigned long)GetCurrentProcessId());
+    snprintf(g_album_dir, MAX_PATH, "%swt_album_selftest2_%lu", tmp, (unsigned long)GetCurrentProcessId());
     CreateDirectoryA(g_album_dir, NULL);
     uint8_t *px = malloc(1280 * 720 * 4), *out = malloc(1280 * 720 * 4), *block = malloc(0x40000);
     for (int i = 0; i < 1280 * 720; i++) { px[i * 4] = (uint8_t)(i % 1280); px[i * 4 + 1] = (uint8_t)(i / 1280); px[i * 4 + 2] = (uint8_t)(i >> 3); px[i * 4 + 3] = 0xff; }
@@ -853,7 +853,7 @@ int nnalbum_selftest(Ctx *c) {
     char saved_dir[MAX_PATH], tmp[MAX_PATH], pattern[MAX_PATH];
     strcpy(saved_dir, g_album_dir);
     GetTempPathA(MAX_PATH, tmp);
-    snprintf(g_album_dir, MAX_PATH, "%sssbu_album_selftest", tmp);
+    snprintf(g_album_dir, MAX_PATH, "%swt_album_selftest", tmp);
     uint8_t *px = malloc(1280 * 720 * 4);
     for (int i = 0; i < 1280 * 720; i++) { px[i * 4] = (uint8_t)i; px[i * 4 + 1] = (uint8_t)(i >> 8); px[i * 4 + 2] = (uint8_t)(i >> 16); px[i * 4 + 3] = 0xff; }
     c->x[0] = P(px); c->x[1] = 1280 * 720 * 4; c->x[2] = 0; c->x[3] = 0; album_SaveScreenshot(c);

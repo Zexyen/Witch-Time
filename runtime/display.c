@@ -22,7 +22,7 @@ void os_signal_event(uint64_t key);
 static HWND g_hwnd;
 static volatile LONG g_ready;
 static volatile LONG64 g_frames;
-volatile LONG64 g_prof15_frame;                       /* presented frames, read by prof15.c (SSBU_PROF15, test only; included by boot.c) */
+volatile LONG64 g_prof15_frame;                       /* presented frames, read by prof15.c (WT_PROF15, test only; included by boot.c) */
 void nvn_gl_start(void *hwnd);                        /* nvn_gl.c */
 void nvn_gl_report(FILE *out);
 static uint64_t g_vsync_event;
@@ -38,7 +38,7 @@ static LARGE_INTEGER g_freq;
  * shown are released. A frame queued between refresh n and n+1 is shown at n+1, and no sooner than `interval`
  * refreshes after the frame before it (nvnWindowSetPresentInterval); the game is held in its wait for the window
  * texture (nvnSyncWait on the sync of nvnWindowAcquireTexture), which is AFTER it has read the refresh count, as on
- * the console. SSBU_OLD_PACING=1: the two clocks as before. SSBU_CLOCKSTAT=1: one line every 600 presented frames. */
+ * the console. WT_OLD_PACING=1: the two clocks as before. WT_CLOCKSTAT=1: one line every 600 presented frames. */
 static int g_old_pacing = -1, g_clockstat;
 static volatile LONG64 g_vsync_n;            /* refreshes passed (published after the event was signalled) */
 static volatile LONG64 g_vsync_signals, g_vsync_late;
@@ -48,7 +48,7 @@ static LONG64 g_latch;                       /* refresh at which the last queued
 static volatile LONG g_latch_pending;        /* a frame was queued and nobody has waited for its refresh yet */
 static volatile LONG64 g_tick_at[16];        /* L1: QPC time at which tick n was published (index n & 15) */
 static int old_pacing(void) {
-    if (g_old_pacing < 0) { const char *e = getenv("SSBU_OLD_PACING"); g_old_pacing = e && atoi(e) != 0; g_clockstat = getenv("SSBU_CLOCKSTAT") && atoi(getenv("SSBU_CLOCKSTAT")) != 0; }
+    if (g_old_pacing < 0) { const char *e = getenv("WT_OLD_PACING"); g_old_pacing = e && atoi(e) != 0; g_clockstat = getenv("WT_CLOCKSTAT") && atoi(getenv("WT_CLOCKSTAT")) != 0; }
     return g_old_pacing;
 }
 static void vsync_test_key(void);
@@ -60,15 +60,15 @@ static void vsync_test_key(void);
  *     (display_present_plan on the game's thread decides the tick, display_hold_present on the render thread waits for
  *     it just before vkQueuePresentKHR), not "tick + the time the frame took". A frame that is LATE (queued after the
  *     tick it was due at) is presented at once, as before. The game is released at the same tick as before: its own
- *     timing does not change. SSBU_PACE_HOLD=0: presents as before (when ready).
- * (3) DISPLAY LOCK (vsync = display | auto in graphics.ini, SSBU_PACE=display|clock): when the measured refresh rate is
+ *     timing does not change. WT_PACE_HOLD=0: presents as before (when ready).
+ * (3) DISPLAY LOCK (vsync = display | auto in graphics.ini, WT_PACE=display|clock): when the measured refresh rate is
  *     within 1.1 % of k x 60 Hz (60, 119.88, 120, 240 ...), the tick is every k-th vblank + half a refresh (the present
  *     then lands in the middle between two vblanks: as far from the compositor's latch as it can be), so every game
  *     frame is on screen for exactly k refreshes. The game then runs at refresh / k frames per second (59.94 on a
  *     119.88 Hz panel: 0.1 % slow). Any other panel (75, 100, 144, 165 Hz): our own 60.000 Hz clock, presents at the tick.
  * (4) What the screen got: for every present, the vblank that follows it; a frame's time on screen = the vblanks between
  *     its present and the next frame's (0 = replaced before it was shown). Histogram in the report and per 600 frames
- *     with SSBU_PACESTAT=1. This is the compositor model "the last picture presented before a vblank is what the next
+ *     with WT_PACESTAT=1. This is the compositor model "the last picture presented before a vblank is what the next
  *     refresh shows" on MEASURED vblank times; it is not a camera. */
 typedef struct { HDC hDc; UINT hAdapter; LUID AdapterLuid; UINT VidPnSourceId; } KmtOpenAdapterFromHdc;
 typedef struct { UINT hAdapter; UINT hDevice; UINT VidPnSourceId; } KmtWaitVblank;
@@ -103,7 +103,7 @@ static LONG64 g_ps_phase[10];                          /* where in the refresh t
  * 11-12 ms in the next four (every game thread 40 % slower, 57.5-59.3 fps instead of 60.0): the scheduler had the game's
  * threads on efficiency cores. Now: the process says it is not to be throttled (ProcessPowerThrottling: execution speed
  * off = high quality of service) and the threads that make a frame (the game's main thread, the render thread, the
- * refresh clock) are restricted to the CPU sets of the highest efficiency class. SSBU_PCORES=0: as before.
+ * refresh clock) are restricted to the CPU sets of the highest efficiency class. WT_PCORES=0: as before.
  * The report says on which class of core the game's thread was seen at each present. */
 static ULONG g_pc_ids[128];
 static int g_pc_n = -1, g_pc_on = 1;
@@ -111,7 +111,7 @@ static uint8_t g_cpu_class[256], g_class_max;
 static volatile LONG64 g_pc_frames, g_pc_frames_slow;
 static void pcore_init(void) {
     ULONG len = 0;
-    const char *e = getenv("SSBU_PCORES");
+    const char *e = getenv("WT_PCORES");
     g_pc_n = 0;
     if (e && !atoi(e)) g_pc_on = 0;
     GetSystemCpuSetInformation(NULL, 0, &len, GetCurrentProcess(), 0);
@@ -132,7 +132,7 @@ static void pcore_init(void) {
     free(buf);
     if (!nslow) { g_pc_n = 0; printf("display: CPU: %d logical processors of one class: nothing to choose%c", ncpu, 10); return; }
     printf("display: CPU: %d logical processors, %d of the performance class, %d of an efficiency class: %s%c", ncpu, g_pc_n, nslow,
-           g_pc_on ? "the game's main thread, the render thread and the refresh clock run on the performance class only; the process asks not to be throttled (SSBU_PCORES=0: left to the system)" : "left to the system (SSBU_PCORES=0)", 10);
+           g_pc_on ? "the game's main thread, the render thread and the refresh clock run on the performance class only; the process asks not to be throttled (WT_PCORES=0: left to the system)" : "left to the system (WT_PCORES=0)", 10);
     if (g_pc_on) {
         PROCESS_POWER_THROTTLING_STATE st;
         memset(&st, 0, sizeof st);
@@ -174,24 +174,24 @@ static DWORD WINAPI vblank_thread(LPVOID arg) {
     LARGE_INTEGER now;
     LONGLONG prev = 0, first[24];
     int nfirst = 0, fails = 0;
-    LONGLONG gap_at = 0;                                                   /* TEST (finding 122): SSBU_VBLANK_GAP=<s>,<ms> = no vblank seen for <ms> once, <s> after start */
+    LONGLONG gap_at = 0;                                                   /* TEST (finding 122): WT_VBLANK_GAP=<s>,<ms> = no vblank seen for <ms> once, <s> after start */
     int gap_ms = 0;
-    { const char *e = getenv("SSBU_VBLANK_GAP"); if (e) { double s = atof(e); const char *c = strchr(e, ','); gap_ms = c ? atoi(c + 1) : 0; QueryPerformanceCounter(&now); if (s > 0 && gap_ms > 0) gap_at = now.QuadPart + (LONGLONG)(s * (double)g_freq.QuadPart); } }
-    LONGLONG drift_at = 0, drift_end = 0;                                  /* TEST (finding 125): SSBU_VBLANK_DRIFT=<s>,<percent>[,<s long>] = from <s> after start, */
+    { const char *e = getenv("WT_VBLANK_GAP"); if (e) { double s = atof(e); const char *c = strchr(e, ','); gap_ms = c ? atoi(c + 1) : 0; QueryPerformanceCounter(&now); if (s > 0 && gap_ms > 0) gap_at = now.QuadPart + (LONGLONG)(s * (double)g_freq.QuadPart); } }
+    LONGLONG drift_at = 0, drift_end = 0;                                  /* TEST (finding 125): WT_VBLANK_DRIFT=<s>,<percent>[,<s long>] = from <s> after start, */
     LONG64 drift_every = 0, drift_i = 0;                                   /* one vblank in 100/<percent> is not counted, as a variable refresh rate stretches refreshes */
-    { const char *e = getenv("SSBU_VBLANK_DRIFT"); if (e) { double s = atof(e), pc = 0, len = 0; const char *c = strchr(e, ','); if (c) { pc = atof(c + 1); c = strchr(c + 1, ','); if (c) len = atof(c + 1); }
+    { const char *e = getenv("WT_VBLANK_DRIFT"); if (e) { double s = atof(e), pc = 0, len = 0; const char *c = strchr(e, ','); if (c) { pc = atof(c + 1); c = strchr(c + 1, ','); if (c) len = atof(c + 1); }
         QueryPerformanceCounter(&now); if (s > 0 && pc > 0) { drift_every = (LONG64)(100.0 / pc + 0.5); drift_at = now.QuadPart + (LONGLONG)(s * (double)g_freq.QuadPart); if (len > 0) drift_end = drift_at + (LONGLONG)(len * (double)g_freq.QuadPart); } } }
     for (;;) {
         LONG st = wait_vblank(&wv);
         QueryPerformanceCounter(&now);
-        if (gap_at && now.QuadPart >= gap_at) { gap_at = 0; printf("display: SSBU_VBLANK_GAP: the vblank thread stops for %d ms (a test)%c", gap_ms, 10); Sleep((DWORD)gap_ms); QueryPerformanceCounter(&now); }
+        if (gap_at && now.QuadPart >= gap_at) { gap_at = 0; printf("display: WT_VBLANK_GAP: the vblank thread stops for %d ms (a test)%c", gap_ms, 10); Sleep((DWORD)gap_ms); QueryPerformanceCounter(&now); }
         if (st != 0) { if (++fails == 20) { printf("display: the vblank wait fails (status 0x%lx): display lock off%c", (unsigned long)st, 10); InterlockedExchange(&g_vb_state, -1); return 0; } Sleep(50); prev = 0; continue; }
         fails = 0;
         LONGLONG dt = prev ? now.QuadPart - prev : 0;
         prev = now.QuadPart;
         if (drift_every && g_vb_state == 2 && now.QuadPart >= drift_at) {
-            if (drift_end && now.QuadPart >= drift_end) { drift_every = 0; printf("display: SSBU_VBLANK_DRIFT: every vblank counted again (a test)%c", 10); }
-            else { if (!drift_i) printf("display: SSBU_VBLANK_DRIFT: one vblank in %lld is not counted from now (a test)%c", (long long)drift_every, 10); if (++drift_i % drift_every == 0) continue; }
+            if (drift_end && now.QuadPart >= drift_end) { drift_every = 0; printf("display: WT_VBLANK_DRIFT: every vblank counted again (a test)%c", 10); }
+            else { if (!drift_i) printf("display: WT_VBLANK_DRIFT: one vblank in %lld is not counted from now (a test)%c", (long long)drift_every, 10); if (++drift_i % drift_every == 0) continue; }
         }
         LONG64 steps = 1;
         if (g_vb_state == 1) {                                         /* the first 24 intervals: their median is the refresh period */
@@ -220,7 +220,7 @@ static DWORD WINAPI vblank_thread(LPVOID arg) {
 }
 static void pace_options(void) {
     if (g_pace_want >= 0) return;
-    const char *e = getenv("SSBU_PACE"), *h = getenv("SSBU_PACE_HOLD"), *p = getenv("SSBU_PACE_PHASE");
+    const char *e = getenv("WT_PACE"), *h = getenv("WT_PACE_HOLD"), *p = getenv("WT_PACE_PHASE");
     int opt = gfx_options()->present;                                  /* 0 clock, 1 on (fifo), 2 off, 3 mailbox, 4 display, 5 auto */
     g_pace_want = e ? !_stricmp(e, "display") || !_stricmp(e, "auto") : opt == 4 || opt == 5;
     g_pace_auto = e ? !_stricmp(e, "auto") : opt == 5;
@@ -249,7 +249,7 @@ static int pace_try_lock(void) {
     return 0;
 }
 
-/* TEST ONLY, SSBU_SPEED=<n> (debug_mode.c, tests\DEBUG_MODE.md): 2, 4 (any number > 0) = the refresh clock runs n times
+/* TEST ONLY, WT_SPEED=<n> (debug_mode.c, tests\DEBUG_MODE.md): 2, 4 (any number > 0) = the refresh clock runs n times
  * faster; 0 = uncapped. Not set or 1 = nothing changes. In this mode there is no free-running vsync thread: the refresh is
  * given when the frame the game queued is due, ONE refresh per queued frame (interval 1), the event is signalled and the
  * wait goes on until the game's VSync Count Thread has counted it (window object + 0x138), so the game steps one frame per
@@ -258,12 +258,12 @@ static double g_speed = 1.0;
 static int g_lockstep;
 static volatile uint64_t g_wnd_count_addr;           /* guest address of the window object's refresh count, once known */
 static void speed_init(void) {
-    const char *e = getenv("SSBU_SPEED");
+    const char *e = getenv("WT_SPEED");
     if (!e || !e[0]) return;
     g_speed = atof(e);
     if (g_speed < 0) g_speed = 0;
     g_lockstep = g_speed != 1.0;
-    if (g_lockstep) printf("display: SSBU_SPEED=%s: %s, one refresh per presented frame\n", e, g_speed > 0 ? "paced at n x 60 Hz" : "uncapped");
+    if (g_lockstep) printf("display: WT_SPEED=%s: %s, one refresh per presented frame\n", e, g_speed > 0 ? "paced at n x 60 Hz" : "uncapped");
 }
 
 int oe_exit_request(void);                            /* nnmisc.c */
@@ -311,12 +311,12 @@ static void mouse_update(HWND h) {
  * the swapchain 1280 x 720, stretched 3x (blurring whatever resolution_scale drew; with Windows HDR on, Vulkan's picture was
  * also dim there, not explained yet). Now the process is DPI aware (per monitor v2, else per monitor, else system) before
  * its first window: borderless / fullscreen get the monitor's real pixels, and a windowed size from graphics.ini is scaled
- * by the monitor's scaling, so the window keeps the size it had. SSBU_DPI_AWARE=0: as before (Windows scales the picture).
- * TEST: SSBU_DPI=<dpi> sizes the window as on a monitor of that DPI (96 = 100 %). */
+ * by the monitor's scaling, so the window keeps the size it had. WT_DPI_AWARE=0: as before (Windows scales the picture).
+ * TEST: WT_DPI=<dpi> sizes the window as on a monitor of that DPI (96 = 100 %). */
 static int g_dpi_aware;
 static void dpi_aware_init(void) {
-    const char *e = getenv("SSBU_DPI_AWARE"), *how = "no";
-    if (e && !atoi(e)) { printf("display: DPI awareness off (SSBU_DPI_AWARE=0): on a scaled screen Windows enlarges the picture\n"); return; }
+    const char *e = getenv("WT_DPI_AWARE"), *how = "no";
+    if (e && !atoi(e)) { printf("display: DPI awareness off (WT_DPI_AWARE=0): on a scaled screen Windows enlarges the picture\n"); return; }
     HMODULE u = GetModuleHandleA("user32.dll"), s;
     BOOL (WINAPI *ctx)(HANDLE) = u ? (BOOL (WINAPI *)(HANDLE))(void *)GetProcAddress(u, "SetProcessDpiAwarenessContext") : NULL;
     HRESULT (WINAPI *pa)(int) = NULL;
@@ -326,8 +326,8 @@ static void dpi_aware_init(void) {
     g_dpi_aware = IsProcessDPIAware();               /* also when compatibility settings or a manifest had set it already */
     printf("display: DPI aware: %s%s\n", g_dpi_aware ? how : "no", g_dpi_aware && !strcmp(how, "no") ? " (set before us: compatibility settings)" : "");
 }
-static UINT dpi_of(HMONITOR m, int test) {           /* the monitor's scaling as a DPI (96 = 100 %); test: SSBU_DPI wins */
-    const char *t = test ? getenv("SSBU_DPI") : NULL;
+static UINT dpi_of(HMONITOR m, int test) {           /* the monitor's scaling as a DPI (96 = 100 %); test: WT_DPI wins */
+    const char *t = test ? getenv("WT_DPI") : NULL;
     UINT x = 96, y = 96;
     if (t && atoi(t) >= 48) return (UINT)atoi(t);
     if (!g_dpi_aware) return 96;
@@ -411,14 +411,14 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     adjust_rect(&r, style, dpi_of(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), 0));      /* the frame at the monitor's real scaling */
     printf("display: window %s, client %dx%d (graphics.ini; the screen's scaling %u %%%s)\n", go->window_mode == 2 ? "fullscreen (borderless, topmost)" : go->window_mode ? "borderless" : "windowed", cw, ch,
            dpi * 100 / 96, go->window_mode ? ": the monitor's real pixels" : dpi != 96 ? ": graphics.ini's size scaled by it" : "");
-    /* Only the copies a person plays (ssbu_native.exe, ssbu_user.exe, or SSBU_SHOW=1) get a window on screen;
+    /* Only the copy a person plays (witch-time-game.exe, or WT_SHOW=1) gets a window on screen;
      * test copies started under any other name keep theirs off-screen and out of the taskbar, so automated
-     * runs do not cover the desktop. SSBU_TITLE names the window. */
+     * runs do not cover the desktop. WT_TITLE names the window. */
     char exe[MAX_PATH] = "";
     GetModuleFileNameA(NULL, exe, sizeof exe);
-    const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *show = getenv("SSBU_SHOW");
-    int visible = show ? atoi(show) != 0 : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "witch-time-game.exe"));   /* [Recomps#1] our exe: on screen (SSBU_SHOW=0 hides) */
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "Witch Time");   /* [witchtime] window title */
+    const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *show = getenv("WT_SHOW");
+    int visible = show ? atoi(show) != 0 : !_stricmp(base, "witch-time-game.exe");   /* [Recomps#1] our exe: on screen (WT_SHOW=0 hides) */
+    snprintf(g_title, sizeof g_title, "%s", getenv("WT_TITLE") ? getenv("WT_TITLE") : "Witch Time");   /* [witchtime] window title */
     if (visible)
         g_hwnd = CreateWindowExA(go->window_mode == 2 ? WS_EX_TOPMOST : 0, wc.lpszClassName, g_title, style | WS_VISIBLE, px, py, r.right - r.left,
                                  r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
@@ -445,11 +445,11 @@ int display_window_apply(void) { return 0; }      /* [witchtime] Windows: the PC
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
  * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
- * mouse buttons are kept as the window's events leave them (GetAsyncKeyState below); SSBU_KBM_SCRIPT feeds synthetic
+ * mouse buttons are kept as the window's events leave them (GetAsyncKeyState below); WT_KBM_SCRIPT feeds synthetic
  * events into the same queue (test aid, kbm_script_thread). */
 #include <SDL3/SDL.h>
 #include "nnpad.h"
-static int g_kbm_test;                       /* SSBU_KBM_SCRIPT set: the window counts as focused (a hidden test window never gets the focus) */
+static int g_kbm_test;                       /* WT_KBM_SCRIPT set: the window counts as focused (a hidden test window never gets the focus) */
 static int has_focus(SDL_Window *w) { return g_kbm_test || (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS); }
 BOOL GetClientRect(HWND h, RECT *r) {
     int w = 0, hh = 0;
@@ -521,7 +521,7 @@ static void sdl_mouse_update(SDL_Window *w) {
         printf("display: mouse %s%c", g_mouse_grab ? "captured for the camera" : "released", 10);
     }
 }
-/* Test aid (Linux): SSBU_KBM_SCRIPT="<second>[+<duration>]:<input> ..." pushes synthetic SDL events into the window's queue,
+/* Test aid (Linux): WT_KBM_SCRIPT="<second>[+<duration>]:<input> ..." pushes synthetic SDL events into the window's queue,
  * so they take the path of real ones (key state, mouse capture, the mouse camera). <input> is a key name of controllers.ini
  * (W, SPACE, LSHIFT, ENTER, MOUSE1..MOUSE5: down at <second>, up after <duration>, default 0.15 s) or M<dx>,<dy> (mouse
  * movement of dx, dy counts every 10 ms for <duration>) or P<x>,<y> (the pointer moved to x, y of the window, in its units,
@@ -613,9 +613,9 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     (void)arg;
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { printf("display: SDL video cannot start: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }
     const GfxOptions *go = gfx_options();
-    const char *show = getenv("SSBU_SHOW");
+    const char *show = getenv("WT_SHOW");
     int visible = show ? atoi(show) != 0 : 1;
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "Witch Time");
+    snprintf(g_title, sizeof g_title, "%s", getenv("WT_TITLE") ? getenv("WT_TITLE") : "Witch Time");
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (go->window_mode ? SDL_WINDOW_FULLSCREEN : 0) | (visible ? 0 : SDL_WINDOW_HIDDEN);
     /* [witchtime] started by the Witch Time launcher (launcher/, through libwitchtime.so): the game takes over the launcher's
      * window, so building and playing happen in one window. The launcher has let go of it (no renderer of its own left). */
@@ -629,14 +629,14 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     int pw = 0, ph = 0;
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
     printf("display: window %s, client %dx%d pixels (SDL %s video%s)%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph,
-           SDL_GetCurrentVideoDriver(), visible ? "" : ", hidden (SSBU_SHOW=0)", 10);
+           SDL_GetCurrentVideoDriver(), visible ? "" : ", hidden (WT_SHOW=0)", 10);
     {   /* [witchtime] aspect_ratio = auto: the window's shape; borderless / fullscreen: the monitor's (the window may not have its size yet) */
         const SDL_DisplayMode *dm = go->window_mode ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : NULL;
         gfx_aspect_window(dm ? dm->w : pw, dm ? dm->h : ph);
     }
     g_hwnd = (HWND)w;
     InterlockedExchange(&g_ready, 1);
-    { const char *ks = getenv("SSBU_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }
+    { const char *ks = getenv("WT_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }
     float fx = 0, fy = 0;
     for (;;) {
         SDL_Event e;
@@ -820,11 +820,11 @@ static DWORD WINAPI vsync_thread(LPVOID arg) {
 }
 static void vsync_test_key(void) {
     {
-        /* Test aid: SSBU_AUTOKEY=<letter>,<first second>,<every n seconds> presses a key now and then, so a run without a person can get
+        /* Test aid: WT_AUTOKEY=<letter>,<first second>,<every n seconds> presses a key now and then, so a run without a person can get
          * past "press any button". Only while this window is the foreground window, so the key never reaches another program. */
         static int key = -1, first, every, tick, down;
         if (key == -1) {
-            const char *e = getenv("SSBU_AUTOKEY");
+            const char *e = getenv("WT_AUTOKEY");
             key = 0;
             if (e && e[0]) { key = e[0]; first = 30; every = 5; sscanf(e + 1, ",%d,%d", &first, &every); if (every < 1) every = 1; }
         }
@@ -834,7 +834,7 @@ static void vsync_test_key(void) {
     }
 }
 
-void hitch_init(void); void hitch_pacing(int on);      /* hitch.c: SSBU_HITCH */
+void hitch_init(void); void hitch_pacing(int on);      /* hitch.c: WT_HITCH */
 void display_init(void) {
 #ifdef _WIN32
     dpi_aware_init();                                /* [Recomps#1] finding 131: before the first window */
@@ -845,8 +845,8 @@ void display_init(void) {
      * default Windows timer period they ended at the next 15.6 ms tick, so a thread that polls with a 1 ms time-out ran
      * 64 times per second: the movie player's two feed threads delivered one sample per tick and its pre-roll loop
      * [game 0x71036f27b4, 125 x 10 ms, holding the player's mutex] ran out every time (1.3 s, main thread blocked).
-     * SSBU_TIMER_PERIOD=<ms> (default 1; 0 = leave the system default). */
-    { const char *e = getenv("SSBU_TIMER_PERIOD"); int ms = e ? atoi(e) : 1; if (ms > 0) { MMRESULT r = timeBeginPeriod((UINT)ms); printf("display: system timer period %d ms requested (%s)%c", ms, r == TIMERR_NOERROR ? "ok" : "refused", 10); } }
+     * WT_TIMER_PERIOD=<ms> (default 1; 0 = leave the system default). */
+    { const char *e = getenv("WT_TIMER_PERIOD"); int ms = e ? atoi(e) : 1; if (ms > 0) { MMRESULT r = timeBeginPeriod((UINT)ms); printf("display: system timer period %d ms requested (%s)%c", ms, r == TIMERR_NOERROR ? "ok" : "refused", 10); } }
     hitch_init();
     CreateThread(NULL, 0, window_thread, NULL, 0, NULL);
     while (!g_ready) Sleep(1);
@@ -854,7 +854,7 @@ void display_init(void) {
     speed_init();
     if (!g_lockstep && !old_pacing()) CreateThread(NULL, 0, vblank_thread, NULL, 0, NULL);      /* session 14: the display's vblanks, timed */
     if (!g_lockstep) CreateThread(NULL, 0, vsync_thread, NULL, 0, NULL);
-    { void nvn_vk_selftest_hook(void); nvn_vk_selftest_hook(); }      /* nvn_vk.c: SSBU_RENDERER=vk SSBU_VK_SELFTEST=<frames>, then exit (plan\phases\V1_vulkan.md, M1) */
+    { void nvn_vk_selftest_hook(void); nvn_vk_selftest_hook(); }      /* nvn_vk.c: WT_RENDERER=vk WT_VK_SELFTEST=<frames>, then exit (plan\phases\V1_vulkan.md, M1) */
 }
 
 /* Called after every presented frame (nvn_gl.c has already put it in the window): holds the caller to 60 Hz. */
@@ -865,13 +865,12 @@ int display_interval(void) { return (int)g_interval; }
  * present; when display.c paces at frame_rate (g_pace_hz > 60) that is one of its ticks */
 static LONG64 eff_interval(void) { LONG iv = g_interval; return iv ? iv : g_pace_hz > 60 ? 1 : 0; }
 void nvn_pf_pace(LONG64 ticks);            /* nvn_gl.c: timing scopes */
-/* SSBU_CLOCKSTAT=1: per 600 presented frames, the real time, the vsync signals sent, the refreshes the game counted
+/* WT_CLOCKSTAT=1: per 600 presented frames, the real time, the vsync signals sent, the refreshes the game counted
  * (its frame counter at 0x710593a440: 600 = one step per presented frame) and the refreshes this thread slept through. */
 static LONG64 g_cs_steps, g_cs_hist[4];      /* game steps (1 + refreshes skipped) and the histogram of "refreshes counted since the last present" 0, 1, 2, 3+ */
 /* nvn_gl.c, at nvnWindowAcquireTexture: the game's window object is the index pointer - 0x30; + 0x138 = refreshes its
  * VSync Count Thread has counted, + 0x140 = the count at its previous present. Right after this call the game computes
  * steps = max(count - last, 1) (0x710386fc30) and then stores last = count. */
-uint64_t display_wnd_count_addr(void) { return g_wnd_count_addr; }      /* track R1 round 5 (r1_state.c run-ahead): the refresh count is wall time, not rolled back */
 void display_clock_sample(uint64_t index_ptr) {
     if (index_ptr) g_wnd_count_addr = index_ptr - 0x30 + 0x138;      /* session 13 (track V): known at normal speed too, for the wait below */
     if (!g_clockstat || !index_ptr) return;
@@ -914,12 +913,11 @@ static void frame_queued(void) {
     InterlockedExchange(&g_latch_pending, iv != 0);
     }
     clock_stat(n, now);
-    {   /* TEST ONLY, SSBU_FRAMELOG=<k>: a line "frame-mark: <n>" every k presented frames, to place log events in game frames */
+    {   /* TEST ONLY, WT_FRAMELOG=<k>: a line "frame-mark: <n>" every k presented frames, to place log events in game frames */
         static int every = -1;
-        if (every < 0) { const char *e = getenv("SSBU_FRAMELOG"); every = e ? atoi(e) : 0; }
+        if (every < 0) { const char *e = getenv("WT_FRAMELOG"); every = e ? atoi(e) : 0; }
         if (every > 0 && n % every == 0) printf("frame-mark: %lld%c", (long long)n, 10);
-        { void debug_mode_frame(long long frame); debug_mode_frame((long long)n); }      /* debug_mode.c: returns at once unless SSBU_DEBUG_END / SSBU_DEBUG_MATCH is set */
-        g_prof15_frame = n;                                                              /* prof15.c (SSBU_PROF15, test only): presented frames, to turn CPU time into ms per frame */
+        g_prof15_frame = n;                                                              /* prof15.c (WT_PROF15, test only): presented frames, to turn CPU time into ms per frame */
     }
     if ((now.QuadPart - second_start.QuadPart) >= g_freq.QuadPart) {
         char title[160];
@@ -937,18 +935,18 @@ static void frame_queued(void) {
     }
 }
 /* ---- Track L1 (input latency), 2026-10-14.
- * (1) SSBU_L1=1, TEST ONLY: per presented game frame, on the host's clock: the game's release from its wait for the window
+ * (1) WT_L1=1, TEST ONLY: per presented game frame, on the host's clock: the game's release from its wait for the window
  *     texture (display_wait_refresh), player 1's pad poll (nnhid.c), the present call (display_present_plan), the frame
  *     READY on the render thread (recorded and submitted: display_present_defer), vkQueuePresentKHR (display_present_done)
  *     and the display's vblank that follows it (the "shown" model of session 14: the first refresh that can show it).
  *     Percentiles over fight frames at exit (`l1-stage:` lines); `l1-press:` / `l1-after:` lines for every new press of
  *     player 1 in a fight (the injected press of the sequence) with the next presents.
- * (2) latency = normal | low | lowest (graphics.ini; SSBU_LATENCY=0|1|2 or the names wins):
+ * (2) latency = normal | low | lowest (graphics.ini; WT_LATENCY=0|1|2 or the names wins):
  *     low: the game is released from its wait LATER than the tick, by D = tick period - (largest release-to-ready time of
  *          the last 64 frames + margin), so that it reads the pad as late as the frame can still be ready for the next
  *          tick; the present stays at the tick (display lock and cadence unchanged). The refresh count the game reads is
  *          the same (the tick was given; only the moment the game goes on moves), so its logic steps do not change.
- *          A late frame that had been delayed sets D to 0 for 60 frames (one late without a delay is not ours). SSBU_LATENCY_MARGIN=<ms> (default 2.0).
+ *          A late frame that had been delayed sets D to 0 for 60 frames (one late without a delay is not ours). WT_LATENCY_MARGIN=<ms> (default 2.0).
  *     lowest: low + the frame is presented as soon as it is ready (no hold for the tick, as vsync = off does). */
 static int g_lat_mode = -1, g_l1 = -1;
 static double g_lat_margin = 3.0;
@@ -960,11 +958,11 @@ static volatile LONG64 g_lat_release, g_lat_d_sum, g_lat_d_n, g_lat_waits, g_lat
 int gfx_latency(void);                       /* gfx_options.c: graphics.ini latency = normal 0 | low 1 | lowest 2 */
 int latency_mode(void) {
     if (g_lat_mode < 0) {
-        const char *e = getenv("SSBU_LATENCY"), *m = getenv("SSBU_LATENCY_MARGIN");
+        const char *e = getenv("WT_LATENCY"), *m = getenv("WT_LATENCY_MARGIN");
         g_lat_mode = e ? (!_stricmp(e, "lowest") ? 2 : !_stricmp(e, "low") ? 1 : !_stricmp(e, "normal") ? 0 : atoi(e)) : gfx_latency();
         if (g_lat_mode < 0 || g_lat_mode > 2) g_lat_mode = 0;
         if (m && atof(m) >= 0.0) g_lat_margin = atof(m);
-        g_l1 = getenv("SSBU_L1") && atoi(getenv("SSBU_L1"));
+        g_l1 = getenv("WT_L1") && atoi(getenv("WT_L1"));
         printf("display: latency = %s%s (margin %.1f ms)%c", g_lat_mode == 2 ? "lowest" : g_lat_mode == 1 ? "low" : "normal",
                g_lat_mode ? ": the game is released late in the frame so that it reads the pad just in time for the next tick" : "", g_lat_margin, 10);
     }
@@ -1005,7 +1003,7 @@ void display_l1_poll(uint64_t buttons, long long fight_ticks, long long poll) {
         printf("l1-press: game frame counter [0x710593a440] %llu, window refresh count %llu; player 1 poll %lld (fight-frame ticks %lld, presented frames %lld, poll thread %lu, presenting thread %lu): buttons %llx, %.2f ms after the game's release%c", (unsigned long long)rd64(0x710593a440ull), (unsigned long long)(g_wnd_count_addr ? rd64(g_wnd_count_addr) : 0), poll, fight_ticks, (long long)g_frames, GetCurrentThreadId(), nvn_front_present_tid(),
                (unsigned long long)buttons, g_lat_release ? (double)(now.QuadPart - g_lat_release) * 1000.0 / (double)g_freq.QuadPart : -1.0, 10);
         g_l1_press_qpc = now.QuadPart; g_l1_press_left = 6; g_l1_press_n = 0;
-        if (!g_l1_trace_done && getenv("SSBU_L1_TRACE")) { g_l1_trace_done = 1; g_l1_trace_t0 = now.QuadPart; InterlockedExchange(&g_l1_trace_left, 7); }
+        if (!g_l1_trace_done && getenv("WT_L1_TRACE")) { g_l1_trace_done = 1; g_l1_trace_t0 = now.QuadPart; InterlockedExchange(&g_l1_trace_left, 7); }
         InterlockedExchange(&g_l1_press, 1);
     }
     prev = buttons;
@@ -1016,12 +1014,12 @@ static volatile LONG g_l1_waited, g_l1_subs_now;
 static LONG64 g_l1_chk_frames, g_l1_chk_bad, g_l1_chk_subs, g_l1_early_skips;
 static int g_l1_early = -1;
 int display_l1_early(void) {
-    if (g_l1_early < 0) { const char *e = getenv("SSBU_L1_EARLY"); latency_mode(); g_l1_early = e && atoi(e) != 0;      /* TEST ONLY: 1 game submission comes after the wait in every frame (l1-submit), so the picture is NOT complete there */ printf("display: early present %s%c", g_l1_early ? "ON: the picture the game finished before its wait goes to the window at the tick it waits for" : "off", 10); }
+    if (g_l1_early < 0) { const char *e = getenv("WT_L1_EARLY"); latency_mode(); g_l1_early = e && atoi(e) != 0;      /* TEST ONLY: 1 game submission comes after the wait in every frame (l1-submit), so the picture is NOT complete there */ printf("display: early present %s%c", g_l1_early ? "ON: the picture the game finished before its wait goes to the window at the tick it waits for" : "off", 10); }
     g_l1_subs_now = 0;
     InterlockedExchange(&g_l1_waited, 1);
     return g_l1_early;
 }
-int display_l1_pipe_default(void) { return 1; }      /* L1 round 4: pipe ON by default (coordinator 2026-10-14); SSBU_L1_PIPE=0 = the old path */
+int display_l1_pipe_default(void) { return 1; }      /* L1 round 4: pipe ON by default (coordinator 2026-10-14); WT_L1_PIPE=0 = the old path */
 void display_l1_submit(void) { if (g_l1_waited) InterlockedIncrement(&g_l1_subs_now); }
 void display_l1_early_skip(void) { g_l1_early_skips++; }
 /* game thread, display_present_plan */
@@ -1179,7 +1177,7 @@ void display_present_done(int fight) {
     static int stat = -1;
     LARGE_INTEGER now;
     if (g_vb_state != 2 || g_lockstep) return;
-    if (stat < 0) stat = getenv("SSBU_PACESTAT") && atoi(getenv("SSBU_PACESTAT"));
+    if (stat < 0) stat = getenv("WT_PACESTAT") && atoi(getenv("WT_PACESTAT"));
     QueryPerformanceCounter(&now);
     AcquireSRWLockShared(&g_vb_lock);
     LONG64 vc = g_vb_count, vq = g_vb_qpc;
@@ -1192,13 +1190,13 @@ void display_present_done(int fight) {
     if (g_ps_prev_qpc) {
         LONG64 refs = shown - g_ps_prev_vb;                         /* the PREVIOUS frame was on screen from its vblank to this one's */
         double ms = (double)(now.QuadPart - g_ps_prev_qpc) * 1000.0 / (double)g_freq.QuadPart;
-        {   /* Round 16 (P3 section 15), SSBU_LATELOG=1 (test): one line per fight frame that was not on screen for exactly
+        {   /* Round 16 (P3 section 15), WT_LATELOG=1 (test): one line per fight frame that was not on screen for exactly
              * 2 refreshes, with the presented-frame number the hitch lines use ("hitch: frame N"), so that every late frame
              * can be given its cause. Frames 100 ms or more apart are NOT in the display-timing counts (the test above):
              * they are printed here as well, marked. */
             static int ll = -1;
             static LONG64 n_long;
-            if (ll < 0) ll = getenv("SSBU_LATELOG") && atoi(getenv("SSBU_LATELOG"));
+            if (ll < 0) ll = getenv("WT_LATELOG") && atoi(getenv("WT_LATELOG"));
             if (fight && ms >= 100.0) n_long++;
             if (ll && fight && (refs != 2 || ms >= 100.0))
                 printf("display-late: the frame shown before presented frame %lld was on screen for %lld refreshes; %.1f ms between the two presents%s\n", (long long)g_prof15_frame, (long long)refs, ms,
@@ -1222,7 +1220,7 @@ void display_present_done(int fight) {
 int display_wait_refresh(void) {
     if (old_pacing() || !InterlockedExchange(&g_latch_pending, 0)) return 0;
     if (g_vsync_n >= g_latch) return 0;
-    if (g_lockstep) {                                              /* SSBU_SPEED: see the comment at g_speed */
+    if (g_lockstep) {                                              /* WT_SPEED: see the comment at g_speed */
         static LONG64 due;                                         /* wall-clock time of the next refresh (QPC ticks) */
         LARGE_INTEGER a, now;
         QueryPerformanceCounter(&a);
@@ -1265,10 +1263,10 @@ int display_wait_refresh(void) {
      * before the refresh was counted: 0 this frame, 2 the next = one frame with a doubled step at a perfect 60 fps
      * (R0_determinism.md measured 104 / 559 / 20 polls with 0 / 1 / 2 steps at normal speed). Here: after the refresh, wait
      * (at most 3 ms, yielding) until the count has advanced by the refreshes that passed during this wait.
-     * OFF by default (SSBU_PACE_COUNTWAIT=1 turns it on): measured in two quiet runs of three fights each (tp0 / tp1) it
+     * OFF by default (WT_PACE_COUNTWAIT=1 turns it on): measured in two quiet runs of three fights each (tp0 / tp1) it
      * did not change the frames over 18 ms and the doubled steps were 17 against 10 in 14,000 frames: not shown to matter. */
     static int cw = -1;
-    if (cw < 0) cw = getenv("SSBU_PACE_COUNTWAIT") && atoi(getenv("SSBU_PACE_COUNTWAIT"));
+    if (cw < 0) cw = getenv("WT_PACE_COUNTWAIT") && atoi(getenv("WT_PACE_COUNTWAIT"));
     uint64_t ca = cw ? g_wnd_count_addr : 0, c0 = ca ? rd64(ca) : 0;
     LONG64 n0;
     AcquireSRWLockExclusive(&g_vsync_lock);
@@ -1342,8 +1340,8 @@ void display_pace(void) {
 
 void display_report(FILE *out) {
     fprintf(out, "\ndisplay: %lld frames presented\n", (long long)g_frames);
-    fprintf(out, "display: %s; %lld vsync signals, %lld refreshes slept through by the vsync thread\n", old_pacing() ? "old pacing (SSBU_OLD_PACING=1: two clocks)" : "one refresh clock", (long long)g_vsync_signals, (long long)g_vsync_late);
-    if (g_pc_n > 0) fprintf(out, "display: the game's thread was on an EFFICIENCY core at %lld of %lld presents (%s)\n", (long long)g_pc_frames_slow, (long long)g_pc_frames, g_pc_on ? "performance cores asked for" : "SSBU_PCORES=0: left to the system");
+    fprintf(out, "display: %s; %lld vsync signals, %lld refreshes slept through by the vsync thread\n", old_pacing() ? "old pacing (WT_OLD_PACING=1: two clocks)" : "one refresh clock", (long long)g_vsync_signals, (long long)g_vsync_late);
+    if (g_pc_n > 0) fprintf(out, "display: the game's thread was on an EFFICIENCY core at %lld of %lld presents (%s)\n", (long long)g_pc_frames_slow, (long long)g_pc_frames, g_pc_on ? "performance cores asked for" : "WT_PCORES=0: left to the system");
     if (g_vb_state == 2) {
         fprintf(out, "display: refresh %.3f Hz measured; %s (ticks for %d fps); presents held for their tick %lld, late frames presented at once %lld; display lock lost after a vblank gap %lld times, taken again %lld times; dropped because the refresh drifted %lld times, taken again %lld times\n", (double)g_freq.QuadPart / g_vb_period,
                 g_lock_k ? "DISPLAY LOCK (the tick is the display's vblank)" : "our own clock", g_pace_hz, (long long)g_hold_n, (long long)g_hold_late, (long long)g_lock_drops, (long long)g_lock_relocks,

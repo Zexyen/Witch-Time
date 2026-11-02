@@ -9,7 +9,7 @@ variable, or --toolchain=<name> on the command line of compile_main.py / build_r
   msvc   clang 9.0.0 (folder: LLVM_ROOT or deps/llvm) for the MSVC target: links with MSVC's link.exe, CRT and Windows SDK libraries
          (needs the Visual Studio Build Tools). Outputs beside the default build: build/obj_msvc, build/out_msvc/.
 The default toolchain's outputs live in the standard places, which every run script, the launcher and bench.py use; an
-exe in build/out_msvc must get SSBU_GRAPHICS_CONFIG / SSBU_CONFIG (bench.py and play.ps1 -Msvc set them, finding 97).
+exe in build/out_msvc must get WT_GRAPHICS_CONFIG / WT_CONFIG (bench.py and play.ps1 -Msvc set them, finding 97).
 
 Every tool and library is found the same way (as ssbu-recomp's setup.py does): an environment variable (scripts/setup.py
 sets them from its options), else <repo>/deps/<name> (a copy or a junction; ignored by git). No machine paths are built in.

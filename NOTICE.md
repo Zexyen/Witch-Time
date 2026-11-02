@@ -58,14 +58,14 @@ No code is copied from these; they are named in comments as the source of number
 | llvm-mingw (LLVM / clang 23.1.2, lld, mingw-w64 headers and runtime), the default toolchain | 20260922 | LLVM: Apache-2.0 with LLVM exception; mingw-w64: ZPL 2.1, public domain and others (`COPYING.MinGW-w64-runtime.txt`) |
 | SDL3 | 3.4.18 | zlib |
 | Vulkan-Headers | vulkan-sdk-1.4.341.0 | Apache-2.0 / MIT |
-| glslang (built into `ssbu_glslang.dll`) | 16.6.0 | BSD-3-Clause, Apache-2.0 and others (see its LICENSE.txt) |
+| glslang (built into `wt_glslang.dll`) | 16.6.0 | BSD-3-Clause, Apache-2.0 and others (see its LICENSE.txt) |
 | LLVM / clang (optional MSVC build, `--toolchain msvc`) | 9.0.0 | Apache-2.0 with LLVM exception |
 | Python packages: lz4, Pillow, (self-test) unicorn, capstone | — | BSD / HPND / GPL-2.0 / BSD |
 
 The game is never distributed in any form: every player builds it locally with `scripts/setup.py`. The **builder
 package** (`scripts/make_package.py`) contains this source plus the tools above in `deps\` (llvm-mingw trimmed to x86_64,
-Python with lz4 and Pillow, SDL3, Vulkan-Headers, `ssbu_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
-needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `ssbu_glslang.dll` is the one program of ours
+Python with lz4 and Pillow, SDL3, Vulkan-Headers, `wt_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
+needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `wt_glslang.dll` is the one program of ours
 in it in compiled form (`runtime/vk_glslang_shim.c` linked with glslang and SPIRV-Tools); its corresponding source is
 in the package itself (GPL-3.0 section 6), plus glslang 16.6.0's public source. A build with
 llvm-mingw links parts of the MinGW-w64 runtime into `witch-time-game.exe` and `launcher.exe`; the build copies the

@@ -60,7 +60,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * page tables to the end of the run of pages with the same state, which takes 2-3 ms inside the game's heap (gigabytes
  * committed in one run), and one throw asks about 22 addresses there (the fiber's stack). The answer for memory the GAME
  * manages (regions from nn::os::AllocateAddressRegion, registered with cxxrt_guest_region) is therefore remembered per
- * thread. Host memory is asked about every time, as before. SSBU_NO_READABLE_CACHE=1 = ask every time everywhere.
+ * thread. Host memory is asked about every time, as before. WT_NO_READABLE_CACHE=1 = ask every time everywhere.
  *
  * PR #2 (jfb112697): what makes a remembered run wrong is guest memory being decommitted, released or protected
  * (cxxrt_mem_changed, called by those entry points before and after the change; prototype in hostrt.h). Forgetting
@@ -72,7 +72,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * is still committed and accessible. A record older than the kept events is forgotten. Same match with this: 8 of 1,497
  * throws over 1 ms (1.4-6.3 ms). Those are the first question a thread asks about a run (the record starts at the page
  * asked about, so a fiber stack lower in the same run asks again), which this does not remove.
- * SSBU_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
+ * WT_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
 static struct { uint64_t base, size; } g_guest_region[64];
 static volatile LONG g_guest_regions, g_mem_epoch = 1;
 #define RD_CHANGES 256      // PR #2 (jfb112697): ring of the last changes of guest memory, with their page ranges
@@ -129,7 +129,7 @@ int cxxrt_readable(uint64_t p, size_t n) {
     if (p < 0x10000) return 0;
     LONG epoch = g_mem_epoch;
     int guest = 0;
-    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("SSBU_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("SSBU_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): SSBU_READABLE_FORGET_ALL=1 = the old forget-everything rule
+    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("WT_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("WT_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): WT_READABLE_FORGET_ALL=1 = the old forget-everything rule
     if (!g_rd_nocache) {
         for (int i = 0; i < g_guest_regions && i < 64 && !guest; i++) guest = p - g_guest_region[i].base < g_guest_region[i].size;
         if (guest) for (int i = 0; i < 4; i++) {      // PR #2 (jfb112697): an older record is brought up to date instead of being dropped
@@ -320,7 +320,7 @@ typedef struct { Ctx *c; uint64_t in_flight, caught; int uncaught; } EhState;
  * The C++ ABI keeps this state per THREAD (__cxa_get_globals); a guest fiber is a Windows fiber here (os_threads.c), so
  * fiber-local storage is exactly "one state per guest thread and per guest fiber", needs no table, cannot fill up, and is
  * freed by the system when the thread or fiber ends. A context on the stack now shares the state of the fiber it runs
- * on, which is what a throw that crosses it needs. SSBU_EH_STATE=table restores the old table (bounded: it stops with a
+ * on, which is what a throw that crosses it needs. WT_EH_STATE=table restores the old table (bounded: it stops with a
  * report instead of spinning). */
 #define EH_STATES 4096
 static EhState g_eh_state[EH_STATES];
@@ -354,7 +354,7 @@ static EhState *eh_state(Ctx *c) {
     if (!g_eh_mode) {
         AcquireSRWLockExclusive(&g_eh_state_lock);
         if (!g_eh_mode) {
-            const char *e = getenv("SSBU_EH_STATE");
+            const char *e = getenv("WT_EH_STATE");
             if (e && !strcmp(e, "table")) g_eh_mode = 2;
             else { g_eh_fls = FlsAlloc(eh_fls_free); g_eh_mode = g_eh_fls != FLS_OUT_OF_INDEXES ? 1 : 2; }
         }
@@ -1017,14 +1017,14 @@ void register_cxxrt_imports(void) {
     register_libc2_imports();
     if (!eh_register_image(GUEST_BASE, 0x7500000ull, 0)) printf("nncxxrt: the exception tables of main were not found\n");
     eh_bind_main();
-    const char *path = getenv("SSBU_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
+    const char *path = getenv("WT_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
     if (path && path[0]) {
         FILE *f = fopen(path, "w");
         for (int i = 0; f && i < dyn_sym_count; i++)
             if (!dyn_syms[i].defined && dyn_syms[i].name[0] && !import_lookup(dyn_syms[i].name)) fprintf(f, "%d %s\n", (int)(import_address(i) != IMPORT_BASE + (uint64_t)i * IMPORT_SLOT), dyn_syms[i].name);
         if (f) fclose(f);
     }
-    if (getenv("SSBU_CXXRT_SELFTEST")) cxxrt_selftest();
+    if (getenv("WT_CXXRT_SELFTEST")) cxxrt_selftest();
 }
 
 #include "cxxrt_selftest.h"

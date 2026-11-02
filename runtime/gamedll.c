@@ -1,4 +1,4 @@
-/* Host side of the exe / ssbu_game.dll split (see game_shim.c).
+/* Host side of the exe / game.dll split (see game_shim.c).
  *
  * build.py compiles every host file with
  *     -Dfn_table=(*game_fn_table_p) -Dfn_table_count=(*game_fn_table_count_p)

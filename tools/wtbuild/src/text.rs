@@ -539,7 +539,7 @@ fn dump_texts(repo: &Path, romfs: &Path, tmp: &Path, env: &dyn Fn(&mut Command))
         .arg("--pkz-dump")
         .arg(tmp)
         .args(["ui/ui_menu", "ui/ui_core"]);
-    c.current_dir(repo.join("build")).env("SSBU_ROMFS", romfs);
+    c.current_dir(repo.join("build")).env("WT_ROMFS", romfs);
     let r = c.output().map_err(|e| format!("{}: {}", exe.display(), e))?;
     if !r.status.success() {
         let tail = |b: &[u8]| {

@@ -182,13 +182,13 @@ static void nifm_HandleNetworkRequestErrorResult(Ctx *c) {
  * failed with its own 2618-0006 and, cleaning up, called Finalize on sockets we had never seen initialised: our SDK-abort
  * check stopped the game. Now this answers 0x1906e (110-200), what the SDK gives with an empty applet block (as for
  * HandleNetworkRequestErrorResult above), and once per run a message box says why (none in scripted runs or with
- * SSBU_ERROR_DIALOG=0, as nn::err's dialog). */
+ * WT_ERROR_DIALOG=0, as nn::err's dialog). */
 static void nifm_SetLocalNetworkMode(Ctx *c) { (void)c; }      /* (bool) local / internet: there is no network either way */
 static void nifm_HandleNetworkRequestResult(Ctx *c) {
     static volatile LONG said;
-    const char *off = getenv("SSBU_ERROR_DIALOG");
+    const char *off = getenv("WT_ERROR_DIALOG");
     printf("nn::nifm::HandleNetworkRequestResult: no network: 0x1906e, caller 0x%llx\n", (unsigned long long)c->x[30] - 4);
-    if (!((off && off[0] == '0') || getenv("SSBU_SEQ") || getenv("SSBU_PLAY") || getenv("SSBU_PRESS") || getenv("SSBU_SCRIPT")) && !InterlockedExchange(&said, 1))
+    if (!((off && off[0] == '0') || getenv("WT_SEQ") || getenv("WT_PLAY") || getenv("WT_PRESS") || getenv("WT_SCRIPT")) && !InterlockedExchange(&said, 1))
         MessageBoxA(NULL, "Online play is not available.\n\nB2recomp cannot connect to Nintendo's online services, so Quick Match and "
                           "other online modes do not work.", "Witch Time", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TASKMODAL);
     RET(0x1906eu);

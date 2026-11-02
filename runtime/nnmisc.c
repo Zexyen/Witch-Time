@@ -19,6 +19,7 @@
 #include <wincrypt.h>
 #include "runtime.h"
 #include "hostrt.h"
+#include "image_layout.h"          /* GUEST_RO_END: the start of main's data segment */
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -243,7 +244,7 @@ static LARGE_INTEGER g_start;
  * another window had the focus). (2) A window
  * that has never been in the foreground (the automated tests keep theirs off screen) is treated as in focus.
  * (3) Closing the window is the exit request: see oe_exit_request below.
- * SSBU_FOCUS_NOTIFY=0 turns the focus tracking off. */
+ * WT_FOCUS_NOTIFY=0 turns the focus tracking off. */
 #define OE_MSG_FOCUS_STATE_CHANGED 15u
 static uint8_t g_oe_event[0x40];
 static uint32_t g_oe_queue[16];
@@ -265,7 +266,7 @@ static void oe_track_focus(void) {
     static int enabled = -1;
     static ULONGLONG last;
     ULONGLONG now = GetTickCount64();
-    if (enabled < 0) { const char *e = getenv("SSBU_FOCUS_NOTIFY"); enabled = !(e && e[0] == '0'); }
+    if (enabled < 0) { const char *e = getenv("WT_FOCUS_NOTIFY"); enabled = !(e && e[0] == '0'); }
     if (!enabled || (now - last < 30 && !g_oe_focus_recheck)) return;
     last = now;
     g_oe_focus_recheck = 0;
@@ -405,13 +406,13 @@ static void settings_CodeEqualsLanguage(Ctx *c) {         /* operator==(const La
  * es, es-419, zh-Hans, zh-Hant, ko, ru; anything else gives en-US (NOT VERIFIED: the console decides from the
  * supported-language mask of the application's control data, which was not read here). nl and pt have message files
  * but their text is empty (no subtitles, blank menus: issue #16), so they give en-US too.
- * SSBU_LANGUAGE=<code> overrides (for example SSBU_LANGUAGE=en-US). */
+ * WT_LANGUAGE=<code> overrides (for example WT_LANGUAGE=en-US). */
 static uint64_t desired_language(void) {
     static uint64_t cached;
     static const char *const supported[] = {"ja", "en-US", "en-GB", "fr", "fr-CA", "de", "it", "es", "es-419", "zh-Hans", "zh-Hant", "ko", "ru"};
     if (cached) return cached;
     char name[LOCALE_NAME_MAX_LENGTH * 3] = "", pick[16] = "en-US";
-    const char *env = getenv("SSBU_LANGUAGE");
+    const char *env = getenv("WT_LANGUAGE");
     wchar_t wname[LOCALE_NAME_MAX_LENGTH] = L"";
     ULONG count = 0, size = 0;
     if (env && env[0]) snprintf(name, sizeof name, "%s", env);
@@ -455,11 +456,11 @@ static void err_Variant_toResult(Ctx *c) { RET(rd32(A0 + 4)); }
 static void err_Variant_toCode(Ctx *c) { RET(rd64(A0 + 4)); }
 /* The console's error viewer shows "Error Code: 2MMM-DDDD" (2000 + module, description) in a dialog and returns when
  * the user closes it. Here it is a Windows message box on the calling thread, which blocks the same way. Scripted
- * runs (SSBU_SEQ / SSBU_PLAY / SSBU_PRESS / SSBU_SCRIPT) and SSBU_ERROR_DIALOG=0 only log, so tests never hang. */
+ * runs (WT_SEQ / WT_PLAY / WT_PRESS / WT_SCRIPT) and WT_ERROR_DIALOG=0 only log, so tests never hang. */
 static void err_dialog(unsigned category, unsigned number) {
-    const char *off = getenv("SSBU_ERROR_DIALOG");
+    const char *off = getenv("WT_ERROR_DIALOG");
     char text[160];
-    if ((off && off[0] == '0') || getenv("SSBU_SEQ") || getenv("SSBU_PLAY") || getenv("SSBU_PRESS") || getenv("SSBU_SCRIPT")) return;
+    if ((off && off[0] == '0') || getenv("WT_SEQ") || getenv("WT_PLAY") || getenv("WT_PRESS") || getenv("WT_SCRIPT")) return;
     snprintf(text, sizeof text, "Error Code: %04u-%04u\n\nAn error has occurred.", category, number);
     MessageBoxA(NULL, text, "Error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
 }
@@ -485,12 +486,12 @@ static void prepo_PlayReport_ctor(Ctx *c) { wr8(A0, 0); wr64(A0 + 0x20, 0); wr64
  * The console lists the installed add-on contents of the running application by INDEX (add-on content id =
  * application id + 0x1000 + index). The game's DLC fighters, stages and costumes are data of the game update; an owned
  * add-on content only unlocks them. Which ones this player owns is his own fact: <exe folder>\..\config\dlc.txt
- * (SSBU_DLC_LIST overrides the path), one index per line, decimal or 0x.. hex, `#` comments; tools\dlc_list.py writes
+ * (WT_DLC_LIST overrides the path), one index per line, decimal or 0x.. hex, `#` comments; tools\dlc_list.py writes
  * it from the file names of the player's own DLC dumps. No file = none owned (as before). */
 static int g_aoc[2048], g_aoc_n = -1;
 static void aoc_load(void) {
     char exe[MAX_PATH], path[MAX_PATH + 32];
-    const char *e = getenv("SSBU_DLC_LIST");
+    const char *e = getenv("WT_DLC_LIST");
     if (e && e[0]) snprintf(path, sizeof path, "%s", e);
     else {
         GetModuleFileNameA(NULL, exe, MAX_PATH);
@@ -530,7 +531,7 @@ static HCRYPTPROV crypt_provider(void) {
     InterlockedExchange(&lock, 0);
     return prov;
 }
-int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr);      /* os_threads.c: SSBU_FIXED_SEED */
+int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr);      /* os_threads.c: WT_FIXED_SEED */
 static void random_bytes(void *p, size_t n) {
     if (host_fixed_random(p, n, "nn::crypto / uuid random bytes", 0)) return;
     HCRYPTPROV prov = crypt_provider();
@@ -603,8 +604,8 @@ static void crypto_Md5_dtor(Ctx *c) { md5_drop(A0); }
  * which the console creates from the application control property (NACP) and which stay at those values
  * unless the game extends the save. Values read from the control.nacp of the user's own 13.0.4 update
  * dump with extract-tools\nacp_extract.py: UserAccountSaveDataSize 0x6000000 (96 MiB),
- * UserAccountSaveDataJournalSize 0xa00000 (10 MiB). Overridable with SSBU_SAVE_SIZE /
- * SSBU_SAVE_JOURNAL_SIZE (bytes). [game] 0x71017c15e4 uses journalSize - 0x80000. */
+ * UserAccountSaveDataJournalSize 0xa00000 (10 MiB). Overridable with WT_SAVE_SIZE /
+ * WT_SAVE_JOURNAL_SIZE (bytes). [game] 0x71017c15e4 uses journalSize - 0x80000. */
 #define NACP_USER_SAVE_SIZE 0x6000000ll
 #define NACP_USER_SAVE_JOURNAL_SIZE 0xa00000ll
 static int64_t env_size(const char *name, int64_t fallback) {
@@ -612,8 +613,8 @@ static int64_t env_size(const char *name, int64_t fallback) {
     return v && v[0] ? strtoll(v, NULL, 0) : fallback;
 }
 static void fs_GetSaveDataSize(Ctx *c) {
-    if (A0) wr64(A0, (uint64_t)env_size("SSBU_SAVE_SIZE", NACP_USER_SAVE_SIZE));
-    if (A1) wr64(A1, (uint64_t)env_size("SSBU_SAVE_JOURNAL_SIZE", NACP_USER_SAVE_JOURNAL_SIZE));
+    if (A0) wr64(A0, (uint64_t)env_size("WT_SAVE_SIZE", NACP_USER_SAVE_SIZE));
+    if (A1) wr64(A1, (uint64_t)env_size("WT_SAVE_JOURNAL_SIZE", NACP_USER_SAVE_JOURNAL_SIZE));
     RET(0);
 }
 
@@ -762,60 +763,9 @@ static const ImportDef fill_imports[] = {
     {"_ZN2nn3ngc15ProfanityFilter24MaskProfanityWordsInTextEPiPtj", ngc_MaskProfanityWordsInText},
 };
 
-/* ---------------------------------------------------------------- self-test of setjmp/longjmp
- * SSBU_MISC_SELFTEST=1: run the game's own luaD_rawrunprotected (0x71038faf00) on a blank
- * lua_State with host callbacks that return normally, throw through the game's luaD_throw
- * (0x71038fae10), and throw from inside a nested protected call; then exit. */
-#define LUAD_RAWRUNPROTECTED 0x71038faf00ull
-#define LUAD_THROW 0x71038fae10ull
-static int g_selftest_mode;
-static void selftest_callback(Ctx *c) {                   /* Pfunc: (lua_State *L, void *ud) */
-    uint64_t L = A0;
-    if (g_selftest_mode == 0) return;
-    if (g_selftest_mode == 2) {                           /* nested protected call that throws 5, then throw 7 here */
-        uint64_t sp = c->x[31], lr = c->x[30];
-        g_selftest_mode = 1;
-        c->x[0] = L; c->x[1] = hostfn_address("nnmisc selftest callback", selftest_callback); c->x[2] = 0;
-        call_guest(c, LUAD_RAWRUNPROTECTED);
-        printf("  nested protected call returned status %d (expected 5), sp %s\n", (int)c->x[0], c->x[31] == sp ? "restored" : "WRONG");
-        c->x[30] = lr;
-        c->x[0] = L; c->x[1] = 7;
-        call_guest(c, LUAD_THROW);
-    } else { c->x[0] = L; c->x[1] = 5; call_guest(c, LUAD_THROW); }
-    printf("  ERROR: luaD_throw returned\n");
-}
-static void misc_selftest(void) {
-    Ctx *c = _aligned_malloc(sizeof *c, 16);
-    uint8_t *stack = VirtualAlloc(NULL, 1 << 20, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    uint8_t *L = calloc(1, 0x400);
-    static const int expect[3] = {0, 5, 7};
-    int bad = 0;
-    for (int mode = 0; mode < 3; mode++) {
-        memset(c, 0, sizeof *c);
-        c->x[31] = (uint64_t)(uintptr_t)(stack + (1 << 20) - 0x100);
-        for (int i = 19; i < 30; i++) c->x[i] = 0x1111111111111111ull * (uint64_t)(i - 18);
-        for (int i = 8; i < 16; i++) c->v[i].d[0] = 0xd0d0d0d000000000ull + (uint64_t)i;
-        wr64((uint64_t)(uintptr_t)L + 0x58, 0);
-        wr16((uint64_t)(uintptr_t)L + 0xc6, 0x1234);
-        uint64_t sp = c->x[31];
-        g_selftest_mode = mode;
-        c->x[0] = (uint64_t)(uintptr_t)L; c->x[1] = hostfn_address("nnmisc selftest callback", selftest_callback); c->x[2] = 0;
-        call_guest(c, LUAD_RAWRUNPROTECTED);
-        int ok = (int)c->x[0] == expect[mode] && c->x[31] == sp && rd64((uint64_t)(uintptr_t)L + 0x58) == 0 &&
-                 rd16((uint64_t)(uintptr_t)L + 0xc6) == 0x1234;
-        for (int i = 19; i < 30; i++) if (c->x[i] != 0x1111111111111111ull * (uint64_t)(i - 18)) ok = 0;
-        for (int i = 8; i < 16; i++) if (c->v[i].d[0] != 0xd0d0d0d000000000ull + (uint64_t)i) ok = 0;
-        printf("setjmp/longjmp self-test %d (%s): status %d, expected %d -> %s\n", mode,
-               mode == 0 ? "normal return" : mode == 1 ? "throw" : "throw after a nested throw", (int)c->x[0], expect[mode], ok ? "ok" : "FAILED");
-        bad += !ok;
-    }
-    fflush(stdout);
-    ExitProcess((UINT)bad);
-}
-
-/* SSBU_DUMP_UNREG=<file>: write the names of all imports that still have no handler. */
+/* WT_DUMP_UNREG=<file>: write the names of all imports that still have no handler. */
 static void dump_unregistered(void) {
-    const char *path = getenv("SSBU_DUMP_UNREG");
+    const char *path = getenv("WT_DUMP_UNREG");
     if (!path || !path[0]) return;
     FILE *f = fopen(path, "w");
     if (!f) return;
@@ -836,11 +786,11 @@ int close5_lead_selftest(Ctx *c) {
             if (f) f(c);
             n++; if (!f || (c->x[0] & 0xff) != 1) { bad++; printf("  close5 lead: %s(%d) is not true\n", names[i], show); }
         }
-    if (!getenv("SSBU_NO_PROTECT")) {
+    if (!getenv("WT_NO_PROTECT")) {
         n += 3;
         if (!IsBadWritePtr((void *)(uintptr_t)0x7100000000ull, 1)) { bad++; printf("  close5 lead: the first text page is writable\n"); }
-        if (!IsBadWritePtr((void *)(uintptr_t)(0x7104f16000ull - 1), 1)) { bad++; printf("  close5 lead: the last read-only data byte is writable\n"); }
-        if (IsBadWritePtr((void *)(uintptr_t)0x7104f16000ull, 1) || IsBadReadPtr((void *)(uintptr_t)0x7100000000ull, 16)) { bad++; printf("  close5 lead: data segment not writable or text not readable\n"); }
+        if (!IsBadWritePtr((void *)(uintptr_t)(GUEST_BASE + GUEST_RO_END - 1), 1)) { bad++; printf("  close5 lead: the last read-only data byte is writable\n"); }
+        if (IsBadWritePtr((void *)(uintptr_t)(GUEST_BASE + GUEST_RO_END), 1) || IsBadReadPtr((void *)(uintptr_t)0x7100000000ull, 16)) { bad++; printf("  close5 lead: data segment not writable or text not readable\n"); }
     }
     printf("  close5 lead (pctl bool answers, image protection): %d cases, %d failed\n", n, bad);
     return bad;
@@ -861,5 +811,4 @@ void register_misc_imports(void) {
     trace_printf("nnmisc: %d of %d functions installed (the rest are provided elsewhere or not imported)\n", added, n);
     dump_unregistered();
     (void)ret1;
-    if (getenv("SSBU_MISC_SELFTEST")) misc_selftest();
 }

@@ -46,7 +46,7 @@ typedef struct {
     uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
     unsigned qcase_pc[256]; uint32_t qcase_mask[256]; int nqcase; unsigned cur_case;      /* [issue 66] the snapshot bits each shuffle case needs */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
-    int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
+    int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / WT_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
@@ -267,12 +267,12 @@ static const char *attr_in(Mx *e, unsigned a, const char *vx) {
 /* Round 17 (track V session 17): clip distances in the Vulkan text. OpenGL clips by gl_ClipDistance[i] only when
  * GL_CLIP_DISTANCEi is enabled, and nvn_gl.c never enables one; Vulkan clips by every element the vertex stage DECLARES,
  * and an element the code did not write on the path taken is undefined (the array is sized by the highest index written).
- * SSBU_VK_CLIP: 0 = as before (declared, not initialised); 1 = every element starts at 0.0 (on the plane = kept) and is
+ * WT_VK_CLIP: 0 = as before (declared, not initialised); 1 = every element starts at 0.0 (on the plane = kept) and is
  * clipped only by what the code writes; 2 = the writes go to a plain array and nothing is clipped, as in OpenGL. */
 #define MX_VK_CLIP_DEFAULT 0
 static int mx_vk_clip(const MxIn *in) {
     static int m = -1;
-    if (m < 0) { const char *s = getenv("SSBU_VK_CLIP"); m = s && s[0] ? atoi(s) : MX_VK_CLIP_DEFAULT; }
+    if (m < 0) { const char *s = getenv("WT_VK_CLIP"); m = s && s[0] ? atoi(s) : MX_VK_CLIP_DEFAULT; }
     return in->target == 1 ? m : 0;
 }
 static void attr_out(Mx *e, unsigned a, const char *v) {
@@ -1901,11 +1901,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
             if (nclip && mx_vk_clip(in) != 2) emit(&h, " float gl_ClipDistance[%d];", nclip);
             emit(&h, " };\n");
             if (nclip && mx_vk_clip(in) == 2) emit(&h, "float mx_clip[8];\n");      /* round 17: see mx_vk_clip */
-            {   /* The position is declared invariant (SSBU_VK_INVARIANT=0 off, =2 also precise): two programs that draw the same mesh,
+            {   /* The position is declared invariant (WT_VK_INVARIANT=0 off, =2 also precise): two programs that draw the same mesh,
                  * a depth pass and a colour pass with a depth test for equality, must give bit-equal depths. [issue 92] Without it,
                  * stages run as blocks in order (no dispatcher between the sums) lost a third of the goo's colour fragments on RADV. */
                 static int inv = -1;
-                if (inv < 0) inv = getenv("SSBU_VK_INVARIANT") ? atoi(getenv("SSBU_VK_INVARIANT")) : 1;
+                if (inv < 0) inv = getenv("WT_VK_INVARIANT") ? atoi(getenv("WT_VK_INVARIANT")) : 1;
                 if (vk && inv) emit(&h, "invariant gl_Position;\n");
                 if (vk && inv >= 2) emit(&h, "precise gl_Position;\n");
             }

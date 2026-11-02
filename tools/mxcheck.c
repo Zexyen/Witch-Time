@@ -1,5 +1,5 @@
 /* [witchtime] Offline check of the Maxwell -> Vulkan GLSL translator (runtime/mx_translate.c) on the stages a run dumped
- * (SSBU_SHADERDUMP_ALL=<dir>: one s<program>_<index>.mxd per stage, the game's own code: keep the folder out of the repo).
+ * (WT_SHADERDUMP_ALL=<dir>: one s<program>_<index>.mxd per stage, the game's own code: keep the folder out of the repo).
  * Every stage (vertex, fragment, tessellation control / evaluation, compute) is translated as nvn_vk_draw.c does (target 1, its bindings) and compiled by glslang to SPIR-V; the failures
  * are counted by instruction / glslang message.
  *

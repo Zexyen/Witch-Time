@@ -109,7 +109,7 @@ def main():
                 sys.exit('unresolved: %s; libraries not found: %s' % (', '.join(undef) or '-', ', '.join(missing) or '-'))
             print('ldd -r: every symbol resolves (but the %d game functions a stand-in lacks)' % len(GAME_ONLY))
         os.makedirs(os.path.join(build, 'run'))
-        env = dict(os.environ, SDL_VIDEO_DRIVER='offscreen', SDL_AUDIO_DRIVER='dummy', SSBU_ROMFS=os.path.join(t, 'romfs'))
+        env = dict(os.environ, SDL_VIDEO_DRIVER='offscreen', SDL_AUDIO_DRIVER='dummy', WT_ROMFS=os.path.join(t, 'romfs'))
         if wine:
             env.setdefault('WINEDEBUG', '-all')
         game = os.path.join(build, 'witch-time-game.exe' if windows else 'witch-time-game')

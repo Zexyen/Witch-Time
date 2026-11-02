@@ -43,9 +43,9 @@
  * [doc] TextCheckResult 0 Success, 1 ShowFailureDialog, 2 ShowConfirmDialog, with the message in
  * textCheckWorkBuf.
  * Here the applet is a small Win32 dialog (edit box, OK, Cancel) run on the calling guest thread, which
- * blocks exactly like on the console. Scripted runs must not block: SSBU_SWKBD=cancel answers "cancelled",
- * SSBU_SWKBD=text:<utf-8 text> answers that text, SSBU_SWKBD=dialog forces the dialog; without the
- * variable the dialog is used unless an input script (SSBU_SEQ / SSBU_PRESS / SSBU_SCRIPT) is active.
+ * blocks exactly like on the console. Scripted runs must not block: WT_SWKBD=cancel answers "cancelled",
+ * WT_SWKBD=text:<utf-8 text> answers that text, WT_SWKBD=dialog forces the dialog; without the
+ * variable the dialog is used unless an input script (WT_SEQ / WT_PRESS / WT_SCRIPT) is active.
  *
  * ---- nn::nfp
  * Console modelled: the player-1 controller has an NFC reader (as a Pro Controller / right Joy-Con does)
@@ -257,11 +257,11 @@ static void copy_w(wchar_t *dst, uint64_t src, int max) {
 }
 /* How this call is answered: 0 dialog, 1 cancel, 2 fixed text. */
 static int kbd_mode(wchar_t *fixed) {
-    const char *v = getenv("SSBU_SWKBD");
+    const char *v = getenv("WT_SWKBD");
     if (v && strncmp(v, "text:", 5) == 0) { MultiByteToWideChar(CP_UTF8, 0, v + 5, -1, fixed, SWKBD_MAX_CHARS + 1); fixed[SWKBD_MAX_CHARS] = 0; return 2; }
     if (v && strcmp(v, "cancel") == 0) return 1;
     if (v && strcmp(v, "dialog") == 0) return 0;
-    if (getenv("SSBU_SEQ") || getenv("SSBU_PRESS") || getenv("SSBU_SCRIPT")) return 1;
+    if (getenv("WT_SEQ") || getenv("WT_PRESS") || getenv("WT_SCRIPT")) return 1;
     return 0;
 }
 /* Writes `text` into the caller's String the way the applet's storage is copied ([sdk] 0x389ff4):
@@ -524,14 +524,14 @@ int nnapplet_selftest(Ctx *c) {
     ok = rd32(P(buf) + KC_INITIAL_LENGTH) == 5 && rd16(P(work) + rd32(P(buf) + KC_INITIAL_OFFSET)) == 'M';
     uint64_t string[2] = {P(text), string_size};
     memset(text, 0xee, string_size + 16);
-    _putenv("SSBU_SWKBD=text:Kirby");
+    _putenv("WT_SWKBD=text:Kirby");
     c->x[0] = P(string); c->x[1] = P(buf); swkbd_ShowKeyboard(c);
     ok = ok && c->x[0] == 0 && rd16(P(text)) == 'K' && rd16(P(text) + 8) == 'y' && rd16(P(text) + 10) == 0 && guard_ok(text, string_size, string_size + 16, 0xee);
-    _putenv("SSBU_SWKBD=cancel");
+    _putenv("WT_SWKBD=cancel");
     c->x[0] = P(string); c->x[1] = P(buf); swkbd_ShowKeyboard(c);
     ok = ok && c->x[0] == SWKBD_RESULT_CANCELED;
     /* the real dialog: a helper thread types into it and presses OK, then a second run is cancelled */
-    _putenv("SSBU_SWKBD=dialog");
+    _putenv("WT_SWKBD=dialog");
     HANDLE helper = CreateThread(NULL, 0, kbd_test_driver, NULL, 0, NULL);
     memset(text, 0xee, string_size + 16);
     c->x[0] = P(string); c->x[1] = P(buf); swkbd_ShowKeyboard(c);
@@ -542,7 +542,7 @@ int nnapplet_selftest(Ctx *c) {
     CloseHandle(helper);
     printf("  swkbd: Win32 dialog shows the initial text \"Mario\", returns typed text \"Z\" + U+30BC on OK and 0x29f on Cancel: %s\n", dialog_ok ? "ok" : "FAILED");
     bad += !dialog_ok;
-    _putenv("SSBU_SWKBD=");
+    _putenv("WT_SWKBD=");
     printf("  swkbd: sizes work 0x%llx string 0x%llx; SetInitialText in the work buffer; scripted answer \"Kirby\" (UTF-16) and cancel (0x29f): %s\n",
            (unsigned long long)work_size, (unsigned long long)string_size, ok ? "ok" : "FAILED");
     bad += !ok;

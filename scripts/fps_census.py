@@ -2,7 +2,7 @@
 
     python scripts/fps_census.py <census at 60> <census above 60> [build/gen_eh/fps_sites.txt] [--all]
 
-A census file is what a census build (WT_FPS_CENSUS=1 at lift time) writes with SSBU_FPS_CENSUS=<file>; take the same
+A census file is what a census build (WTBUILD_FPS_CENSUS=1 at lift time) writes with WT_FPS_CENSUS=<file>; take the same
 scene at frame_rate = 60 and above (scripts/perf_bench.py). Per site, what one visit adds to its field (the mean of its
 size) at 60 against above 60: a site that takes the frame's time adds less per visit when the frames are shorter (half
 at 120); a frame-locked one adds as much, so above 60 it runs faster than the game's time. Listed: the frame-locked
