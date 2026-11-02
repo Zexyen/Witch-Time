@@ -30,7 +30,7 @@ typedef struct VStage {
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
-typedef struct { int stage, code_len, serial, rs; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess); rs: a fragment stage translated for a scale other than 1.0, kept here because a worker may build it after the scale changed */
+typedef struct { int stage, code_len, serial, rs, nograin; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess); rs: a fragment stage translated for a scale other than 1.0, kept here because a worker may build it after the scale changed */
 static CRITICAL_SECTION g_sh_lock;
 static CONDITION_VARIABLE g_sh_cv, g_jq_cv;        /* g_sh_cv: something was finished; g_jq_cv: a job was queued */
 /* ---- Session 12: the freeze watchdog's wait registry (nvn_vk_wd.c writes the report). Every wait of ours that has no
@@ -103,11 +103,25 @@ static PFN_vkCmdSetDepthClampEnableEXT vkCmdSetDepthClampEnableEXT;
 static PFN_vkCmdSetSampleMaskEXT vkCmdSetSampleMaskEXT;
 
 /* ---------------------------------------------------------------- stages: machine code -> Vulkan GLSL -> SPIR-V -> module */
+/* [witchtime] issue 86: the fragment stages the option film_grain acts on, by the hash of their machine code
+ * (found by translating every pixel shader of the game's archives: 4 of 5,485 have the grain, none shares these hashes).
+ * The four tonemap stages draw the grain as colour * (1 + (0.5 - noise) * c4[13]), so 0 there removes it and keeps the
+ * vignette; the jitter (c4[12]) then moves nothing. A mod's own shader is not recognised. */
+enum { FX_GRAIN = 1 };
+static int stage_fx(Stage *st) {
+    if (st->fx_code != st->code) {
+        uint64_t h = fnv(0xcbf29ce484222325ULL ^ 1u, st->code, (size_t)st->code_len);
+        st->fx = h == 0x44931dbda608639dULL || h == 0x48c1d6be354413c1ULL || h == 0xe84083dddb26435cULL || h == 0xe3b5d8050915b977ULL ? FX_GRAIN : 0;
+        st->fx_code = st->code;
+    }
+    return st->fx;
+}
 static int ssrc_of(SSrc *o, const Prog *p, int s) {
     const Stage *st = &p->st[s];
     memset(o, 0, sizeof *o);
     if (!st->code || st->code_len <= 0) return 0;
     o->stage = s; o->code = st->code; o->code_len = st->code_len; o->serial = p->serial; o->rs = s == 1 && RS_ON;
+    o->nograin = s == 1 && gfx_options()->no_film_grain && stage_fx((Stage *)st) == FX_GRAIN;
     if (st->ctl[3] && st->ctl[4]) { o->cdata = st->code - (s == 5 ? 0 : 0x30) + st->ctl[4]; o->cdata_size = st->ctl[3]; }      /* a compute stage has no program header */
     memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
@@ -127,6 +141,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
+    if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
@@ -249,6 +264,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
             uint64_t spv_hash = 0;
+            if (src->nograin) { char *g = strstr(out.glsl, "(F(c4[13u]))"); if (g) memcpy(g, "(0.0       )", 12); }      /* issue 86, stage_fx */
             if (getenv("SSBU_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: SSBU_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
                 uint32_t dep = s == 0 ? out.int_dep : 0, ck[4] = { v->key[0] & dep, v->key[1] & dep, v->key[2] & out.tex_units, v->key[3] & out.tex_units };
                 glsl_dump(src->serial, s, fnv(fnv(v->hb, ck, 16), &v->fo, 4), out.glsl);
@@ -334,6 +350,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     SSrc src;
     int how;
     if (!st->code) return NULL;
+    if (s == 1 && stage_fx(st) == FX_GRAIN && st->nograin != gfx_options()->no_film_grain) { st->nograin = gfx_options()->no_film_grain; st->vk = v = NULL; }      /* issue 86: film_grain changed */
     if (s == 1 && st->rs_flips != g_rs_flips) { st->rs_flips = g_rs_flips; st->vk = v = NULL; }      /* [witchtime] the scale left or reached 1.0: the other translation (rs_apply) */
     if (v && v->state == 2 && v->fo == fo && key_fits(s, key, v->key, v->dep, v->tex_units)) return v->ok ? v : NULL;
     if (!ssrc_of(&src, p, s)) return NULL;

@@ -124,6 +124,7 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
     &["game_bind", "game_eh_bind"],
     &[
         "game_cutscene_fps",
+        "game_model_lod",
         "game_rebind",
         "game_rebind_on",
         "game_rebind_live",

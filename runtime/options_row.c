@@ -1,20 +1,20 @@
-/* [witchtime] PC settings in the game's own Options screen (page Screen Display): eight rows of the game's own kind that show
+/* [witchtime] PC settings in the game's own Options screen (page Screen Display): ten rows of the game's own kind that show
  * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
  * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
- *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 33, 25, Restore Defaults (24); +0xffc their count
- *   +0x100  the row table: the game's 25, row 25, rows 26 .. 33
+ *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 35, 25, Restore Defaults (24); +0xffc their count
+ *   +0x100  the row table: the game's 25, row 25, rows 26 .. 35
  *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
  *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
  *           which opens the panel where the Brightness row opens its screen
- *   +0x360  rows 26 .. 33's method table: the Display Language row's (a list row: left / right go round its values, with
+ *   +0x360  rows 26 .. 35's method table: the Display Language row's (a list row: left / right go round its values, with
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
  *   +0x510  rows 1 and 2's method table, Controls (Bayonetta, Viola): the Brightness row's again, the label the game's own,
- *           and "decide" opens the panel's Controls page. Their objects follow row 33's. The list they were is the game's four
+ *           and "decide" opens the panel's Controls page. Their objects follow row 35's. The list they were is the game's four
  *           control types, which that page has as presets. The page's picture of the pad is kept, and shows the layout (labels_tick)
  * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
  * scripts/pc_settings_mod.py; the names here are theirs (the frame rate's label says it applies at the next start and is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
@@ -69,6 +69,8 @@ static const PcRow k_pc[] = {
     {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
     {"anisotropic_filtering", "MENU_OPTION_LIST_PC_ANISO", {"game", "2", "4", "8", "16"}, {"CORE_PC_DEFAULT", "CORE_PC_AF_2", "CORE_PC_AF_4", "CORE_PC_AF_8", "CORE_PC_AF_16"}, 0},
     {"texture_lod_bias", "MENU_OPTION_LIST_PC_TEXTURE", {"-1", "-0.5", "0", "0.5", "1"}, {"CORE_PC_LOD_M1", "CORE_PC_LOD_M05", "CORE_PC_LOD_0", "CORE_PC_LOD_P05", "CORE_PC_LOD_P1"}, 2},
+    {"model_lod", "MENU_OPTION_LIST_PC_MODEL", {"game", "highest"}, {"CORE_PC_DEFAULT", "CORE_PC_HIGHEST"}, 0},
+    {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
     {"aspect", "MENU_OPTION_LIST_PC_ASPECT", {"keep", "stretch"}, {"CORE_PC_KEEP", "CORE_PC_STRETCH"}, 0},
 };
 #define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
