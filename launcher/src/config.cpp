@@ -118,15 +118,15 @@ Paths Paths::find(const char* argv0)
 
 std::string ini_get(const std::string& file, const std::string& section, const std::string& key, const std::string& def)
 {
-	std::string cur, want = lower(key), sec = lower(section);
-	for (const std::string& l : read_lines(file))
+	std::string cur, want = lower(key), sec = lower(section), found = def;
+	for (const std::string& l : read_lines(file))                 // the last line with the key wins, as in the game's readers
 	{
 		if (std::string s = section_of(l); !s.empty())
 			cur = s;
 		else if ((sec.empty() || cur == sec) && line_key(l) == want)
-			return trim(l.substr(l.find('=') + 1));
+			found = trim(l.substr(l.find('=') + 1));
 	}
-	return def;
+	return found;
 }
 
 bool ini_set(const std::string& file, const std::string& section, const std::string& key, const std::string& value)
@@ -135,7 +135,7 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 	std::string cur, want = lower(key), sec = lower(section);
 	bool done = false;
 	int insert_at = sec.empty() ? int(lines.size()) : -1;   // after the section's last line that is not empty
-	for (size_t i = 0; i < lines.size() && !done; i++)
+	for (size_t i = 0; i < lines.size(); i++)                // every line with the key, as gfx_option_set does
 	{
 		if (std::string s = section_of(lines[i]); !s.empty())
 		{

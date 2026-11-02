@@ -20,6 +20,14 @@ struct SlowSystem : SystemInterface_SDL
 	double slow = 1;
 	explicit SlowSystem(SDL_Window* w) : SystemInterface_SDL(w) { if (const char* e = std::getenv("WITCHTIME_SLOWMO")) slow = std::max(1.0, std::atof(e)); }
 	double GetElapsedTime() override { return SystemInterface_SDL::GetElapsedTime() / slow; }
+	// RmlUi's own drops a query (it rebuilds the path from the URL's parts); ui_render.cpp reads a picture's "?a=" alpha
+	void JoinPath(Rml::String& out, const Rml::String& document, const Rml::String& path) override
+	{
+		const size_t q = path.find('?');
+		SystemInterface_SDL::JoinPath(out, document, path.substr(0, q));
+		if (q != Rml::String::npos)
+			out += path.substr(q);
+	}
 };
 
 struct CheckRow { Rml::String text, right, state; };
@@ -64,7 +72,7 @@ private:
 	bool dump_modified = false;    // the last check found files that differ from the supported version
 	bool accept_modified = false;  // setup runs with --accept-modified: such a dump is used anyway
 	std::vector<CheckRow> checks;
-	bool building = false;
+	bool building = false, converting = false;   // converting: the textures (building is true then too)
 	float progress = 0;
 	int percent = 0;
 	Rml::String phase, build_aside, build_line, build_error;
@@ -77,6 +85,8 @@ private:
 	bool mods_rebuild = false;
 	std::vector<SettingRow> settings;  // the rows of the tab shown
 	int tab = 0;
+	float row_step = 26;              // dp each settings row steps right of the one above (refresh_settings)
+	float row_pitch = 56;             // dp from one settings row's top to the next one's
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
 	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
@@ -88,6 +98,8 @@ private:
 	enum class Job { none, verify, build, textures } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
+	bool play_after_stop = false;      // Play during the texture conversion: it is stopped, and the game starts when it has
+	bool typed = false;                // the dump folder's box was typed or clicked in since the screen opened
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
@@ -100,6 +112,7 @@ private:
 	void bind_model();
 	void handle(SDL_Event& ev);
 	bool key(Rml::Input::KeyIdentifier k);
+	void hover_focus();
 	void back();
 	void tick();
 	void tick_clock();

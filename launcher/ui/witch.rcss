@@ -60,8 +60,9 @@ body {
 .screen.leaving .readout, .screen.leaving .actions, .screen.leaving .logbox, .screen.leaving .tabs, .screen.leaving .glow, .screen.leaving .band, .screen.leaving .foot { animation: 0.22s cubic-in fade-out; }
 
 /* ---- the stage: ground, the diagonal panel and its stripe ---- */
-.ground { left: 0; top: 0; width: 1280dp; height: 800dp; decorator: image(gen:grad?d=v&c0=e9e8ee&c1=d3d1da fill); }
-.glow { left: 0; top: 0; width: 1280dp; height: 800dp; decorator: image(gen:glow?x=0.7&y=0.45&rx=0.55&ry=0.7&c1=fbfbfd&a1=255&c0=fbfbfd&a0=0&stop=1 fill); }
+/* (the stage is 1280 x 800 dp; a window of another shape is wider or taller, never smaller: the ground and the glow fill it, the two bands span its width) */
+.ground { left: 0; top: 0; width: 100%; height: 100%; decorator: image(gen:grad?d=v&c0=e9e8ee&c1=d3d1da fill); }
+.glow { left: 0; top: 0; width: 100%; height: 100%; decorator: image(gen:glow?x=0.7&y=0.45&rx=0.55&ry=0.7&c1=fbfbfd&a1=255&c0=fbfbfd&a0=0&stop=1 fill); }
 .wedge { left: -300dp; top: 0; width: 700dp; height: 800dp; transform: skewX(22deg); transform-origin: left top;
 	decorator: image(gen:grad?c0=120f1c&c1=221b36&p1=0.7&c2=2a2142 fill); }
 .stripe { left: 400dp; top: 0; width: 40dp; height: 800dp; transform: skewX(22deg); transform-origin: left top;
@@ -96,14 +97,14 @@ body {
 .plate { left: 0; top: 30dp; height: 44dp; width: 340dp; display: flex; flex-direction: row; align-items: center; gap: 14dp; padding-left: 44dp;
 	decorator: image(gen:grad?c0=15111f&c1=1f1930&p1=0.55&c2=1f1930&a2=0 fill); color: #f3f0fb; font-weight: 600; font-size: 22dp; letter-spacing: 3dp; }
 .plate .crumb { font-size: 14dp; letter-spacing: 3dp; color: #d7ccf7; font-weight: 400; tab-index: auto; nav: auto; }
-.plate .crumb:hover, .plate .crumb:focus-visible { color: #ffffff; }
+.plate .crumb:focus { color: #ffffff; }
 .plate .sep { width: 7dp; height: 7dp; border: 1dp #d7ccf7; transform: rotate(45deg); }
 
 /* ---- the two bands at the bottom ---- */
-.band { left: 0; top: 674dp; width: 1280dp; height: 52dp; line-height: 52dp; text-align: center; background-color: #161220c7;
+.band { left: 0; top: 674dp; width: 100%; height: 52dp; line-height: 52dp; text-align: center; background-color: #161220c7;
 	color: #f4f2fa; font-size: 22dp; letter-spacing: 2dp; white-space: nowrap; }
 .band.bad { color: #ffb3bd; }
-.foot { left: 0; top: 726dp; width: 1280dp; height: 74dp; display: flex; flex-direction: row; align-items: center; gap: 30dp; padding: 0 60dp;
+.foot { left: 0; top: 726dp; width: 100%; height: 74dp; display: flex; flex-direction: row; align-items: center; gap: 30dp; padding: 0 60dp;
 	decorator: image(gen:grad?d=v&c0=d6d4de&a0=240&c1=cccad4&a1=240 fill); color: #24202e; font-size: 20dp; }
 .foot .fl { font-size: 15dp; color: #5d5868; letter-spacing: 1dp; }
 .foot .grow { flex: 1; }
@@ -116,7 +117,7 @@ body {
 	font-size: 22dp; letter-spacing: 2dp; white-space: nowrap; tab-index: auto; nav: vertical; }
 .mi .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom;
 	decorator: image(gen:grad?c0=141020&c1=1c162c&a1=235&p1=0.55&c2=1c162c&a2=0 fill); }
-.mi .halo { position: absolute; left: -40dp; top: -24dp; width: 110%; height: 88dp; transform: scale(0.001);
+.mi .halo { position: absolute; left: -40dp; top: -24dp; width: 110%; height: 88dp; transform: scale(0.001); pointer-events: none;
 	decorator: image(gen:glow?x=0.35&y=0.5&rx=0.55&ry=0.7&c1=8f75e6&a1=120&c0=8f75e6&a0=0&stop=1&edge=0.3 fill); transition: transform 0.2s cubic-out; }
 .mi .chev { position: absolute; left: -16dp; top: 0; height: 40dp; line-height: 38dp; font-size: 30dp; color: #ffffff; transform: translateX(-10dp) scale(0.001); transition: transform 0.15s cubic-out; }
 .mi span { position: relative; }
@@ -125,11 +126,12 @@ body {
 .mi .num { font-family: "Marcellus"; font-size: 22dp; width: 34dp; text-align: right; color: #d7ccf7; }
 .mi .tag { font-size: 13dp; letter-spacing: 1dp; font-weight: 600; padding: 1dp 8dp; background-color: #e5334b; color: #ffffff; margin-left: 4dp; }
 .mi .dia { position: absolute; left: -38dp; top: 15dp; width: 9dp; height: 9dp; background-color: #a690ec; transform: rotate(45deg); }      /* a stage done: before the bar, clear of the name */
-.mi:hover, .mi:focus-visible, .mi.on { color: #ffffff; font-weight: 600; }
-.mi:hover .fill, .mi:focus-visible .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); animation: 0.3s cubic-out sweep-in; }
-.mi:hover .halo, .mi:focus-visible .halo, .mi.on .halo { transform: scale(1); }
-.mi:hover .chev, .mi:focus-visible .chev, .mi.on .chev { transform: translateX(0) scale(1); }
-.mi:hover .num, .mi:focus-visible .num, .mi.on .num { color: #ffffff; }
+/* lit is :focus, for the mouse too (App::hover_focus moves the focus): one bar is lit, never a hovered one and a focused one */
+.mi:focus, .mi.on { color: #ffffff; font-weight: 600; }
+.mi:focus .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); animation: 0.3s cubic-out sweep-in; }
+.mi:focus .halo, .mi.on .halo { transform: scale(1); }
+.mi:focus .chev, .mi.on .chev { transform: translateX(0) scale(1); }
+.mi:focus .num, .mi.on .num { color: #ffffff; }
 .mi.dim { color: #f1eefa9e; }
 .mi.dim .num { color: #d7ccf799; }
 .mi.run .num { animation: 0.8s sine-in-out infinite alternate pulse; }
@@ -141,6 +143,7 @@ body {
 
 /* ---- the build screen ---- */
 .build .wheel { left: 600dp; top: 70dp; }
+.build .mi { tab-index: none; focus: none; }   /* the steps show the build, they do nothing: the keys, the mouse and clicks stay on the buttons */
 /* the progress ring on the wheel's grey band (the wheel's box is 660dp at 600, 70: its centre 930, 400; the band at 0.79 of its half) */
 .build .track { left: 660dp; top: 130dp; width: 540dp; height: 540dp; }
 .build progress { position: absolute; left: 660dp; top: 130dp; width: 540dp; height: 540dp; fill-image: gen:ring?c=6a49d0&w=16; }
@@ -154,15 +157,15 @@ body {
 .btn .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom;
 	decorator: image(gen:grad?c0=2b2148&c1=3a2d62 fill); }
 .btn span { position: relative; }
-.btn:hover, .btn:focus-visible { color: #ffffff; font-weight: 600; }
-.btn:hover .fill, .btn:focus-visible .fill { animation: 0.3s cubic-out sweep-in; }
-.btn:hover .fill, .btn:focus-visible .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
+.btn:focus { color: #ffffff; font-weight: 600; }
+.btn:focus .fill { animation: 0.3s cubic-out sweep-in; }
+.btn:focus .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
 .btn.primary .fill { decorator: image(gen:grad?c0=6a49d0&c1=8f75e6 fill); }
-.btn.primary:hover .fill, .btn.primary:focus-visible .fill { decorator: image(gen:grad?c0=8f75e6&c1=a690ec fill); }
+.btn.primary:focus .fill { decorator: image(gen:grad?c0=8f75e6&c1=a690ec fill); }
 .btn.light { color: #24202e; }
 .btn.light .fill { decorator: image(gen:grad?c0=dddbe3&c1=e9e8ee fill); }
-.btn.light:hover, .btn.light:focus-visible { color: #ffffff; }
-.btn.light:hover .fill, .btn.light:focus-visible .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
+.btn.light:focus { color: #ffffff; }
+.btn.light:focus .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
 .logbox { left: 620dp; top: 440dp; width: 620dp; height: 214dp; padding: 12dp 16dp; background-color: #161220d9; font-size: 14dp; line-height: 21dp; color: #d7ccf7; overflow: hidden; }
 .error { color: #ffb3bd; font-size: 16dp; line-height: 22dp; }
 
@@ -172,6 +175,7 @@ body {
 .lead-block .flourish { width: 190dp; height: 2dp; decorator: image(gen:fade?c=a690ec fill); }
 .lead-block p { font-size: 17dp; line-height: 25dp; letter-spacing: 0.5dp; color: #d7ccf7; }
 .lead-block p em { color: #ffffff; font-style: normal; }
+.lead-block p.small { font-size: 15dp; line-height: 21dp; }   /* a long note, clear of the wheel below */
 .lead-block .facts { display: flex; flex-direction: column; gap: 6dp; font-size: 15dp; letter-spacing: 0.5dp; color: #d7ccf7b3; }
 .lead-block .actions { position: relative; left: 0; top: 0; margin-top: 8dp; }
 .col { left: 640dp; top: 110dp; width: 600dp; height: 540dp; display: flex; flex-direction: column; gap: 14dp; }
@@ -209,11 +213,14 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 
 /* ---- switches (mods, the dump options): drawn by gen:pill, smooth at any size ---- */
 .switch { position: relative; width: 54dp; height: 28dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=108&h=56&c=24202e&a=110&l=2 fill); }
+/* mods: the list scrolls, and arrows do not leave a scrolling box by themselves */
+.rows .switch { nav-left: #mods_open; }
+#mods_open { nav-right: #mod0; }   /* (Apply and rebuild, left of it, goes right to it by itself) */
 .switch .knob { position: absolute; left: 4dp; top: 4dp; width: 20dp; height: 20dp; decorator: image(gen:pill?w=40&h=40&f=5d5868 fill); transition: left 0.18s cubic-out; }
 .switch.on { decorator: image(gen:pill?w=108&h=56&f=6a49d0 fill); }
 .switch.on .knob { left: 30dp; decorator: image(gen:pill?w=40&h=40&f=ffffff fill); }
-.switch:focus-visible, .switch:hover { decorator: image(gen:pill?w=108&h=56&c=6a49d0&l=4 fill); }
-.switch.on:focus-visible, .switch.on:hover { decorator: image(gen:pill?w=108&h=56&f=6a49d0&c=24202e&l=4 fill); }
+.switch:focus { decorator: image(gen:pill?w=108&h=56&c=6a49d0&l=4 fill); }
+.switch.on:focus { decorator: image(gen:pill?w=108&h=56&f=6a49d0&c=24202e&l=4 fill); }
 .tag { font-size: 12dp; letter-spacing: 2dp; font-weight: 600; color: #6a49d0; border: 1dp #6a49d080; padding: 4dp 8dp; }
 .empty { font-size: 18dp; color: #5d5868; padding: 20dp 0; line-height: 26dp; width: 420dp; }
 
@@ -221,11 +228,10 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .tabs { left: 520dp; top: 44dp; width: 760dp; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 40dp; }
 .tabs .gl { margin-bottom: 2dp; }
 .tab { position: relative; padding: 6dp 2dp 8dp 2dp; font-size: 15dp; font-weight: 600; letter-spacing: 3dp; color: #5d5868;
-	border-bottom: 2dp transparent; tab-index: auto; nav: horizontal; }
+	border-bottom: 2dp transparent; }   /* Q / E (the shoulders) and a click change the section; the arrows stay on the rows */
 .tab div { position: relative; }
 .tab:hover { color: #24202e; }
 .tab.on { color: #6a49d0; border-bottom-color: #a690ec; }
-.tab:focus-visible { color: #6a49d0; border-bottom-color: #6a49d0; }
 .srow { height: 50dp; width: 500dp; display: flex; flex-direction: row; align-items: center; padding: 0 16dp 0 30dp; font-size: 19dp; letter-spacing: 0.5dp; color: #24202e;
 	tab-index: auto; nav: vertical; border-bottom: 1dp #24202e40; }
 .srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg) scaleX(0.001); transform-origin: left bottom;
@@ -233,16 +239,22 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .srow .chev { position: absolute; left: 4dp; top: 0; height: 50dp; line-height: 48dp; font-size: 30dp; color: #ffffff; transform: scale(0.001); transition: transform 0.15s cubic-out; }
 .srow .k { position: relative; flex: 1; display: flex; flex-direction: column; }
 .srow .k div { position: relative; }
-.srow .k .note { font-size: 13dp; color: #5d5868; line-height: 14dp; white-space: nowrap; }
-.srow .v { position: relative; width: 200dp; display: flex; flex-direction: row; justify-content: space-between; align-items: center; color: #6a49d0; font-weight: 600; }
+.srow .k .note { font-size: 12dp; color: #5d5868; line-height: 14dp; white-space: nowrap; }
+.srow .v { position: relative; width: 180dp; display: flex; flex-direction: row; justify-content: space-between; align-items: center; color: #6a49d0; font-weight: 600; }
 .srow .v .arrow { width: 28dp; text-align: center; color: #6a49d08c; font-weight: 400; font-size: 24dp; }
 .srow .v .arrow:hover { color: #6a49d0; }
 .srow .v .value { flex: 1; text-align: center; }
-.srow:hover, .srow:focus-visible { color: #ffffff; border-bottom-color: transparent; }
-.srow:hover .fill, .srow:focus-visible .fill { transform: skewX(22deg) scaleX(1); }
-.srow:hover .chev, .srow:focus-visible .chev { transform: scale(1); }
-.srow:hover .k .note, .srow:focus-visible .k .note { color: #ffffffd1; }
-.srow:hover .v, .srow:focus-visible .v, .srow:hover .v .arrow, .srow:focus-visible .v .arrow { color: #ffffff; }
+.srow:focus { color: #ffffff; border-bottom-color: transparent; }
+.srow:focus .fill { transform: skewX(22deg) scaleX(1); }
+.srow:focus .chev { transform: scale(1); }
+.srow:focus .k .note { color: #ffffffd1; }
+.srow:focus .v, .srow:focus .v .arrow { color: #ffffff; }
 .srow .btn { height: 32dp; line-height: 32dp; font-size: 14dp; padding: 0 16dp; }
+/* (.srow .fill, the row's glow, would hide a button's own fill until the row itself is lit, and fight its sweep animation) */
+.srow .btn .fill { transform: skewX(22deg); transition: none; }
+/* the converted textures: the row is not a stop of its own, its buttons are (up and down as the rows; left and right between them: App::key) */
+.srow.tex { tab-index: none; }
+.srow.tex .v { width: 220dp; }   /* its two buttons side by side; its own words are short */
+.srow.tex .btn { nav: vertical; }
 .saved { display: flex; flex-direction: row; align-items: center; gap: 8dp; font-size: 15dp; color: #24202e; letter-spacing: 0.5dp; }
 .reddot { width: 10dp; height: 10dp; border-radius: 5dp; background-color: #e5334b; }

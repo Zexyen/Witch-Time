@@ -11,6 +11,9 @@
 /notes/
 /config/*.bak
 /runtime/obj_host/
+# left in older checkouts by the Python tools (gone since #110): the first is made from the dump, so never commit it
+/lifter/eh_main_tables.json
+**/__pycache__/
 # runtime/gen/: written by wtbuild tables from the dump
 /runtime/gen/
 *.elf

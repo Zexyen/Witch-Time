@@ -70,8 +70,8 @@ const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
 		{"window", "Display mode", "Windowed, or the monitor the window is on", {{"windowed", "Windowed"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}, 0},
-		{"size", "Window size", "The window in windowed mode",
-			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0, "1920x1080"},
+		{"size", "Window size", "The window in windowed mode",     // the file's width and height (read_setting)
+			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0},
 		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
 		{"cutscene_fps", "Cutscene frame rate", "Title, menus and cutscenes; movies keep theirs", {{"30", "30 fps"}, {"60", "60 fps"}}, 0},
@@ -80,7 +80,7 @@ const std::vector<SettingDef>& setting_defs()
 			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
 			1, "1.0"},
 		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}, 1},
-		{"texture_lod_bias", "Texture detail", "Below 0 sharper in the distance, above 0 blurrier",
+		{"texture_lod_bias", "Texture detail", "Below 0 sharper far away, above 0 blurrier",
 			{{"-1", "–1"}, {"-0.5", "–0.5"}, {"0", "0 — game"}, {"0.5", "+0.5"}, {"1", "+1"}}, 1, "0"},
 		{"model_lod", "Model detail", "Highest keeps the finest detail at any distance", {{"game", "Game"}, {"highest", "Highest"}}, 1},
 		{"film_grain", "Film grain", "The game's moving noise; the vignette stays", {{"on", "On"}, {"off", "Off"}}, 1},
@@ -89,7 +89,7 @@ const std::vector<SettingDef>& setting_defs()
 		{"hud_area", "HUD layout", "Wider than 16:9: HUD at the edges, or centred", {{"screen", "Full Screen"}, {"16:9", "Centered"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Menus confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -108,6 +108,49 @@ int option_index(const SettingDef& d, const std::string& value)
 		if (same_value(d.options[i].first, value))
 			return int(i);
 	return -1;
+}
+// a value's first two numbers (1.4; 1366x768; 16:10), false when it starts with none (auto, game)
+bool numbers(const char* s, double& a, double& b)
+{
+	char* e = nullptr;
+	a = std::strtod(s, &e);
+	b = e != s && *e ? std::strtod(e + 1, nullptr) : 0;
+	return e != s;
+}
+bool before(double a0, double a1, double b0, double b1) { return a0 < b0 || (a0 == b0 && a1 < b1); }
+// the option a press goes to. From a value not in the list (another version's, or the file edited by hand) the nearest
+// one that way by its numbers (1.4 -> 1.2 or 1.6, 1280x800 -> 1280x720 or 1600x900); past the ends it wraps, as the list does
+int next_option(const SettingDef& d, const std::string& value, int dir)
+{
+	const int n = int(d.options.size());
+	if (const int i = option_index(d, value); i >= 0)
+		return (i + dir + n) % n;
+	double v0, v1, o0, o1, b0 = 0, b1 = 0;
+	int best = -1;
+	for (int k = 0, num = numbers(value.c_str(), v0, v1); k < n && num; k++)
+		if (numbers(d.options[size_t(k)].first, o0, o1) && (dir > 0 ? before(v0, v1, o0, o1) : before(o0, o1, v0, v1)) &&
+			(best < 0 || (dir > 0 ? before(o0, o1, b0, b1) : before(b0, b1, o0, o1))))
+			best = k, b0 = o0, b1 = o1;
+	return best >= 0 ? best : dir > 0 ? 0 : n - 1;
+}
+// a row's value in its file. Window size is two keys there, width and height (runtime/pcmenu.c's A_SIZE does the same)
+std::string read_setting(const std::string& config, const SettingDef& d)
+{
+	const std::string ini = config + d.file;
+	if (!std::strcmp(d.key, "size"))
+		return ini_get(ini, "", "width", "1280") + "x" + ini_get(ini, "", "height", "720");   // gfx_options.c's defaults
+	return ini_get(ini, d.section, d.key, default_value(d));
+}
+void write_setting(const std::string& config, const SettingDef& d, const std::string& value)
+{
+	const std::string ini = config + d.file;
+	if (const size_t x = value.find('x'); !std::strcmp(d.key, "size") && x != std::string::npos)
+	{
+		ini_set(ini, "", "width", value.substr(0, x));
+		ini_set(ini, "", "height", value.substr(x + 1));
+	}
+	else
+		ini_set(ini, d.section, d.key, value);
 }
 
 std::string minutes(double s)
@@ -156,6 +199,7 @@ bool App::init(int argc, char** argv)
 		return false;
 	SetupState st = SetupState::read(paths.build);
 	dump = st.dump;
+	model.DirtyVariable("dump");            // (the folder box was made when the model was, still empty)
 	refresh_title();
 	refresh_build();
 	update::check(paths);
@@ -307,6 +351,7 @@ void App::bind_model()
 	c.Bind("accept_modified", &accept_modified);
 	c.Bind("checks", &checks);
 	c.Bind("building", &building);
+	c.Bind("converting", &converting);
 	c.Bind("progress", &progress);
 	c.Bind("percent", &percent);
 	c.Bind("phase", &phase);
@@ -322,6 +367,8 @@ void App::bind_model()
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
 	c.Bind("tab", &tab);
+	c.Bind("row_step", &row_step);
+	c.Bind("row_pitch", &row_pitch);
 	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
@@ -350,11 +397,13 @@ void App::bind_model()
 		{
 			if (!runner.running())
 				update::start(paths);
+			else
+				go(job == Job::verify ? "setup" : "build");   // not over a job that runs: the job, as Play shows it
 		}
 		else if (act == "quit")
 			running = false;
 		else
-			go(act);
+			go(act == "build" && runner.running() && job == Job::verify ? "setup" : act);   // (a dump check shows on the dump screen)
 	});
 	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		if (!runner.running())
@@ -570,6 +619,8 @@ void App::handle(SDL_Event& ev)
 	case SDL_EVENT_KEY_DOWN:
 	{
 		prompts_use(4);
+		if (Rml::Element* f = ctx->GetFocusElement(); f && f->GetTagName() == "input")
+			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
 		if (k == Rml::Input::KI_ESCAPE)
 		{
@@ -583,8 +634,28 @@ void App::handle(SDL_Event& ev)
 	default: break;
 	}
 	RmlSDL::InputEventHandler(ctx, window, ev);
+	if (ev.type == SDL_EVENT_MOUSE_MOTION)
+		hover_focus();
+	// a click into the dump folder's box, or an IME's text, is using it too: the mouse leaves its focus there
+	if (Rml::Element* f = ctx->GetFocusElement(); (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_TEXT_INPUT) && f && f->GetTagName() == "input")
+		typed = true;
 	if (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || ev.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
 		rescale();
+}
+
+// the control under the mouse takes the focus (not shown as the keys' focus), so one row is lit, not the hovered one and
+// the one the keys left, and the keys go on from where the mouse is. Not once the dump folder's box is in use (typed).
+void App::hover_focus()
+{
+	auto control = [](Rml::Element* e) {
+		while (e && e->GetComputedValues().tab_index() != Rml::Style::TabIndex::Auto)
+			e = e->GetParentNode();
+		return e;
+	};
+	Rml::Element* h = control(ctx->GetHoverElement());
+	Rml::Element* f = control(ctx->GetFocusElement());
+	if (h && h != f && h->IsVisible(true) && h->GetTagName() != "input" && !(typed && f && f->GetTagName() == "input"))
+		h->Focus(false);
 }
 
 // keys with a meaning of their own here; true when used. The rest go to RmlUi (arrows move the focus: `nav`).
@@ -592,10 +663,45 @@ bool App::key(Rml::Input::KeyIdentifier k)
 {
 	using namespace Rml::Input;
 	Rml::Element* focus = ctx->GetFocusElement();
+	// a click focuses what is under the pointer (a row's arrow, a switch's knob): the keys act for the control around it
+	Rml::Element* control = focus;
+	while (control && control->GetComputedValues().tab_index() != Rml::Style::TabIndex::Auto)
+		control = control->GetParentNode();
+	// a focused button that data-if hid (Stop when the build ends) leaves the focus on its parent, in no control: the keys
+	// that move or press take it back, to the other button of the converted textures' row (its Remove hid itself, or its
+	// words were clicked), else to the screen's first control
+	if (!control || !control->IsVisible(true))
+	{
+		if (k == KI_UP || k == KI_DOWN || k == KI_RETURN || k == KI_NUMPADENTER)
+		{
+			Rml::Element* row = focus;
+			while (row && !row->IsClassSet("tex"))
+				row = row->GetParentNode();
+			Rml::ElementList side;
+			if (row)
+				row->GetElementsByClassName(side, "side");
+			for (Rml::Element* e : side)
+				if (e->IsVisible(true) && e->Focus(true))
+					return true;
+			focus_first();
+			return true;
+		}
+		focus = control = nullptr;
+	}
 	bool editing = focus && focus->GetTagName() == "input";
 	if ((k == KI_RETURN || k == KI_NUMPADENTER) && focus && !editing && focus != ctx->GetDocument(0))
 	{
 		focus->Click();
+		return true;
+	}
+	if ((k == KI_LEFT || k == KI_RIGHT) && control && control->IsClassSet("side"))     // buttons side by side in a row
+	{
+		Rml::Element* e = control;
+		do
+			e = k == KI_LEFT ? e->GetPreviousSibling() : e->GetNextSibling();
+		while (e && !(e->IsClassSet("side") && e->IsVisible(true)));
+		if (e)
+			e->Focus(true);
 		return true;
 	}
 	if ((k == KI_Q || k == KI_E) && screen == "settings" && !editing)
@@ -603,18 +709,10 @@ bool App::key(Rml::Input::KeyIdentifier k)
 		set_tab(tab + (k == KI_Q ? -1 : 1));
 		return true;
 	}
-	if ((k == KI_LEFT || k == KI_RIGHT) && focus && focus->IsClassSet("setting"))
+	if ((k == KI_LEFT || k == KI_RIGHT) && control && control->IsClassSet("setting"))
 	{
-		step_setting(std::atoi(focus->GetAttribute<Rml::String>("index", "0").c_str()), k == KI_LEFT ? -1 : 1);
+		step_setting(std::atoi(control->GetAttribute<Rml::String>("index", "0").c_str()), k == KI_LEFT ? -1 : 1);
 		return true;
-	}
-	if (!focus || focus == ctx->GetDocument(0))
-	{
-		if (k == KI_UP || k == KI_DOWN || k == KI_RETURN)
-		{
-			focus_first();
-			return true;
-		}
 	}
 	ctx->ProcessKeyDown(k, RmlSDL::GetKeyModifierState());
 	ctx->ProcessKeyUp(k, RmlSDL::GetKeyModifierState());
@@ -647,6 +745,7 @@ void App::go(const Rml::String& to)
 void App::go_now(const Rml::String& to)
 {
 	leaving = false;
+	typed = false;
 	model.DirtyVariable("leaving");
 	screen = to;
 	if (to == "title")
@@ -693,6 +792,12 @@ void App::refresh_title()
 		status_bad = true;
 		status_title = "UPDATE FAILED";
 		status_line = message;
+	}
+	else if (runner.running() && (job == Job::build || (job == Job::textures && !stale)))
+	{
+		status_title = job == Job::build ? "BUILDING" : "CONVERTING";
+		status_line = job == Job::textures ? "Converting textures. Play stops it and starts the game."
+			: built ? "Building. Play shows how far it is." : "Building. Close the window any time; it resumes.";
 	}
 	else if (stale)
 	{
@@ -764,15 +869,17 @@ void App::refresh_build()
 	if (job == Job::textures && runner.running())
 	{
 		building = true;
+		converting = true;
 		progress = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
 		percent = int(progress * 100 + .5f);
 		phase = "converting textures";
 		build_aside = "archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
-		build_line = "Converting textures. Close the window any time; it resumes.";
+		build_line = stale ? "Converting textures. Stop it to rebuild; Settings goes on with it later."
+			: "Converting textures. Play stops it; Settings goes on with it later.";
 		log.clear();
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "build_line", "log"})
+		for (const char* v : {"progress", "percent", "building", "converting", "phase", "build_aside", "build_line", "log", "build_error"})
 			model.DirtyVariable(v);
 		return;
 	}
@@ -839,6 +946,7 @@ void App::refresh_build()
 		percent = int(progress * 100 + .5f);
 	}
 	building = run;
+	converting = false;
 	phase = run ? phase_of(runner.current) : complete ? "ready" : !runner.failed.empty() ? "stopped" : progress > 0 ? "paused" : "not started";
 	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
 	if (run)
@@ -850,13 +958,14 @@ void App::refresh_build()
 		build_line = doing + ". Close the window any time; it resumes.";
 	}
 	else
-		build_line = complete ? "Built from your dump. Ready to play." : !runner.failed.empty() ? "The build stopped. Show the log to see why, then build again." :
+		build_line = complete ? (stale ? "Built by an older version. Rebuild to play." : "Built from your dump. Ready to play.")
+			: !runner.failed.empty() ? "The build stopped. Show the log to see why, then build again." :
 			progress > 0 ? "Paused part way. Build to go on from where it stopped." : "Not built yet.";
 	log.clear();
 	if (job == Job::build || !runner.lines.empty())
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-	for (const char* v : {"progress", "percent", "steps", "building", "phase", "build_aside", "build_line", "log", "build_error"})
+	for (const char* v : {"progress", "percent", "steps", "building", "converting", "phase", "build_aside", "build_line", "log", "build_error"})
 		model.DirtyVariable(v);
 }
 
@@ -902,14 +1011,22 @@ void App::refresh_settings()
 		const SettingDef& d = defs[n];
 		if (d.tab != tab)
 			continue;
-		std::string v = ini_get(paths.config + d.file, d.section, d.key, default_value(d));
+		std::string v = read_setting(paths.config, d);
 		int i = option_index(d, v);
 		const int b = n < 64 ? bump_count[n] : 0;   // the value nudges the way it went; two names a direction, so a second change the same way starts it again
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
 			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
+	// the staircase (rows 500 dp wide from 620 dp) ends 20 dp inside the 1280 dp stage, however many rows a section has.
+	// Rows that step less than the diagonal (22.6 dp a 56 dp row) close in on its rule, 40 dp from the first row's corner:
+	// they come closer together too, so the last stays 12 dp clear (Graphics' nine, the converted textures' row too)
+	const float rows = float(settings.size() + (tab == 1 ? 1 : 0)), tan22 = 0.4040f;
+	row_step = rows > 1 ? std::min(26.f, 140.f / (rows - 1)) : 26.f;
+	row_pitch = rows > 1 ? std::clamp((row_step + 28.f / (rows - 1)) / tan22, 50.f, 56.f) : 56.f;
 	model.DirtyVariable("settings");
 	model.DirtyVariable("tab");
+	model.DirtyVariable("row_step");
+	model.DirtyVariable("row_pitch");
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;
@@ -947,11 +1064,7 @@ void App::step_setting(int index, int dir)
 	if (index < 0 || index >= int(defs.size()))
 		return;
 	const SettingDef& d = defs[size_t(index)];
-	const std::string ini = paths.config + d.file;
-	int i = option_index(d, ini_get(ini, d.section, d.key, default_value(d)));
-	int n = int(d.options.size());
-	i = i < 0 ? 0 : (i + dir + n) % n;
-	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
+	write_setting(paths.config, d, d.options[size_t(next_option(d, read_setting(paths.config, d), dir))].first);
 	if (index < 64)                        // the value nudges the way it went (the row's animation name changes with each count)
 		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
 	refresh_settings();
@@ -1128,7 +1241,7 @@ void App::tick()
 	{
 		const bool built_game = job == Job::build;
 		job = Job::none;
-		if (runner.exit_code)
+		if (runner.exit_code && !play_after_stop)    // (Play's own stop of the textures is no error)
 		{
 			build_error.clear();
 			bool after = false;
@@ -1138,12 +1251,23 @@ void App::tick()
 					build_error += (build_error.empty() ? "" : " ") + l.substr(std::min(l.size(), l.find_first_not_of(' ')));
 				after |= l.find("FAILED") != std::string::npos;
 			}
+			for (const std::string& l : runner.lines)       // else wtbuild's own reason (its die(): "wtbuild: ..."), as the textures fail
+				if (const size_t at = l.find("wtbuild: "); build_error.empty() && at != std::string::npos)
+					build_error = l.substr(at + 9);
 			if (build_error.empty())
-				build_error = runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
+				build_error = !built_game ? "The texture conversion was stopped. Settings goes on with it."
+					: runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
 		else if (built_game)
 			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
 		refresh_title();
+		if (screen == "build")
+			want_focus = true;                   // Stop is gone: the focus to Play, or Build
+		if (play_after_stop)
+		{
+			play_after_stop = false;
+			want_play = true;
+		}
 		if (built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
 		{
 			std::error_code ec;
@@ -1176,13 +1300,23 @@ void App::release_window()
 
 void App::play()
 {
-	if (runner.running())
+	if (runner.running() && job != Job::textures)
+	{
+		go(job == Job::verify ? "setup" : "build");   // a build or a dump check: where it shows, with its Stop
 		return;
+	}
+	if (runner.running() && !stale)
+	{                                            // the textures: optional, and Settings goes on with them; stopped, then tick() plays
+		play_after_stop = true;
+		runner.stop();
+		return;
+	}
 	if (stale)
 	{
 		play_only = false;                       // the launcher stays until the game matches it
 		go("build");
-		build_error = "This game was built by an older version. Press REBUILD to update it.";
+		build_error = runner.running() ? "This game was built by an older version. Stop the texture conversion, then press REBUILD."
+			: "This game was built by an older version. Press REBUILD to update it.";
 		model.DirtyVariable("build_error");
 		return;
 	}
@@ -1190,7 +1324,7 @@ void App::play()
 	if (!g.error.empty())
 	{
 		play_only = false;                       // nothing to play: the launcher stays, and says why
-		go("title");
+		go_now("title");                         // (go() would open the title after this, and its refresh_title wipe the reason)
 		status_bad = true;
 		status_title = "NOT READY";
 		status_line = g.error;
