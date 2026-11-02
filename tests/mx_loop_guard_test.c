@@ -49,6 +49,20 @@ int main(void) {
     fwd = fwd && sf && strstr(sf, "while (pc != 0u) { switch (pc) {") && !strstr(sf, "do { if (pc");
     if (!fwd && s) puts(s);
     ok = ok && fwd;
+    /* [issue 100] a long chain of forward jumps in a fragment stage runs in order; with a SHFL it keeps the dispatcher and the snapshot at its header */
+    uint8_t chain[0x50 + 24 * 8];
+    uint64_t l[24];
+    for (int n = 0; n < 24; n++) l[n] = n % 4 ? 0xe24000000000000full : 0;         /* @P0 BRA to the next instruction */
+    l[23] = 0xe30000000000000full | 7ull << 16;                                    /* EXIT */
+    memset(chain, 0, sizeof chain);
+    memcpy(chain + 0x50, l, sizeof l);
+    char *lf = translate(1, chain, sizeof chain, 0);
+    l[1] = 0xef10000000000000ull | 7ull << 16 | 2 | 1ull << 8 | 1ull << 20 | 3ull << 28 | 3ull << 30 | 0x1c03ull << 34;      /* SHFL.XOR R2, R1, 1, 0x1c03 */
+    memcpy(chain + 0x50, l, sizeof l);
+    char *ls = translate(1, chain, sizeof chain, 0);
+    int lng = lf && strstr(lf, "do { if (pc != 2u) continue;") && !strstr(lf, "switch (pc)") && ls && strstr(ls, "while (subgroupAny(pc != 0u)) {") && !strstr(ls, "do { if (pc");
+    if (!lng && lf) puts(lf);
+    ok = ok && lng;
     uint64_t g[4] = {0,
         0xe33000000000000full | 1ull << 16,                            /* @P1 KIL */
         0x50b0000000000f00ull | 7ull << 16,                            /* NOP */
