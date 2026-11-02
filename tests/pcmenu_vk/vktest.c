@@ -7,7 +7,7 @@
  * (the clock is frozen in t_pcm.c; the hands follow the wall clock, so a second's change between the two renders shows as a
  * hand's difference)
  * A fourth argument renders the panel's motion instead: <ms> milliseconds into the opening, or -<ms> into the closing
- * (the CPU path has no motion: no comparison; the picture under the panel is a gradient, as the game's would be):
+ * (the CPU path has no motion: no comparison; the picture under the panel is a gradient with a grid, as the game's would be):
  *   ./vktest 1920 1080 1 120 -> gpu1_open120.bmp;  ./vktest 1920 1080 1 -100 -> gpu1_close100.bmp */
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr);
     VMem gm; VkBuffer gbuf = NULL;
     VkBufferImageCopy gc; memset(&gc, 0, sizeof gc); gc.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; gc.imageSubresource.layerCount = 1; gc.imageExtent.width = W; gc.imageExtent.height = H; gc.imageExtent.depth = 1;
-    if (anim) {                                    /* a picture under the panel: a gradient with a grid, as a game's frame would show through */
+    {                                              /* a picture under the panel: a gradient with a grid, as a game's frame shows left of the panel's edge */
         gbuf = vbuf_new((uint64_t)W * H * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &gm);
         uint8_t *g = gm.map;
         for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) { uint8_t *p = g + ((size_t)y * W + x) * 4; int grid = x % 80 < 2 || y % 80 < 2; p[0] = grid ? 255 : 40 + 160 * x / W; p[1] = grid ? 255 : 60 + 120 * y / H; p[2] = grid ? 255 : 120; p[3] = 255; }
@@ -141,7 +141,11 @@ int main(int argc, char **argv) {
     }
     /* compare */
     long bad = 0, worst = 0; double sum = 0; uint8_t *diff = calloc((size_t)W * H, 4);
-    for (long i = 0; i < (long)W * H; i++) { int d = 0; for (int k = 0; k < 3; k++) { int e = abs(cpu[i * 4 + k] - gpu[i * 4 + k]); if (e > d) d = e; } sum += d; if (d > worst) worst = d; if (d > 16) bad++; diff[i * 4] = diff[i * 4 + 1] = diff[i * 4 + 2] = d > 255 ? 255 : d * 4 > 255 ? 255 : d * 4; }
+    float sc = (float)W / 1280 < (float)H / 720 ? (float)W / 1280 : (float)H / 720; if (sc < 0.45f) sc = 0.45f;      /* (scale_of) */
+    for (long i = 0; i < (long)W * H; i++) {
+        if (which == 1 && (i % W) < 360 * sc + (i / W) * 0.4040f + 1) continue;      /* left of the panel's edge the game shows: the CPU fallback's flat indigo is not compared */
+        int d = 0; for (int k = 0; k < 3; k++) { int e = abs(cpu[i * 4 + k] - gpu[i * 4 + k]); if (e > d) d = e; } sum += d; if (d > worst) worst = d; if (d > 16) bad++; diff[i * 4] = diff[i * 4 + 1] = diff[i * 4 + 2] = d > 255 ? 255 : d * 4 > 255 ? 255 : d * 4;
+    }
     printf("%dx%d screen %d: %d sprites; worst channel difference %ld, mean %.3f, pixels over 16: %ld of %ld (%.3f%%)\n", W, H, which, nspr, worst, sum / ((double)W * H), bad, (long)W * H, 100.0 * bad / ((double)W * H));
     snprintf(nm, sizeof nm, "cpu%d.bmp", which); save_bmp(nm, cpu, W, H); snprintf(nm, sizeof nm, "gpu%d.bmp", which); save_bmp(nm, gpu, W, H); snprintf(nm, sizeof nm, "diff%d.bmp", which); save_bmp(nm, diff, W, H);
     pcm_vk_free();

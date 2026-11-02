@@ -1025,8 +1025,8 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
   the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
   through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
-- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below): the whole window, its ground drawn on the
-  CPU into BGRA when something changes, composed on the GPU every frame with the turning wheel over it (`pcm_gpu_draw`,
+- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below; the pearl segment alone over the game since
+  2026-11-02): the whole window, its ground drawn on the CPU into BGRA when something changes, composed on the GPU every frame with the turning wheel over it (`pcm_gpu_draw`,
   below) and copied over the presented picture (never into the game's textures); Marcellus and Source Sans 3 subsets
   (SIL OFL 1.1) through stb_truetype.
 - **The foot hints follow the prompts** (2026-11-02, Kevin's report): "Change" and "Close" show the button that acts as
@@ -1274,17 +1274,22 @@ a value saved for the next start. The launcher never names the game: the code na
   arrow pressed (`SettingRow::bump`), and a leaving screen steps out the other way in 0.22 s before the next shows
   (`App::go` sets `leaving` and `next_screen`; `tick` changes the screen). RmlUi inherits opacity rather than
   compositing it, so things that must vanish scale to nothing instead; `WITCHTIME_SLOWMO=<n>` slows every animation
-  for a look. The in-game panel (GPU path only): `pcmenu_gpu_scene` draws the whole panel as sprites over the game's
-  picture while it opens (`PCM_OPEN_MS` 320) or closes (`PCM_CLOSE_MS` 220): the indigo wedge slides in from the
-  left with its wheel and words, a flat pearl fills between it and its place, the pearl side and its light wheel fade
-  in, the rows step in from the right one after another (40 ms apart at most, 0.26 s each), the foot bands rise; the
-  closing runs it all back together, and the game goes on when it has. `pcm_gpu_draw` then copies the picture under the
-  panel into the canvas (the swapchain image when it has TRANSFER_SRC, else the HDR picture, which now has it) before
-  the sprites, with the ground and a 1 x 1 pearl as two more textures; a second slanted edge and a band of rows are
-  more `discard`s of the fragment stage. A slanted edge may now start left of the window (`NOCLIP` is the sentinel
-  for none, not a negative edge). The CPU fallback has no motion: the panel just waits the closing's time. Verified
-  on lavapipe only (`tests/pcmenu_vk/vktest.c`'s fourth argument renders a moment of the opening or the closing over a
-  gradient); not seen at speed on a real GPU.
+  for a look. The in-game panel (GPU path only): `pcmenu_gpu_scene` draws the panel as sprites over the game's
+  picture; while it opens (`PCM_OPEN_MS` 320) the segment slides in from the right with its wheel and the rows step in
+  from the right one after another (40 ms apart at most, 0.24 s each); closing (`PCM_CLOSE_MS` 220) slides it out
+  together, and the game goes on when it has. `pcm_gpu_draw` copies the picture under the panel into the canvas (the
+  swapchain image when it has TRANSFER_SRC, else the HDR picture, which now has it) before the sprites, with the ground
+  as one more texture; a second slanted edge and a band of rows are more `discard`s of the fragment stage. A slanted
+  edge may start outside the window (`NOCLIP` is the sentinel for none, not a negative edge). The CPU fallback has no
+  motion: the panel just waits the closing's time. Verified on lavapipe only (`tests/pcmenu_vk/vktest.c`'s fourth
+  argument renders a moment of the opening or the closing over a gradient); not seen at speed on a real GPU.
+- **The segment alone** (2026-11-02, Kevin's ask): the in-game panel lost its indigo wedge, the dark wheel and the title
+  on it. It is the pearl segment right of the runic stripe, over the game's picture, which shows left of the edge
+  (`pcmenu_gpu_scene` clips the ground at the edge whenever the renderer can start from the picture, so the steady panel
+  is drawn over it every frame too); the title and its line sit at the top of the segment by the stripe, the rows start
+  a little lower, the help wraps to two lines when the band right of the stripe is too narrow for one, and "F1 · Start +
+  Select" moved right of the edge. The CPU fallback and a swapchain without TRANSFER_SRC cannot show the game there and
+  fill the left with flat indigo (`stage_edge`). The first-start screen keeps its own stage.
 - **Checked**: the launcher built here (SDL3 3.4.18 from conda-forge, RmlUi 6.3) and all five screens screenshotted
   under Xvfb with lavapipe; the panel, the Controls page, the hint and the first-start screen rendered through a
   stand-alone harness that includes `pcmenu.c` (1280 x 720 and 1920 x 1080). Not run: the game itself (no dump here),

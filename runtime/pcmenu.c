@@ -215,7 +215,10 @@ static void menu_init(void) {                              /* the first opening:
 /* The look (the launcher's too, launcher/ui/witch.rcss; the design page in the project files): a pearl ground crossed by an
  * indigo panel on a 22 degree diagonal with a runic stripe on its edge, settings as a staircase of rows stepping down the
  * diagonal, the chosen row a violet glow, a clockwork wheel behind, a dark message band and a pale hint band at the bottom.
- * Everything is laid out for 1280 x 720 and scaled by s = min(W / 1280, H / 720); the rows keep to the right edge. */
+ * The in-game panel (2026-11-02, Kevin's ask) is the pearl segment alone, right of the stripe, over the game's picture;
+ * nothing of the indigo panel stays but the stripe on its edge (the CPU fallback, which cannot show the game there, fills
+ * the left with flat indigo). Everything is laid out for 1280 x 720 and scaled by s = min(W / 1280, H / 720); the rows
+ * keep to the right edge. */
 static stbtt_fontinfo g_f_head, g_f_ui, g_f_uib;          /* Marcellus (titles); Source Sans 3 Regular and SemiBold */
 static uint8_t *g_px;                                      /* the panel */
 static int g_pw, g_ph, g_rect[4], g_for_w, g_for_h;
@@ -284,18 +287,6 @@ static void para(float x, float y, float w, float h, Rgb c0, Rgb c1, Rgb c2, flo
             if (t < 0 || t > 1) { cov = t < 0 ? 1 + t * w : 1 - (t - 1) * w; if (cov <= 0) continue; t = t < 0 ? 0 : 1; }      /* the slanted ends smoothed */
             Rgb c = t < t1 ? mix(c0, c1, t1 > 0 ? t / t1 : 1) : mix(c1, c2, t1 < 1 ? (t - t1) / (1 - t1) : 1);
             put(i, j, c, (a0 + (a2 - a0) * t) * cov);
-        }
-    }
-}
-/* the indigo panel: its right edge runs from x_top at the top of the window down to the right at 22 degrees (as the
- * launcher's skewX from the top left corner); filled from x_left with c0 -> c1 -> c2 over w */
-static void wedge(float x_left, float w, float x_top, int H, Rgb c0, Rgb c1, Rgb c2, float t1) {
-    for (int j = 0; j < H; j++) {
-        float e = x_top + j * TAN22;
-        int i1 = (int)ceilf(e);
-        for (int i = (int)x_left < 0 ? 0 : (int)x_left; i < i1 && i < g_pw; i++) {
-            float t = (i + 0.5f - x_left) / w, cov = e - i; if (t > 1) t = 1; if (t < 0) t = 0;
-            put(i, j, t < t1 ? mix(c0, c1, t / t1) : mix(c1, c2, (t - t1) / (1 - t1)), cov > 1 ? 1 : cov);
         }
     }
 }
@@ -657,15 +648,16 @@ static void alloc_panel(int pw, int ph) {
     if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
     g_pw = pw; g_ph = ph;
 }
-/* the stage every full screen shares: the pearl ground, the indigo panel from the left with its stripe and rules; its edge
- * at x_top (1280-scale) at the top of the window */
+/* the panel's stage: the pearl ground; left of the slanted edge (x_top at the top of the window) flat indigo, which only
+ * the CPU fallback shows (the GPU path clips the ground at the edge and the game's picture is there); the runic stripe
+ * and the rules right of the edge */
 static void stage_ground(int W, int H) {
     for (int y = 0; y < H; y++) rect(0, y, W, 1, mix(C_PEARL, C_PEARL_LO, (float)y / H), 1);
     soft_disc(W * 0.7f, H * 0.45f, H * 0.9f, C_WHITE, 0.9f);
 }
-static void stage_panel(int W, int H, float s, float x_top) {
+static void stage_edge(int W, int H, float s, float x_top) {
     (void)W;
-    wedge(-300 * s, 660 * s, x_top, H, C_INDIGO0, C_INDIGO1, C_INDIGO2, 0.7f);
+    for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; int i1 = (int)ceilf(e); if (i1 > 0) rect(0, j, i1, 1, C_INDIGO0, 1); put(i1, j, C_INDIGO0, i1 - e); }
     for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
     stripe_text(&g_stripe, x_top, 40 * s, H, 1);
     slant_line(x_top + 50 * s, H, 1, C_INK, 0.35f); slant_line(x_top + 55 * s, H, 1, C_INK, 0.35f);
@@ -678,33 +670,31 @@ static void draw_panel_words(int W, int H, float s);
 static uint8_t *g_pbg; static int g_pbg_w, g_pbg_h; static unsigned g_pbg_ver = ~0u;     /* the panel's ground, once a size */
 static Layer g_hubs, g_words;                                                          /* over the wheels: the hubs, then the words, once a version */
 static float scale_of(int W, int H) { float s = (float)W / 1280.0f < (float)H / 720.0f ? (float)W / 1280.0f : (float)H / 720.0f; return s < 0.45f ? 0.45f : s; }
-/* the panel's wheels: the light one (centre, radius) on the pearl side, right of the slanted edge; the dark one on the indigo panel, left of it */
-static void panel_wheels(int W, float s, float wl[3], float wd[3], float *edge) { wl[0] = W - 300 * s; wl[1] = 360 * s; wl[2] = 360 * s; wd[0] = 170 * s; wd[1] = 430 * s; wd[2] = 240 * s; *edge = 360 * s; }
+/* the panel's wheel (centre, radius), behind the rows, right of the slanted edge (edge: its x at the top of the window) */
+static void panel_wheel(int W, float s, float wl[3], float *edge) { wl[0] = W - 300 * s; wl[1] = 360 * s; wl[2] = 360 * s; *edge = 360 * s; }
 static void draw_panel(int W, int H) {
-    float s = scale_of(W, H), wl[3], wd[3], edge;
+    float s = scale_of(W, H), wl[3], edge;
     art_init();
     alloc_panel(W, H);
     if (!g_px) return;
     g_rect[0] = 0; g_rect[1] = 0; g_rect[2] = W; g_rect[3] = H;
-    panel_wheels(W, s, wl, wd, &edge);
-    const float wl_x = wl[0], wl_y = wl[1], wl_r = wl[2], wd_x = wd[0], wd_y = wd[1], wd_r = wd[2];
+    panel_wheel(W, s, wl, &edge);
+    const float wl_x = wl[0], wl_y = wl[1], wl_r = wl[2];
     if (g_pbg && (g_pbg_w != W || g_pbg_h != H)) { free(g_pbg); g_pbg = NULL; }
     if (g_pbg && g_pbg_ver == g_ver) {
         memcpy(g_px, g_pbg, (size_t)W * H * 4);
     } else {
         if (!g_pbg) {
-            /* the stage: the ground, the base of the wheel on the pearl side, the indigo panel, the lilac wheel's base on it */
+            /* the stage: the ground, the base of the wheel on it, the edge */
             stage_ground(W, H);
             g_clip_right = 1; wheel_still(&g_wheel, wl_x, wl_y, wl_r, 0.34f, edge); g_clip_right = 0;
-            stage_panel(W, H, s, edge);
-            wheel_still(&g_wheel_dark, wd_x, wd_y, wd_r, 0.4f, edge - 1);
+            stage_edge(W, H, s, edge);
             g_pbg = malloc((size_t)W * H * 4); g_pbg_w = W; g_pbg_h = H;
             if (g_pbg) memcpy(g_pbg, g_px, (size_t)W * H * 4);
         } else memcpy(g_px, g_pbg, (size_t)W * H * 4);
         layer_clear(&g_hubs); layer_clear(&g_words);
         g_to = &g_hubs;
         g_clip_right = 1; wheel_hub(&g_wheel, wl_x, wl_y, wl_r, 0.34f, edge); g_clip_right = 0;
-        wheel_hub(&g_wheel_dark, wd_x, wd_y, wd_r, 0.4f, edge - 1);
         g_to = &g_words;
         draw_panel_words(W, H, s);
         g_to = NULL;
@@ -714,21 +704,21 @@ static void draw_panel(int W, int H) {
     double t = anim_t();
     g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, 0, edge, t); g_clip_right = 0;
     layer_over(&g_hubs);
-    wheel_turn(&g_wheel_dark, wd_x, wd_y, wd_r, 0.4f, 1, edge - 1, t);
     layer_over(&g_words);
 }
 static void draw_panel_words(int W, int H, float s) {
     int nshow = 0;
     for (int i = 0; i < NROW; i++) nshow += row_on(i);
-    /* the indigo side: where you are */
-    int ty = (int)(170 * s);
-    float ttl = 38 * s;
-    if (g_page) text(&g_f_ui, 56 * s, ty - (int)(30 * s), "PC Settings  \xE2\x80\xBA  Controls", 15 * s, C_LILAC, 2 * s);
-    text(&g_f_head, 56 * s, ty + (int)(ttl * 0.78f), g_page ? "Controls" : "PC Settings", ttl, C_WHITE, 0);
-    hgrad_a((int)(56 * s), ty + (int)(ttl * 1.05f), (int)(190 * s), 1, C_LAV, C_LAV, 1, 0.1f);
-    text(&g_f_ui, 56 * s, ty + (int)(ttl * 1.05f + 26 * s), g_page ? "Each character keeps a layout." : "The game waits while this is open.", 16 * s, C_LILAC, 1 * s);
+    /* where you are: the title at the top of the segment, by the stripe */
+    float edge = 360 * s;                                  /* (panel_wheel's) */
+    int ty = (int)(40 * s), tx = (int)(edge + 40 * TAN22 * s + 76 * s);
+    float ttl = 32 * s;
+    if (g_page) text(&g_f_ui, tx, ty - (int)(14 * s), "PC Settings  \xE2\x80\xBA  Controls", 14 * s, C_VIOLET, 2 * s);
+    text(&g_f_head, tx, ty + (int)(ttl * 0.78f), g_page ? "Controls" : "PC Settings", ttl, C_INK, 0);
+    hgrad_a(tx, ty + (int)(ttl * 1.05f), (int)(190 * s), 1, C_VIOLET, C_VIOLET, 0.5f, 0.1f);
+    text(&g_f_ui, tx, ty + (int)(ttl * 1.05f + 22 * s), g_page ? "Each character keeps a layout." : "The game waits while this is open.", 15 * s, C_MUTE, 1 * s);
     /* the rows: a staircase down the diagonal, both ends stepping as the launcher's rows do; the last ends 50 from the edge */
-    float band_y = H - 126 * s, top = nshow > 9 ? 110 * s : 200 * s, rowh = 50 * s;
+    float band_y = H - 126 * s, top = nshow > 9 ? 136 * s : 200 * s, rowh = 50 * s;
     if (top + nshow * rowh > band_y - 40 * s) rowh = (band_y - 40 * s - top) / nshow;
     float st = 26 * s, w0 = 460 * s;
     if (nshow > 1 && st * (nshow - 1) > 200 * s) st = 200 * s / (nshow - 1);
@@ -773,15 +763,20 @@ static void draw_panel_words(int W, int H, float s) {
         if (dot) disc(xr - w - 14 * s, sb - px * 0.3f, 5 * s, C_RED, 0);
         text(&g_f_ui, xr - w, sb, st_txt, px, sc, 0.5f * s);
     }
-    /* the message band: the chosen row's help, one line; the hint band: the buttons */
+    /* the message band: the chosen row's help, one line when it fits right of the stripe, else two; the hint band: the buttons */
     bands(W, H, s, C_BAND, 0.78f, C_FOOT, 0.94f);
     const char *help = g_cap >= 0 ? "Press the button for this, on the pad. Esc leaves it as it is." : k_rows[g_sel].help;
-    float hpx = 20 * s, hw = text_w(&g_f_ui, help, hpx, 1.5f * s);
-    if (hw > W - 60 * s) { hpx *= (W - 60 * s) / hw; hw = text_w(&g_f_ui, help, hpx, 1.5f * s); }
-    text(&g_f_ui, (W - hw) / 2, (int)(band_y + 26 * s + hpx * 0.35f), help, hpx, C_WHITE, 1.5f * s);
+    float hpx = 20 * s, hw = text_w(&g_f_ui, help, hpx, 1.5f * s), bx = edge + (band_y + 26 * s) * TAN22 + 60 * s, bw = W - 40 * s - bx;
+    if (hw <= bw) text(&g_f_ui, bx + (bw - hw) / 2, (int)(band_y + 26 * s + hpx * 0.35f), help, hpx, C_WHITE, 1.5f * s);
+    else {
+        char ln[2][160];
+        hpx = 17 * s;
+        int n = wrap(&g_f_ui, ln, 2, help, hpx, bw * 0.92f);      /* (wrap measures without the tracking) */
+        for (int l = 0; l < n; l++) { float w = text_w(&g_f_ui, ln[l], hpx, 1 * s); text(&g_f_ui, bx + (bw - w) / 2, (int)(band_y + (n == 1 ? 26 * s + hpx * 0.35f : 17 * s + l * 21 * s + hpx * 0.35f)), ln[l], hpx, C_WHITE, 1 * s); }
+    }
     int fb = (int)(H - 37 * s + 7 * s);
     float fpx = 20 * s;
-    text(&g_f_ui, 60 * s, fb, "F1  \xC2\xB7  Start + Select", 15 * s, C_MUTE, 1 * s);
+    text(&g_f_ui, edge + fb * TAN22 + 70 * s, fb, "F1  \xC2\xB7  Start + Select", 15 * s, C_MUTE, 1 * s);
     const char *close = g_page && !g_direct ? "Back" : "Close";
     float wc = hint_btn(0, fb, fpx, g_swap ? 1 : 0, "Change", C_INK, C_PEARL, C_INK, 0), wb = hint_btn(0, fb, fpx, g_swap ? 0 : 1, close, C_INK, C_PEARL, C_INK, 0), x = W - 60 * s - wc - 30 * s - wb;
     hint_btn(x, fb, fpx, g_swap ? 1 : 0, "Change", C_INK, C_PEARL, C_INK, 1);
@@ -942,7 +937,7 @@ int pcmenu_take_work(void) { InterlockedExchange(&g_job, 0); return (int)Interlo
  * the panel again. */
 void pcmenu_gpu(int on) {
     AcquireSRWLockExclusive(&g_lock);
-    if (g_gpu != (on != 0)) { g_gpu = on != 0; g_drawn_ver = ~0u; }
+    if (g_gpu != (on != 0)) { g_gpu = on != 0; g_drawn_ver = ~0u; free(g_pbg); g_pbg = NULL; }
     ReleaseSRWLockExclusive(&g_lock);
 }
 static float ease_out(float t) { if (t <= 0) return 0; if (t >= 1) return 1; float u = 1 - t; return 1 - u * u * u; }      /* a quick start, a gradual finish */
@@ -951,11 +946,11 @@ static void emit(int art, float x, float y, float w, float h, float alpha, float
     PcmSprite e = {art, x, y, w, h, 0, alpha, 0, 0, clip_top, clip_right, clip2_top, clip2_right, y0, y1};
     g_emit[g_emit_n++] = e;
 }
-/* The sprites to draw for the window (W, H) now, in order. Steady: over the ground the renderer copied, the moving parts
- * of the wheels with the hubs and the words between (*over_game = 0). While the panel opens (PCM_OPEN_MS) or closes
- * (PCM_CLOSE_MS) and the renderer can start from the game's picture (over_game in), the whole panel is sprites over it
- * (*over_game = 1): the indigo wedge slides in from the left with its wheel and words, the pearl side fades in, the rows
- * step in from the right one after another, the bands rise; the reverse on closing, together. */
+/* The sprites to draw for the window (W, H) now, in order. The first-start screen, and the panel when the renderer cannot
+ * start from the game's picture (over_game in): over the ground it copied, the wheel's moving parts with the hubs and the
+ * words between (*over_game = 0). The panel otherwise (*over_game = 1): the segment as sprites over the game's picture,
+ * clipped at its slanted edge, so the game shows left of it; while it opens (PCM_OPEN_MS) it slides in from the right
+ * with its wheel, and the rows step in from the right one after another; closing (PCM_CLOSE_MS) slides it out, together. */
 int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
     int kind = pcmenu_kind(), can = *over_game;
     *over_game = 0;
@@ -971,45 +966,36 @@ int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
         wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, t);
         if (g_emit_n < max) out[g_emit_n++] = hubs;
     } else {
-        float wl[3], wd[3], edge;
-        panel_wheels(W, s, wl, wd, &edge);
-        float open = g_close_at ? 1 - ease_out((float)(now - g_close_at) / PCM_CLOSE_MS) : ease_out((float)(now - g_open_at) / PCM_OPEN_MS);      /* 0 away .. 1 in place */
-        if (!can || (open >= 1 && !g_close_at)) {
+        float wl[3], edge;
+        panel_wheel(W, s, wl, &edge);
+        if (!can) {
             g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
             if (g_emit_n < max) out[g_emit_n++] = hubs;
-            wheel_turn(&g_wheel_dark, wd[0], wd[1], wd[2], 0.4f, 1, edge - 1, t);
             if (g_emit_n < max) out[g_emit_n++] = words;
         } else {
             *over_game = 1;
-            float dx = (1 - open) * (edge + H * TAN22 + 8 * s), e2 = edge - dx, a = open, band_y = H - 126 * s, fw = (float)W, fh = (float)H;
-            /* the pearl side: flat between the wedge's edge and its place, the ground right of its place, the light wheel */
-            emit(-4, 0, 0, fw, fh, a, e2, 1, edge, 0, 0, band_y);
-            emit(-3, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, 0);
-            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f * a, 0, edge, t); g_clip_right = 0;
-            emit(-1, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, 0);
-            /* the wedge, with its wheel and hub, shifted */
-            emit(-3, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
-            wheel_turn(&g_wheel_dark, wd[0] - dx, wd[1], wd[2], 0.4f, 1, e2 - 1, t);
-            emit(-1, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
-            /* the words: the rows one after another from the right; the rest of the pearl side; the bands from below; the wedge's words with it */
-            float rows_top = fh, rows_bot = 0;
-            int k = 0, nshow = 0;
-            for (int i = 0; i < NROW; i++) nshow += g_row_y[i] >= 0;
-            float stag = nshow > 1 ? (0.2f / (nshow - 1) < 0.04f ? 0.2f / (nshow - 1) : 0.04f) : 0;
-            for (int i = 0; i < NROW; i++) {
-                if (g_row_y[i] < 0) continue;
-                float y0 = (float)g_row_y[i], y1 = y0 + g_row_h;
-                if (y0 < rows_top) rows_top = y0; if (y1 > rows_bot) rows_bot = y1;
-                float p = g_close_at ? open : ease_out(((float)(now - g_open_at) / 1000 - 0.08f - k * stag) / 0.26f), sh = (1 - p) * 70 * s;
-                emit(-2, sh, 0, fw, fh, p, edge, 1, NOCLIP, 0, y0, y1);
-                k++;
+            float open = g_close_at ? 1 - ease_out((float)(now - g_close_at) / PCM_CLOSE_MS) : ease_out((float)(now - g_open_at) / PCM_OPEN_MS);      /* 0 away .. 1 in place */
+            float dx = (1 - open) * (W - edge), ex = edge + dx, fw = (float)W, fh = (float)H;
+            emit(-3, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0] + dx, wl[1], wl[2], 0.34f, 0, ex, t); g_clip_right = 0;
+            emit(-1, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
+            if (open >= 1 && !g_close_at) emit(-2, 0, 0, fw, fh, 1, edge, 1, NOCLIP, 0, 0, 0);
+            else {                                 /* the rows one after another from the right, within the segment; the rest with it */
+                float rows_top = fh, rows_bot = 0;
+                int k = 0, nshow = 0;
+                for (int i = 0; i < NROW; i++) nshow += g_row_y[i] >= 0;
+                float stag = nshow > 1 ? (0.2f / (nshow - 1) < 0.04f ? 0.2f / (nshow - 1) : 0.04f) : 0;
+                for (int i = 0; i < NROW; i++) {
+                    if (g_row_y[i] < 0) continue;
+                    float y0 = (float)g_row_y[i], y1 = y0 + g_row_h;
+                    if (y0 < rows_top) rows_top = y0; if (y1 > rows_bot) rows_bot = y1;
+                    float p = g_close_at ? open : ease_out(((float)(now - g_open_at) / 1000 - 0.06f - k * stag) / 0.24f), sh = (1 - p) * 70 * s;
+                    emit(-2, dx + sh, 0, fw, fh, p, ex, 1, NOCLIP, 0, y0, y1);
+                    k++;
+                }
+                if (rows_top > rows_bot) emit(-2, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
+                else { emit(-2, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, rows_top); emit(-2, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, rows_bot, fh); }
             }
-            if (rows_top > rows_bot) { rows_top = band_y; rows_bot = band_y; }
-            emit(-2, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, rows_top);
-            emit(-2, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, rows_bot, band_y);
-            float dy = (1 - a) * 40 * s;
-            emit(-2, 0, dy, fw, fh, a, NOCLIP, 0, NOCLIP, 0, band_y + dy, fh);
-            emit(-2, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
         }
     }
     int n = g_emit_n;
