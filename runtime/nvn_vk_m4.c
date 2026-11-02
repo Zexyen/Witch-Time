@@ -2253,7 +2253,7 @@ static int cont_stage(uint64_t control, uint64_t data, SSrc *o) {      /* as nvn
     int s = stage_of_type[(g32(data + 0x30) >> 10) & 15];
     if (s < 0) return -1;
     if (s > 1) return -2;
-    o->stage = s; o->code = (const uint8_t *)(uintptr_t)(data + 0x30); o->code_len = len;
+    o->stage = s; o->code = (const uint8_t *)(uintptr_t)(data + 0x30); o->code_len = len; o->rs = s == 1 && RS_ON;      /* as ssrc_of, or the preparation makes a translation the game never asks for */
     if (ctl[3] && ctl[4]) { o->cdata = o->code - 0x30 + ctl[4]; o->cdata_size = ctl[3]; }
     return s;
 }
@@ -2556,7 +2556,7 @@ static int dat_walk(const uint8_t *b, uint64_t n, int *njobs) {
             if (s.stage == 4) memcpy(s.tess, (const void *)(uintptr_t)(ctl + 0x738), 16);
         }
         if (at > dsz || !len || len > dsz - at) continue;
-        s.code = (const uint8_t *)(uintptr_t)(data + at); s.code_len = (int)len;
+        s.code = (const uint8_t *)(uintptr_t)(data + at); s.code_len = (int)len; s.rs = s.stage == 1 && RS_ON;      /* as ssrc_of */
         if (csize && has_c && cofs <= dsz - at && csize <= dsz - at - cofs) { s.cdata = s.code + cofs; s.cdata_size = csize; }
         Job *j = calloc(1, sizeof *j + (size_t)s.code_len + s.cdata_size + 16);
         uint8_t *d = j->data;
@@ -2782,7 +2782,7 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 1 : 0, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 2 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages, so those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
         printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (SSBU_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;

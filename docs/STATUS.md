@@ -719,6 +719,12 @@ halved in 2:1 steps first).
 - **Not measured**: that first change on a PC whose cache has no `rs1` stages (the game translates what each draw needs, held,
   on the render thread; 3,755 stages took 110.7 s over a whole first run). Windows, and a change from the Options rows (their
   job post was seen working for vsync, not for the scale).
+- **Regression, fixed after v0.5.2**: `SSrc.rs` was set only in `ssrc_of`, so the preparation's two readers (`cont_stage`, the
+  store's walk) made the 1.0 translation of every fragment stage at any other scale, and the game translated all of them
+  again behind held loading screens: a row of short bars after the first-run screen. They set it now, and the marker of a
+  scaled run is `_s2_`, so a PC prepared by v0.5.1 or v0.5.2 at a scale prepares once more; 1.0 keeps its marker. Cold first
+  start to the title, scale 2.4, RX 9070 XT, hidden window: 602 holds, 46.9 s and 41 bars before; 5 holds, 32 ms and no bar
+  after, second start no translation. Title pictures aligned by scene differ only in their random particles.
 
 ## Depth pyramid at a scale (issue 93, 2026-11-01)
 
