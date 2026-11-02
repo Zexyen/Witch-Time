@@ -1174,7 +1174,7 @@ The green liquid of a dying giant Homunculus: 8 blobs of one 1272-index mesh, ea
 RX 6600 on Windows gave about 63 ms a frame more (12 fps).
 - **Vertex stages with no step back** (every target is known: BRA, the tokens, the BRX tables) run their blocks once, in order:
   `do { if (pc != N) continue; ... } while (false);`, and a jump leaves its block. Vertex stages with a real loop keep the
-  dispatcher, and so do fragment stages, whose quad reads depend on how a quad's lanes move through the blocks.
+  dispatcher, and so do most fragment stages, whose quad reads depend on how a quad's lanes move through the blocks (issue 100 below).
 - **`invariant gl_Position` is the rule now** (`SSBU_VK_INVARIANT=0` off). #3747 is a colour pass with a depth test for equality
   after depth pass #620. Without the dispatcher between the sums the two compiled differently and #3747 lost a third of its
   fragments (8,327,501 to 5,541,822). With it the count is exact.
@@ -1183,6 +1183,18 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
   repeat (the same shaders, 4.1 and 82.5 us): compare later runs only. #4943 / #4945 went from 51 to 98 us a draw in one run
   and not in another; not explained.
 - Not run on AMD's Windows driver, NVIDIA or Intel.
+
+## The golden light and the dispatcher (2026-11-01; issue 100)
+
+The light at the end of the prologue's last cutscene is the boss's gold cracks: vs #7759 / fs #7760, about 55 frames. fs #7760 is a
+16-step parallax march over texture 2's alpha with an early exit at each step: 31 dispatcher cases and 47 jumps. RX 9070 XT, RADV,
+1.6: 11 ms of the frame, peak frame 28.5 ms of GPU time; an RX 6700 XT on Windows fell to 16.5 fps there.
+- **Long fragment chains run in order** too: a fragment stage with no step back, no SHFL and 16 blocks or more, which on the dumped
+  stages is that march's six variants (#7756 to #7766). Same 100 frames: GPU time 11.6 to 5.8 ms a frame, peak 28.5 to 8.8, #7760
+  0.59 to 0.06 ns a fragment. `SHFL` stages stay for #98's header snapshot; shorter stages stay because a wider test (1,644 stages,
+  410 with an implicit-derivative sample after a jump) showed no clear gain outside this family, and a regression could be anywhere.
+- Not run on AMD's Windows driver, NVIDIA or Intel; RADV's whole-quad mode can hide quad bugs those show. The picture was checked by
+  eye on shots 28 frames apart, not frame for frame.
 
 ## Performance report (2026-10-26)
 

@@ -40,7 +40,7 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
-    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a vertex stage with none (see the blocks in mx_translate) */
+    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
     int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
     uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
     uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
@@ -1827,8 +1827,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
     /* [issue 92] A vertex stage with no step back runs its blocks once, in order: a jump leaves its block (continue ends the do) and
      * the blocks up to the target skip themselves. In the dispatcher every jump is a new trip through all the cases, per lane: the
      * goo's skinning stage (98 cases, about 120 jumps a vertex) took 5.7 ms of an RX 9070 XT's frame that way, 0.13 ms like this.
-     * Fragment stages stay: their quad reads depend on how the lanes of a quad move through the blocks. */
-    e->seq = e->any_jump && !e->has_back && in->stage == MX_VERTEX;
+     * Fragment stages stay: their quad reads depend on how the lanes of a quad move through the blocks.
+     * [issue 100] Except a long chain with no shuffle (those need the dispatcher's header): the gold cracks' 16-step parallax march
+     * (#7760 and its variants, 31 blocks) cost an RX 9070 XT 0.59 ns a fragment that way, 0.06 like this. Shorter stages stay: all
+     * 1,644 of them in order gave no clear gain outside this family, and a wrong quad read could then be anywhere in the game. */
+    int chain = 0, quad = 0;
+    for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) { chain += e->leader[pc]; quad |= e->qlead[pc]; }
+    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && !quad && chain >= 16));
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
