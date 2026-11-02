@@ -110,7 +110,7 @@
 		<img class="gear3" src="img/wheel-gear3.bmp?a=150"/>
 		<img class="top" src="img/wheel-top.bmp?a=150"/>
 	</div>
-	<img class="track" src="gen:ring?c=24202e&amp;a=24&amp;w=22"/>
+	<img class="track" src="gen:ring?c=24202e&amp;a=24&amp;w=16"/>
 	<progress direction="clockwise" start-edge="top" data-attr-value="progress"></progress>
 	<div class="wedge" style="width: 640dp;"></div>
 	<div class="stripe" style="left: 340dp;"><img src="img/stripe.bmp"/></div>

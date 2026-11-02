@@ -99,7 +99,7 @@ body {
 .mi .sub { font-size: 13dp; letter-spacing: 1dp; color: #ffffffd1; line-height: 14dp; }
 .mi .num { font-family: "Marcellus"; font-size: 22dp; width: 34dp; text-align: right; color: #d7ccf7; }
 .mi .tag { font-size: 13dp; letter-spacing: 1dp; font-weight: 600; padding: 1dp 8dp; background-color: #e5334b; color: #ffffff; margin-left: 4dp; }
-.mi .dia { width: 9dp; height: 9dp; background-color: #a690ec; transform: rotate(45deg); margin-left: auto; margin-right: 20dp; }
+.mi .dia { position: absolute; left: -38dp; top: 15dp; width: 9dp; height: 9dp; background-color: #a690ec; transform: rotate(45deg); }      /* a stage done: before the bar, clear of the name */
 .mi:hover, .mi:focus-visible, .mi.on { color: #ffffff; font-weight: 600; }
 .mi:hover .fill, .mi:focus-visible .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); }
 .mi:hover .halo, .mi:focus-visible .halo, .mi.on .halo { opacity: 1; }
@@ -116,8 +116,9 @@ body {
 
 /* ---- the build screen ---- */
 .build .wheel { left: 600dp; top: 70dp; }
-.build .track { left: 662dp; top: 132dp; width: 476dp; height: 476dp; }
-.build progress { position: absolute; left: 662dp; top: 132dp; width: 476dp; height: 476dp; fill-image: gen:ring?c=6a49d0&w=22; }
+/* the progress ring on the wheel's grey band (the wheel's box is 660dp at 600, 70: its centre 930, 400; the band at 0.79 of its half) */
+.build .track { left: 660dp; top: 130dp; width: 540dp; height: 540dp; }
+.build progress { position: absolute; left: 660dp; top: 130dp; width: 540dp; height: 540dp; fill-image: gen:ring?c=6a49d0&w=16; }
 .readout { left: 72dp; top: 536dp; display: flex; flex-direction: row; align-items: baseline; gap: 14dp; color: #f4f2fa; white-space: nowrap; }
 .readout .pct { font-family: "Marcellus"; font-size: 64dp; line-height: 64dp; }
 .readout .pct span { font-size: 30dp; color: #d7ccf7; }

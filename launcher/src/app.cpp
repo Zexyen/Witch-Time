@@ -806,6 +806,14 @@ void App::refresh_build()
 			r.right = run ? "Next" : "";
 		steps.push_back(r);
 	}
+	if (const char* d = std::getenv("WITCHTIME_BUILD_DEMO"))     // test aid: the first n stages done, the next running
+	{
+		const int n = std::atoi(d);
+		for (int i = 0; i < int(steps.size()); i++)
+			steps[i].state = i < n ? "done" : i == n ? "run" : "wait";
+		progress = std::clamp(float(n) / float(steps.size()) + 0.1f, 0.f, 1.f);
+		percent = int(progress * 100 + .5f);
+	}
 	building = run;
 	phase = run ? phase_of(runner.current) : complete ? "ready" : !runner.failed.empty() ? "stopped" : progress > 0 ? "paused" : "not started";
 	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
