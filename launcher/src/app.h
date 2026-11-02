@@ -11,11 +11,21 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cstdlib>
+
+/* test aid: WITCHTIME_SLOWMO=<n> slows every animation n times (RmlUi's clock), so frames of a 0.3 s motion can be grabbed */
+struct SlowSystem : SystemInterface_SDL
+{
+	double slow = 1;
+	explicit SlowSystem(SDL_Window* w) : SystemInterface_SDL(w) { if (const char* e = std::getenv("WITCHTIME_SLOWMO")) slow = std::max(1.0, std::atof(e)); }
+	double GetElapsedTime() override { return SystemInterface_SDL::GetElapsedTime() / slow; }
+};
 
 struct CheckRow { Rml::String text, right, state; };
 struct StepRow { Rml::String num, name, note, right, state; };
 struct ModRow { Rml::String name, note, kind; bool on = true; };
-struct SettingRow { Rml::String name, note, value; int index = 0; };   // index: the row in setting_defs()
+struct SettingRow { Rml::String name, note, value; int index = 0; Rml::String bump = "none"; };   // index: the row in setting_defs(); bump: the value's nudge animation after a change
 struct MenuRow { Rml::String label, tag; std::string action; bool dim = false; };   // a bar of the title's staircase
 
 class App {
@@ -28,7 +38,7 @@ private:
 	SDL_Window* window = nullptr;
 	SDL_GPUDevice* gpu = nullptr;
 	std::unique_ptr<UiRender> render;
-	std::unique_ptr<SystemInterface_SDL> system;
+	std::unique_ptr<SlowSystem> system;
 	TextInputMethodEditor_SDL ime;
 	Rml::Context* ctx = nullptr;
 	Rml::DataModelHandle model;
@@ -66,7 +76,10 @@ private:
 	Rml::String mods_summary, mods_error;
 	bool mods_rebuild = false;
 	std::vector<SettingRow> settings;  // the rows of the tab shown
-	int tab = 0;                       // settings: 0 Display, 1 Graphics, 2 Controls
+	int tab = 0;
+	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
+	Rml::String next_screen; double leave_at = 0;
+	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
 	Rml::String tex_note, tex_action;  // settings: the converted textures (#54)
 	bool tex_remove = false;
 
@@ -95,6 +108,7 @@ private:
 	void focus_first();
 
 	void go(const Rml::String& to);
+	void go_now(const Rml::String& to);
 	void refresh_title();
 	void refresh_build();
 	void refresh_mods();
