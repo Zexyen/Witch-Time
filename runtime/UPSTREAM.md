@@ -41,8 +41,8 @@ from the player's own dump and is never committed or published.
 
 ## Smash leftovers removed (2026-11-02)
 Handlers for imports our main does not have: every import-table entry whose name main.elf does not import (737
-entries), then every function, variable and macro that left unused, and the self-test cases (about 8,200 lines with the generated test vectors)
-that called them. Gone whole: `nnalbum.c` (album, movie maker) with the renderers' movie-maker present job,
+entries), then every function, variable and macro that left unused, and the self-test cases that called them (about
+8,200 lines with the generated test vectors). Gone whole: `nnalbum.c` (album, movie maker) with the renderers' movie-maker present job,
 `nnapplet.c` (web, software keyboard, shop, amiibo), `nnlibc2_c5b.inc` (musl stdio lifted from Smash's SDK; ours is
 not lifted), the binary128 soft-float arithmetic, `gen_static/quad_tests.h`, `sdktest_data.h` and
 `lifter/gen_quad_tests.py`. Both self-tests now run to the end on our main (`WT_CXXRT_SELFTEST` 79 checks, none
