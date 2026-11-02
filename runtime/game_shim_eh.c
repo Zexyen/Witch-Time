@@ -548,14 +548,27 @@ void h_screen_handheld(Ctx *c) { f_710070a760(c); screen_size_aspect(c); }
 /* The chapter select's aim (0x7100920570) is a point on the map moved by the stick. It is projected with the camera's
  * viewport, which has the screen getters' width (h_screen_*), and kept on screen by the screen's corners mapped back with
  * 0x7100d02d70's width (+304 of the graphics object, 1280 whatever the window): wider than 16:9 the aim could not reach
- * the right part of the screen. Only that call gets the screen's width: the getter's other 50 callers are not checked.
+ * the right part of the screen. Those calls that work in the camera's viewport get its width: the aim, the fights'
+ * off-screen arrow, tests whether a projected point is on screen, target picks around the middle, the ray through the
+ * middle, the stick-aim cursor (at rest half the width, moved within 80 % of that, its ray left of the middle at 21:9). The
+ * getter's other callers want 1280 (the capture effects' texel sizes, the UI camera) or are not about the screen.
  * f_7100a6f5a0(x s0, y s1) stores the aim's position on screen (one caller, 0x710091c298, by the same projection) for
  * the ring drawn there, in the UI's space (h_ui_ortho): at 21:9 the ring was 290 units right of the aim. */
 void f_7100d02d70(Ctx *c);
 void h_screen_w(Ctx *c) {
     f_7100d02d70(c);
     float a = aspect_want();
-    if (a <= 0.0f || c->x[30] != 0x71009207fcull) return;
+    if (a <= 0.0f) return;
+    switch (c->x[30]) {
+    case 0x71009207fcull:      /* the aim */
+    case 0x71009c93b8ull: case 0x71009c9520ull: case 0x71009c9640ull:      /* the arrow */
+    case 0x7100269080ull: case 0x71005a1a00ull: case 0x7100864cc4ull: case 0x710086fb10ull: case 0x71008af4f8ull:      /* on screen? */
+    case 0x7100787350ull: case 0x7100787360ull: case 0x71007834ecull: case 0x7100783500ull: case 0x7100783534ull:      /* picks */
+    case 0x710052dfecull:      /* the ray */
+    case 0x71004f63d4ull: case 0x71004f65acull: case 0x71004f7390ull: case 0x71004f7438ull: case 0x710041af94ull: case 0x71004a9828ull:      /* the aim cursor (+0x17c40): */
+    case 0x71004d8954ull: case 0x71004d8c7cull: case 0x7100536c84ull: case 0x710053819cull: case 0x7100538710ull: case 0x7100398c74ull: break;      /* half this width, then unprojected */
+    default: return;
+    }
     uint64_t g; int32_t h; memcpy(&g, (void *)(uintptr_t)0x71024accc0ull, 8); memcpy(&h, (void *)(uintptr_t)(g + 308), 4);
     c->x[0] = (uint32_t)(2 * (int32_t)((float)h * a / 2.0f + 0.5f));
 }
@@ -564,26 +577,41 @@ void h_screen_w(Ctx *c) {
  * its centre at 640. Wider than 16:9 the UI is 720 * ratio wide with its centre in the middle, so the fill was cut
  * short (74 % of a full health bar at 21:9 with the HUD at the edges, 20 % centred). The width it reads is scaled to
  * 1280 / (720 * ratio) (target_w), and the rectangle is moved right by half the extra width (clip_cmd: the command it
- * is copied into is allocated at 0x7100c1e388, then the rectangle is read back from [sp]).
- * shortcut: wider than 16:9 only; a taller screen keeps the console's mapping (not seen on screen). */
-static float g_clip_off;
+ * is copied into is allocated at 0x7100c1e388, then the rectangle is read back from [sp]). A taller screen does the same with
+ * the height (target_h, 0x7100d02db0). A rectangle over all of the 1280 (or 720) becomes all of the screen: what it clips
+ * is widened by h_ui_element. */
+static float g_clip_off, g_clip_y, g_clip_w, g_clip_h;
 void f_7100d02d90(Ctx *c);
 void h_target_w(Ctx *c) {
     f_7100d02d90(c);
     float a = aspect_want();
     if (a > 16.0f / 9.0f && (c->x[30] == 0x7100c1e044ull || c->x[30] == 0x7100c1e110ull)) {
         double ui = (double)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f)), w = (double)(uint32_t)c->x[0];
-        g_clip_off = (float)((ui - 1280.0) / 2.0 * w / ui);
+        g_clip_off = (float)((ui - 1280.0) / 2.0 * w / ui); g_clip_w = (float)w;
         c->x[0] = (uint32_t)(w * 1280.0 / ui + 0.5);
+    }
+}
+void f_7100d02db0(Ctx *c);
+void h_target_h(Ctx *c) {
+    f_7100d02db0(c);
+    float a = aspect_want();
+    if (a > 0.0f && a < 16.0f / 9.0f && (c->x[30] == 0x7100c1e04cull || c->x[30] == 0x7100c1e118ull)) {
+        double ui = 1280.0 / (double)a, h = (double)(uint32_t)c->x[0];
+        g_clip_y = (float)((ui - 720.0) / 2.0 * h / ui); g_clip_h = (float)h;
+        c->x[0] = (uint32_t)(h * 720.0 / ui + 0.5);
     }
 }
 void f_7100d04414(Ctx *c);
 void h_clip_cmd(Ctx *c) {
-    int ours = c->x[30] == 0x7100c1e38cull && aspect_want() > 16.0f / 9.0f;
+    int ours = c->x[30] == 0x7100c1e38cull && aspect_want() > 0.0f;
     f_7100d04414(c);
-    if (!ours) return;
+    if (!ours || (g_clip_off == 0.0f && g_clip_y == 0.0f)) return;
     float r[4]; memcpy(r, (void *)(uintptr_t)c->x[31], 16);      /* x0 y0 x1 y1 */
-    r[0] += g_clip_off; r[2] += g_clip_off;
+    float t = (g_clip_w - 2.0f * g_clip_off) * 0.99f;      /* it must reach the 1280's right edge too: a heading's wipe is as long at very wide ratios, ui_rule */
+    if (g_clip_off != 0.0f && r[2] - r[0] >= t && r[2] >= t) { r[0] = 0.0f; r[2] = g_clip_w; }
+    else { r[0] += g_clip_off; r[2] += g_clip_off; }
+    if (g_clip_y != 0.0f && r[3] - r[1] >= (g_clip_h - 2.0f * g_clip_y) * 0.99f) { r[1] = 0.0f; r[3] = g_clip_h; }
+    else { r[1] += g_clip_y; r[3] += g_clip_y; }
     memcpy((void *)(uintptr_t)c->x[31], r, 16);
 }
 /* f_7100d07610(slot w0, left s0, right s1, top s2, bottom s3, near s4, far s5): the UI's flat projection, one caller (0x7100640218),
@@ -600,6 +628,62 @@ void h_ui_ortho(Ctx *c) {
 /* The screen's size in that space, for a sprite in the UI's screen mode (lifter eh.rs UI_SIZE_SITES). */
 uint32_t wt_ui_w_bits(void) { float w = 1280.0f - 2.0f * ui_x0; uint32_t b; memcpy(&b, &w, 4); return b; }
 uint32_t wt_ui_h_bits(void) { float h = 720.0f - 2.0f * ui_y0; uint32_t b; memcpy(&b, &h, 4); return b; }
+/* The capture effects (element types 1000 gauss, 1011 colour shift, 1020 and 1021 radial, the Yes / No dialog's last element)
+ * copy the window to a texture and draw it back with u = UI x / 1280, v = UI y / 720 (0x7100d02d70 and 0x7100d02d80), so u = 1
+ * was the right of the window. In the space above the window's left edge is ui_x0: the dialog came out squeezed into the
+ * middle 1280, and 1021's shader paints outside 0..1 black. 0x7100c025a4 and 0x7100c00b98 (quad, x2 -> u0 v0 u1 v1) get them
+ * corrected. 1011 has the same call with the sprite's own UVs when [x21 + 0x18] = 0 (material, not capture). Types 1001
+ * and 1010 are in no layout. */
+static void ui_capture_uv(float *t) {
+    if (ui_x0 == 0.0f && ui_y0 == 0.0f) return;
+    float w = 1280.0f - 2.0f * ui_x0, h = 720.0f - 2.0f * ui_y0;
+    t[0] = (t[0] * 1280.0f - ui_x0) / w; t[2] = (t[2] * 1280.0f - ui_x0) / w;
+    t[1] = (t[1] * 720.0f - ui_y0) / h; t[3] = (t[3] * 720.0f - ui_y0) / h;
+}
+void f_7100c025a4(Ctx *c);
+void h_capture_quad(Ctx *c) {
+    float t[4]; uint64_t lr = c->x[30]; uint32_t cap = 1;
+    if (lr == 0x7100972924ull) memcpy(&cap, (void *)(uintptr_t)(c->x[21] + 0x18), 4);
+    if ((lr == 0x71009732dcull || lr == 0x7100972dc8ull || lr == 0x7100972924ull) && cap) {
+        memcpy(t, (void *)(uintptr_t)c->x[2], 16); ui_capture_uv(t); c->x[2] = (uint64_t)(uintptr_t)t;
+    }
+    f_7100c025a4(c);
+}
+void f_7100c00b98(Ctx *c);
+void h_gauss_quad(Ctx *c) {      /* two callers, 1000's two passes, with the same rectangle: corrected in a copy */
+    float t[4]; memcpy(t, (void *)(uintptr_t)c->x[2], 16); ui_capture_uv(t); c->x[2] = (uint64_t)(uintptr_t)t;
+    f_7100c00b98(c);
+}
+/* HUD elements placed at a point of the 3D view: 0x7100626004 gives it in the camera's viewport (0 to 720 * ratio), and they
+ * take that as the UI's position (0x7100c1656c), a reticle, an icon, a small gauge (hud0340, hud0360, hud0380) and the off-screen
+ * arrow (hud0420): at 21:9 they stood 220 right of their targets. Same mapping as the aim, also for the stick-aim reticle,
+ * whose cursor is in the viewport (h_screen_w). The ones that test the
+ * viewport's right edge with the UI's width (0x7100bfcf70) get the viewport's width. Others place themselves at 0..1 of the
+ * screen times the UI's size, kept on screen: they get the real size, and the left and top edge by wt_ui_mark (lifter). */
+static float ui_view_w(void) { float a = aspect_want(); return a > 0.0f ? (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f)) : 1280.0f; }
+void f_7100c1656c(Ctx *c);
+void h_ui_pos(Ctx *c) {
+    float p[3];
+    switch (c->x[30]) {
+    case 0x71009ae8c0ull: case 0x71009aedb0ull: case 0x71009b2380ull: case 0x71009b2440ull: case 0x71009b3ff4ull: case 0x71009b40c4ull: case 0x71009c961cull:
+    case 0x71009b6fe8ull: case 0x71009b709cull:      /* the stick-aim reticle (HUD + 0x173e0, its cursor copied to +0x68 at 0x710098784c) */
+        memcpy(p, (void *)(uintptr_t)c->x[1], 12); p[0] = p[0] * ui_k + ui_x0; p[1] = p[1] * ui_k + ui_y0; c->x[1] = (uint64_t)(uintptr_t)p;
+    }
+    f_7100c1656c(c);
+}
+void f_7100bfcf70(Ctx *c);
+void h_ui_w(Ctx *c) {
+    f_7100bfcf70(c);
+    uint64_t lr = c->x[30];
+    if (lr == 0x71009a83a8ull || lr == 0x71009b05a0ull) c->v[0].f[0] = 1280.0f - 2.0f * ui_x0;
+    else if (lr == 0x71009b274cull || lr == 0x71009b28a0ull || lr == 0x71009b48a4ull) c->v[0].f[0] = ui_view_w();
+}
+void f_7100bfcf80(Ctx *c);
+void h_ui_h(Ctx *c) {
+    f_7100bfcf80(c);
+    if (c->x[30] == 0x71009a83b0ull || c->x[30] == 0x71009b05a8ull) c->v[0].f[0] = 720.0f - 2.0f * ui_y0;
+}
+void wt_ui_mark(Ctx *c, int x, int y) { c->v[x].f[0] += ui_x0; c->v[y].f[0] += ui_y0; }
 void f_7100a6f5a0(Ctx *c);
 void h_aim_pos(Ctx *c) {
     c->v[0].f[0] = c->v[0].f[0] * ui_k + ui_x0; c->v[1].f[0] = c->v[1].f[0] * ui_k + ui_y0;
@@ -653,21 +737,20 @@ void h_camera_fov(Ctx *c) {
  * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the
  * centre. Wider than 16:9 the cameras and the flat projection keep that space in the middle (h_camera_perspective,
  * h_ui_ortho). What is 1280 across (not turned, in the middle: dims, strips, the cutscene bars) gets the screen's width
- * here, the banner of the chapter select stays at its diagonal. Of the HUD: a root (element 0) of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
+ * here, some named below. Of the HUD: a root (element 0) of a layout of the HUD's files (a .uid named hud*: ui_hud.dat, ui_hud_bayo1.dat) placed 200 or more from the centre in
  * the file (health -492, 269; the gauges -572, -316; the score 260, 297 ...) moves out by half the extra width, to the
  * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
  * RECOMPS_HUD_CENTRE=1; "Centered" in the PC menu and the Options screen, at once: game_hud_centre) keeps them in the middle. */
 void f_7100c0ef04(Ctx *c);
 /* The name of the layout at lay, an entry of a DAT archive in memory, or "". The archive ("DAT\0", file count, offset table at
  * +8, name table at +0x10: u32 name size, then the names) starts before it, 4-aligned, within 16 MB (the UI archives are
- * a few MB); its offset table holds lay - archive. Asked once per layout (a table of 1024). */
+ * a few MB); its offset table holds lay - archive. Looked up once per layout loaded (a table of 1024). */
 static const char *ui_name(uint64_t lay) {
-    static struct { uint64_t lay; const char *name; } t[1024];
-    uint32_t h = (uint32_t)((lay >> 2) * 0x9E3779B1u) >> 22;
-    for (uint32_t i = 0; i < 1024; i++, h = (h + 1) & 1023) {
-        if (t[h].lay == lay) return t[h].name;
-        if (!t[h].lay) break;
-    }
+    static struct { uint64_t lay, sig; const char *name; } t[1024];
+    uint32_t h = (uint32_t)((lay >> 2) * 0x9E3779B1u) >> 22, q[3];
+    memcpy(q, (void *)(uintptr_t)lay, 4); memcpy(q + 1, (void *)(uintptr_t)(lay + 4), 4); memcpy(q + 2, (void *)(uintptr_t)(lay + 0x10), 4);
+    uint64_t sig = q[0] | (uint64_t)q[1] << 16 ^ (uint64_t)q[2] << 32;      /* another layout loaded at this address has other counts and sizes */
+    for (uint32_t i = 0; i < 8; i++) if (t[(h + i) & 1023].lay == lay && t[(h + i) & 1023].sig == sig) return t[(h + i) & 1023].name;
     const char *name = "";
     for (uint64_t p = lay & ~3ull; p + (16u << 20) > lay && p >= 0x1000; p -= 4) {
         uint32_t w; memcpy(&w, (void *)(uintptr_t)p, 4);
@@ -681,43 +764,104 @@ static const char *ui_name(uint64_t lay) {
             if (p + o == lay) { name = (const char *)(uintptr_t)(p + no + 4 + (uint64_t)i * nl); goto found; }
         }
     }
-found:
-    if (!t[h].lay) { t[h].lay = lay; t[h].name = name; }
+found:;
+    uint32_t e = h;      /* the first free or stale slot of the 8, else the first: a bounded probe, so a full table costs a scan of one layout, not of every one every frame */
+    for (uint32_t i = 0; i < 8; i++) if (!t[(h + i) & 1023].lay || t[(h + i) & 1023].lay == lay) { e = (h + i) & 1023; break; }
+    t[e].lay = lay; t[e].sig = sig; t[e].name = name;
     return name;
 }
 __declspec(dllexport) volatile int game_hud_centre = -1;      /* -1 = not read yet; 0 / 1; the PC menu and the Options row (pcmenu.c) change it while the game runs */
+static float fabsf_(float x) { return x < 0.0f ? -x : x; }
+/* The rule under a heading (Main Menu, Options, Brightness, Difficulty, Play History, the Shop ...): one picture (the diagonal
+ * rules use it too) in a nine-grid (kind 2), anchored left, starting past the 1280's left edge. 0x7100c1b25c keeps its caps' size
+ * at any scale, so scale lengthens only the straight middle: the tip in the left cap and the ornament in the right stay as drawn.
+ * Half of them are wiped in by a clip (kind 6, always the element before them), whose rectangle cut them at the 1280's edge; they
+ * inherit its position, not its scale. Answers 0 if el is not one, else the scale that takes the clip to the screen's left edge (1: no clip). */
+static float ui_rule(uint64_t lay, uint32_t el) {
+    uint32_t n, f, kind, d, part, anchor; int32_t par; float rot, px, w; uint64_t e, p;
+    memcpy(&n, (void *)(uintptr_t)lay, 4); memcpy(&f, (void *)(uintptr_t)(lay + 0xc), 4);
+    if (el >= n) return 0.0f;
+    e = lay + f + el * 0x1b4ull;
+    memcpy(&rot, (void *)(uintptr_t)(e + 0x14), 4); memcpy(&par, (void *)(uintptr_t)(e + 0x44), 4);
+    memcpy(&kind, (void *)(uintptr_t)(e + 0x198), 4); memcpy(&d, (void *)(uintptr_t)(e + 0x1a4), 4);
+    if (kind != 2 || !d || par < 0 || rot != 0.0f) return 0.0f;
+    memcpy(&part, (void *)(uintptr_t)(lay + d + 0x24), 4); memcpy(&anchor, (void *)(uintptr_t)(lay + d + 0x10), 4);
+    p = lay + f + (uint32_t)par * 0x1b4ull;
+    memcpy(&px, (void *)(uintptr_t)p, 4); memcpy(&rot, (void *)(uintptr_t)(p + 0x14), 4);
+    memcpy(&kind, (void *)(uintptr_t)(p + 0x198), 4); memcpy(&d, (void *)(uintptr_t)(p + 0x1a4), 4);
+    if (part != 0x364a6e68u || anchor || px > -620.0f || rot != 0.0f) return 0.0f;
+    if (kind != 6) return 1.0f;
+    memcpy(&w, (void *)(uintptr_t)(lay + d + 0xc), 4);
+    return (w - ui_x0) / w;
+}
 void h_ui_element(Ctx *c) {
     uint64_t lay = c->x[0], out = c->x[1]; uint32_t el = (uint32_t)c->x[2];
     f_7100c0ef04(c);
     float a = aspect_want();
     if (game_hud_centre < 0) { const char *e = getenv("RECOMPS_HUD_CENTRE"); game_hud_centre = e && atoi(e); }
     if (a <= 0.0f || !(uint32_t)c->x[0]) return;      /* x0 = 0: no such element */
-    uint32_t f, kind, ty, d; float ex[2], sc[2], rot, sz[2] = {0, 0};
+    uint32_t f, kind, ty, d, mode = 0; float ex[2], sc[2], rot, sz[2] = {0, 0}, v[2];
     memcpy(&f, (void *)(uintptr_t)(lay + 0xc), 4);
     uint64_t e = lay + f + el * 0x1b4;
     memcpy(ex, (void *)(uintptr_t)e, 8); memcpy(&rot, (void *)(uintptr_t)(e + 0x14), 4); memcpy(sc, (void *)(uintptr_t)(e + 0x18), 8);
     memcpy(&kind, (void *)(uintptr_t)(e + 0x198), 4); memcpy(&ty, (void *)(uintptr_t)(e + 0x19c), 4); memcpy(&d, (void *)(uintptr_t)(e + 0x1a4), 4);
-    if ((kind == 1 || kind == 2) && d) memcpy(sz, (void *)(uintptr_t)(lay + d), 8);      /* a picture's or a framed panel's size */
-    float v[2]; memcpy(v, (void *)(uintptr_t)(out + 0x50), 8);
-    if ((ty == 0 || ty == 2001 || ty == 1021) && sz[0] * sc[0] >= 1270.0f && sz[1] >= 1.0f && rot == 0.0f && ex[0] >= -30.0f && ex[0] <= 30.0f) {      /* 1280 across: dims, pictures, strips, the cutscene bars; none has children */
-        int full = sz[1] * sc[1] >= 700.0f, shot = ty == 1021;      /* a whole screen keeps its shape and loses a little at the edges; the screen's capture (1021) is the screen's shape already */
-        float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
-        if (a > 16.0f / 9.0f ? 1 : full && !shot) v[0] *= k;
-        if (a > 16.0f / 9.0f ? full && !shot : full) v[1] *= k;
-        memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
-    } else if ((el == 1 || el == 2) && !strncmp(ui_name(lay), "menu000b", 8)) {      /* the banner of the chapter select: its left edge is -187 of the UI at rest; scaled around a point of its diagonal (149 right of its centre), the diagonal stays */
-        float k = (310.0f - ui_x0) / 497.0f, x;
-        if (k > 1.0f) {
+    if ((kind == 1 || kind == 2) && d) { memcpy(sz, (void *)(uintptr_t)(lay + d), 8); memcpy(&mode, (void *)(uintptr_t)(lay + d + 0x18), 4); }      /* a picture's or a framed panel's size; mode 1: the size of the screen (UI_SIZE_SITES) */
+    memcpy(v, (void *)(uintptr_t)(out + 0x50), 8);
+    float wd = sz[0] * sc[0], ht = sz[1] * sc[1];
+    if ((ty == 0 || ty == 2001 || ty == 1021 || ty == 1000) && mode != 1 && (wd >= 1270.0f || (wd >= 1260.0f && ht < 100.0f)) && sz[1] >= 1.0f && sz[0] != sz[1] && rot == 0.0f && ex[0] >= -30.0f && ex[0] <= 30.0f) {      /* 1280 across: dims, pictures, strips, the cutscene bars; none has children */
+        if (el != 4 || strncmp(ui_name(lay), "event0015", 9)) {      /* its neighbours are 1280 away: below */
+            int full = ht >= 700.0f, shot = ty == 1021 || ty == 1000;      /* a whole screen keeps its shape and loses a little at the edges; the screen's capture is the screen's shape already */
+            float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
+            if (a > 16.0f / 9.0f ? 1 : full && !shot) v[0] *= k;
+            if (a > 16.0f / 9.0f ? full && !shot : full) v[1] *= k;
+            memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+        }
+    } else if (a > 16.0f / 9.0f && kind == 2 && ht >= 1240.0f && ex[0] >= -30.0f && ex[0] <= 30.0f && (fabsf_(rot - 1.5708f) < 0.02f || fabsf_(rot + 1.5708f) < 0.02f)) {      /* the same turned a quarter (the vignettes): their length is y; no children, no scale tracks */
+        v[1] *= a * 9.0f / 16.0f; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+    } else if (el >= 11 && el <= 22 && !strncmp(ui_name(lay), "hud0100", 7)) {      /* Game Over's paper */
+        if (el <= 12) {      /* its speckles, 1600 x 1000, drift 200 from their place 39 right of the middle: as the rule, or their edge comes to the 1280's */
+            float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
             v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
-            memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x += 149.0f * (1.0f - k); memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+        } else if (el >= 17) {      /* the right triangles that fill its corners and the bands along its top and bottom, anchored at their ends: their edges are the 1280 x 720's, so they go to the screen's corners, the bands as much longer */
+            float pos[2]; memcpy(pos, (void *)(uintptr_t)(out + 0x10), 8);
+            pos[0] += pos[0] < 0.0f ? ui_x0 : -ui_x0; pos[1] += pos[1] < 0.0f ? ui_y0 : -ui_y0;
+            memcpy((void *)(uintptr_t)(out + 0x10), pos, 8);
+            if (el >= 21) { v[1] -= 2.0f * ui_x0 / sz[1]; memcpy((void *)(uintptr_t)(out + 0x50), v, 8); }
+        }
+    } else if (el >= 20 && el <= 23) {
+        if (!strncmp(ui_name(lay), "menu006a", 8)) {      /* Play History's vignette: strips down the sides at the 1280's edges, or along the top and bottom at the 720's */
+            float pos[2]; memcpy(pos, (void *)(uintptr_t)(out + 0x10), 8);
+            if (a > 16.0f / 9.0f) { if (el >= 22) pos[0] += el == 22 ? ui_x0 : -ui_x0; }
+            else if (el < 22) pos[1] += el == 20 ? ui_y0 : -ui_y0;
+            else { v[1] *= 16.0f / (a * 9.0f); memcpy((void *)(uintptr_t)(out + 0x50), v, 8); }
+            memcpy((void *)(uintptr_t)(out + 0x10), pos, 8);
+        }
+    } else if ((el == 2 || el == 3) && a > 16.0f / 9.0f && !strncmp(ui_name(lay), "hud04", 5) && (!strncmp(ui_name(lay) + 5, "30", 2) || !strncmp(ui_name(lay) + 5, "50", 2))) {      /* the lines at the ends of the bands of hud0430 and hud0450, anchored at those ends */
+        float k = a * 9.0f / 16.0f, x; v[0] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+        memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x *= k; memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+    } else if ((el == 7 || el == 8) && ui_y0 != 0.0f && !strncmp(ui_name(lay), "event0020", 9)) {      /* its shutter, from the top and bottom of a taller screen */
+        float y; memcpy(&y, (void *)(uintptr_t)(out + 0x14), 4); y += el == 7 ? ui_y0 : -ui_y0; memcpy((void *)(uintptr_t)(out + 0x14), &y, 4);
+    } else if (el == 1 || el == 2) {
+        const char *nm = ui_name(lay);
+        if (!strncmp(nm, "menu000b", 8)) {      /* the banner of the chapter select, the Shop's panels: a picture with a diagonal edge. Scaled around a point of that edge (149 right of its centre) the diagonal stays. Shop, Items is the panel nearest the middle: its far edge is 1317 of the UI, and moved 151 at a scale of 1.368, so 410 from there */
+            float k = (380.0f - ui_x0) / 410.0f, ky = (360.0f - ui_y0) / 360.0f, x;
+            if (ky > k) k = ky;
+            if (k > 1.0f) {
+                v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+                memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x += 149.0f * (1.0f - k); memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+            }
+        } else if (el == 1 && !strncmp(nm, "event0015", 9)) {      /* the credits' ring of 5 pictures, 1280 apart: the whole ring evenly */
+            float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
+            v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
         }
     }
     if (!(a > 16.0f / 9.0f)) return;
-    if (el >= 1 && el <= 8) {
-        if ((ex[1] == 360.0f || ex[1] == -360.0f) && !strncmp(ui_name(lay), "event0020", 9)) {      /* its bars reach 1280 by their animation */
-            float v; memcpy(&v, (void *)(uintptr_t)(out + 0x50), 4); v *= a * 9.0f / 16.0f; memcpy((void *)(uintptr_t)(out + 0x50), &v, 4);
-        }
-        return;
+    float rule = kind == 2 ? ui_rule(lay, el) : kind == 6 ? ui_rule(lay, el + 1) : 0.0f;
+    if (kind == 2 ? rule > 0.0f : rule > 1.0f) {      /* the left end moves by ui_x0, the right end stays, and a wipe still starts at the screen's left */
+        float rx; memcpy(&rx, (void *)(uintptr_t)(out + 0x10), 4);
+        if (kind == 6) { rx += ui_x0; v[0] *= rule; }
+        else { if (rule == 1.0f) rx += ui_x0; v[0] -= ui_x0 / sz[0]; }
+        memcpy((void *)(uintptr_t)(out + 0x10), &rx, 4); memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
     }
     if (el != 0 || game_hud_centre) return;
     float x0 = ex[0], x;

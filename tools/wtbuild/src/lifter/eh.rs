@@ -22,28 +22,30 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x71007e1fe4, "quad_walk"),
     (0x7100b20a20, "main_pass"),
     (0x710067037c, "step_kind"),
-    (0x710070a740, "screen_docked"),
-    (0x710070a760, "screen_handheld"),
-    (0x7100d01380, "gfx_setup"),
-    (0x7100cba90c, "camera_perspective"),
-    (0x7100cba97c, "camera_fov"),
-pub const HOST_OVERRIDES: &[(i64, &str)] = &[
-    (0x7100c0ef04, "ui_element"),
-pub const HOST_OVERRIDES: &[(i64, &str)] = &[
-    (0x7100d07610, "ui_ortho"),
-];
-    (0x7100d02d70, "screen_w"),
-    (0x7100a6f5a0, "aim_pos"),
-    (0x7100d02d90, "target_w"),
-    (0x7100d04414, "clip_cmd"),
     (0x7100983610, "rebind_pads"),
     (0x710095f464, "rebind_menu_pads"),
     (0x7100b22cc0, "prompt_number"),
     (0x7100b22ee0, "action_mask"),
     (0x7100b31b60, "control_type"),
     (0x7100c0f960, "text_symbol"),
+    (0x710070a740, "screen_docked"),
+    (0x710070a760, "screen_handheld"),
+    (0x7100d01380, "gfx_setup"),
+    (0x7100cba90c, "camera_perspective"),
+    (0x7100cba97c, "camera_fov"),
+    (0x7100c0ef04, "ui_element"),
+    (0x7100d02d70, "screen_w"),
+    (0x7100a6f5a0, "aim_pos"),
+    (0x7100d02d90, "target_w"),
+    (0x7100d04414, "clip_cmd"),
+    (0x7100d07610, "ui_ortho"),
+    (0x7100c025a4, "capture_quad"),
+    (0x7100c00b98, "gauss_quad"),
+    (0x7100c1656c, "ui_pos"),
+    (0x7100bfcf70, "ui_w"),
+    (0x7100bfcf80, "ui_h"),
+    (0x7100d02db0, "target_h"),
     (0x7100bd563c, "model_lod"),
-];
 ];
 
 /// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as
@@ -81,7 +83,14 @@ const UI_SIZE_SITES: &[(i64, u32)] = &[
     (0x7100c1a6ec, 10),
     (0x7100c1a7d4, 10),
     (0x7100c1a7f4, 8),
+    (0x7100c1a808, 8),
+    (0x7100c1a8f4, 8),
 ];
+
+/// [witchtime] aspect ratios: markers kept on screen (0x71009a81f4, 0x71009b0444) place themselves at 0..1 of the screen times
+/// its size, clamped, which is a position from the UI's left edge. Their position (pc; x and y registers) gets the UI's
+/// left and top edge (game_shim_eh.c wt_ui_mark) just before it is stored; the operand names the statement expected.
+const UI_MARK_SITES: &[(i64, u32, u32, &str)] = &[(0x71009a83e8, 1, 0, "&c->v[1]"), (0x71009b05fc, 8, 0, "&c->v[8]")];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
@@ -479,6 +488,11 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
                 if *stmt == format!("c->x[{}] = (uint32_t)({}ULL);", r, bits) {
                     *stmt = format!("{{ extern uint32_t {}(void); c->x[{}] = (uint64_t){}(); }}", f, r, f);
                 }
+            }
+        }
+        if let Some(&(_, x, y, want)) = UI_MARK_SITES.iter().find(|s| s.0 == *pc) {
+            if stmt.contains(want) {
+                *stmt = format!("{{ extern void wt_ui_mark(Ctx *, int, int); wt_ui_mark(c, {}, {}); }} {}", x, y, stmt);
             }
         }
     }

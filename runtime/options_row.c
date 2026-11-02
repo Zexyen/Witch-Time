@@ -1,16 +1,16 @@
-/* [witchtime] PC settings in the game's own Options screen (page Screen Display): ten rows of the game's own kind that show
+/* [witchtime] PC settings in the game's own Options screen (page Screen Display): eleven rows of the game's own kind that show
  * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
  * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
- *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 35, 25, Restore Defaults (24); +0xffc their count
- *   +0x100  the row table: the game's 25, row 25, rows 26 .. 35
+ *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 36, 25, Restore Defaults (24); +0xffc their count
+ *   +0x100  the row table: the game's 25, row 25, rows 26 .. 36
  *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
  *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
  *           which opens the panel where the Brightness row opens its screen
- *   +0x360  rows 26 .. 35's method table: the Display Language row's (a list row: left / right go round its values, with
+ *   +0x360  rows 26 .. 36's method table: the Display Language row's (a list row: left / right go round its values, with
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
  *   +0x510  rows 1 and 2's method table, Controls (Bayonetta, Viola): the Brightness row's again, the label the game's own,

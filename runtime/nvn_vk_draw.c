@@ -817,7 +817,7 @@ static int rs_window_class(int w, int h) {
 }
 static int rs_169_class(int w, int h) {                  /* [witchtime] a scene target of 16:9 in a window of another shape (rs_xstretch) */
     double a = (double)w / h, b = 16.0 / 9.0;
-    return rs_xstretch() != 1.0f && !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
+    return !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
 }
 static int rs_screen_class(int w, int h) { return rs_extra_class(w, h) || rs_window_class(w, h) || rs_169_class(w, h); }
 /* A coordinate of the game's grid on a scaled image (nearest image texel edge, inside 0..max). */
@@ -1173,7 +1173,7 @@ static void rs_apply(void) {
     LARGE_INTEGER fq;
     g_rs = -1;
     if (rs_scale() == was) return;
-    if ((was != 1.0f) != RS_ON) g_rs_flips++;
+    if ((was != 1.0f || rs_xstretch() != 1.0f) != RS_ON) g_rs_flips++;
     for (VTex *vt = g_vtex_all, *next; vt; vt = next) {      /* a new image goes to the head of the list: not met here */
         Tex *t = vt->t;
         Fmt f;
@@ -1906,11 +1906,32 @@ static void rs_keep_level(Tex *c) {
     R.col[0].tex = c;
 }
 /* The image view and sampler of one declared sampler of stage s. May end the pass (upload, layout change). */
-/* [witchtime] aspect ratios: the movies (1600x900 VP9) are drawn by one full-screen pass into the window texture, which
- * samples the frame's Y plane (R8, the game's 16:9 screen size: 1600x900) and UV plane. Wider or taller than 16:9 that pass
- * keeps a centred 16:9 box (pillar- or letterboxed) and the rest of the window texture is cleared to black, as on a TV;
- * the game's subtitles are drawn after it by the interface (its 16:9 area). */
+/* [witchtime] aspect ratios: the movies (1600x900 VP9) are drawn by one UI quad, 1280 x 720, into the window texture, which
+ * samples the frame's Y plane (R8, the game's 16:9 screen size: 1600x900) and UV plane. Wider or taller than 16:9 the UI's
+ * projection (game_shim_eh.c h_ui_ortho) puts it in a centred 16:9 box (pillar- or letterboxed); the rest of the window texture
+ * is cleared to black, as on a TV. The game's subtitles are drawn after it by the interface (its 16:9 area). */
 static int g_movie_y, g_movie_draw, g_movie_box[4];      /* box: x, y, w, h in the pass's pixels */
+/* [witchtime] aspect ratios: the game's screen filters (the Clouds of Erasure's tint, a fight's opening) are effect quads in front
+ * of the camera, sized for a 16:9 view, drawn into the half-size target bloom reads: under the wider camera they stopped at the
+ * middle 16:9 with a hard edge. Their fragment stages read the screen by gl_FragCoord, so the draw's viewport is simply as
+ * much wider. Known by the game's own code (FNV-1a of the vertex stages), which no translator version changes; world effects
+ * use the same stages, in the full-size target. The Practice loading screen's haze (vs 9f4eba97, x -8 to 1288, a gradient) is one
+ * in the UI's flat projection, which also leaves it short (h_ui_ortho). That stage is the game's general effect quad, so it is
+ * taken only under a flat camera (cb3_flat): the world's strips, and those into a 128 x 128 target, are not.
+ * shortcut: wider than 16:9 only, the taller camera is not checked; a world effect by the other two stages drawn as a strip into a
+ * half-size target would move too, none seen (the frames logged have only the filters there), and in handheld a whole scene can be
+ * under that height (the PC runs docked). */
+static int cb3_flat(void) {      /* the last row of the camera, c3[32..47] of that vertex stage: floats, as the matrix has -0 in it */
+    const Range *u = &R.ubo[0][0];
+    if (!u->addr || u->size < 0xc0) return 0;
+    const float *c = (const float *)P(u->addr);
+    return c[44] == 0.0f && c[45] == 0.0f && c[46] == 0.0f && c[47] == 1.0f;
+}
+static uint32_t stage_fnv(Stage *st) {
+    if (!st->code_fnv) { uint32_t h = 2166136261u; for (int i = 0; i < st->code_len; i++) h = (h ^ st->code[i]) * 16777619u; st->code_fnv = h | 1u; }
+    return st->code_fnv;
+}
+static int g_filter_draw;
 /* [witchtime] The game's dither (objects near the camera fade through a screen-door pattern): the fragment stage samples a
  * small tiled texture at gl_FragCoord / its size and discards against it. On a scaled image gl_FragCoord is given in the
  * game's pixels (mx_fcs), so at a ratio that is not a whole number (21:9: 1600 game pixels over 2100) neighbouring pixels
@@ -2006,11 +2027,11 @@ static void set_dynamic_state(void) {
     if (sx > R.pass_w) sx = R.pass_w; if (sy > R.pass_h) sy = R.pass_h;
     if (sw > R.pass_w - sx) sw = R.pass_w - sx; if (sh > R.pass_h - sy) sh = R.pass_h - sy;
     n.sc.offset.x = sx; n.sc.offset.y = sy; n.sc.extent.width = (uint32_t)(sw > 0 ? sw : 0); n.sc.extent.height = (uint32_t)(sh > 0 ? sh : 0);
+    if (g_filter_draw) { float k = rs_xstretch(); n.vp.x -= n.vp.width * (k - 1.0f) * 0.5f; n.vp.width *= k; }      /* [witchtime] the screen filter (stage_fnv) */
     if (g_movie_draw && R.pass_w > 0 && R.pass_h > 0) {      /* [witchtime] the movie in a centred 16:9 box (resolve_sampler) */
         int bw = R.pass_w, bh = R.pass_h;
         if ((double)R.pass_w * 9 > (double)R.pass_h * 16) bw = (int)((double)R.pass_h * 16 / 9 + 0.5); else bh = (int)((double)R.pass_w * 9 / 16 + 0.5);
         g_movie_box[0] = (R.pass_w - bw) / 2; g_movie_box[1] = (R.pass_h - bh) / 2; g_movie_box[2] = bw; g_movie_box[3] = bh;
-        n.vp.x = (float)g_movie_box[0]; n.vp.width = (float)bw; n.vp.y = (float)(g_movie_box[1] + bh); n.vp.height = -(float)bh;
         n.sc.offset.x = g_movie_box[0]; n.sc.offset.y = g_movie_box[1]; n.sc.extent.width = (uint32_t)bw; n.sc.extent.height = (uint32_t)bh;
     }
     if (R.pass_rs && D.f2.features.wideLines) { float lw = R.line_width * R.pass_sx; n.lw = lw < V.props.limits.lineWidthRange[0] ? V.props.limits.lineWidthRange[0] : lw; }
@@ -3205,6 +3226,8 @@ static int draw_prepare(unsigned prim) {
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
     {   int m = g_movie_y && g_rs_bw * 9 != g_rs_bh * 16 && R.ncol > 0 && R.col[0].tex && wintex_is(R.col[0].tex);      /* [witchtime] a movie in a window texture not of 16:9 */
         if (m != g_movie_draw) { g_movie_draw = m; R.dyn_dirty = 1; } }
+    {   int m = rs_xstretch() != 1.0f && prim == 5 && R.prog[1] && R.have_viewport && R.viewport[3] <= 460.0f && (stage_fnv(&R.prog[0]->st[0]) == 0xad7d2a1fu || R.prog[0]->st[0].code_fnv == 0x044ea2e3u || (R.prog[0]->st[0].code_fnv == 0x9f4eba97u && cb3_flat()));      /* [witchtime] the screen filters (above): strips into the half-size targets (the game's size: R.pass_h grows with the scale) */
+        if (m != g_filter_draw) { g_filter_draw = m; R.dyn_dirty = 1; } }
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: SSBU_VK_WATCHFS */
     int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
@@ -3302,10 +3325,11 @@ static int draw_prepare(unsigned prim) {
         VkClearRect cr[2]; int nr = 0;
         VkClearAttachment ca; memset(&ca, 0, sizeof ca); memset(cr, 0, sizeof cr);
         ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ca.colorAttachment = 0; ca.clearValue.color.float32[3] = 1.0f;
-        if (b[0] > 0) { cr[0].rect.extent.width = (uint32_t)b[0]; cr[0].rect.extent.height = (uint32_t)R.pass_h;
-                        cr[1].rect.offset.x = b[0] + b[2]; cr[1].rect.extent.width = (uint32_t)(R.pass_w - b[0] - b[2]); cr[1].rect.extent.height = (uint32_t)R.pass_h; nr = 2; }
-        else if (b[1] > 0) { cr[0].rect.extent.width = (uint32_t)R.pass_w; cr[0].rect.extent.height = (uint32_t)b[1];
-                             cr[1].rect.offset.y = b[1] + b[3]; cr[1].rect.extent.width = (uint32_t)R.pass_w; cr[1].rect.extent.height = (uint32_t)(R.pass_h - b[1] - b[3]); nr = 2; }
+        /* a row or column over the box: the quad's edge is exact (h_ui_ortho), the box rounded, and these clears come before the draw */
+        if (b[0] > 0) { cr[0].rect.extent.width = (uint32_t)b[0] + 1; cr[0].rect.extent.height = (uint32_t)R.pass_h;
+                        cr[1].rect.offset.x = b[0] + b[2] - 1; cr[1].rect.extent.width = (uint32_t)(R.pass_w - b[0] - b[2] + 1); cr[1].rect.extent.height = (uint32_t)R.pass_h; nr = 2; }
+        else if (b[1] > 0) { cr[0].rect.extent.width = (uint32_t)R.pass_w; cr[0].rect.extent.height = (uint32_t)b[1] + 1;
+                             cr[1].rect.offset.y = b[1] + b[3] - 1; cr[1].rect.extent.width = (uint32_t)R.pass_w; cr[1].rect.extent.height = (uint32_t)(R.pass_h - b[1] - b[3] + 1); nr = 2; }
         for (int i = 0; i < nr; i++) cr[i].layerCount = 1;
         if (nr && cr[1].rect.extent.width && cr[1].rect.extent.height) vkCmdClearAttachments(R.cmd, 1, &ca, (uint32_t)nr, cr);
     }

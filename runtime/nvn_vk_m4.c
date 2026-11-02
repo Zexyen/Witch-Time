@@ -17,7 +17,7 @@ typedef struct { uint8_t unit, dim, shadow; uint16_t binding; } VSmp;
 typedef struct VStage {
     uint64_t h, hb;                                /* h: this variant (code, constants, canonical key, forced outputs); hb: code and constants only */
     int stage, code_len, ok; volatile LONG state, cp_state;      /* state: 1 being made, 2 made (ok says how it went); cp_state: compute pipeline 0 none, 1 being made, 2 made */
-    uint32_t key[4], fo, in_attr, out_attr, id, cbufs, ssbos, ssbo_w, images, dep, tex_units; int uses_alpha, nsmp, cp_recorded, from_rec, fragonly, temp;      /* fragonly (session 9): handed over by a program without a vertex stage; scaled ([witchtime]): the translation for a scaled run, made ahead (rs_pre) */
+    uint32_t key[4], fo, in_attr, out_attr, id, cbufs, ssbos, ssbo_w, images, dep, tex_units; int uses_alpha, nsmp, cp_recorded, from_rec, fragonly, temp;      /* fragonly (session 9): handed over by a program without a vertex stage */
     VkPipeline cp; VkPipelineLayout cl; VkDescriptorSetLayout cdl[2];      /* compute stage: its pipeline */
     uint32_t local[3];
     VSmp smp[64];
@@ -240,7 +240,7 @@ static void module_name(VkShaderModule mod, const SSrc *src) {
  * held loading screens (20.9 / 22.7 s off, 25.9 / 25.9 s on). SSBU_VK_RS_PREP=0: off. The driver's pipelines (they need a draw's state) are not made ahead. */
 typedef struct RsJob { struct RsJob *next; SSrc src; uint32_t key[4], fo; uint8_t data[1]; } RsJob;
 static RsJob *g_rs_head, **g_rs_tail = &g_rs_head;
-static CRITICAL_SECTION g_rs_lock; static CONDITION_VARIABLE g_rs_cv; static volatile LONG g_rs_started;
+static CRITICAL_SECTION g_rs_lock; static CONDITION_VARIABLE g_rs_cv; static volatile LONG g_rs_started; static HANDLE g_rs_thread; static int g_m4_quit;
 static LONG64 g_rs_pre_made, g_rs_pre_had, g_rs_pre_queued;
 static void vstage_build(VStage *v, const SSrc *src);
 static int rs_pre_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("SSBU_VK_RS_PREP"); on = !(e && !atoi(e)) && !g_offline; } return on; }
@@ -260,10 +260,13 @@ static DWORD WINAPI rs_pre_thread(LPVOID arg) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
     for (;;) {
         EnterCriticalSection(&g_rs_lock);
-        while (!g_rs_head) SleepConditionVariableCS(&g_rs_cv, &g_rs_lock, INFINITE);
-        RsJob *j = g_rs_head; g_rs_head = j->next; if (!g_rs_head) g_rs_tail = &g_rs_head;
+        while (!g_rs_head && !g_m4_quit) SleepConditionVariableCS(&g_rs_cv, &g_rs_lock, INFINITE);
+        RsJob *j = g_m4_quit ? NULL : g_rs_head;
+        if (j) { g_rs_head = j->next; if (!g_rs_head) g_rs_tail = &g_rs_head; }
         LeaveCriticalSection(&g_rs_lock);
-        while (!rs_pre_idle()) Sleep(50);          /* the workers' own jobs (a loading screen waits for them) and fights first */
+        if (!j) return 0;                          /* m4_stop: the device goes next */
+        while (!rs_pre_idle() && !g_m4_quit) Sleep(50);      /* the workers' own jobs (a loading screen waits for them) and fights first */
+        if (g_m4_quit) { free(j); return 0; }
         j->src.rs = 1;
         uint64_t hb = ssrc_hb(&j->src);
         if (rs_pre_have(&j->src, hb, j->key, j->fo)) InterlockedIncrement64(&g_rs_pre_had);
@@ -283,7 +286,7 @@ static void rs_pre_queue(const SSrc *src, const uint32_t *key, uint32_t fo) {   
     if (!rs_pre_on()) return;
     if (InterlockedCompareExchange(&g_rs_started, 1, 0) == 0) {
         InitializeCriticalSection(&g_rs_lock); InitializeConditionVariable(&g_rs_cv);
-        CloseHandle(CreateThread(NULL, 0, rs_pre_thread, NULL, 0, NULL));
+        g_rs_thread = CreateThread(NULL, 0, rs_pre_thread, NULL, 0, NULL);
         InterlockedExchange(&g_rs_started, 2);
     }
     while (g_rs_started != 2) Sleep(0);
@@ -2102,6 +2105,10 @@ static void m4_stop(void) {
     for (int i = 0; i < g_pw_nthread; i++) CloseHandle(g_pw_thread[i]);
     g_pw_nthread = 0;
     if (g_prep_thread) { WaitForSingleObject(g_prep_thread, 30000); CloseHandle(g_prep_thread); g_prep_thread = NULL; }
+    if (g_rs_thread) {
+        EnterCriticalSection(&g_rs_lock); WakeAllConditionVariable(&g_rs_cv); LeaveCriticalSection(&g_rs_lock);
+        WaitForSingleObject(g_rs_thread, 30000); CloseHandle(g_rs_thread); g_rs_thread = NULL;
+    }
     m4_report();
 }
 /* ---- Session 12: WHERE the driver's pipeline cache is written. The owner's freeze (2026-10-12): the preparation thread, at
@@ -2869,7 +2876,7 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 2 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages, so those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 3 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
         printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (SSBU_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;

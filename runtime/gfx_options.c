@@ -128,7 +128,7 @@ static const char *const k_default_ini =
 ";   (or a number, 2.37). Wider than 16:9 shows more at the sides, narrower more above and below.\r\n"
 "aspect_ratio = 16:9\r\n"
 "\r\n"
-"; hud_area = screen | 16:9      (with aspect_ratio wider than 16:9; at the next start)\r\n"
+"; hud_area = screen | 16:9      (with aspect_ratio wider than 16:9; at once)\r\n"
 ";   screen: the HUD's corners (health, gauges, score) at the screen's edges. 16:9: kept in a 16:9 area in the middle.\r\n"
 "hud_area = screen\r\n"
 "\r\n"

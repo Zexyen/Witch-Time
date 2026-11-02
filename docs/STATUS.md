@@ -1115,7 +1115,7 @@ Screen Display page** (the fallback asked for when a tab is not possible), below
 | Display Mode | Windowed / Borderless / Fullscreen | at once (Linux; Windows at the next start, as the panel) |
 | Anisotropic Filtering | Default (the game's) / 2x / 4x / 8x / 16x | at once (new samplers) |
 | Texture Detail | -1 / -0.5 / 0 / +0.5 / +1 | at once (new samplers) |
-| Aspect Ratio | Original / Stretch | at once |
+| Aspect Ratio | Original / Stretch (later Fixed / Unlocked, next start; "Aspect ratios" below) | at once |
 
 then "PC Settings" (opens the panel, which keeps window size and the values these rows do not list; F1 / Start + Select as
 before) and Restore Defaults. Left / right go round the values with the game's sounds and key repeat (the game's own list
@@ -1354,32 +1354,66 @@ is up). `0x710091c298` stores the aim's position on screen through `0x7100a6f5a0
 the disc at the start, at the right and top edges when pushed there, the dart lands at the ring (as at 16:9). `774b4c`
 (below) read from the screen's ratio did not move or round it.
 
-**The stretched menus** (the chapter select's ring an oval 1.34 wide at 21:9, its text, icons and prompts, the pause menu):
-the game has two projections for the UI. In a fight its camera, which `h_camera_perspective` makes wider; on flat screens
-0 to 1280 and 0 to 720 (`0x7100d07610`, one caller, `0x7100640218`), which fills the screen. Override `ui_ortho` gives the
-flat one the camera's space: the 1280 x 720 in the middle, unstretched, with more around it. So the menus are in the
-middle now, and what filled the screen needed more:
-- **Sprites in the UI's screen mode** (+0x4c = 1: the dims, 16 x 9 in `core0030`, 100 x 100 in `menu0103`) are as large as
-  the screen by 1280.0 and 720.0, immediates: 30 loads in `eh.rs` `UI_SIZE_SITES` read `wt_ui_w_bits` / `wt_ui_h_bits`
-  instead. Rust lifter only: the stand-in of `compare_lift` has none of them, `--main` on a real dump will differ.
-- **What is 1280 across in its layout** (size at the element's +0x1a4, kinds 1 and 2; not turned, within 30 of the middle:
-  123 elements, none with children): `h_ui_element` widens it. A whole screen keeps its shape and loses a little at the
-  edges, except the screen's capture (type 1021), which is the screen's shape already. This took over from `huda02a`'s
-  case; `event0020` keeps its own (its bars reach 1280 by their animation; not seen).
-- **The chapter select's banner** (`menu000b`, elements 1 and 2): a picture with a diagonal edge, so it is scaled evenly
-  around a point of that diagonal (149 right of its centre), which stays, until its left edge passes the screen's.
-- The aim's position is mapped into that space (`h_aim_pos`), wider and narrower.
+**The stretched menus** (the chapter select's ring an oval 1.34 wide at 21:9, its text, icons and prompts, the pause menu): the
+game has two projections for the UI. In a fight its camera, which `h_camera_perspective` makes wider; on flat screens 0 to
+1280 and 0 to 720 (`0x7100d07610`, one caller, `0x7100640218`), which filled the screen. Override `ui_ortho` gives the flat one
+the camera's space: the 1280 x 720 in the middle, unstretched, with more around it (x -220 to 1500 at 21:9). So the menus are in
+the middle now. What that needed besides:
+- **Sprites in the UI's screen mode** (+0x4c = 1: the dims, 16 x 9 in `core0030`, 100 x 100 in `menu0103`) are as large as the
+  screen by 1280.0 and 720.0, immediates: 32 loads in `eh.rs` `UI_SIZE_SITES` read `wt_ui_w_bits` / `wt_ui_h_bits`. Rust lifter
+  only: the stand-in of `compare_lift` has none of them, `--main` on a real dump will differ.
+- **What is 1280 across in its layout** (size at the element's +0x1a4, kinds 1 and 2, not screen mode, not turned, within 30 of
+  the middle; 1240 for thin bands): `h_ui_element` widens it. None has children. A whole screen keeps its shape and loses a
+  little at the edges, except the capture types 1000 and 1021, which are the screen's shape already. The cutscene bars are
+  this case. `h_clip_cmd` widens a rectangle over all of the 1280; only a heading's wipe clip is scaled (`ui_rule`), its child does not inherit that.
+- **Turned a quarter** the same strips (kind 2, the vignettes of `menu0034`, `menu0040`, `menu1010` ...) have their length in y.
+- **Named cases**: `menu000b` elements 1, 2 (a picture with a diagonal edge: the chapter select's banner and the Shop's two panels)
+  scaled evenly around a point of the diagonal, which stays; `menu006a` 20 to 23 (Play History's side strips, and all four when
+  narrower); `hud0430` and `hud0450` 2, 3 (the lines at the ends of their bands); `event0020` 7, 8 when narrower; `event0015`
+  (the credits' ring of pictures, widened as a whole; not seen). `ui_name` keeps a signature of the layout, so another
+  layout loaded at the same address is not taken for the old one, and it evicts instead of rescanning when full.
+- **The capture effects** (types 1000, 1011, 1020, 1021): they copy the window to a texture and draw it back with u = UI x / 1280,
+  v = UI y / 720, and u = 1 is the window's right edge. In the wider space that squeezed the picture into the middle 1280 by
+  0.744, and 1021's shader (`uiradialchromaticwithblack`) paints outside 0..1 black. That was the Yes / No dialog, `core0030`
+  element 25, its last: not a clip (a clip change did nothing). Overrides `capture_quad`, `gauss_quad` correct the rectangle.
+- **Points of the 3D view placed on the UI** (a reticle, an icon and a small gauge, hud0340, hud0360, hud0380, and the off-screen
+  arrow, hud0420): `0x7100626004` gives them in the camera's viewport, and they took that for UI x, 220 right of their target at
+  21:9, and culled at 1280. `ui_pos`, `ui_w`, `h_screen_w`; markers kept on screen (`0x71009a81f4`, `0x71009b0444`) by `ui_w`,
+  `ui_h`, `wt_ui_mark`. `h_screen_w` also answers the tests of a projected point (on screen? picks around the middle, the ray
+  through the middle: at 21:9 the right quarter of the screen counted as off screen) and the stick-aim cursor (`+0x17c40`, half
+  the getter's width at rest, so its ray left the middle), whose reticle (HUD `+0x173e0`) goes through `ui_pos`. Seen: enemy
+  gauges on their enemies out to 97 % of the width at 21:9, clamped to the real edges at 9:10; the lock-on marker on its enemy at
+  21:9.
+- **Narrower than 16:9**: `target_h` as `target_w`, and the two `720` loads in `UI_SIZE_SITES` (`0x7100c1a808`, `0x7100c1a8f4`)
+  that cut every plain dim at half the screen.
+- **Movies** are a UI quad of 1280 x 720, so `ui_ortho` puts them in the box: the viewport the movie pass set squeezed them twice.
+- **Screen filters** (the Clouds of Erasure's tint, a fight's opening): effect quads in front of the camera, sized for a 16:9 view
+  (`vs` FNV `ad7d2a1f`, `044ea2e3`, strips into the half-size target that bloom reads), so they stopped at hard edges, two sets
+  of them in a fight's opening. `stage_fnv` finds them, their viewport is as much wider. Their fragment stages read the screen
+  by `gl_FragCoord`. Wider than 16:9 only, tested on the game's viewport height, as the pass grows with the scale. The Practice
+  loading screen's haze is one too, though in the UI's flat projection (`vs` `9f4eba97`, x -8 to 1288, a gradient: a tone step of 5
+  to 7 / 255 at columns 265 and 1885 of 2150). That stage is the game's general effect quad, also the world's and in a 128 x 128
+  target, so it is taken only under a flat camera (`cb3_flat`, the camera's last row 0 0 0 1).
+- **Game Over** (`hud0100`, children of el 2; not `vs 7871`, which only draws the dotted lines): plain sprites at alpha 0.2 in the
+  1280 x 720's corners (el 17 to 20) and bands along its top and bottom, anchored at their ends (el 21, 22), a step of 56 levels at
+  the old edges (hiding them measured it). They go to the screen's corners, the bands as much longer; the speckles (el 11, 12) get
+  the rule's scale, as they drift 200 and their edge came to the 1280's.
+- **The rule under a heading** (10 elements in 377 layouts, `ui_rule`): one nine-grid picture, `0x7100c1b25c` keeps its caps' size,
+  so scale lengthens only the middle and the ornament stays. Half are wiped in by a clip whose rectangle cut them at the old left
+  edge; a child inherits a kind 6 clip's position, not its scale. Left end by `ui_x0`, right end unmoved, the wipe starts at the
+  screen's left. The tip goes with the line, away from the heading's text; on the Shop the parchment is drawn over it.
 
-The ring is `core0005.uid`, elements 3 to 5, turning, under element 1 (scale 0.71). Found by skipping draws by vertex shader,
-dumping that shader's matrices per draw and finding the ring's colours in the elements.
-
-Checked by screenshots at 21:9 (Linux): the chapter select (ring round and on the disc, text, prompts, strip, banner), a
-Verse 3 fight, the pause menu, Photo Mode. **Not right yet: the Yes / No dialog** (`core0030`, seen as "End Photo Mode?"):
-it is cut to the middle 1280 with black at the sides, strips included, not a UI clip (full-width clips were tried) and
-not yet found. Before `UI_SIZE_SITES` the scene showed at the sides instead, doubled. **Not checked since `ui_ortho`**: 32:9
-and 9:10 (the size sites, the banner and the aim are written for them), Options, the title and main menus, the
-verse result (`hud` clips assume this same space, which may be what cut its panel), loading screens, the spider ride,
-Windows. The final build had no `smoke_link`, `compare_lift` or test runs.
+Found by a survey of the screens and an audit of the code (the capture UV came from reading `0x710097308c`, the squeeze from
+measuring text against 16:9: 0.744 = 1280 / 1720, 0.5 at 32:9). Checked by screenshots on Linux at 21:9: chapter select, Chapter
+Menu, Difficulty, Play History, Options, the Yes / No dialog, the Shop, movies, a fight of Verse 7 with its opening and gauges, the
+ride's filter; at 32:9 the dialog; at 9:10 chapter select, Options, the dialog, a fight's HUD; at 16:9 the menus and that fight.
+From `graphics.ini`: 21:9 at scale 2.0 (dialog, the ride's filter), 16:10 at scale 2.0 (Play History). On an empty cache at 21:9
+the second start translated no fragment stage. The ride's prompts and HUD were seen at 21:9; the band of noise as its fight starts
+is the game's own wipe, 16:9 has it too. Game Over at 21:9, 32:9 and 9:10: no step at the old edges beyond the picture's own (1.3
+levels at most); the Practice loading screen at 21:9, also at scale 2.0: 0.7 / 255 at most; the rule at 21:9, 32:9, unmoved at 9:10.
+UK English (`SSBU_LANGUAGE=en-GB`, a language with 144 layouts of its own) at 21:9: Main Menu, Practice, the ride; its Game Over not seen.
+Not seen since: the verse result, the cutscene
+bars on the ride (not in its first 110 s), the stick-aim cursor, Windows.
 
 **The cutscene bars** (seen by hand on the spider ride, 3440x1440): the black bars are UI elements 1280 across, at y = -360 and
 360 of `huda02a` (the ride) and `event0020`, so they stopped at the 16:9 block. `h_ui_element` widens those two by the

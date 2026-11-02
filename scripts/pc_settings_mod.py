@@ -64,7 +64,7 @@ MENU = [
                                      ('Формат экрана (после перезапуска)', 'Формат экрана'), ASPECT + ' (Restart)', ASPECT + ' (Restart)',
                                      (ASPECT + ' (다음 시작 시)', ASPECT))),     # aspect_ratio: applies at the next start
     ('MENU_OPTION_LIST_PC_HUD', T('HUD Layout', ('HUDの配置', 'HUD'), 'HUD-Anordnung', 'Disposition du HUD', 'Disposición del HUD',
-                                  'Layout HUD', 'Расположение HUD', ('HUD布局', 'HUD'), ('HUD佈局', 'HUD'), ('HUD 배치', 'HUD'))),
+                                  'Layout HUD', ('Расположение HUD', 'Интерфейс'), ('HUD布局', 'HUD'), ('HUD佈局', 'HUD'), ('HUD 배치', 'HUD'))),
     ('MENU_OPTION_LIST_PC_FPS', T('Experimental Frame Rate (next start)',      # frame_rate: experimental above 60, at the next start; no commas
                                   # (no menu file has one) and no 'x' in the ja / cn / tw files: 'beta' there
                                   ('フレームレート 実験的 (スタート時に変更)', 'FPS ベータ版 (スタート時に変更)', 'FPS Beta (スタート時に変更)'),

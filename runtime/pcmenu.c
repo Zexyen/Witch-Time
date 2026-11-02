@@ -102,7 +102,7 @@ static const Row k_rows[] = {
      {"keep", "stretch"}, {"Keep shape", "Stretch"}},
     {"aspect_ratio", "Aspect ratio", "Fixed: the game's 16:9. Unlocked: the window's shape at the start (borderless and fullscreen: the monitor's); wider shows more at the sides, narrower more above and below.", "RECOMPS_ASPECT", "16:9", A_RESTART, 0,
      {"16:9", "auto"}, {"Fixed", "Unlocked"}},
-    {"hud_area", "HUD layout", "With an aspect ratio wider than 16:9 (aspect_ratio in graphics.ini). Full Screen: health, gauges and score at the screen's edges. Centered: in a 16:9 area in the middle.", NULL, "screen", A_HUD, 0,
+    {"hud_area", "HUD layout", "With an aspect ratio wider than 16:9. Full Screen: health, gauges and score at the screen's edges. Centered: in a 16:9 area in the middle.", NULL, "screen", A_HUD, 0,
      {"screen", "16:9"}, {"Full Screen", "Centered"}},
     {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
      {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},

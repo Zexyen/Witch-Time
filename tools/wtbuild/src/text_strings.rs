@@ -153,7 +153,7 @@ pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
             ("fr", &["Disposition du HUD"]),
             ("es", &["Disposición del HUD"]),
             ("it", &["Layout HUD"]),
-            ("ru", &["Расположение HUD"]),
+            ("ru", &["Расположение HUD", "Интерфейс"]),
             ("cn", &["HUD布局", "HUD"]),
             ("tw", &["HUD佈局", "HUD"]),
             ("kr", &["HUD 배치", "HUD"]),
