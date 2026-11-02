@@ -22,10 +22,9 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 |---|---|---|---|
 | `runtime/` | [ssbu-recomp](https://github.com/Denkishi/ssbu-recomp) `runtime/`, commit `3a96916` (2026-10-16), by Denkishi | GPL-3.0-or-later | Marked `[Recomps#1]` in the code; listed with dates in `runtime/UPSTREAM.md`; Smash-only files removed (same file) |
 | `lifter/recomp.py`, `lifter/recomp_eh.py` | ssbu-recomp `tools/lifter/`, same commit | GPL-3.0-or-later | Marked `[Recomps#1]`; listed in `lifter/README.md` |
-| `lifter/gen_quad_tests.py` | ssbu-recomp `tools/lifter/`, same commit (binary128 test vectors, game-independent) | GPL-3.0-or-later | None (a provenance comment added at the top) |
 | `tools/extract/nso2elf.py` | ssbu-recomp `tools/extract/`, same commit (NSO to ELF, LZ4 only, no keys) | GPL-3.0-or-later | None (a provenance comment added at the top) |
 | `runtime/mx_ops.h` (via ssbu-recomp) | Generated from suyu `src/video_core/.../maxwell.inc` (Maxwell opcode table) | GPL-3.0-or-later (suyu) | None by us |
-| `runtime/mx_translate.c`, `runtime/nnalbum.c`, `runtime/nnapplet.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
+| `runtime/mx_translate.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
 | `runtime/tex_decode.c` (via ssbu-recomp) | Tables from the Khronos Data Format Specification (BCn / ASTC) | Specification | — |
 | `runtime/third_party/stb_truetype.h` | [stb](https://github.com/nothings/stb) `stb_truetype.h` v1.26, by Sean Barrett | Public domain or MIT (the file's own text) | None |
 | `runtime/third_party/NotoSerif-pcmenu.ttf` | Noto Serif Regular 2.015 (The Noto Project Authors), the PC menu's font | SIL Open Font License 1.1 (`runtime/third_party/OFL-NotoSerif.txt`) | Subset to Latin-1 and a few punctuation marks (`pyftsubset`, kerning kept, hinting removed) |

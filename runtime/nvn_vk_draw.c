@@ -3631,22 +3631,6 @@ static void vk_read_texels(void *arg) {
     cb_sync();
     read_region(j->tex, j->has_view ? &j->view : NULL, j->region, j->out, j->row_stride, j->image_stride);
 }
-int album_movie_push_frame(const uint8_t *rgba, int w, int h, int stride, int bottom_up);      /* nnalbum.c, as nvn_gl.c job_present_movie */
-static void vk_present_movie(void *arg) {
-    PresentJob *j = arg;
-    Tex *t = j->win && j->index >= 0 && j->index < j->win->count ? j->win->tex[j->index] : NULL;
-    if (!V.alive || !t || t->dead || t->b.width <= 0 || t->b.height <= 0) return;
-    VTex *vt = vt_get(t);
-    int w = vt->rs ? t->b.width : vt->w, h = vt->rs ? t->b.height : vt->h, r[6] = {0, 0, 0, w, h, 1}, bgr = vt->fmt == VK_FORMAT_B8G8R8A8_UNORM || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB;      /* track O: read_region takes the game's rectangle */
-    if (vt->bpb != 4 || vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { nvn_vk_missing("nvnQueuePresentTexture to the movie maker's window with a window texture that is not 8-bit RGBA"); return; }
-    uint8_t *px = malloc((size_t)w * h * 4);
-    if (!px) return;
-    if (read_region(t, NULL, r, px, 0, 0)) {
-        if (bgr) for (size_t i = 0; i < (size_t)w * h; i++) { uint8_t b = px[i * 4]; px[i * 4] = px[i * 4 + 2]; px[i * 4 + 2] = b; }
-        album_movie_push_frame(px, w, h, w * 4, 0);
-    }
-    free(px);
-}
 static void blit_tex(Tex *s, const View *sv, const int *sr, Tex *d, const View *dv, const int *dr, int linear) {
     VTex *vs = vt_get(s), *vd = vt_get(d);
     VkImageBlit b;
@@ -5196,7 +5180,7 @@ void nvn_vk_shot_job(void *arg) {
     VTex *vt = t && !t->dead ? t->vk : NULL;
     if (j->shot_fight && vt) { char path[300]; const char *dir = getenv("WT_SHOT_DIR"); snprintf(path, sizeof path, "%s%sfight_%05d.bmp", dir ? dir : "", dir ? "/" : "", j->shot_fight); save_bmp_vk(path, vt); printf("shot: fight frame %d saved from window texture %d (pipe, not presented again)%c", j->shot_fight, j->index, 10); }
 }
-const RBackend rb_vk = {"vk", vk_submit, vk_submit_async, vk_present, vk_present_movie, vk_fence, vk_sync_wait, vk_server_wait, vk_sync_drop, vk_flush, vk_finish, vk_write_texels, vk_read_texels, vk_housekeeping,
+const RBackend rb_vk = {"vk", vk_submit, vk_submit_async, vk_present, vk_fence, vk_sync_wait, vk_server_wait, vk_sync_drop, vk_flush, vk_finish, vk_write_texels, vk_read_texels, vk_housekeeping,
                         vk_reset_status, vk_no_grid, vk_idle};
 
 /* ---------------------------------------------------------------- start and end */

@@ -374,7 +374,6 @@ static int guest_scan(const char *input, const char *fmt, Args *a) {
     return matches == 0 && input_failure ? -1 : matches;
 }
 static void c_sscanf(Ctx *c) { Args a; args_direct(&a, c, 2); RET((int64_t)guest_scan(STR(0), STR(1), &a)); }
-static void c_vsscanf(Ctx *c) { Args a; args_va(&a, c, A2); RET((int64_t)guest_scan(STR(0), STR(1), &a)); }
 /* host-side entry for self-tests: scans with the variadic arguments taken from c exactly as a guest call would pass them */
 int clib_guest_sscanf(Ctx *c) { c_sscanf(c); return (int)(int32_t)c->x[0]; }
 
@@ -426,42 +425,24 @@ static void c_strtof(Ctx *c) { char *e = NULL; float r = strtof(STR(0), &e); if 
 static void c_tolower(Ctx *c) { RET((int64_t)tolower((int)A0)); }
 static void c_toupper(Ctx *c) { RET((int64_t)toupper((int)A0)); }
 #define CTYPE(n, fn) static void n(Ctx *c) { int v = (int)A0; RET(v >= 0 && v < 256 ? (fn(v) != 0) : 0); }
-CTYPE(c_isalnum, isalnum) CTYPE(c_iscntrl, iscntrl) CTYPE(c_ispunct, ispunct) CTYPE(c_isspace, isspace) CTYPE(c_isxdigit, isxdigit) CTYPE(c_isprint, isprint)
+CTYPE(c_isprint, isprint)
 static void c_strcasecmp(Ctx *c) { RET((int64_t)_stricmp(STR(0), STR(1))); }
 static void c_strncasecmp(Ctx *c) { RET((int64_t)_strnicmp(STR(0), STR(1), (size_t)A2)); }
 static void c_strncat(Ctx *c) { strncat((char *)(uintptr_t)A0, STR(1), (size_t)A2); }
-static void c_strpbrk(Ctx *c) { RET(strpbrk(STR(0), STR(1))); }
 static void c_strspn(Ctx *c) { RET(strspn(STR(0), STR(1))); }
 static void c_strcspn(Ctx *c) { RET(strcspn(STR(0), STR(1))); }
-static void c_strcoll(Ctx *c) { RET((int64_t)strcmp(STR(0), STR(1))); }
-static void c_strdup(Ctx *c) {                            /* freed by the imported free(): same heap */
-    size_t n = strlen(STR(0)) + 1;
-    char *p = _aligned_malloc(n, 16);
-    memcpy(p, STR(0), n);
-    RET(p);
-}
 static void c_strerror(Ctx *c) { static char msg[] = "error"; RET(msg); }
-static void c_memset_s(Ctx *c) { memset((void *)(uintptr_t)A0, (int)A2, (size_t)(A3 < A1 ? A3 : A1)); RET(0); }
 /* [sdk rand 0x4fb588, srand 0x4fb578] musl's generator: one 64-bit state shared by all threads, 31-bit results
  * (the host CRT's rand() only yields 15 bits and has a per-thread state) */
 static uint64_t g_rand_seed;
 static void c_rand(Ctx *c) { g_rand_seed = 6364136223846793005ull * g_rand_seed + 1; RET(g_rand_seed >> 33); }
-static void c_srand(Ctx *c) { g_rand_seed = (uint32_t)((uint32_t)A0 - 1); }
 static void c_time(Ctx *c) { int64_t t = (int64_t)time(NULL); if (A0) wr64(A0, (uint64_t)t); RET(t); }
-static void c_clock(Ctx *c) { RET((int64_t)clock() * 1000); }               /* CLOCKS_PER_SEC is 1,000,000 on the target */
 static void c_getenv(Ctx *c) { RET(0); }
 /* atexit(fn): the functions run in reverse order of registration when the program ends normally, that is when nnMain
  * returns (boot.c calls clib_run_atexit). musl accepts any number of them (it allocates more blocks). */
 static uint64_t *g_atexit;
-static int g_atexit_count, g_atexit_cap;
+static int g_atexit_count;
 static volatile LONG g_atexit_lock;
-static void c_atexit(Ctx *c) {
-    while (InterlockedExchange(&g_atexit_lock, 1)) SwitchToThread();
-    if (g_atexit_count == g_atexit_cap) { g_atexit_cap = g_atexit_cap ? g_atexit_cap * 2 : 32; g_atexit = realloc(g_atexit, (size_t)g_atexit_cap * sizeof *g_atexit); }
-    g_atexit[g_atexit_count++] = A0;
-    InterlockedExchange(&g_atexit_lock, 0);
-    RET(0);
-}
 void clib_run_atexit(Ctx *c) {
     for (;;) {
         uint64_t fn = 0;
@@ -473,23 +454,20 @@ void clib_run_atexit(Ctx *c) {
     }
 }
 static void m_exp2(Ctx *c) { double r = exp2(c->v[0].df[0]); vzero(&c->v[0]); c->v[0].df[0] = r; }
-static void m_erfcf(Ctx *c) { float r = erfcf(c->v[0].f[0]); vzero(&c->v[0]); c->v[0].f[0] = r; }
 static void m_modff(Ctx *c) { float ip, r = modff(c->v[0].f[0], &ip); memcpy((void *)(uintptr_t)A0, &ip, 4); vzero(&c->v[0]); c->v[0].f[0] = r; }
-static void m_frexpf(Ctx *c) { int e; float r = frexpf(c->v[0].f[0], &e); wr32(A0, (uint32_t)e); vzero(&c->v[0]); c->v[0].f[0] = r; }
 
 static const ImportDef clib_imports[] = {
     {"sprintf", c_sprintf}, {"snprintf", c_snprintf}, {"vsnprintf", c_vsnprintf}, {"vsprintf", c_vsprintf}, {"printf", c_printf}, {"fprintf", c_fprintf},
-    {"_ZN2nn4util8SNPrintfEPcmPKcz", c_snprintf}, {"_ZN2nn4util9VSNPrintfEPcmPKcSt9__va_list", c_vsnprintf},
-    {"sscanf", c_sscanf}, {"vsscanf", c_vsscanf},
+    {"sscanf", c_sscanf},
     {"bsearch", c_bsearch}, {"qsort", c_qsort},
     {"atoi", c_atoi}, {"atol", c_atol}, {"atof", c_atof}, {"strtoul", c_strtoul}, {"strtoull", c_strtoul}, {"strtof", c_strtof},
-    {"tolower", c_tolower}, {"toupper", c_toupper}, {"isalnum", c_isalnum}, {"iscntrl", c_iscntrl}, {"ispunct", c_ispunct},
-    {"isspace", c_isspace}, {"isxdigit", c_isxdigit}, {"isprint", c_isprint},   /* [Recomps#1] */
-    {"strcasecmp", c_strcasecmp}, {"strncasecmp", c_strncasecmp}, {"strncat", c_strncat}, {"strpbrk", c_strpbrk},
-    {"strspn", c_strspn}, {"strcspn", c_strcspn}, {"strcoll", c_strcoll}, {"strdup", c_strdup}, {"strerror", c_strerror},
-    {"memset_s", c_memset_s}, {"rand", c_rand}, {"srand", c_srand}, {"time", c_time}, {"clock", c_clock},
-    {"getenv", c_getenv}, {"atexit", c_atexit},
-    {"exp2", m_exp2}, {"erfcf", m_erfcf}, {"modff", m_modff}, {"frexpf", m_frexpf},
+    {"tolower", c_tolower}, {"toupper", c_toupper},
+      {"isprint", c_isprint},   /* [Recomps#1] */
+    {"strcasecmp", c_strcasecmp}, {"strncasecmp", c_strncasecmp}, {"strncat", c_strncat},
+    {"strspn", c_strspn}, {"strcspn", c_strcspn},   {"strerror", c_strerror},
+    {"rand", c_rand},  {"time", c_time},
+    {"getenv", c_getenv},
+    {"exp2", m_exp2},  {"modff", m_modff},
 };
 
 void register_clib_imports(void) {

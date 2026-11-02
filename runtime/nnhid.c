@@ -728,28 +728,10 @@ static void hid_GetPlayerLedPattern(Ctx *c) {               /* the console's pat
 }
 /* [sdk] 0x2398a0: per npad the service publishes a colour attribute (0 ok, 1 read error -> hid 603, 2 no such
  * controller -> hid 604) and two RGBA colours. A Pro Controller's own colours are body 2D2D2D, buttons E6E6E6. */
-#define HID_COLOR_NO_CONTROLLER 0x4b8caull
-static void hid_ControllerColor1(Ctx *c) {                  /* (NpadControllerColor *out, const NpadIdType &) */
-    if (!player_connected(rd32(A1))) { RET(HID_COLOR_NO_CONTROLLER); return; }
-    wr32(A0, 0xff2d2d2du);
-    wr32(A0 + 4, 0xffe6e6e6u);
-    RET(0);
-}
-static void hid_ControllerColor2(Ctx *c) { RET(HID_COLOR_NO_CONTROLLER); }   /* (left, right, id): Joy-Con colours; no Joy-Con is ever attached */
 static void hid_InitializeTouchScreen(Ctx *c) { (void)c; g_touch_ready = 1; }
 static void hid_GetTouchScreenState(Ctx *c) {               /* docked console: the screen is in the dock, no touch can arrive */
     memset((void *)(uintptr_t)A0, 0, 0x290);
     wr64(A0, (uint64_t)InterlockedIncrement64(&g_sampling));
-}
-/* [Recomps#1] SDK 3.6.0 forms our game uses.
- * GetTouchScreenStates<1>(TouchScreenState<1> *states, int count) -> int written. [sdk 0x20b4dc]: 0x38-byte states
- * (+0 sampling number, +8 touch count clamped to 1, +0x10 one 0x28-byte TouchState), newest first. Docked: no touch, so one
- * state with count 0 (the hid service keeps sampling the touch screen even when nothing touches it). */
-static void hid_GetTouchScreenStates1(Ctx *c) {
-    if ((int)A1 <= 0) { RET(0); return; }
-    memset((void *)(uintptr_t)A0, 0, 0x38);
-    wr64(A0, (uint64_t)InterlockedIncrement64(&g_sampling));
-    RET(1);
 }
 /* InitializeKeyboard() / GetKeyboardState(KeyboardState *). [sdk 0x202060]: the state is 0x30 bytes copied from the shared
  * memory ring (+0 sampling number, then modifiers and the 256-bit key set [doc]). The PC keyboard already drives the
@@ -861,7 +843,6 @@ static void hid_IsSevenSixAxisSensorAtRest(Ctx *c) {
         guest_trap("nn::hid::IsSevenSixAxisSensorAtRest before InitializeSevenSixAxisSensor (the SDK aborts with 0x872ca, sdk 0x232be4 / 0x24a398)", c->x[30] - 4);
     RET(1);
 }
-static void hid_GetSevenSixAxisSensorStates(Ctx *c) { RET(0); }                           /* (states, count) -> number written: the console's own sensor is not sampled while docked */
 
 /* ---- vibration. Handle = style index (3 = full key) | npad id << 8 | device index << 16. */
 static int vib_slot(uint32_t handle, uint32_t *id, uint32_t *dev) {
@@ -892,12 +873,6 @@ static void hid_InitializeVibrationDevice(Ctx *c) {         /* (const VibrationD
     uint32_t id, dev;
     hid_setup();
     if (vib_slot(rd32(A0), &id, &dev)) { memcpy(g_vib[id][dev].v, g_vib_default, sizeof g_vib_default); g_vib[id][dev].set = 1; }
-}
-static void hid_GetVibrationDeviceInfo(Ctx *c) {            /* (VibrationDeviceInfo *out, handle): { type, position } */
-    uint32_t id, dev;
-    if (!vib_slot(rd32(A1), &id, &dev)) { wr32(A0, 0); wr32(A0 + 4, 0); return; }
-    wr32(A0, 1);                                            /* VibrationDeviceType_LinearResonantActuator */
-    wr32(A0 + 4, dev == 0 ? 1 : 2);                         /* VibrationDevicePosition_Left / _Right */
 }
 static void hid_SendVibrationValue(Ctx *c) {                /* (handle, const VibrationValue &{ampLow, freqLow, ampHigh, freqHigh}) */
     uint32_t id, dev;
@@ -997,16 +972,6 @@ int nnhid_selftest_close4(Ctx *c) {
 /* ---- Joy-Con management: there are no Joy-Con here, every controller is a Pro Controller, for which the console
  * itself does nothing in these calls (they regroup or split Joy-Con pairs). */
 static void hid_joycon_only(Ctx *c) { hid_setup(); (void)c; }
-static void hid_GetNpadJoyAssignment(Ctx *c) { RET(0); }    /* NpadJoyAssignmentMode_Dual, the value of every non-Joy-Con npad */
-static void hid_MergeSingleJoyAsDualJoy(Ctx *c) { RET(0x4b2caull); }   /* hid 601..602 family: the two npads are not single Joy-Con (NOT VERIFIED: the exact code for "not a Joy-Con") */
-static void hid_SwapNpadAssignment(Ctx *c) {                /* (const NpadIdType &a, const NpadIdType &b): the two players exchange controllers */
-    uint32_t a = rd32(A0), b = rd32(A1);
-    if (a > 7 || b > 7) return;
-    int t = g_source[a]; g_source[a] = g_source[b]; g_source[b] = t;
-    if (sdl_on()) nnpad_swap((int)a, (int)b);
-    if (g_keyboard_player == (int)a) g_keyboard_player = (int)b; else if (g_keyboard_player == (int)b) g_keyboard_player = (int)a;
-    for (int d = 0; d < 2; d++) { float tmp[4]; int ts = g_vib[a][d].set; memcpy(tmp, g_vib[a][d].v, 16); g_vib[a][d] = g_vib[b][d]; memcpy(g_vib[b][d].v, tmp, 16); g_vib[b][d].set = ts; }
-}
 static void hid_DisconnectNpad(Ctx *c) {                    /* drops the wireless link; the pad returns when a button is pressed */
     uint32_t id = rd32(A0);
     if (id > 7) return;
@@ -1020,7 +985,6 @@ static void hid_DisconnectNpad(Ctx *c) {                    /* drops the wireles
     }
 }
 static void hid_InitializeSevenSixAxisSensor(Ctx *c) { (void)c; hid_setup(); g_seven_ready = 1; }       /* (void *work, size_t) [sdk 0x232540] */
-static void hid_seven_start_stop(Ctx *c) { (void)c; hid_setup(); }
 
 /* Self-test of the XInput pad path with a synthetic pad on slot 1 = player 2 (see "synthetic XInput pad" above): the
  * state is set here, the three XInput entry points are the synthetic ones, and the handlers the game calls
@@ -1198,36 +1162,20 @@ int nnhid_pad_selftest(void) {
 
 #define H(n) "_ZN2nn3hid" n
 static const ImportDef hid_imports[] = {
-    {H("20GetTouchScreenStatesILm1EEEiPNS0_16TouchScreenStateIXT_EEEi"), hid_GetTouchScreenStates1},     /* [Recomps#1] */
     {H("18InitializeKeyboardEv"), hid_InitializeKeyboard}, {H("16GetKeyboardStateEPNS0_13KeyboardStateE"), hid_GetKeyboardState},  /* [Recomps#1] */
     {H("14InitializeNpadEv"), hid_InitializeNpad}, {H("24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE"), hid_SetSupportedNpadStyleSet},
     {H("22SetSupportedNpadIdTypeEPKjm"), hid_SetSupportedNpadIdType}, {H("18SetNpadJoyHoldTypeENS0_15NpadJoyHoldTypeE"), hid_joycon_only},
-    {H("20GetNpadJoyAssignmentERKj"), hid_GetNpadJoyAssignment}, {H("30SetNpadJoyAssignmentModeSingleERKjNS0_17NpadJoyDeviceTypeE"), hid_joycon_only},
-    {H("30SetNpadJoyAssignmentModeSingleERKj"), hid_joycon_only}, {H("28SetNpadJoyAssignmentModeDualERKj"), hid_joycon_only},
-    {H("23MergeSingleJoyAsDualJoyERKjS2_"), hid_MergeSingleJoyAsDualJoy}, {H("18SwapNpadAssignmentERKjS2_"), hid_SwapNpadAssignment}, {H("14DisconnectNpadERKj"), hid_DisconnectNpad},
-    {H("19GetPlayerLedPatternERKj"), hid_GetPlayerLedPattern}, {H("15GetNpadStyleSetERKj"), hid_GetNpadStyleSet},
+    {H("15GetNpadStyleSetERKj"), hid_GetNpadStyleSet},
     {H("12GetNpadStateEPNS0_16NpadFullKeyStateERKj"), hid_GetNpadState_FullKey},
     {H("12GetNpadStateEPNS0_16NpadJoyDualStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_16NpadJoyLeftStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_17NpadJoyRightStateERKj"), hid_GetNpadState_Other},
-    {H("12GetNpadStateEPNS0_11NpadGcStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_17NpadHandheldStateERKj"), hid_GetNpadState_Other},
-    {H("22GetNpadControllerColorEPNS0_19NpadControllerColorERKj"), hid_ControllerColor1},
-    {H("22GetNpadControllerColorEPNS0_19NpadControllerColorES2_RKj"), hid_ControllerColor2},
     {H("21InitializeTouchScreenEv"), hid_InitializeTouchScreen}, {H("19GetTouchScreenStateILm16EEEvPNS0_16TouchScreenStateIXT_EEE"), hid_GetTouchScreenState},
-    {H("21StartLrAssignmentModeEv"), hid_joycon_only}, {H("20StopLrAssignmentModeEv"), hid_joycon_only},
     {H("21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE"), hid_GetSixAxisSensorState},
-    {H("21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE"), hid_IsSixAxisSensorAtRest},
     {H("18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE"), hid_StartSixAxisSensor},
-    {H("22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE"), hid_GetVibrationDeviceInfo},
     {H("18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE"), hid_SendVibrationValue},
-    {H("25SendVibrationGcErmCommandERKNS0_21VibrationDeviceHandleERKNS0_21VibrationGcErmCommandE"), hid_SendVibrationGcErmCommand},
-    {H("23GetActualVibrationValueEPNS0_14VibrationValueERKNS0_21VibrationDeviceHandleE"), hid_GetActualVibrationValue},
-    {H("30GetActualVibrationGcErmCommandEPNS0_21VibrationGcErmCommandERKNS0_21VibrationDeviceHandleE"), hid_GetActualVibrationGcErmCommand},
     {H("25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE"), hid_InitializeVibrationDevice},
-    {H("23StartSevenSixAxisSensorEv"), hid_seven_start_stop}, {H("22StopSevenSixAxisSensorEv"), hid_seven_start_stop},
-    {H("27GetSevenSixAxisSensorStatesEPNS0_23SevenSixAxisSensorStateEi"), hid_GetSevenSixAxisSensorStates},
-    {H("26IsSevenSixAxisSensorAtRestEv"), hid_IsSevenSixAxisSensorAtRest}, {H("28InitializeSevenSixAxisSensorEPvm"), hid_InitializeSevenSixAxisSensor},
 };
 
 void register_hid_imports(void) {

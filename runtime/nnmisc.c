@@ -33,7 +33,6 @@
 
 /* Some non-zero nn::Result. The SDK's real "not available" codes differ per service and are
  * not established; the game only tests these for failure. Same value as nnsdk.c. */
-#define RESULT_UNAVAILABLE 0x3e87aull
 
 void os_init_event(uint64_t key, int autoclear);          /* os_threads.c */
 void os_signal_event(uint64_t key);
@@ -41,8 +40,6 @@ void os_signal_event(uint64_t key);
 static void keep(Ctx *c) { (void)c; }                     /* void function, or returns `this` */
 static void ret0(Ctx *c) { RET(0); }                      /* Result success / false / 0 / null */
 static void ret1(Ctx *c) { RET(1); }
-static void pctl_permitted(Ctx *c) { trace_printf("nn::pctl: permission check (showError=%d) -> permitted (no parental controls)\n", (int)(c->x[0] & 1)); RET(1); }
-static void unavailable(Ctx *c) { RET(RESULT_UNAVAILABLE); }
 /* nn::account network-service-account functions on a machine without a linked account: see nnfs.c ([sdk] 0x4b3a8,
  * account results 124-0200..0269 mean "no usable network service account"). */
 static void acc_nsa_unavailable(Ctx *c) { RET(0x1907cull); }
@@ -69,24 +66,6 @@ static ImportFn forward_target(Ctx *c, const char *name) {
 }
 #define FWD(fn, target) static void fn(Ctx *c) { static ImportFn f; if (!f) f = forward_target(c, target); f(c); }
 #define OS(n) "_ZN2nn2os" n
-FWD(nnos_GetCurrentThread, OS("16GetCurrentThreadEv"))
-FWD(nnos_CreateThread, OS("12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mi"))
-FWD(nnos_StartThread, OS("11StartThreadEPNS0_10ThreadTypeE"))
-FWD(nnos_WaitThread, OS("10WaitThreadEPNS0_10ThreadTypeE"))
-FWD(nnos_DestroyThread, OS("13DestroyThreadEPNS0_10ThreadTypeE"))
-FWD(nnos_GetThreadPriority, OS("17GetThreadPriorityEPKNS0_10ThreadTypeE"))
-FWD(nnos_GetThreadCoreMask, OS("17GetThreadCoreMaskEPiPmPKNS0_10ThreadTypeE"))
-FWD(nnos_SetThreadCoreMask, OS("17SetThreadCoreMaskEPNS0_10ThreadTypeEim"))
-FWD(nnos_SetThreadName, OS("13SetThreadNameEPNS0_10ThreadTypeEPKc"))      /* the host keeps a copy either way */
-FWD(nnos_SleepThread, OS("11SleepThreadENS_8TimeSpanE"))
-FWD(nnos_InitializeMutex, OS("15InitializeMutexEPNS0_9MutexTypeEbi"))
-FWD(nnos_FinalizeMutex, OS("13FinalizeMutexEPNS0_9MutexTypeE"))
-FWD(nnos_LockMutex, OS("9LockMutexEPNS0_9MutexTypeE"))
-FWD(nnos_UnlockMutex, OS("11UnlockMutexEPNS0_9MutexTypeE"))
-FWD(nnos_InitializeEvent, OS("15InitializeEventEPNS0_9EventTypeEbNS0_14EventClearModeE"))
-FWD(nnos_FinalizeEvent, OS("13FinalizeEventEPNS0_9EventTypeE"))
-FWD(nnos_SignalEvent, OS("11SignalEventEPNS0_9EventTypeE"))
-FWD(nnos_WaitEvent, OS("9WaitEventEPNS0_9EventTypeE"))
 FWD(nnos_GetSystemTick, OS("13GetSystemTickEv"))
 FWD(nnos_GetSystemTickFrequency, OS("22GetSystemTickFrequencyEv"))
 FWD(nnos_ConvertTickToNanoSeconds, OS("17ConvertToTimeSpanENS0_4TickE"))
@@ -162,55 +141,12 @@ static void c_longjmp(Ctx *c) {
     longjmp(r->host, 1);
 }
 
-/* ---------------------------------------------------------------- swprintf
- * The guest wchar_t is 32 bits. The format is narrowed, formatted by the registered snprintf
- * (same variadic argument positions: x3.. / v0..), and the result widened again.
- * Limitation: %ls / %lc arguments (wide strings) are not supported; the formats upstream
- * met (Smash) are numeric. */
-static void c_swprintf(Ctx *c) {
-    static ImportFn f;
-    if (!f) f = forward_target(c, "snprintf");
-    uint64_t out = A0, n = A1, wfmt = A2;
-    char fmt[256], tmp[1024];
-    size_t k = 0;
-    for (; k < sizeof fmt - 1; k++) {
-        uint32_t ch = rd32(wfmt + k * 4);
-        if (!ch) break;
-        if (ch > 0x7e) fatal(c, "swprintf: non-ASCII format character U+%04x is not supported", ch);
-        fmt[k] = (char)ch;
-    }
-    fmt[k] = 0;
-    for (size_t i = 0; i + 1 < k; i++)
-        if (fmt[i] == '%' && fmt[i + 1] != '%') {
-            size_t j = i + 1;
-            while (fmt[j] && strchr("-+ #0123456789.*hljztL", fmt[j])) j++;
-            if ((fmt[j] == 's' || fmt[j] == 'c') && j > 0 && fmt[j - 1] == 'l')
-                fatal(c, "swprintf: wide string arguments (\"%s\") are not supported", fmt);
-        } else if (fmt[i] == '%') i++;
-    c->x[0] = (uint64_t)(uintptr_t)tmp;
-    c->x[1] = sizeof tmp;
-    c->x[2] = (uint64_t)(uintptr_t)fmt;
-    f(c);
-    int len = (int)c->x[0];
-    if (len < 0 || (uint64_t)len >= n || (size_t)len >= sizeof tmp) {     /* does not fit: C says negative */
-        if (n) wr32(out, 0);
-        RET((int64_t)-1);
-        return;
-    }
-    for (int i = 0; i <= len; i++) wr32(out + (uint64_t)i * 4, (uint8_t)tmp[i]);
-    RET((int64_t)len);
-}
 
 /* ---------------------------------------------------------------- abort helpers (never return on the console) */
 static void diag_AbortImpl(Ctx *c) {                      /* (condition, function, file, line) */
     printf("\nnn::diag abort: %s  in %s  (%s:%d)\n", safe_str(A0), safe_str(A1), safe_str(A2), (int)A3);
     trace_printf("nn::diag abort: %s  in %s  (%s:%d)\n", safe_str(A0), safe_str(A1), safe_str(A2), (int)A3);
     guest_trap("guest called nn::diag::detail::AbortImpl", c->x[30] - 4);
-}
-static void diag_AbortFormatImpl(Ctx *c) {                /* (condition, function, file, line, format, ...) */
-    printf("\nnn::diag abort: %s  in %s  (%s:%d)  format \"%s\"\n", safe_str(A0), safe_str(A1), safe_str(A2), (int)A3, safe_str(A4));
-    trace_printf("nn::diag abort: %s  in %s  (%s:%d)  format \"%s\"\n", safe_str(A0), safe_str(A1), safe_str(A2), (int)A3, safe_str(A4));
-    guest_trap("guest called nndetailDiagAbortFormatImpl", c->x[30] - 4);
 }
 static void diag_UnexpectedDefault(Ctx *c) {              /* (function, file, line) */
     printf("\nnn unexpected default: %s  (%s:%d)\n", safe_str(A0), safe_str(A1), (int)A2);
@@ -301,12 +237,7 @@ static void oe_track_focus(void) {
  *   UnlockExit after an exit request          -> terminated
  * Here the exit request is the user closing the game window (display.c WM_CLOSE calls oe_exit_request). */
 #define OE_MSG_EXIT_REQUEST 4u
-static int g_oe_exit_nest, g_oe_exit_locked, g_oe_exit_requested;
-static void oe_terminate(const char *why) {
-    printf("\nnn::oe: %s: the application ends\n", why);
-    trace_printf("     nn::oe: %s: the application ends\n", why);
-    report_and_exit(0);
-}
+static int g_oe_exit_locked, g_oe_exit_requested;
 int oe_exit_request(void) {                              /* display.c, window thread. Returns 1 when the game keeps running until it leaves its section */
     int locked;
     EnterCriticalSection(&g_oe_lock);
@@ -317,22 +248,6 @@ int oe_exit_request(void) {                              /* display.c, window th
     trace_printf("     nn::oe: exit requested inside an exit-request handling section: MessageExitRequest posted\n");
     oe_push(OE_MSG_EXIT_REQUEST);
     return 1;
-}
-static void oe_EnterExitRequestHandlingSection(Ctx *c) {
-    int terminate = 0;
-    (void)c;
-    EnterCriticalSection(&g_oe_lock);
-    if (g_oe_exit_nest++ == 0) { if (g_oe_exit_requested) terminate = 1; else g_oe_exit_locked = 1; }
-    LeaveCriticalSection(&g_oe_lock);
-    if (terminate) oe_terminate("exit-request handling section entered after an exit request");
-}
-static void oe_LeaveExitRequestHandlingSection(Ctx *c) {
-    int terminate = 0;
-    (void)c;
-    EnterCriticalSection(&g_oe_lock);
-    if (--g_oe_exit_nest == 0) { g_oe_exit_locked = 0; terminate = g_oe_exit_requested; }
-    LeaveCriticalSection(&g_oe_lock);
-    if (terminate) oe_terminate("exit-request handling section left with an exit request pending");
 }
 static void oe_TryPopNotificationMessage(Ctx *c) {       /* (uint32_t *out) -> bool */
     uint64_t out = A0;
@@ -348,32 +263,9 @@ static void oe_TryPopNotificationMessage(Ctx *c) {       /* (uint32_t *out) -> b
     LeaveCriticalSection(&g_oe_lock);
     RET(got);
 }
-static void oe_GetNotificationMessageEvent(Ctx *c) {     /* -> nn::os::SystemEvent *, signalled while a message is pending */
-    EnterCriticalSection(&g_oe_lock);
-    oe_event_setup();
-    LeaveCriticalSection(&g_oe_lock);
-    RET(g_oe_event);
-}
 static void oe_GetCurrentFocusState(Ctx *c) { oe_track_focus(); RET(g_oe_focus_state); }
 static void oe_SetFocusHandlingMode(Ctx *c) { g_oe_focus_mode = (int)(uint32_t)A0; g_oe_focus_recheck = 1; oe_track_focus(); }               /* 0 SuspendHomeSleep, 1 NoSuspend, 2 SuspendHomeSleepNotify, 3 AlwaysSuspend */
 static void oe_SetOperationModeChangedNotificationEnabled(Ctx *c) { g_oe_opmode_notify = (int)(A0 & 1); }
-/* While the game is inside such a section the console does not dim the screen or go to sleep by itself; the same is
- * asked of Windows (display and system kept awake) for as long as at least one section is open. */
-static volatile LONG g_oe_no_sleep;
-static void oe_BeginAutoSleepDisabledSection(Ctx *c) { (void)c; if (InterlockedIncrement(&g_oe_no_sleep) == 1) SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED); }
-static void oe_EndAutoSleepDisabledSection(Ctx *c) { (void)c; if (InterlockedDecrement(&g_oe_no_sleep) == 0) SetThreadExecutionState(ES_CONTINUOUS); }
-static void oe_GetProgramTotalActiveTime(Ctx *c) {                    /* -> TimeSpan (nanoseconds) */
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    RET((int64_t)((double)(now.QuadPart - g_start.QuadPart) * 1e9 / (double)freq.QuadPart));
-}
-static void oe_RequestToRelaunchApplication(Ctx *c) {
-    printf("\nthe game asked to be relaunched (nn::oe::RequestToRelaunchApplication): stopping.\n");
-    trace_printf("nn::oe::RequestToRelaunchApplication\n");
-    (void)c;
-    report_and_exit(0);
-}
 
 /* ---------------------------------------------------------------- nn::settings
  * [doc] nn::settings::Language values and their codes (switchbrew "Settings services"); the
@@ -443,16 +335,7 @@ static uint64_t desired_language(void) {
 }
 static void oe_GetDesiredLanguage(Ctx *c) { RET(desired_language()); }   /* LanguageCode (8 chars) by value in x0 */
 
-/* ---------------------------------------------------------------- nn::err
- * [sdk] ErrorResultVariant { uint32_t state @0 (0 none, 1 Result, 2 ErrorCode); payload @4:
- * Result (4 bytes) or ErrorCode (8 bytes, unaligned) } -- 12 bytes. These replace the two
- * entries in nnsdk.c, which wrote the Result at +0 and cleared 16 bytes in the constructor. */
-static void err_Variant_ctor(Ctx *c) { wr32(A0, 0); }
-static void err_Variant_fromResult(Ctx *c) { wr32(A0, 1); wr32(A0 + 4, rd32(A1)); }       /* C1(const Result&), operator= */
-static void err_Variant_fromCode(Ctx *c) { wr32(A0, 2); wr64(A0 + 4, rd64(A1)); }          /* C1(const ErrorCode&), operator= */
-static void err_Variant_GetState(Ctx *c) { RET(rd32(A0)); }
-static void err_Variant_toResult(Ctx *c) { RET(rd32(A0 + 4)); }
-static void err_Variant_toCode(Ctx *c) { RET(rd64(A0 + 4)); }
+/* ---------------------------------------------------------------- nn::err */
 /* The console's error viewer shows "Error Code: 2MMM-DDDD" (2000 + module, description) in a dialog and returns when
  * the user closes it. Here it is a Windows message box on the calling thread, which blocks the same way. Scripted
  * runs (WT_SEQ / WT_PLAY / WT_PRESS / WT_SCRIPT) and WT_ERROR_DIALOG=0 only log, so tests never hang. */
@@ -470,56 +353,11 @@ static void err_ShowErrorResult(Ctx *c) {                 /* (Result): the conso
            (unsigned long long)c->x[30] - 4);
     trace_printf("     nn::err::ShowError result 0x%x (module %u, description %u)\n", r, r & 0x1ff, (r >> 9) & 0x1fff);
 }
-static void err_ShowErrorCode(Ctx *c) {                   /* (ErrorCode { uint32_t category, number }) in x0 */
-    printf("nn::err::ShowError: error code %04u-%04u, caller 0x%llx\n", (unsigned)(uint32_t)A0, (unsigned)(A0 >> 32),
-           (unsigned long long)c->x[30] - 4);
-    trace_printf("     nn::err::ShowError error code %04u-%04u\n", (unsigned)(uint32_t)A0, (unsigned)(A0 >> 32));
-    err_dialog((unsigned)(uint32_t)A0, (unsigned)(A0 >> 32));
-}
 
 /* ---------------------------------------------------------------- nn::prepo (play reports): accepted and discarded
  * [sdk] PlayReport(): byte @0 = 0, three 8-byte fields @0x20..0x37 = 0. */
 static void prepo_PlayReport_ctor(Ctx *c) { wr8(A0, 0); wr64(A0 + 0x20, 0); wr64(A0 + 0x28, 0); wr64(A0 + 0x30, 0); }
 
-/* ---------------------------------------------------------------- nn::aoc: the add-on content the player owns
- * The console lists the installed add-on contents of the running application by INDEX (add-on content id =
- * application id + 0x1000 + index). The game's DLC fighters, stages and costumes are data of the game update; an owned
- * add-on content only unlocks them. Which ones this player owns is his own fact: <exe folder>\..\config\dlc.txt
- * (WT_DLC_LIST overrides the path), one index per line, decimal or 0x.. hex, `#` comments; tools\dlc_list.py writes
- * it from the file names of the player's own DLC dumps. No file = none owned (as before). */
-static int g_aoc[2048], g_aoc_n = -1;
-static void aoc_load(void) {
-    char exe[MAX_PATH], path[MAX_PATH + 32];
-    const char *e = getenv("WT_DLC_LIST");
-    if (e && e[0]) snprintf(path, sizeof path, "%s", e);
-    else {
-        GetModuleFileNameA(NULL, exe, MAX_PATH);
-        char *s = strrchr(exe, '\\');
-        if (s) *s = 0;
-        snprintf(path, sizeof path, "%s\\..\\config\\dlc.txt", exe);
-    }
-    int n = 0;
-    FILE *fp = fopen(path, "r");
-    char ln[128];
-    while (fp && fgets(ln, sizeof ln, fp) && n < (int)(sizeof g_aoc / sizeof g_aoc[0])) {
-        char *p = ln, *end;
-        while (*p == ' ' || *p == '\t') p++;
-        if (*p == '#' || *p == '\r' || *p == '\n' || !*p) continue;
-        long v = strtol(p, &end, 0);
-        if (end != p && v > 0 && v < 0x1000) g_aoc[n++] = (int)v;
-    }
-    if (fp) fclose(fp);
-    printf("nn::aoc: %d add-on content(s) owned (%s)\n", n, fp ? path : "no config\\dlc.txt");
-    g_aoc_n = n;
-}
-static void aoc_CountAddOnContent(Ctx *c) { if (g_aoc_n < 0) aoc_load(); RET(g_aoc_n); }
-static void aoc_ListAddOnContent(Ctx *c) {                 /* (int *out, int offset, int count) -> number written */
-    if (g_aoc_n < 0) aoc_load();
-    uint64_t out = A0;
-    int off = (int)A1, cnt = (int)A2, w = 0;
-    for (int i = off; out && i >= 0 && i < g_aoc_n && w < cnt; i++, w++) wr32(out + (uint64_t)w * 4, (uint32_t)g_aoc[i]);
-    RET(w);
-}
 
 /* ---------------------------------------------------------------- nn::util */
 static HCRYPTPROV crypt_provider(void) {
@@ -546,110 +384,14 @@ static void util_GenerateUuid(Ctx *c) {
     memcpy(&c->x[0], b, 8);
     memcpy(&c->x[1], b + 8, 8);
 }
-/* [sdk] BinaryFileHeader checks (layout in nnsdk.c): signature = first 8 bytes; alignment shift u8 @0xe;
- * byte-order mark i16 @0xc, reversed when it reads 0xFFFE. BinaryBlockHeader: next-block offset u32 @4. */
-static void util_BinaryFileHeader_IsSignatureValid(Ctx *c) { RET(rd64(A0) == A1); }
-static void util_BinaryFileHeader_IsAlignmentValid(Ctx *c) { RET((A0 & ~(~0ull << (rd8(A0 + 0xe) & 63))) == 0); }
-static void util_BinaryFileHeader_IsEndianReverse(Ctx *c) { RET(rd16(A0 + 0xc) == 0xfffe); }
-static void util_BinaryBlockHeader_GetNextBlock(Ctx *c) { uint32_t off = rd32(A0 + 4); RET(off ? A0 + off : 0); }
 
-/* ---------------------------------------------------------------- nn::crypto (Windows CryptoAPI) */
-static void crypto_RandomBytes(Ctx *c) { random_bytes((void *)(uintptr_t)A0, (size_t)A1); }
-static void crypto_Sha1(Ctx *c) {                         /* (void *out, size_t outSize, const void *data, size_t size) */
-    HCRYPTHASH h = 0;
-    uint8_t digest[20] = {0};
-    DWORD len = sizeof digest;
-    if (crypt_provider() && CryptCreateHash(crypt_provider(), CALG_SHA1, 0, 0, &h)) {
-        CryptHashData(h, (const BYTE *)(uintptr_t)A2, (DWORD)A3, 0);
-        CryptGetHashParam(h, HP_HASHVAL, digest, &len, 0);
-        CryptDestroyHash(h);
-    }
-    memcpy((void *)(uintptr_t)A0, digest, A1 < sizeof digest ? (size_t)A1 : sizeof digest);
-}
-/* Md5Impl: the guest object is not touched; the running hash is kept on the host, keyed by its address. */
-static struct { uint64_t key; HCRYPTHASH h; } g_md5[64];
-static CRITICAL_SECTION g_md5_lock;
-static HCRYPTHASH *md5_slot(uint64_t key, int create) {
-    HCRYPTHASH *found = NULL;
-    EnterCriticalSection(&g_md5_lock);
-    for (int i = 0; i < 64 && !found; i++) if (g_md5[i].key == key) found = &g_md5[i].h;
-    for (int i = 0; i < 64 && !found && create; i++) if (!g_md5[i].key) { g_md5[i].key = key; g_md5[i].h = 0; found = &g_md5[i].h; }
-    LeaveCriticalSection(&g_md5_lock);
-    return found;
-}
-static void md5_drop(uint64_t key) {
-    EnterCriticalSection(&g_md5_lock);
-    for (int i = 0; i < 64; i++) if (g_md5[i].key == key) { if (g_md5[i].h) CryptDestroyHash(g_md5[i].h); g_md5[i].key = 0; g_md5[i].h = 0; }
-    LeaveCriticalSection(&g_md5_lock);
-}
-static void crypto_Md5_Initialize(Ctx *c) {
-    md5_drop(A0);
-    HCRYPTHASH *h = md5_slot(A0, 1);
-    if (!h) fatal(c, "nn::crypto Md5Impl: more than 64 hashes in progress");
-    if (!crypt_provider() || !CryptCreateHash(crypt_provider(), CALG_MD5, 0, 0, h)) *h = 0;
-}
-static void crypto_Md5_Update(Ctx *c) { HCRYPTHASH *h = md5_slot(A0, 0); if (h && *h) CryptHashData(*h, (const BYTE *)(uintptr_t)A1, (DWORD)A2, 0); }
-static void crypto_Md5_GetHash(Ctx *c) {                  /* (this, void *out, size_t outSize) */
-    HCRYPTHASH *h = md5_slot(A0, 0);
-    uint8_t digest[16] = {0};
-    DWORD len = sizeof digest;
-    if (h && *h) CryptGetHashParam(*h, HP_HASHVAL, digest, &len, 0);
-    memcpy((void *)(uintptr_t)A1, digest, A2 < sizeof digest ? (size_t)A2 : sizeof digest);
-}
-static void crypto_Md5_dtor(Ctx *c) { md5_drop(A0); }
-
-/* ---------------------------------------------------------------- nn::fs::GetSaveDataSize
- * (int64_t *outSize, int64_t *outJournalSize, const Uid&) -> Result: the sizes of the user's save data,
- * which the console creates from the application control property (NACP) and which stay at those values
- * unless the game extends the save. Values read from the control.nacp of the user's own 13.0.4 update
- * dump with extract-tools\nacp_extract.py: UserAccountSaveDataSize 0x6000000 (96 MiB),
- * UserAccountSaveDataJournalSize 0xa00000 (10 MiB). Overridable with WT_SAVE_SIZE /
- * WT_SAVE_JOURNAL_SIZE (bytes). [game] 0x71017c15e4 uses journalSize - 0x80000. */
-#define NACP_USER_SAVE_SIZE 0x6000000ll
-#define NACP_USER_SAVE_JOURNAL_SIZE 0xa00000ll
-static int64_t env_size(const char *name, int64_t fallback) {
-    const char *v = getenv(name);
-    return v && v[0] ? strtoll(v, NULL, 0) : fallback;
-}
-static void fs_GetSaveDataSize(Ctx *c) {
-    if (A0) wr64(A0, (uint64_t)env_size("WT_SAVE_SIZE", NACP_USER_SAVE_SIZE));
-    if (A1) wr64(A1, (uint64_t)env_size("WT_SAVE_JOURNAL_SIZE", NACP_USER_SAVE_JOURNAL_SIZE));
-    RET(0);
-}
-
-/* nn::mii: see nnmii.c (Database on the SDK's own default-Mii code); nn::nfp, nn::web, nn::swkbd, nn::ec shop pages:
- * nnapplet.c; nn::album screenshots and movie maker: nnalbum.c. */
-
-/* ---------------------------------------------------------------- nn::friends: no friends, no network
- * [sdk] NotificationQueue::GetSystemEvent() returns this+0x38 (the SystemEvent inside the queue
- * object) once the queue is initialised. Events are keyed by address in os_threads.c; this one is
- * never signalled. */
-static void friends_NotificationQueue_GetSystemEvent(Ctx *c) {
-    static uint64_t known[16];
-    static volatile LONG n;
-    uint64_t ev = A0 + 0x38;
-    int seen = 0;
-    for (int i = 0; i < n && i < 16; i++) if (known[i] == ev) seen = 1;
-    if (!seen) {                                          /* first time for this queue: make it a clean manual-clear event */
-        LONG slot = InterlockedIncrement(&n) - 1;
-        if (slot < 16) known[slot] = ev;
-        os_init_event(ev, 0);
-    }
-    RET(ev);
-}
+/* ---------------------------------------------------------------- nn::friends: no friends, no network */
 /* An asynchronous request that has already finished (with a failure): its event is signalled. */
 static void async_GetSystemEvent(Ctx *c) { os_init_event(A1, 0); os_signal_event(A1); RET(0); }   /* (this, SystemEvent *out) */
-static void out_count0_at0(Ctx *c) { if (A0) wr32(A0, 0); RET(0); }               /* (int *outCount, ...) -> Result */
 
-/* ---------------------------------------------------------------- nn::account extras: the one local user, no online account */
-static void acc_ShowUserSelector(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); RET(0); }   /* (Uid *out, settings): uid as in nnfs.c */
 
 /* nn::ldn, nn::nifm leftovers, nn::nsd, nn::ssl, sockets and the nn::ec accessor: nnnet_c4a.inc (included by nnnet.c). */
 
-/* nn::album (Initialize / Finalize, the file lists, IsMovieMakerRunning): nnalbum.c */
-
-/* ---------------------------------------------------------------- nn::ngc ProfanityFilter: nothing is masked */
-static void ngc_MaskProfanityWordsInText(Ctx *c) { if (A1) wr32(A1, 0); RET(0); } /* (this, int *outCount, char16_t *text, uint32_t patterns) */
 
 /* ---------------------------------------------------------------- byte order helpers of nn::socket */
 static void socket_swap16(Ctx *c) { RET((uint16_t)(((A0 & 0xff) << 8) | ((A0 >> 8) & 0xff))); }
@@ -658,108 +400,57 @@ static void socket_swap32(Ctx *c) { RET(bswap32((uint32_t)A0)); }
 /* ---------------------------------------------------------------- registration */
 #define OE(n) "_ZN2nn2oe" n
 #define PR(n) "_ZN2nn5prepo10PlayReport" n
-#define FR(n) "_ZN2nn7friends" n
 #define AC(n) "_ZN2nn7account" n
 #define SO(n) "_ZN2nn6socket" n
 #define LDN(n) "_ZN2nn3ldn" n
-#define ERRV(n) "_ZN2nn3err18ErrorResultVariant" n
 
 /* Replace whatever is registered: exact SDK behaviour for one small class (see nn::err above). */
 static const ImportDef replace_imports[] = {
     {"_ZN2nn2oe25TryPopNotificationMessageEPj", oe_TryPopNotificationMessage}, {"_ZN2nn2oe20GetCurrentFocusStateEv", oe_GetCurrentFocusState},
-    {"_ZN2nn2oe27GetNotificationMessageEventEv", oe_GetNotificationMessageEvent},
     {"_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", oe_SetFocusHandlingMode},
     {"_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb", oe_SetOperationModeChangedNotificationEnabled},
     {"_ZN2nn2oe18GetDesiredLanguageEv", oe_GetDesiredLanguage},
     {"_ZN2nn8settingseqERKNS0_12LanguageCodeERKNS0_8LanguageE", settings_CodeEqualsLanguage},
-    {"_ZN2nn2oe29BeginAutoSleepDisabledSectionEv", oe_BeginAutoSleepDisabledSection}, {"_ZN2nn2oe27EndAutoSleepDisabledSectionEv", oe_EndAutoSleepDisabledSection},
-    {ERRV("C1Ev"), err_Variant_ctor}, {ERRV("aSERKNS_6ResultE"), err_Variant_fromResult}, {ERRV("C1ERKNS_6ResultE"), err_Variant_fromResult},
-    {ERRV("aSERKNS0_9ErrorCodeE"), err_Variant_fromCode}, {ERRV("C1ERKNS0_9ErrorCodeE"), err_Variant_fromCode},
-    {"_ZNK2nn3err18ErrorResultVariant8GetStateEv", err_Variant_GetState},
-    {"_ZNK2nn3err18ErrorResultVariantcvNS_6ResultEEv", err_Variant_toResult},
-    {"_ZNK2nn3err18ErrorResultVariantcvNS0_9ErrorCodeEEv", err_Variant_toCode},
 };
 
 /* Only installed where no other file provides the function. */
 static const ImportDef fill_imports[] = {
     /* C wrappers */
-    {"nnosGetCurrentThread", nnos_GetCurrentThread}, {"nnosCreateThread", nnos_CreateThread}, {"nnosStartThread", nnos_StartThread},
-    {"nnosWaitThread", nnos_WaitThread}, {"nnosDestroyThread", nnos_DestroyThread}, {"nnosGetThreadPriority", nnos_GetThreadPriority},
-    {"nnosGetThreadCoreMask", nnos_GetThreadCoreMask}, {"nnosSetThreadCoreMask", nnos_SetThreadCoreMask},
-    {"nnosSetThreadNamePointer", nnos_SetThreadName}, {"nnosSleepThread", nnos_SleepThread},
-    {"nnosInitializeMutex", nnos_InitializeMutex}, {"nnosFinalizeMutex", nnos_FinalizeMutex}, {"nnosLockMutex", nnos_LockMutex},
-    {"nnosUnlockMutex", nnos_UnlockMutex}, {"nnosInitializeEvent", nnos_InitializeEvent}, {"nnosFinalizeEvent", nnos_FinalizeEvent},
-    {"nnosSignalEvent", nnos_SignalEvent}, {"nnosWaitEvent", nnos_WaitEvent}, {"nnosGetSystemTick", nnos_GetSystemTick},
+      {"nnosGetSystemTick", nnos_GetSystemTick},
     {"nnosGetSystemTickFrequency", nnos_GetSystemTickFrequency}, {"nnosConvertTickToNanoSeconds", nnos_ConvertTickToNanoSeconds},
-    {"setjmp", c_setjmp}, {"longjmp", c_longjmp}, {"swprintf", c_swprintf},
-    {"_ZN2nn4diag6detail9AbortImplEPKcS3_S3_i", diag_AbortImpl}, {"nndetailDiagAbortFormatImpl", diag_AbortFormatImpl},
+    {"setjmp", c_setjmp}, {"longjmp", c_longjmp},
+    {"_ZN2nn4diag6detail9AbortImplEPKcS3_S3_i", diag_AbortImpl},
     {"_ZN2nn6detail21UnexpectedDefaultImplEPKcS2_i", diag_UnexpectedDefault}, {"__assert_fail", c_assert_fail},
     /* nn::oe */
     {OE("25TryPopNotificationMessageEPj"), oe_TryPopNotificationMessage}, {OE("20GetCurrentFocusStateEv"), oe_GetCurrentFocusState},
-    {OE("25GetProgramTotalActiveTimeEv"), oe_GetProgramTotalActiveTime}, {OE("28RequestToRelaunchApplicationEv"), oe_RequestToRelaunchApplication},
-    {OE("17FinishStartupLogoEv"), keep}, {OE("42SetOperationModeChangedNotificationEnabledEb"), keep},
-    {OE("31EnterExitRequestHandlingSectionEv"), oe_EnterExitRequestHandlingSection}, {OE("31LeaveExitRequestHandlingSectionEv"), oe_LeaveExitRequestHandlingSection},
-    {OE("29BeginAutoSleepDisabledSectionEv"), keep}, {OE("27EndAutoSleepDisabledSectionEv"), keep},
-    {OE("21SwitchLcdBacklightOffEv"), keep}, {OE("20SwitchLcdBacklightOnEv"), keep},
-    {OE("27SetTvPowerStateMatchingModeENS0_24TvPowerStateMatchingModeE"), keep}, {OE("16EnableScreenShotEv"), keep},
-    {OE("17DisableScreenShotEv"), keep}, {OE("15SetCpuBoostModeENS0_12CpuBoostModeE"), keep},
+     {OE("42SetOperationModeChangedNotificationEnabledEb"), keep},
+     {OE("15SetCpuBoostModeENS0_12CpuBoostModeE"), keep},
     /* nn::settings, nn::err */
     {"_ZN2nn8settings12LanguageCode4MakeENS0_8LanguageE", settings_LanguageCode_Make},
-    {"_ZN2nn8settingseqERKNS0_8LanguageERKNS0_12LanguageCodeE", settings_LanguageEqualsCode},
-    {"_ZN2nn3err9ShowErrorENS_6ResultE", err_ShowErrorResult}, {"_ZN2nn3err9ShowErrorENS0_9ErrorCodeE", err_ShowErrorCode},
+    {"_ZN2nn3err9ShowErrorENS_6ResultE", err_ShowErrorResult},
     /* nn::prepo */
-    {"_ZN2nn5prepo10InitializeEv", ret0}, {"_ZN2nn5prepo28RequestImmediateTransmissionEv", ret0},
+    {"_ZN2nn5prepo10InitializeEv", ret0},
     {PR("C1Ev"), prepo_PlayReport_ctor}, {PR("10SetEventIdEPKc"), ret0}, {PR("9SetBufferEPvm"), keep},
-    {PR("3AddEPKcRKNS0_10Any64BitIdE"), ret0}, {PR("3AddEPKcl"), ret0}, {PR("3AddEPKcd"), ret0}, {PR("3AddEPKcS3_"), ret0},
+    {PR("3AddEPKcRKNS0_10Any64BitIdE"), ret0}, {PR("3AddEPKcl"), ret0},  {PR("3AddEPKcS3_"), ret0},
     {PR("4SaveERKNS_7account3UidE"), ret0},
     /* nn::aoc, nn::pctl, nn::pdm */
-    {"_ZN2nn3aoc17CountAddOnContentEv", aoc_CountAddOnContent}, {"_ZN2nn3aoc16ListAddOnContentEPiii", aoc_ListAddOnContent},
     /* close5: both return a BOOL, not a Result: [sdk 0x33a620] `cset w0, eq` on the service Result (slot +0x28), [sdk 0x33aef0] the
      * byte the service writes (slot +0x148). A console without parental controls: true (suyu pctl/parental_control_service.cpp
      * CheckFreeCommunicationPermissionImpl / ConfirmStereoVisionPermissionImpl: no PIN -> true). The old ret0 answered "refused". */
-    {"_ZN2nn4pctl32CheckFreeCommunicationPermissionEb", pctl_permitted}, {"_ZN2nn4pctl27CheckStereoVisionPermissionEb", pctl_permitted},
-    {"_ZN2nn3pdm30QueryApplicationPlayStatisticsEPNS0_25ApplicationPlayStatisticsEPKNS_13ApplicationIdEi", ret0},
     /* nn::util, nn::crypto */
     {"_ZN2nn4util12GenerateUuidEv", util_GenerateUuid},
-    {"_ZNK2nn4util16BinaryFileHeader16IsSignatureValidEl", util_BinaryFileHeader_IsSignatureValid},
-    {"_ZNK2nn4util16BinaryFileHeader16IsAlignmentValidEv", util_BinaryFileHeader_IsAlignmentValid},
-    {"_ZNK2nn4util16BinaryFileHeader15IsEndianReverseEv", util_BinaryFileHeader_IsEndianReverse},
-    {"_ZNK2nn4util17BinaryBlockHeader12GetNextBlockEv", util_BinaryBlockHeader_GetNextBlock},
-    {"_ZN2nn6crypto36GenerateCryptographicallyRandomBytesEPvm", crypto_RandomBytes},
-    {"_ZN2nn6crypto16GenerateSha1HashEPvmPKvm", crypto_Sha1},
-    {"_ZN2nn6crypto6detail7Md5Impl10InitializeEv", crypto_Md5_Initialize}, {"_ZN2nn6crypto6detail7Md5Impl6UpdateEPKvm", crypto_Md5_Update},
-    {"_ZN2nn6crypto6detail7Md5Impl7GetHashEPvm", crypto_Md5_GetHash}, {"_ZN2nn6crypto6detail7Md5ImplD1Ev", crypto_Md5_dtor},
     /* nn::fs */
-    {"_ZN2nn2fs15GetSaveDataSizeEPlS1_RKNS_7account3UidE", fs_GetSaveDataSize},
     /* nn::friends */
-    {FR("17NotificationQueue14GetSystemEventEv"), friends_NotificationQueue_GetSystemEvent},
-    {FR("17NotificationQueue3PopEPNS0_16NotificationInfoE"), unavailable}, {FR("17NotificationQueueD1Ev"), keep},
-    {FR("12AsyncContextD1Ev"), keep}, {FR("12AsyncContext14GetSystemEventEPNS_2os11SystemEventE"), async_GetSystemEvent},
-    {"_ZNK2nn7friends12AsyncContext9GetResultEv", unavailable},
-    {"_ZNK2nn7friends6Friend7IsValidEv", ret0}, {"_ZNK2nn7friends7Profile7IsValidEv", ret0},
-    {FR("18GetBlockedUserListEPiPNS_7account23NetworkServiceAccountIdERKNS2_3UidEii"), out_count0_at0},
-    {FR("14GetProfileListEPNS0_12AsyncContextEPNS0_7ProfileERKNS_7account3UidEPKNS5_23NetworkServiceAccountIdEi"), unavailable},
-    {FR("16UpdateFriendInfoEPNS0_6FriendERKNS_7account3UidEPKNS3_23NetworkServiceAccountIdEi"), unavailable},
-    {FR("18ShowUserDetailInfoERKNS_7account3UidERKNS1_23NetworkServiceAccountIdERKNS0_15InAppScreenNameESA_"), unavailable},
-    {FR("14AddPlayHistoryERKNS_7account3UidERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameESA_"), unavailable},
-    {FR("29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyERKNS_7account3UidEb"), unavailable},
     /* nn::account */
-    {AC("16ShowUserSelectorEPNS0_3UidERKNS0_21UserSelectionSettingsE"), acc_ShowUserSelector},
     {AC("44EnsureNetworkServiceAccountIdTokenCacheAsyncEPNS0_12AsyncContextERKNS0_10UserHandleE"), acc_nsa_unavailable},
-    {AC("12AsyncContextaSEOS1_"), keep}, {AC("12AsyncContextC1EOS1_"), keep}, {AC("12AsyncContext6CancelEv"), ret0},
     {AC("12AsyncContext14GetSystemEventEPNS_2os11SystemEventE"), async_GetSystemEvent},
     {AC("37LoadNetworkServiceAccountIdTokenCacheEPmPcmRKNS0_10UserHandleE"), acc_nsa_unavailable},
     {AC("26GetNetworkServiceAccountIdEPNS0_23NetworkServiceAccountIdERKNS0_10UserHandleE"), acc_nsa_unavailable},
-    {AC("29LoadCachedNintendoAccountInfoEPNS0_25CachedNintendoAccountInfoERKNS0_10UserHandleEPvm"), acc_nsa_unavailable},
     /* nn::nifm, nn::nsd, nn::ssl */
     /* sockets */
-    {SO("9InetHtonsEt"), socket_swap16}, {SO("9InetNtohsEt"), socket_swap16}, {SO("9InetHtonlEj"), socket_swap32}, {SO("9InetNtohlEj"), socket_swap32},
-    {"nnsocketInetHtons", socket_swap16}, {"nnsocketInetNtohs", socket_swap16},
+    {SO("9InetHtonsEt"), socket_swap16}, {SO("9InetNtohsEt"), socket_swap16}, {SO("9InetHtonlEj"), socket_swap32},
     /* nn::ldn */
     /* nn::ec, nn::album, nn::ngc */
-    {"_ZN2nn3ngc15ProfanityFilterC1Ev", keep}, {"_ZN2nn3ngc15ProfanityFilterD1Ev", keep}, {"_ZN2nn3ngc15ProfanityFilter10InitializeEPvm", ret0},
-    {"_ZN2nn3ngc15ProfanityFilter11SetMaskModeENS1_8MaskModeE", keep}, {"_ZN2nn3ngc15ProfanityFilter15SkipAtSignCheckENS1_8SkipModeE", keep},
-    {"_ZN2nn3ngc15ProfanityFilter24MaskProfanityWordsInTextEPiPtj", ngc_MaskProfanityWordsInText},
 };
 
 /* WT_DUMP_UNREG=<file>: write the names of all imports that still have no handler. */
@@ -773,32 +464,23 @@ static void dump_unregistered(void) {
     fclose(f);
 }
 
-/* close5 (lead) self-test: the two parental-control checks return BOOL true on a console without parental controls
- * ([sdk 0x33a620], [0x33aef0]); the image's text is read-only, its data writable (hostrt.c runtime_init). */
+/* close5 (lead) self-test: the image's text is read-only, its data writable (hostrt.c runtime_init). */
 int close5_lead_selftest(Ctx *c) {
     int bad = 0, n = 0;
-    static const char *names[2] = {"_ZN2nn4pctl32CheckFreeCommunicationPermissionEb", "_ZN2nn4pctl27CheckStereoVisionPermissionEb"};
-    for (int i = 0; i < 2; i++)
-        for (int show = 0; show < 2; show++) {
-            ImportFn f = import_lookup(names[i]);
-            c->x[0] = (uint64_t)show | 0xdead00000000ull;
-            if (f) f(c);
-            n++; if (!f || (c->x[0] & 0xff) != 1) { bad++; printf("  close5 lead: %s(%d) is not true\n", names[i], show); }
-        }
+    (void)c;
     if (!getenv("WT_NO_PROTECT")) {
         n += 3;
         if (!IsBadWritePtr((void *)(uintptr_t)0x7100000000ull, 1)) { bad++; printf("  close5 lead: the first text page is writable\n"); }
         if (!IsBadWritePtr((void *)(uintptr_t)(GUEST_BASE + GUEST_RO_END - 1), 1)) { bad++; printf("  close5 lead: the last read-only data byte is writable\n"); }
         if (IsBadWritePtr((void *)(uintptr_t)(GUEST_BASE + GUEST_RO_END), 1) || IsBadReadPtr((void *)(uintptr_t)0x7100000000ull, 16)) { bad++; printf("  close5 lead: data segment not writable or text not readable\n"); }
     }
-    printf("  close5 lead (pctl bool answers, image protection): %d cases, %d failed\n", n, bad);
+    printf("  close5 lead (image protection): %d cases, %d failed\n", n, bad);
     return bad;
 }
 
 void register_misc_imports(void) {
     QueryPerformanceCounter(&g_start);
     InitializeCriticalSection(&g_oe_lock);
-    InitializeCriticalSection(&g_md5_lock);
     register_imports(replace_imports, (int)(sizeof replace_imports / sizeof replace_imports[0]));
     int n = (int)(sizeof fill_imports / sizeof fill_imports[0]), added = 0;
     for (int i = 0; i < n; i++) {

@@ -19,25 +19,6 @@
 
 static int64_t now_posix(void) { return (int64_t)_time64(NULL); }
 
-static void write_calendar(uint64_t out, const struct tm *t) {
-    wr16(out, (uint16_t)(t->tm_year + 1900));
-    wr8(out + 2, (uint8_t)(t->tm_mon + 1));
-    wr8(out + 3, (uint8_t)t->tm_mday);
-    wr8(out + 4, (uint8_t)t->tm_hour);
-    wr8(out + 5, (uint8_t)t->tm_min);
-    wr8(out + 6, (uint8_t)t->tm_sec);
-    wr8(out + 7, 0);
-}
-static void read_calendar(uint64_t in, struct tm *t) {
-    memset(t, 0, sizeof *t);
-    t->tm_year = (int16_t)rd16(in) - 1900;
-    t->tm_mon = (int8_t)rd8(in + 2) - 1;
-    t->tm_mday = (int8_t)rd8(in + 3);
-    t->tm_hour = (int8_t)rd8(in + 4);
-    t->tm_min = (int8_t)rd8(in + 5);
-    t->tm_sec = (int8_t)rd8(in + 6);
-    t->tm_isdst = -1;
-}
 
 void host_clock_caller(const char *what, uint64_t lr);       /* nnsdk.c: WT_TICK_CALLERS */
 static void time_GetCurrentTime(Ctx *c) { host_clock_caller("GetCurrentTime", c->x[30]); wr64(A0, (uint64_t)now_posix()); RET(0); }
@@ -429,14 +410,6 @@ static int tz_to_posix(const TzRule *r, int year, int mon, int mday, int hour, i
     if (n == 2 && out[0] > out[1]) { int64_t s = out[0]; out[0] = out[1]; out[1] = s; }
     return n;
 }
-static void time_ToCalendarTimeInUtc(Ctx *c) {            /* returns CalendarTime (8 bytes) in x0 */
-    __time64_t t = (__time64_t)rd64(A0);
-    struct tm utc;
-    uint64_t packed = 0;
-    if (!_gmtime64_s(&utc, &t)) write_calendar((uint64_t)(uintptr_t)&packed, &utc);
-    RET(packed);
-}
-static void time_ToPosixTimeFromUtc(Ctx *c) { struct tm t; read_calendar(A0, &t); t.tm_isdst = 0; RET((int64_t)_mkgmtime64(&t)); }
 static void time_ToPosixTime(Ctx *c) {                    /* (int *outCount, PosixTime *out, int count, const CalendarTime &) */
     int64_t v[2];                                         /* [sdk 0x391970]: at most min(count, 2) results; the module answers 0 for a time that does not exist */
     const TzRule *r = my_rule();
@@ -446,67 +419,6 @@ static void time_ToPosixTime(Ctx *c) {                    /* (int *outCount, Pos
     for (int i = 0; i < n; i++) wr64(A1 + (uint64_t)i * 8, (uint64_t)v[i]);
     if (A0) wr32(A0, (uint32_t)n);
     RET(0);
-}
-static int days_in_month(int y, int m) {
-    static const int d[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
-    return d[m - 1];
-}
-static void time_IsValidDate(Ctx *c) {
-    int y = (int32_t)A0, m = (int32_t)A1, d = (int32_t)A2;
-    RET(y >= 1 && m >= 1 && m <= 12 && d >= 1 && d <= days_in_month(y, m));
-}
-static void time_GetDayOfWeek(Ctx *c) {                   /* Sakamoto's method; 0 = Sunday */
-    static const int t[12] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
-    int y = (int32_t)A0, m = (int32_t)A1, d = (int32_t)A2;
-    if (m < 1 || m > 12) { RET(0); return; }
-    if (m < 3) y -= 1;
-    RET((uint64_t)((y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7));
-}
-static void time_CalendarGreater(Ctx *c) {                /* operator>(const CalendarTime &, const CalendarTime &) */
-    struct tm a, b;
-    read_calendar(A0, &a);
-    read_calendar(A1, &b);
-    int ka[6] = {a.tm_year, a.tm_mon, a.tm_mday, a.tm_hour, a.tm_min, a.tm_sec};
-    int kb[6] = {b.tm_year, b.tm_mon, b.tm_mday, b.tm_hour, b.tm_min, b.tm_sec};
-    for (int i = 0; i < 6; i++) if (ka[i] != kb[i]) { RET(ka[i] > kb[i]); return; }
-    RET(0);
-}
-static void time_SteadyNow(Ctx *c) {                      /* nanoseconds on a monotonic clock */
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    RET((uint64_t)((double)now.QuadPart * 1e9 / (double)freq.QuadPart));
-}
-/* nn::time::ClockSnapshot (0xd0 bytes). The constructor is the SDK's own code (lifted, [sdk 0x38fc00]). The contents are
- * produced by the time system module ([sdk 0x38fce0] CreateWithStandardSystemClock = IStaticService::GetClockSnapshot(out,
- * type 1); [sdk 0x38f030] CalculateSpanBetween = IStaticService::CalculateSpanBetween), which is not in the dump: both are
- * re-implemented here after the reference implementation (suyu psc/time/static.cpp GetClockSnapshotImpl / CalculateSpanBetween,
- * layout psc/time/common.h, which agrees with the offsets the SDK constructor writes):
- *   +0x00 user SystemClockContext { s64 offset; SteadyClockTimePoint { s64 seconds; u8 sourceId[16] } }   +0x20 network context
- *   +0x40 user time (posix)   +0x48 network time   +0x50 user CalendarTime   +0x58 network CalendarTime
- *   +0x60 user CalendarAdditionalInfo (0x18)   +0x78 network CalendarAdditionalInfo
- *   +0x90 SteadyClockTimePoint now   +0xa8 LocationName (0x24)   +0xcc automatic correction enabled   +0xcd type
- * Host sources: the steady clock is the time since Windows started (GetTickCount64) with a source id made from the boot
- * time, so two snapshots of one Windows session compare by the steady clock, as on the console between RTC resets; the
- * system clocks are the Windows clock; the location name is the IANA name of the Windows time zone (ICU, Windows 10 1903+;
- * "UTC" if ICU is absent); automatic correction = Windows time synchronisation is on (W32Time Type != NoSync).
- * NOT VERIFIED against a console: the time point stored inside the two contexts (the moment the clock was last set; 0 here). */
-static void steady_now(int64_t *seconds, uint8_t id[16]) {
-    static uint8_t source[16];
-    static volatile LONG ready;
-    if (InterlockedCompareExchange(&ready, 1, 0) == 0) {
-        FILETIME ft;
-        GetSystemTimeAsFileTime(&ft);
-        uint64_t boot = ((((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000 - GetTickCount64()) / 60000;   /* boot time, to the minute */
-        uint64_t h = 0xcbf29ce484222325ull;
-        for (int i = 0; i < 16; i++) { h = (h ^ ((boot >> ((i & 7) * 8)) & 0xff) ^ (uint64_t)i) * 0x100000001b3ull; source[i] = (uint8_t)(h >> 32); }
-        source[6] = (uint8_t)((source[6] & 0x0f) | 0x40); source[8] = (uint8_t)((source[8] & 0x3f) | 0x80);          /* a version 4 UUID */
-        ready = 2;
-    }
-    while (ready != 2) SwitchToThread();
-    *seconds = (int64_t)(GetTickCount64() / 1000);
-    memcpy(id, source, 16);
 }
 static void location_name(char out[0x24]) {
     static char name[0x24];
@@ -527,44 +439,7 @@ static void location_name(char out[0x24]) {
     memset(out, 0, 0x24);
     strcpy(out, name);
 }
-static int auto_correction(void) {
-    char type[32] = "";
-    DWORD size = sizeof type;
-    if (SHGetValueA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters", "Type", NULL, type, &size) != ERROR_SUCCESS) return 1;
-    return _stricmp(type, "NoSync") != 0;
-}
 static void time_ToCalendarTime(Ctx *c);
-static void time_Snapshot_create(Ctx *c) {                /* (ClockSnapshot *out) */
-    uint64_t s = A0;
-    int64_t now = now_posix(), tp;
-    uint8_t id[16];
-    steady_now(&tp, id);
-    memset((void *)(uintptr_t)s, 0, 0xd0);
-    for (int k = 0; k < 2; k++) {                          /* user and network clock: both are the Windows clock */
-        uint64_t ctx = s + (uint64_t)k * 0x20;
-        wr64(ctx, (uint64_t)(now - tp));
-        wr64(ctx + 8, 0);
-        memcpy((void *)(uintptr_t)(ctx + 0x10), id, 16);
-        wr64(s + 0x40 + (uint64_t)k * 8, (uint64_t)now);
-        c->x[0] = s + 0x50 + (uint64_t)k * 8; c->x[1] = s + 0x60 + (uint64_t)k * 0x18; c->x[2] = s + 0x40 + (uint64_t)k * 8;
-        time_ToCalendarTime(c);
-    }
-    wr64(s + 0x90, (uint64_t)tp);
-    memcpy((void *)(uintptr_t)(s + 0x98), id, 16);
-    location_name((char *)(uintptr_t)(s + 0xa8));
-    wr8(s + 0xcc, (uint8_t)auto_correction());
-    wr8(s + 0xcd, 1);                                      /* ClockSnapshotType of this call ([sdk 0x38fd24] w2 = 1) */
-    c->x[0] = s;
-}
-static void time_CalculateSpanBetween(Ctx *c) {           /* (TimeSpan *out, const ClockSnapshot &a, const ClockSnapshot &b) -> bool */
-    uint64_t out = A0, a = A1, b = A2;
-    int64_t seconds;
-    if (memcmp((void *)(uintptr_t)(a + 0x98), (void *)(uintptr_t)(b + 0x98), 16) == 0) seconds = (int64_t)rd64(b + 0x90) - (int64_t)rd64(a + 0x90);
-    else if (rd64(a + 0x48) && rd64(b + 0x48)) seconds = (int64_t)rd64(b + 0x48) - (int64_t)rd64(a + 0x48);      /* different steady clock sources: the network clocks */
-    else { RET(0); return; }
-    wr64(out, (uint64_t)(seconds * 1000000000LL));
-    RET(1);
-}
 static void ret0(Ctx *c) { RET(0); }
 static void ret1(Ctx *c) { RET(1); }
 
@@ -574,16 +449,6 @@ static const ImportDef time_imports[] = {
     {T("23StandardUserSystemClock14GetCurrentTimeEPNS0_9PosixTimeE"), time_GetCurrentTime},
     {T("26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE"), time_GetCurrentTime},
     {T("14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeE"), time_ToCalendarTime},
-    {T("14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeERKNS0_12TimeZoneRuleE"), time_ToCalendarTimeRule},
-    {T("19ToCalendarTimeInUtcERKNS0_9PosixTimeE"), time_ToCalendarTimeInUtc},
-    {T("18ToPosixTimeFromUtcERKNS0_12CalendarTimeE"), time_ToPosixTimeFromUtc},
-    {T("11ToPosixTimeEPiPNS0_9PosixTimeEiRKNS0_12CalendarTimeE"), time_ToPosixTime},
-    {T("11IsValidDateEiii"), time_IsValidDate}, {T("12GetDayOfWeekEiii"), time_GetDayOfWeek},
-    {T("gtERKNS0_12CalendarTimeES3_"), time_CalendarGreater},
-    {T("19StandardSteadyClock3nowEv"), time_SteadyNow},
-    {T("13ClockSnapshot29CreateWithStandardSystemClockEPS1_"), time_Snapshot_create},
-    {T("20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_"), time_CalculateSpanBetween},
-    {T("16LoadTimeZoneRuleEPNS0_12TimeZoneRuleERKNS0_12LocationNameE"), time_LoadTimeZoneRule},
 };
 
 void register_time_imports(void) {

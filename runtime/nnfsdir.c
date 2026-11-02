@@ -148,10 +148,8 @@ static void fs_DeleteDirectory(Ctx *c) {                  /* (const char *path) 
 #define FS(n) "_ZN2nn2fs" n
 static const ImportDef fsdir_imports[] = {
     {FS("13OpenDirectoryEPNS0_15DirectoryHandleEPKci"), fs_OpenDirectory},
-    {FS("22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE"), fs_GetDirectoryEntryCount},
     {FS("13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl"), fs_ReadDirectory},
     {FS("14CloseDirectoryENS0_15DirectoryHandleE"), fs_CloseDirectory},
-    {FS("15DeleteDirectoryEPKc"), fs_DeleteDirectory},
 };
 void register_nnfsdir_imports(void) {
     int n = (int)(sizeof fsdir_imports / sizeof fsdir_imports[0]);

@@ -1359,19 +1359,13 @@ static uint8_t g_display_token[16], g_layer_token[16], g_native_window_token[16]
 static void vi_OpenDefaultDisplay(Ctx *c) { wr64(A0, (uint64_t)(uintptr_t)g_display_token); RET(0); }
 static void vi_CreateLayer(Ctx *c) { wr64(A0, (uint64_t)(uintptr_t)g_layer_token); RET(0); }
 static void vi_GetNativeWindow(Ctx *c) { wr64(A0, (uint64_t)(uintptr_t)g_native_window_token); RET(0); }
-static void vi_GetDisplayVsyncEvent(Ctx *c) {         /* (SystemEventType *out, Display *) */
-    os_init_event(A0, 1);
-    g_vsync_event = A0;
-    RET(0);
-}
 static void nothing(Ctx *c) { (void)c; }
 
 static const ImportDef vi_imports[] = {
-    {"_ZN2nn2vi10InitializeEv", nothing}, {"_ZN2nn2vi8FinalizeEv", nothing},
-    {"_ZN2nn2vi18OpenDefaultDisplayEPPNS0_7DisplayE", vi_OpenDefaultDisplay}, {"_ZN2nn2vi12CloseDisplayEPNS0_7DisplayE", nothing},
-    {"_ZN2nn2vi11CreateLayerEPPNS0_5LayerEPNS0_7DisplayE", vi_CreateLayer}, {"_ZN2nn2vi12DestroyLayerEPNS0_5LayerE", nothing},
+    {"_ZN2nn2vi10InitializeEv", nothing},
+    {"_ZN2nn2vi18OpenDefaultDisplayEPPNS0_7DisplayE", vi_OpenDefaultDisplay},
+    {"_ZN2nn2vi11CreateLayerEPPNS0_5LayerEPNS0_7DisplayE", vi_CreateLayer},
     {"_ZN2nn2vi15GetNativeWindowEPPvPNS0_5LayerE", vi_GetNativeWindow},
-    {"_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7DisplayE", vi_GetDisplayVsyncEvent},
 };
 
 void register_display_imports(void) {

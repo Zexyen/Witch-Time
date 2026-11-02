@@ -125,19 +125,12 @@ static void load_font(unsigned type) {
     LeaveCriticalSection(&g_lock);
 }
 
-static void pl_RequestSharedFontLoad(Ctx *c) { load_font((unsigned)A0); }
-static void pl_GetSharedFontLoadState(Ctx *c) { load_font((unsigned)A0); RET(1); }
 static void pl_GetSharedFontAddress(Ctx *c) { unsigned t = (unsigned)A0; load_font(t); RET(t < FONT_TYPES ? (uint64_t)(uintptr_t)g_fonts[t].data : 0); }
 static void pl_GetSharedFontSize(Ctx *c) { unsigned t = (unsigned)A0; load_font(t); RET(t < FONT_TYPES ? g_fonts[t].size : 0); }
-static void pl_IsVrMode(Ctx *c) { RET(0); }
-static void nothing(Ctx *c) { (void)c; }
 
 static const ImportDef pl_imports[] = {
-    {"_ZN2nn2pl21RequestSharedFontLoadENS0_14SharedFontTypeE", pl_RequestSharedFontLoad},
-    {"_ZN2nn2pl22GetSharedFontLoadStateENS0_14SharedFontTypeE", pl_GetSharedFontLoadState},
     {"_ZN2nn2pl20GetSharedFontAddressENS0_14SharedFontTypeE", pl_GetSharedFontAddress},
     {"_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", pl_GetSharedFontSize},
-    {"_ZN2nn2pl8IsVrModeEv", pl_IsVrMode}, {"_ZN2nn2pl11BeginVrModeEv", nothing}, {"_ZN2nn2pl9EndVrModeEv", nothing},
 };
 
 void register_pl_imports(void) {

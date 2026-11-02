@@ -895,7 +895,7 @@ under a git-ignored folder (`cache/pkz/`): the files are game assets.
   by the game; its changed copyright line showed on the title screen. So rebuilt archives need no Kraken encoder.
 - **Mods folder on Linux**: it had the `''`-only cut fixed for graphics.ini in 028ea6d (`nnfs.c`: the folder and
   `mods.ini`), so mods worked only with `WT_MODS`; fixed, the default `mods/` beside `build/` is found.
-  `controllers.ini` (nnpad_sdl.c) and `dlc.txt` (nnmisc.c) still have that cut.
+  `controllers.ini` (nnpad_sdl.c) still has that cut.
 
 ## Keyboard and mouse (2026-10-25)
 
