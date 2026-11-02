@@ -1048,10 +1048,29 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     }
     printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], !row_restart(i) ? "applied" : r->apply == A_SCALE ? "applies when the panel closes" : "applies at the next start");
 }
+/* a value's first two numbers (1.4; 1366x768; 16:10); 0 when it starts with none (auto, game) */
+static int numbers2(const char *s, double *a, double *b) {
+    char *e; *a = strtod(s, &e); *b = e != s && *e ? strtod(e + 1, NULL) : 0;
+    return e != s;
+}
+static int before2(double a0, double a1, double b0, double b1) { return a0 < b0 || (a0 == b0 && a1 < b1); }
+/* from a value not in the list (another version's, or the file edited by hand): the nearest one that way by its numbers
+ * (1.4 -> 1.2 or 1.6, 16:10 -> 16:9 on the left); none that way: the ends when round (wrap), else -1 (stays) */
+static int nearest(int i, int dir, int wrap) {
+    double v0, v1, o0, o1, b0 = 0, b1 = 0;
+    int n = row_count(i), best = -1, num = numbers2(g_raw[i], &v0, &v1), any = 0;      /* any: a row of numbers */
+    for (int k = 0; k < n && num && k_rows[i].apply != A_BIND; k++) {
+        if (!numbers2(k_rows[i].val[k], &o0, &o1)) continue;
+        any = 1;
+        if ((dir > 0 ? before2(v0, v1, o0, o1) : before2(o0, o1, v0, v1)) &&
+            (best < 0 || (dir > 0 ? before2(o0, o1, b0, b1) : before2(b0, b1, o0, o1)))) { best = k; b0 = o0; b1 = o1; }
+    }
+    return best >= 0 ? best : wrap || !any ? (dir > 0 ? 0 : n - 1) : -1;
+}
 static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
     int n = row_count(i);
     if (k_rows[i].apply == A_BIND) wrap = 1;
-    set_value(i, g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir);
+    set_value(i, g_cur[i] < 0 ? nearest(i, dir, wrap) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir);
 }
 static ULONGLONG g_cap_t;
 static int g_cap_armed;

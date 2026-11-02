@@ -71,6 +71,20 @@ int main(int argc, char **argv) {
     /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
     spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
     setenv("WT_GRAPHICS_CONFIG", ini, 1);
+    /* a value not in a row's list (v0.5.2's 1.4, a hand-edited 16:10): the nearest one that way; none: left / right stay */
+    int rs = row_of("resolution_scale"), ar = row_of("aspect_ratio"), ws = row_of("size");
+    snprintf(g_raw[rs], sizeof g_raw[rs], "1.4");
+    assert(!strcmp(k_rows[rs].val[nearest(rs, 1, 0)], "1.6") && !strcmp(k_rows[rs].val[nearest(rs, -1, 0)], "1.2"));
+    snprintf(g_raw[rs], sizeof g_raw[rs], "9");
+    assert(nearest(rs, 1, 0) == -1 && nearest(rs, 1, 1) == 0 && !strcmp(k_rows[rs].val[nearest(rs, -1, 0)], "3.0"));
+    snprintf(g_raw[ar], sizeof g_raw[ar], "16:10");
+    assert(!strcmp(k_rows[ar].val[nearest(ar, -1, 0)], "16:9") && nearest(ar, 1, 0) == -1);
+    snprintf(g_raw[ws], sizeof g_raw[ws], "1280x800");
+    assert(!strcmp(k_rows[ws].val[nearest(ws, -1, 0)], "1280x720") && !strcmp(k_rows[ws].val[nearest(ws, 1, 0)], "1600x900"));
+    int vs = row_of("vsync");                              /* a number in a row of words: the ends, as before */
+    snprintf(g_raw[vs], sizeof g_raw[vs], "1");
+    assert(nearest(vs, 1, 0) == 0 && nearest(vs, -1, 0) == row_count(vs) - 1);
+    g_raw[rs][0] = g_raw[ar][0] = g_raw[ws][0] = g_raw[vs][0] = 0;
     assert(gfx_options()->present == 0);                   /* the last vsync line wins: clock */
     assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
     assert(fabsf(gfx_options()->aspect_ratio - 21.0f / 9.0f) < 1e-5f && fabs(atof(getenv("RECOMPS_ASPECT")) - 21.0 / 9.0) < 1e-5);      /* <w>:<h>, handed on */

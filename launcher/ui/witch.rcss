@@ -209,6 +209,9 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 
 /* ---- switches (mods, the dump options): drawn by gen:pill, smooth at any size ---- */
 .switch { position: relative; width: 54dp; height: 28dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=108&h=56&c=24202e&a=110&l=2 fill); }
+/* mods: the list scrolls, and arrows do not leave a scrolling box by themselves */
+.rows .switch { nav-left: #mods_open; }
+#mods_open { nav-right: #mod0; }   /* (Apply and rebuild, left of it, goes right to it by itself) */
 .switch .knob { position: absolute; left: 4dp; top: 4dp; width: 20dp; height: 20dp; decorator: image(gen:pill?w=40&h=40&f=5d5868 fill); transition: left 0.18s cubic-out; }
 .switch.on { decorator: image(gen:pill?w=108&h=56&f=6a49d0 fill); }
 .switch.on .knob { left: 30dp; decorator: image(gen:pill?w=40&h=40&f=ffffff fill); }
@@ -221,11 +224,10 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .tabs { left: 520dp; top: 44dp; width: 760dp; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 40dp; }
 .tabs .gl { margin-bottom: 2dp; }
 .tab { position: relative; padding: 6dp 2dp 8dp 2dp; font-size: 15dp; font-weight: 600; letter-spacing: 3dp; color: #5d5868;
-	border-bottom: 2dp transparent; tab-index: auto; nav: horizontal; }
+	border-bottom: 2dp transparent; }   /* Q / E (the shoulders) and a click change the section; the arrows stay on the rows */
 .tab div { position: relative; }
 .tab:hover { color: #24202e; }
 .tab.on { color: #6a49d0; border-bottom-color: #a690ec; }
-.tab:focus-visible { color: #6a49d0; border-bottom-color: #6a49d0; }
 .srow { height: 50dp; width: 500dp; display: flex; flex-direction: row; align-items: center; padding: 0 16dp 0 30dp; font-size: 19dp; letter-spacing: 0.5dp; color: #24202e;
 	tab-index: auto; nav: vertical; border-bottom: 1dp #24202e40; }
 .srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg) scaleX(0.001); transform-origin: left bottom;
@@ -244,5 +246,10 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .srow:hover .k .note, .srow:focus-visible .k .note { color: #ffffffd1; }
 .srow:hover .v, .srow:focus-visible .v, .srow:hover .v .arrow, .srow:focus-visible .v .arrow { color: #ffffff; }
 .srow .btn { height: 32dp; line-height: 32dp; font-size: 14dp; padding: 0 16dp; }
+/* (.srow .fill, the row's glow, would hide a button's own fill until the row itself is lit, and fight its sweep animation) */
+.srow .btn .fill { transform: skewX(22deg); transition: none; }
+/* the converted textures: the row is not a stop of its own, its buttons are (up and down as the rows; left and right between them: App::key) */
+.srow.tex { tab-index: none; }
+.srow.tex .btn { nav: vertical; }
 .saved { display: flex; flex-direction: row; align-items: center; gap: 8dp; font-size: 15dp; color: #24202e; letter-spacing: 0.5dp; }
 .reddot { width: 10dp; height: 10dp; border-radius: 5dp; background-color: #e5334b; }

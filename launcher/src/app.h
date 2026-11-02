@@ -64,7 +64,7 @@ private:
 	bool dump_modified = false;    // the last check found files that differ from the supported version
 	bool accept_modified = false;  // setup runs with --accept-modified: such a dump is used anyway
 	std::vector<CheckRow> checks;
-	bool building = false;
+	bool building = false, converting = false;   // converting: the textures (building is true then too)
 	float progress = 0;
 	int percent = 0;
 	Rml::String phase, build_aside, build_line, build_error;
@@ -88,6 +88,7 @@ private:
 	enum class Job { none, verify, build, textures } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
+	bool play_after_stop = false;      // Play during the texture conversion: it is stopped, and the game starts when it has
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
