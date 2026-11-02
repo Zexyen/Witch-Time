@@ -68,4 +68,6 @@ driver ("Build (Windows)" in the main README).
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 
-Fonts in `ui/fonts` are under the SIL Open Font License (the `OFL-*.txt` files next to them).
+Fonts in `ui/fonts` (Marcellus, Source Sans 3) are under the SIL Open Font License (the `OFL-*.txt` files next to
+them). The pictures in `ui/img` (the clockwork wheel, its hands, the runic stripe, the logo) are the project's own, made
+from the design page in the project files; `src/ui_render.cpp` says how they are stored.
