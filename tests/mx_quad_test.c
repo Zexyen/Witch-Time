@@ -1,7 +1,8 @@
 /* runtime/mx_translate.c, [issue 66]: a fragment stage finds its place in the quad from the pixel and reads its neighbours with fine
  * derivatives, never with gl_SubgroupInvocationID, which AMD's compiler counts over the live lanes only. The read is a snapshot taken at
  * the header of a wave-uniform dispatcher (every lane of the quad present), and a SHFL that is not first in its case starts one, entered
- * through the header. Other stages keep the lane id and subgroupShuffle. Hand-made stage: S2R lane, SHFL.XOR, FSWZADD, EXIT.
+ * through the header; a long chain of such cases with no step back (issue 107) runs in order, each snapshot taken just before its
+ * block. Other stages keep the lane id and subgroupShuffle. Hand-made stage: S2R lane, SHFL.XOR, FSWZADD, EXIT.
  *   clang -O2 -Wall -I runtime tests/mx_quad_test.c runtime/mx_translate.c -o build/mx_quad_test */
 #include <stdio.h>
 #include <string.h>
@@ -39,6 +40,25 @@ int main(void) {
              strstr(c, "subgroupShuffle(sv") && strstr(c, "gl_SubgroupInvocationID") && !strstr(c, "mx_quad") && !strstr(c, "gl_FragCoord");
     if (!ok && f) puts(f);
     if (!ok && c) puts(c);
+    {   /* [issue 107] S2R, then 16 x (SHFL, FSWZADD), EXIT: 17 blocks, no step back, so in order, each snapshot just before its block */
+        uint8_t big[0x50 + 8 * 48];
+        uint64_t lw[48] = {0};
+        int n = 1;
+        #define PUT(x) do { if ((n & 3) == 0) n++; lw[n++] = (x); } while (0)
+        PUT(w[1]);
+        for (int k = 0; k < 16; k++) { PUT(w[2]); PUT(w[3]); }
+        PUT(w[5]);
+        while (n < 48) PUT(w[6]);
+        #undef PUT
+        memset(big, 0, sizeof big);
+        memcpy(big + 0x50, lw, sizeof lw);
+        char *s = translate(1, big, sizeof big);
+        int ok2 = s && !strstr(s, "subgroupAny") && !strstr(s, "switch (pc)") && strstr(s, "\n uvec3 mq_r1 = uvec3(0u);\n") &&
+                  strstr(s, " pc = 2u; } while (false);\n mq_r1 = mx_quad3(r1);\n do { if (pc != 2u) continue;\n") &&
+                  strstr(s, "sh = m == 1u ? mq_r1.x : m == 2u ? mq_r1.y : m == 3u ? mq_r1.z : sv;");
+        if (!ok2 && s) puts(s);
+        ok = ok && ok2;
+    }
     printf("mx_quad_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }

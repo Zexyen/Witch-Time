@@ -690,7 +690,8 @@ halved in 2:1 steps first).
   not of the window's shape: named in `rs_extra_class`, scaled with the others (1248x864 at 2.4). Crops at 4K
   (`/tmp/shots/smoke_before_after_2700.png`): the blocky, dotted cloud edges against geometry are gone, the composite
   stays aligned. `WT_VK_CLOUD_SCALE=<cap>` limits their scale for a weak GPU (default: the full scale; 4K A/B at equal
-  load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60).
+  load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60). Their fragment stage was the cost: 30x cheaper since
+  issue 107 ("The clouds of erasure and the dispatcher").
 - **Measurements later on 2026-10-25 were taken with other programs loading the machine** (a game in Java at about two
   cores and the GPU, two long-running emulator processes): 4K runs then gave 75-81 % of frames at 60 whatever the setting
   (the 96 % above was an idle machine). Only A/B runs interleaved under the same load are compared.
@@ -1209,6 +1210,33 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
   repeat (the same shaders, 4.1 and 82.5 us): compare later runs only. #4943 / #4945 went from 51 to 98 us a draw in one run
   and not in another; not explained.
 - Not run on AMD's Windows driver, NVIDIA or Intel.
+
+## The clouds of erasure and the dispatcher (2026-11-02; issue 107)
+
+Stutter on an RX 580 with many clouds of erasure on screen, worse at a higher `resolution_scale`. Each frame with clouds draws
+about 40 tessellated and plain draws into the 520x360 targets (scaled with the picture, `rs_extra_class`), all through one
+fragment stage family (#5318 .. #5438: 3D-noise octaves with hand-made derivatives). The stage has no loop, but it is cut into
+26 to 49 blocks at its quad SHFLs, so it ran in the wave-uniform dispatcher with a header snapshot on every trip.
+- **Fix**: a fragment stage with a shuffle, no step back and 16 or more blocks runs its blocks in order, like the vertex stages
+  of issue 92. The snapshot of a shuffle's block is taken just before that block, between two blocks, where every lane of every
+  quad is present; a lane that jumped ahead or reached EXIT waits there with its registers as they were, as in the dispatcher.
+  Exactly these 64 of the 7,896 dumped stages change; all compile. Shorter shuffle stages keep the dispatcher.
+- **Measured** (Linux, RX 9070 XT, RADV; Chapter 2's start from the issue-72 save, cutscene then the fight pattern, 230 s, A/B
+  on caches of their own):
+
+  | scale | cloud fragments | cloud draws, GPU | ns a fragment | longest draw | GPU ms in cloud frames, mean / p99 | whole run, mean / p99 |
+  |---|---|---|---|---|---|---|
+  | 1.2, main | 1,940 M | 10,809 ms | 5.57 | 1,681 us | 4.20 / 7.82 | 3.00 / 5.75 |
+  | 1.2, fix | 1,830 M | 254 ms | 0.14 | 74 us | 1.97 / 3.03 | 2.04 / 3.78 |
+  | 2.4, main | 7,321 M | 32,456 ms | 4.43 | 5,427 us | 12.07 / 18.76 | 7.45 / 16.93 |
+  | 2.4, fix | 7,329 M | 954 ms | 0.13 | 258 us | 5.19 / 8.51 | 4.63 / 7.70 |
+
+  Cloud frames: 0.3 M cloud fragments or more at 1.2, 1.2 M at 2.4. Other programs unchanged (#33 / #1710 2,031 and 2,058 ms,
+  #1671 / #1693 1,868 and 1,860 ms). The clouds also draw at the title and in cutscenes, so the whole run gains.
+- **Picture**: the cutscene's frames 3180 to 3410 shot every frame on both builds and on main twice: main against the fix differs
+  as much as main against main (MAE 110-155 of 65535, the same pixels), so the clouds match within the game's own variation. The
+  cloud wall in the fight looks the same. 0 Vulkan call failures.
+- Not run on AMD's Windows driver (the reporter's), NVIDIA or Intel. `WT_VK_CLOUD_SCALE` still caps the clouds' scale.
 ## Launcher and in-game look (2026-11-01)
 
 One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's
