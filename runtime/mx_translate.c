@@ -1832,10 +1832,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
      * cost an RX 9070 XT 5.6 ns a fragment in the wave-uniform dispatcher, 0.14 ns in order. There the snapshot of a shuffle's block is taken just
      * before it, between two blocks, where every lane of every quad is (a lane that left waits there with its registers frozen, as in
      * the dispatcher; one that jumped ahead waits too, as at a Maxwell reconvergence point, where the dispatcher let it run on: the
-     * clouds' jumps are uniform for the draw and land on the next block). Shorter shuffle stages keep the dispatcher. */
-    int chain = 0, quad = 0;
-    for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) { chain += e->leader[pc]; quad |= e->qlead[pc]; }
-    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && quad && chain >= 16));
+     * clouds' jumps are uniform for the draw and land on the next block). Shorter shuffle stages keep the dispatcher.
+     * [issue 100] And a long chain with no shuffle: the gold cracks' 16-step parallax march (#7760 and its variants, 31 blocks) cost an
+     * RX 9070 XT 0.59 ns a fragment that way, 0.06 like this. Shorter stages stay: all 1,644 of them in order gave no clear gain outside
+     * this family, and a wrong quad read could then be anywhere in the game. */
+    int chain = 0;
+    for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) chain += e->leader[pc];
+    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && chain >= 16));
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
