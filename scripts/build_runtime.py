@@ -50,7 +50,7 @@ HOST_SOURCES = ['hostrt.c', 'boot.c', 'nnsdk.c', 'libcxx.c', 'os_threads.c', 'nv
                 'nncxxrt.c', 'nncxxlib.c', 'nnlibc2.c', 'gen/sdklift_gen.c', 'sdklift_rt.c', 'nnsdk2.c', 'nnapplet.c',
                 'nnalbum.c', 'nnnet.c', 'nnfsdir.c', 'nnunwind.c', 'nvn_sdk.c', 'nvn_c4.c', 'nvn_c5.c', 'gfx_options.c',
                 'hitch.c', 'r0_removed.c', 'r2_imports.c', 'b3_imports.c', 'watch.c', 'pkz_dump.c', 'gamedll.c', 'pcmenu.c',
-                'options_row.c', 'prompts.c']
+                'options_row.c', 'prompts.c', 'presence.c']
 HOST_FLAGS = ['-O1', '-g', '-gcodeview', '-w', '-fno-strict-aliasing', '-mcx16', '-I', RT, '-I', GENRT,   # debug info: crash addresses -> source (llvm-symbolizer)
               '-Dfn_table=(*game_fn_table_p)', '-Dfn_table_count=(*game_fn_table_count_p)',
               '-Ddyn_syms=(*game_dyn_syms_p)', '-Ddyn_sym_count=(*game_dyn_sym_count_p)',

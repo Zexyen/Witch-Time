@@ -34,10 +34,27 @@ static const uint8_t *rebind_cur(Ctx *c) {
     int ch = (uint32_t)c->x[0] == 1;
     return rebind_of(ch) ? game_rebind[ch] : NULL;
 }
+/* [witchtime] What runtime/presence.c shows on Discord (docs/RE_NOTES.md section 10): chapter, difficulty, verse (0: none), location
+ * banner. Read on the game's thread: the two getters are the game's own, and the verse records are remade between phases. */
+__declspec(dllexport) volatile int game_presence[4] = {-1, 0, 0, 0};
+void f_71007bcc50(Ctx *c);                             /* (x0 the flow object) -> the current chapter, -1 outside one */
+void f_7100b286c0(Ctx *c);                             /* -> the difficulty, 0 .. 3 */
+static void presence_tick(Ctx *c) {
+    static unsigned frame;
+    if (frame++ & 63) return;
+    c->x[0] = 0x7104379ca8ull; f_71007bcc50(c); game_presence[0] = (int)c->x[0];
+    f_7100b286c0(c); game_presence[1] = (int)c->x[0];
+    int verse = *(int *)(uintptr_t)0x71026cb410ull;    /* the last verse started in this phase, -1: none */
+    uint64_t count = *(uint64_t *)(uintptr_t)0x71026cb400ull, records = *(uint64_t *)(uintptr_t)0x71026cb3f0ull;
+    const char *record = (const char *)(uintptr_t)(records + 2320ull * verse);
+    game_presence[2] = verse >= 0 && (uint64_t)verse < count && *(const int *)(record + 2248) != 15 ? *(const int *)(record + 68) + 1 : 0;      /* 15: over */
+    game_presence[3] = *(int *)(uintptr_t)0x7104dbb128ull;
+}
 /* 0x7100983610 is empty and called once, just after the frame's pads were copied (0x710095f40c). What gameplay reads is rewritten
  * here: every pad of the first copy, the gameplay copy, the one record. The menus' copy comes from the raw pads later (0x710095f464). */
 void h_rebind_pads(Ctx *c) {
     static const struct { uint64_t at; int n; } copies[] = {{0x7104d8f338ull, 4}, {0x7104d8f418ull, 4}, {0x7104d8f5d8ull, 1}};
+    presence_tick(c);
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     const uint8_t *r = rebind_cur(c);
     if (!r) return;

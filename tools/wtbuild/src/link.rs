@@ -75,6 +75,7 @@ const HOST_SOURCES: &[&str] = &[
     "pcmenu.c",
     "options_row.c",
     "prompts.c",
+    "presence.c",
 ];
 const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
@@ -126,6 +127,7 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
         "game_rebind",
         "game_rebind_on",
         "game_rebind_live",
+        "game_presence",
         "sdk_data",
         "sdk_data_count",
         "sdk_fns",

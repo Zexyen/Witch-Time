@@ -1184,6 +1184,23 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
   and not in another; not explained.
 - Not run on AMD's Windows driver, NVIDIA or Intel.
 
+## Discord Rich Presence (2026-11-01)
+
+`runtime/presence.c` shows the chapter, verse, difficulty, area and time in the chapter on a running Discord client, over its local IPC
+(a socket on Linux, the Flatpak and Snap clients included; a named pipe on Windows). `presence_tick` in `game_shim_eh.c` publishes the state on
+the game's thread once every 64 frames; a thread of its own sends a change at most every 5 s, so Discord can't touch a frame.
+`discord_presence = off` in `graphics.ini` stops it. docs/RE_NOTES.md section 10 has where each value comes from.
+
+The images are the game's, so the repo holds only their keys: they are uploaded to the Discord app, and a key the app lacks is dropped by
+Discord without an error.
+
+- **Measured** (Linux, scripted runs of the prologue and chapter 2, a stand-in for Discord logging every frame): the HUD's Verse 1 and 2 through a
+  story scene in the fight, the results and the next phase; Expert and Standard from two saves; "Tokyo: Shinjuku" against the banner on screen; the
+  area held across phases. On the real client: the card shown, one connection held for a 130 s run, and every activity accepted.
+- **Time** is wall clock from entering the chapter, not the game's Play Time: it runs on through a pause.
+- **Area** is blank after Continue until the next banner: a phase does not always raise one.
+- **Not tested**: Windows was compiled, not run. Chapters other than those two come from the game's tables.
+
 ## Performance report (2026-10-26)
 
 **Method**: `scripts/perf_bench.py run <scene> <scale>` then `report <run dirs>`. Each run: a copy of the save, audio
