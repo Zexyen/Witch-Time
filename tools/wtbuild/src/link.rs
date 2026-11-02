@@ -204,35 +204,43 @@ pub fn table_flags(t: Target) -> Vec<String> {
     flags
 }
 
-/// sha256 of what the runtime is built from: runtime/ except its generated gen/, and lifter/sdklift_install.txt
-pub fn sources_hash(repo: &Path) -> String {
-    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
+/// what the runtime is built from: runtime/ except its generated gen/, and lifter/sdklift_install.txt (sorted)
+pub fn source_files(repo: &Path) -> Vec<String> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) {
         let Ok(rd) = fs::read_dir(dir) else { return };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            let r = if rel.is_empty() { name.clone() } else { format!("{}/{}", rel, name) };
+            let r = format!("{}/{}", rel, name);
             let p = e.path();
             if p.is_dir() {
-                if r != "gen" {
+                if r != "runtime/gen" {
                     walk(&p, &r, out);
                 }
             } else if p.is_file() {
-                out.push((r, p));
+                out.push(r);
             }
         }
     }
     let mut files = Vec::new();
-    walk(&repo.join("runtime"), "", &mut files);
-    files.iter_mut().for_each(|f| f.0 = format!("runtime/{}", f.0));
-    files.push(("lifter/sdklift_install.txt".into(), repo.join("lifter").join("sdklift_install.txt")));
+    walk(&repo.join("runtime"), "runtime", &mut files);
+    files.push("lifter/sdklift_install.txt".into());
     files.sort();
+    files
+}
+
+/// sha256 of these files (repo-relative, sorted); a missing one hashes as empty
+pub fn files_hash(repo: &Path, files: &[String]) -> String {
     let mut h = Sha256::new();
-    for (r, p) in files {
+    for r in files {
         h.update(r.as_bytes());
         h.update([0]);
-        h.update(Sha256::digest(fs::read(p).unwrap_or_default()));
+        h.update(Sha256::digest(fs::read(repo.join(r)).unwrap_or_default()));
     }
     crate::util::hex(&h.finalize())
+}
+
+pub fn sources_hash(repo: &Path) -> String {
+    files_hash(repo, &source_files(repo))
 }
 
 struct Clang<'a> {
@@ -610,7 +618,10 @@ fn prebuilt(repo: &Path, t: Target, log: &mut dyn FnMut(String)) -> Option<(Path
     let dir = repo.join(PREBUILT);
     let m: Value = serde_json::from_slice(&fs::read(dir.join("manifest.json")).ok()?).ok()?;
     let files: Vec<String> = m.get("files")?.as_array()?.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-    if m.get("sources").and_then(|v| v.as_str()) != Some(sources_hash(repo).as_str()) {
+    // only the files the release had: one an older release left behind (an update unpacks over it) builds nothing (#114)
+    let listed: Option<Vec<String>> = m.get("source_files").and_then(|v| serde_json::from_value(v.clone()).ok());
+    let hash = listed.map_or_else(|| sources_hash(repo), |l| files_hash(repo, &l));
+    if m.get("sources").and_then(|v| v.as_str()) != Some(hash.as_str()) {
         log(format!("{}/ was built from other runtime sources: the runtime is built here", PREBUILT));
         return None;
     }
@@ -649,13 +660,14 @@ pub fn make_prebuilt(repo: &Path, clang: &str, t: Target, out: &Path, log: &mut 
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
         .unwrap_or_default();
-    let m = json!({"sources": sources_hash(repo), "clang": ver, "target": t.name(), "files": files});
+    let src = source_files(repo);
+    let m = json!({"sources": files_hash(repo, &src), "source_files": src, "clang": ver, "target": t.name(), "files": files});
     fs::write(out.join("manifest.json"), serde_json::to_string_pretty(&m).unwrap() + "\n").map_err(|e| e.to_string())?;
     log(format!(
         "{}: {} files, runtime sources {}",
         out.display(),
         files.len(),
-        &sources_hash(repo)[..16]
+        &m["sources"].as_str().unwrap()[..16]
     ));
     Ok(())
 }
@@ -773,5 +785,23 @@ mod tests {
         let win = ["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"];
         assert_eq!(table_flags(Target::Windows), win);
         assert_eq!(table_flags(Target::Linux), [&win[..], &["-fPIC", "-D__declspec(x)="]].concat());
+    }
+
+    #[test]
+    fn listed_sources_ignore_leftovers() {
+        let d = std::env::temp_dir().join(format!("wt_srchash_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("runtime/gen")).unwrap();
+        fs::write(d.join("runtime/a.c"), "a").unwrap();
+        fs::write(d.join("runtime/gen/x.c"), "x").unwrap();
+        let list = source_files(&d);
+        assert_eq!(list, ["lifter/sdklift_install.txt", "runtime/a.c"]);
+        let h = files_hash(&d, &list);
+        fs::write(d.join("runtime/old.c"), "left by an older release").unwrap();
+        assert_ne!(sources_hash(&d), h);
+        assert_eq!(files_hash(&d, &list), h);
+        fs::write(d.join("runtime/a.c"), "edited").unwrap();
+        assert_ne!(files_hash(&d, &list), h);
+        fs::remove_dir_all(&d).unwrap();
     }
 }
