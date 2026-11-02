@@ -434,6 +434,19 @@ static void keep_movie_flag(Ctx *c) {
         return;
     }
 }
+/* [witchtime] issue 86: model_lod = highest. 7100bd563c picks a mesh's level into *x1 (-2 none, -1 hidden, 0 finest): every
+ * multi-level mesh stays at 0, also past its last distance, so the far ones stay drawn. Meshes with one level keep their
+ * distance cut, as with the Switch "Increased LOD" mod (mov w8, #0 at 7100bd5b2c), which runs after that cut. */
+__declspec(dllexport) volatile int game_model_lod;         /* 0 = not read yet, 1 the game's, 2 highest; the PC menu (pcmenu.c) changes it */
+void f_7100bd563c(Ctx *c);
+void h_model_lod(Ctx *c) {
+    int32_t last, *out = (int32_t *)(uintptr_t)c->x[1];
+    memcpy(&last, (void *)(uintptr_t)(c->x[0] + 0x14), 4);
+    int levels = (int32_t)c->x[2] < last ? (int32_t)c->x[2] : last;      /* the last level this call may pick */
+    f_7100bd563c(c);
+    if (!game_model_lod) { const char *e = getenv("SSBU_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
+    if (game_model_lod == 2 && (*out > 0 || (*out == -1 && levels > 0))) *out = 0;
+}
 void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     g_clock_ctx = c;

@@ -70,6 +70,13 @@ MENU = [
                                   ('实验性帧率 (Restart)', 'FPS 试验版 (Restart)', 'FPS Beta (Restart)'),
                                   ('實驗性幀率 (Restart)', 'FPS Beta (Restart)'),
                                   ('실험적 프레임 레이트 (다음 시작 시)', '테스트 프레임 레이트 (다음 시작 시)', 'Experimental FPS (다음 시작 시)'))),
+    ('MENU_OPTION_LIST_PC_MODEL', T('Model Detail', ('モデル詳細', 'モデル調整', 'Model Detail'), 'Modelldetails', 'Détail des modèles',
+                                    'Detalle de modelos', ('Dettaglio modelli', 'Model Detail'), 'Детализация моделей',
+                                    ('模型细节', '模型调整', 'Model Detail'), ('模型細節', '模型設定', 'Model Detail'),
+                                    ('모델 디테일', '모델 조정', 'Model Detail'))),
+    ('MENU_OPTION_LIST_PC_GRAIN', T('Film Grain', ('フィルムグレイン', 'Film Grain'), 'Filmkörnung', 'Grain de film', 'Grano de película',
+                                    'Grana della pellicola', ('Зернистость плёнки', 'Зернистость пленки', 'Зернистость'),
+                                    ('胶片颗粒', 'Film Grain'), ('底片顆粒', 'Film Grain'), ('필름 그레인', 'Film Grain'))),
 ]
 CORE = [
     ('CORE_PC_AUTO', T('Auto', '自動', 'Auto', 'Auto', 'Automática', 'Automatica', 'Авто', ('自动', 'Auto'), ('自動', 'Auto'), '자동')),
@@ -93,6 +100,9 @@ CORE = [
 ]
 CORE += [('CORE_PC_RES_' + v, ALL(h + 'p', h)) for v, h in (('10', '900'), ('12', '1080'), ('16', '1440'), ('24', '2160'))]
 CORE += [('CORE_PC_FPS_90', ALL('90')), ('CORE_PC_FPS_120', ALL('120'))]
+# CORE_PC_HIGHEST: the ja / kr files have Latin letters but not 最高 / 최고; the es, cn and tw files have no 'x' nor 最 / 高
+CORE += [('CORE_PC_HIGHEST', T('Highest', ('最高', 'Highest'), 'Maximal', 'Maximum', ('Máximo', 'Ultra'), 'Massimo', 'Максимум',
+                               ('最高', 'Ultra'), ('最高', 'Ultra'), ('최고', 'Highest')))]
 LANGS = list(MENU[0][1])
 MOD = 'witchtime-pc-settings'
 OLD_MOD = 'b3recomp-pc-settings'                 # its name before the rename to Witch Time (2026-10-27)

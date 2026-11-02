@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 
 volatile LONG g_guest_frozen, g_display_close;
-volatile int game_cutscene_fps;
+volatile int game_cutscene_fps, game_model_lod;
 static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int swap_ab) { (void)swap_ab; *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
@@ -97,6 +97,14 @@ int main(int argc, char **argv) {
     assert(g_cur[5] == 7 && !strcmp(val_name(5), "1440p"));
     assert(g_shown[7] && g_cur[7] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
     change(7, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(7));
+    assert(!gfx_options()->model_lod_high && g_cur[8] == 0);
+    change(8, 1, 0); assert(gfx_options()->model_lod_high && game_model_lod == 2 && !row_restart(8));
+    assert(gfx_ini_get("model_lod", buf, sizeof buf) && !strcmp(buf, "highest"));
+    change(8, -1, 0); assert(!gfx_options()->model_lod_high && game_model_lod == 1);
+    assert(!gfx_options()->no_film_grain && g_cur[9] == 0);      /* not in the file: the game's own */
+    change(9, 1, 0); assert(gfx_options()->no_film_grain && !row_restart(9));
+    assert(gfx_ini_get("film_grain", buf, sizeof buf) && !strcmp(buf, "off"));
+    change(9, -1, 0); assert(!gfx_options()->no_film_grain);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
     pcmenu_take_work(); change(5, 1, 0); assert(row_restart(5) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */

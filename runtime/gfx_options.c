@@ -149,6 +149,15 @@ static const char *const k_default_ini =
 ";   lower can shimmer); added to every sampler that uses mip maps. Above 0: blurrier, a little less GPU time.\r\n"
 "texture_lod_bias = 0\r\n"
 "\r\n"
+"; model_lod = game | highest\r\n"
+";   game: models lose detail with distance and far ones disappear, as on the console. highest: every model with detail\r\n"
+";   levels stays at its finest and stays drawn far away; weaker GPUs may lose frame rate. Applies while the game runs.\r\n"
+"model_lod = game\r\n"
+"\r\n"
+"; film_grain = on | off      (Vulkan)\r\n"
+";   on: the game's moving noise over the picture. off: a clean picture; the vignette stays. Applies while the game runs.\r\n"
+"film_grain = on\r\n"
+"\r\n"
 "; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
 ";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
 ";   less work for the CPU, and a sharper picture. The launcher makes that folder after a build, about 16 GB: 12 minutes on 4\r\n"
@@ -248,6 +257,8 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "shader_wait")) o->shader_skip = !_stricmp(val, "skip");
         else if (!_stricmp(key, "runahead")) g_gfx_runahead = !_stricmp(val, "on") || !_stricmp(val, "1");      /* track R1 round 5 (r1_state.c) */
         else if (!_stricmp(key, "latency")) g_gfx_latency = !_stricmp(val, "lowest") ? 2 : !_stricmp(val, "low") ? 1 : 0;      /* track L1 (display.c latency_mode) */
+        else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
+        else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
         else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
@@ -275,6 +286,8 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         const char *e = getenv("SSBU_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
     }
+    if (!getenv("SSBU_MODEL_LOD")) _putenv_s("SSBU_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
+    else o->model_lod_high = !_stricmp(getenv("SSBU_MODEL_LOD"), "highest");
     {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads SSBU_CUTSCENE_FPS; a set variable (test runs) wins */
         const char *e = getenv("SSBU_CUTSCENE_FPS");
         if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
@@ -454,6 +467,7 @@ int gfx_option_set(const char *key, const char *val) {
     if (!done) fprintf(f, "%s%s = %s%s", len && b[len - 1] != '\n' ? (crlf ? "\r\n" : "\n") : "", key, val, crlf ? "\r\n" : "\n");
     free(b);
     if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
+    if (!_stricmp(key, "model_lod")) _putenv_s("SSBU_MODEL_LOD", val);
     if (!_stricmp(key, "cutscene_fps")) _putenv_s("SSBU_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
     GfxOptions t;
     opt_load(NULL, &t, NULL);
@@ -461,6 +475,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale;
+    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain;
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);
     return 1;

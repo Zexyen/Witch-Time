@@ -754,7 +754,29 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
   level of every sampler that uses mip maps (clamped to the device's limit). At -1 the same view is sharper (high-frequency
   energy: near street 113 -> 153, far street 273 -> 292, distant buildings 292 -> 340); no measurable cost (4K A/B:
   77-80 % against 77-79 % of frames at 60).
-- **Model LOD: not found yet.** Candidates read and tested with a host override that scaled their values, measured by
+- **`model_lod`** (graphics.ini, PC settings and the Options screen, "Model detail"; `SSBU_MODEL_LOD`; game | highest, default game; issue 86):
+  `7100bd563c` is the model level selector (its one caller `7100bd5b3c` runs the cross-fade): it writes the level to `*x1`,
+  -2 none, -1 hidden, 0 finest, and past the last distance it gives -1. The Switch "Increased LOD" mod (`mov w8, #0` at
+  `7100bd5b2c`) was the lead. `h_model_lod` (game_shim_eh.c) has the same effect after the call, keeping the distance cut
+  of meshes with one level. Same scripted route, gameplay frames 3800-8000, RX 9070 XT: 0.92 million indices a frame become
+  3.42 (3.7x), 1165 draws become 1608. 60 fps frames, scale 2.4, the clean pair of two: 16.68 -> 16.71 ms mean, p99 21.4 ->
+  19.8, GPU 3.57 -> 3.77 ms a frame; scale 1.0: 16.97 -> 16.91 ms, GPU 1.37 -> 1.50. Some runs of either setting have slow
+  stretches (a first run read 25.7 ms, a repeat did not): compare per-frame data over repeats, never one run. One or two
+  levels finer than the game gave 1.55 / 1.90 million indices and no frame time worth trading for; no weak GPU was tried.
+- **`film_grain`** (graphics.ini, PC settings and the Options screen; on | off; issue 86). The grain is `m_GrainIntensity`,
+  struct offset 0x1fc, `c4[13]` in the four `filtershadertonemap*` stages (the "No Film Grain" mod clears that field's
+  registration, in the two tables of `0x7102632810` and `0x71026329d0`); stages are told by a hash of their code because
+  12.9898 is also in glass, fog and sky. The game sets it per scene: 0 in Chapter 2 gameplay, 0.078-0.2 on frames 575-1248,
+  0.5 on the opening book (2218-2423 of the test route). There the noise floor is 0.633 with grain, 0.180 without.
+- **Options screen rows** (`runtime/options_row.c`, rows 34 and 35): Model Detail (Default / Highest) and Film Grain (ON /
+  OFF, the game's own words), after Texture Detail; their text in `scripts/pc_settings_mod.py` and `text_strings.rs`.
+  "Highest" is spelled with each file's glyphs: Highest (en, ja, ko), Maximal, Maximum, Massimo, Максимум, Ultra (es, zh-Hans,
+  zh-Hant: no 'x', 最 or 高 there). Seen in 10 languages from the title and from the chapter menu: both rows change
+  graphics.ini and apply at once; nothing overflows; the ko label and the ja Film Grain are English, as the other rows there.
+- **Motion blur: no option.** `reconstructionblur`, its tile passes, `filtershadercameravelocity` and
+  `modelshadervelocitymap` drew 0 times on that route (title, opening, Chapter 2 to the fight), so skipping the blur draw
+  was never seen on a real frame. It needs a scene where the chain runs first.
+- **Model LOD, earlier candidates (not the selector).** Candidates read and tested with a host override that scaled their values, measured by
   the indices a frame draws (`SSBU_VK_PRIMLOG`) on the same idle view:
   - `LodDistance0..3` / `UseLodDistance0..3` (reader `71007d3a5c`, pairs of float + flag): the values seen are 0, -1, 0.5,
     0.25, 5 / 15, 10.8 / 26, and every Use flag is 0: an effect system's settings, not models;
@@ -763,8 +785,7 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
     frame against 1.02-1.07 million at 1 (two runs): no effect on this view (likely the breakable props' table);
   - `LOD0..LOD7` names (`71007f44ac`): an enum parser of level names (models' LOD groups or settings), reached through a
     function pointer.
-  Next: find a model whose index count changes with distance (a scripted walk away, `SSBU_VK_PRIMLOG` per draw and
-  vertex buffer), then the code that picks its batch list. The temporary overrides were removed.
+  The temporary overrides were removed.
 
 ## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
 
