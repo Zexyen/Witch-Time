@@ -134,6 +134,9 @@ static const Row k_rows[] = {
 
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static volatile LONG g_open, g_work, g_job;
+static ULONGLONG g_open_at, g_close_at;                    /* the opening's and the closing's start (the GPU path animates them: pcmenu_gpu_scene) */
+#define PCM_OPEN_MS 320                                        /* the opening: a quick start, a gradual finish (ease_out) */
+#define PCM_CLOSE_MS 220                                       /* the closing: the same way back, quicker */
 static volatile LONG g_release;                            /* a bit per npad id: that player still holds what was pressed in the menu */
 static int g_sel, g_cur[NROW], g_start[NROW], g_shown[NROW], g_lock_why[NROW], g_inited, g_said_restart[NROW], g_nowin;
 static char g_raw[NROW][32];                               /* a value of the file that is none of the row's: shown as it is */
@@ -356,19 +359,27 @@ static void put_pre(int x, int y, const float c[4], float a) {          /* premu
     p[0] = (uint8_t)(p[0] * k + c[0] * a + 0.5f); p[1] = (uint8_t)(p[1] * k + c[1] * a + 0.5f); p[2] = (uint8_t)(p[2] * k + c[2] * a + 0.5f);
 }
 /* the picture fitted to the box (x, y, w, h), turned by `deg` about the box's centre, at the opacity `alpha`; on the window,
- * only where x < xmax(y) when clip_top >= 0 (a slanted edge: xmax = clip_top + y * TAN22) */
+ * only where x < xmax(y) when clip_top is not NOCLIP (a slanted edge: xmax = clip_top + y * TAN22; it may start left of the window) */
 static float g_ann0, g_ann1;                                /* set: only the ring between these fractions of the box's half is drawn */
+#define NOCLIP (-1e9f)                                         /* clip_top: no slanted edge (a real edge may start left of the window: the opening) */
+#define CLIPPED(c) ((c) > -1e8f)
 static int g_clip_right;                                     /* set: clip_top keeps what is right of the slanted edge instead */
 /* The GPU path (nvn_vk_pcmenu.c, pcmenu_gpu): the ground and the layers are still drawn here, once a version; the moving
  * parts are not drawn but listed as sprites (PcmSprite: the same box, turn, opacity, ring and slanted clip as art_blit's)
  * for the renderer to draw every frame with the art as textures. While g_emit is set, art_blit lists instead of drawing. */
-typedef struct { int art; float x, y, w, h, deg, alpha, ann0, ann1, clip_top; int clip_right; } PcmSprite;      /* art: pcmenu_art_pixels' id; -1 the hubs layer, -2 the words layer */
+typedef struct {
+    int art;                                               /* pcmenu_art_pixels' id; -1 the hubs layer, -2 the words layer, -3 the ground, -4 a flat pearl */
+    float x, y, w, h, deg, alpha, ann0, ann1;
+    float clip_top; int clip_right;                        /* the slanted edge, as art_blit's (NOCLIP: none) */
+    float clip2_top; int clip2_right;                      /* a second slanted edge, both kept */
+    float y0, y1;                                          /* set (y1 > y0): only this band of rows */
+} PcmSprite;
 static PcmSprite *g_emit; static int g_emit_n, g_emit_max, g_gpu;
 static int art_id(const Art *a);
 static void art_blit(const Art *a, float x, float y, float w, float h, float alpha, float deg, float clip_top) {
     if (!a->w) return;
     if (g_emit) {
-        if (g_emit_n < g_emit_max) { PcmSprite e = {art_id(a), x, y, w, h, deg, alpha, g_ann0, g_ann1, clip_top, g_clip_right}; g_emit[g_emit_n++] = e; }
+        if (g_emit_n < g_emit_max) { PcmSprite e = {art_id(a), x, y, w, h, deg, alpha, g_ann0, g_ann1, clip_top, g_clip_right, NOCLIP, 0, 0, 0}; g_emit[g_emit_n++] = e; }
         return;
     }
     float cx = x + w / 2, cy = y + h / 2, cs = cosf(deg * 3.14159265f / 180), sn = sinf(deg * 3.14159265f / 180), sx = a->w / w, sy = a->h / h;
@@ -383,7 +394,7 @@ static void art_blit(const Art *a, float x, float y, float w, float h, float alp
     float r0 = g_ann0 * w / 2, r1 = g_ann1 * w / 2;
     for (int j = y0; j < y1; j++) {
         int jx0 = x0, jx1 = x1;
-        if (clip_top >= 0) { int e = (int)(clip_top + j * TAN22); if (g_clip_right) { if (e > jx0) jx0 = e; } else if (e < jx1) jx1 = e; }
+        if (CLIPPED(clip_top)) { int e = (int)floorf(clip_top + j * TAN22); if (g_clip_right) { if (e > jx0) jx0 = e; } else if (e < jx1) jx1 = e; }
         for (int i = jx0; i < jx1; i++) {
             float dx = i + 0.5f - cx, dy = j + 0.5f - cy;
             if (g_ann1 > 0) { float rr = dx * dx + dy * dy; if (rr < r0 * r0 || rr > r1 * r1) continue; }
@@ -484,6 +495,7 @@ void *pcmenu_art_pixels(int id, int *w, int *h) {
     const Art *k[16] = {&g_wheel.ring1, &g_wheel.ring2, &g_wheel.base, &g_wheel.gear1, &g_wheel.gear2, &g_wheel.gear3, &g_wheel.top,
                         &g_wheel_dark.ring1, &g_wheel_dark.ring2, &g_wheel_dark.base, &g_wheel_dark.gear1, &g_wheel_dark.gear2, &g_wheel_dark.gear3, &g_wheel_dark.top, &g_hand_minute, &g_hand_hour};
     art_init();
+    if (id == 16) { uint8_t *px = malloc(4); if (px) { px[0] = C_PEARL.b; px[1] = C_PEARL.g; px[2] = C_PEARL.r; px[3] = 255; *w = *h = 1; } return px; }      /* a flat pearl texel (the opening) */
     if (id < 0 || id >= 16 || !k[id]->w) return NULL;
     const Art *a = k[id];
     uint8_t *px = malloc((size_t)a->w * a->h * 4);
@@ -814,7 +826,7 @@ static void draw_prep(int W, int H) {
             float dx = (x + 0.5f - 0.62f * W) / (0.55f * W), dy = (y + 0.5f - 0.48f * H) / (0.7f * H), d = sqrtf(dx * dx + dy * dy);
             put(x, y, d < 0.55f ? mix(c_in, c_mid, d / 0.55f) : mix(c_mid, c_out, d > 1 ? 1 : (d - 0.55f) / 0.45f), 1);
         }
-        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, -1);
+        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP);
         float x_top = W - 200 * s;                             /* the pearl panel at the right, its stripe and rules */
         for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; int i0 = (int)e; for (int i = i0; i < W; i++) put(i, j, mix(C_PEARL, C_PEARL_LO, (float)(i - i0) / (W - x_top)), i == i0 ? 1 - (e - i0) : 1); }
         for (int j = 0; j < H; j++) { float e = x_top - 40 * s + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
@@ -835,9 +847,9 @@ static void draw_prep(int W, int H) {
         text(&g_f_ui, 60 * s, (int)(H - 30 * s), g_prep.info, 15 * s, C_LILAC, 1 * s);
         g_bg = malloc((size_t)W * H * 4); g_bg_w = W; g_bg_h = H;
         if (g_bg) memcpy(g_bg, g_px, (size_t)W * H * 4);
-        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, -1); g_to = NULL;
+        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP); g_to = NULL;
     } else memcpy(g_px, g_bg, (size_t)W * H * 4);
-    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1, anim_t()); layer_over(&g_hubs); }      /* else the renderer draws them over the numbers */
+    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, anim_t()); layer_over(&g_hubs); }      /* else the renderer draws them over the numbers */
     /* the numbers */
     char t[64];
     float big = 84 * s, x = 72 * s;
@@ -933,25 +945,72 @@ void pcmenu_gpu(int on) {
     if (g_gpu != (on != 0)) { g_gpu = on != 0; g_drawn_ver = ~0u; }
     ReleaseSRWLockExclusive(&g_lock);
 }
-int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max) {        /* the sprites to draw over the ground, in order, for the window (W, H) now */
-    int kind = pcmenu_kind();
+static float ease_out(float t) { if (t <= 0) return 0; if (t >= 1) return 1; float u = 1 - t; return 1 - u * u * u; }      /* a quick start, a gradual finish */
+static void emit(int art, float x, float y, float w, float h, float alpha, float clip_top, int clip_right, float clip2_top, int clip2_right, float y0, float y1) {
+    if (g_emit_n >= g_emit_max || alpha <= 0) return;
+    PcmSprite e = {art, x, y, w, h, 0, alpha, 0, 0, clip_top, clip_right, clip2_top, clip2_right, y0, y1};
+    g_emit[g_emit_n++] = e;
+}
+/* The sprites to draw for the window (W, H) now, in order. Steady: over the ground the renderer copied, the moving parts
+ * of the wheels with the hubs and the words between (*over_game = 0). While the panel opens (PCM_OPEN_MS) or closes
+ * (PCM_CLOSE_MS) and the renderer can start from the game's picture (over_game in), the whole panel is sprites over it
+ * (*over_game = 1): the indigo wedge slides in from the left with its wheel and words, the pearl side fades in, the rows
+ * step in from the right one after another, the bands rise; the reverse on closing, together. */
+int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
+    int kind = pcmenu_kind(), can = *over_game;
+    *over_game = 0;
     if (kind != 1 && kind != 3) return 0;
     AcquireSRWLockExclusive(&g_lock);
     float s = scale_of(W, H);
     double t = anim_t();
+    ULONGLONG now = GetTickCount64();
     g_emit = out; g_emit_n = 0; g_emit_max = max;
-    PcmSprite hubs = {-1, 0, 0, (float)W, (float)H, 0, 1, 0, 0, -1, 0}, words = hubs;
+    PcmSprite hubs = {-1, 0, 0, (float)W, (float)H, 0, 1, 0, 0, NOCLIP, 0, NOCLIP, 0, 0, 0}, words = hubs;
     words.art = -2;
-    if (kind == 1) {
+    if (kind == 3) {
+        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, t);
+        if (g_emit_n < max) out[g_emit_n++] = hubs;
+    } else {
         float wl[3], wd[3], edge;
         panel_wheels(W, s, wl, wd, &edge);
-        g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
-        if (g_emit_n < max) out[g_emit_n++] = hubs;
-        wheel_turn(&g_wheel_dark, wd[0], wd[1], wd[2], 0.4f, 1, edge - 1, t);
-        if (g_emit_n < max) out[g_emit_n++] = words;
-    } else {
-        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, -1, t);
-        if (g_emit_n < max) out[g_emit_n++] = hubs;
+        float open = g_close_at ? 1 - ease_out((float)(now - g_close_at) / PCM_CLOSE_MS) : ease_out((float)(now - g_open_at) / PCM_OPEN_MS);      /* 0 away .. 1 in place */
+        if (!can || (open >= 1 && !g_close_at)) {
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
+            if (g_emit_n < max) out[g_emit_n++] = hubs;
+            wheel_turn(&g_wheel_dark, wd[0], wd[1], wd[2], 0.4f, 1, edge - 1, t);
+            if (g_emit_n < max) out[g_emit_n++] = words;
+        } else {
+            *over_game = 1;
+            float dx = (1 - open) * (edge + H * TAN22 + 8 * s), e2 = edge - dx, a = open, band_y = H - 126 * s, fw = (float)W, fh = (float)H;
+            /* the pearl side: flat between the wedge's edge and its place, the ground right of its place, the light wheel */
+            emit(-4, 0, 0, fw, fh, a, e2, 1, edge, 0, 0, band_y);
+            emit(-3, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, 0);
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f * a, 0, edge, t); g_clip_right = 0;
+            emit(-1, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, 0);
+            /* the wedge, with its wheel and hub, shifted */
+            emit(-3, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
+            wheel_turn(&g_wheel_dark, wd[0] - dx, wd[1], wd[2], 0.4f, 1, e2 - 1, t);
+            emit(-1, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
+            /* the words: the rows one after another from the right; the rest of the pearl side; the bands from below; the wedge's words with it */
+            float rows_top = fh, rows_bot = 0;
+            int k = 0, nshow = 0;
+            for (int i = 0; i < NROW; i++) nshow += g_row_y[i] >= 0;
+            float stag = nshow > 1 ? (0.2f / (nshow - 1) < 0.04f ? 0.2f / (nshow - 1) : 0.04f) : 0;
+            for (int i = 0; i < NROW; i++) {
+                if (g_row_y[i] < 0) continue;
+                float y0 = (float)g_row_y[i], y1 = y0 + g_row_h;
+                if (y0 < rows_top) rows_top = y0; if (y1 > rows_bot) rows_bot = y1;
+                float p = g_close_at ? open : ease_out(((float)(now - g_open_at) / 1000 - 0.08f - k * stag) / 0.26f), sh = (1 - p) * 70 * s;
+                emit(-2, sh, 0, fw, fh, p, edge, 1, NOCLIP, 0, y0, y1);
+                k++;
+            }
+            if (rows_top > rows_bot) { rows_top = band_y; rows_bot = band_y; }
+            emit(-2, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, 0, rows_top);
+            emit(-2, 0, 0, fw, fh, a, edge, 1, NOCLIP, 0, rows_bot, band_y);
+            float dy = (1 - a) * 40 * s;
+            emit(-2, 0, dy, fw, fh, a, NOCLIP, 0, NOCLIP, 0, band_y + dy, fh);
+            emit(-2, -dx, 0, fw, fh, 1, e2, 0, NOCLIP, 0, 0, band_y);
+        }
     }
     int n = g_emit_n;
     g_emit = NULL; g_emit_n = g_emit_max = 0;
@@ -1103,13 +1162,16 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         ReleaseSRWLockExclusive(&g_lock);
         if (g_log && (step || (ok && !prev_ok) || (back && !prev_back) || click)) printf("pcmenu: input: %s%s%s%s -> row %d (%s)\n", step ? (dir == 1 ? "up " : dir == 2 ? "down " : dir == 3 ? "left " : "right ") : "", ok && !prev_ok ? "A " : "", back && !prev_back ? "B " : "", click ? "click " : "", g_sel, k_rows[g_sel].key);
         prev_ok = ok; prev_click = md;
-        if (back && !prev_back) {
-            if (!g_page || g_direct) break;
-            AcquireSRWLockExclusive(&g_lock);
-            page_go(0); g_ver++;
-            ReleaseSRWLockExclusive(&g_lock);
+        if (back && !prev_back && !g_close_at) {
+            if (!g_page || g_direct) { g_close_at = now; g_ver++; }      /* the closing plays (PCM_CLOSE_MS); the game goes on after it */
+            else {
+                AcquireSRWLockExclusive(&g_lock);
+                page_go(0); g_ver++;
+                ReleaseSRWLockExclusive(&g_lock);
+            }
         }
         prev_back = back;
+        if (g_close_at && (now - g_close_at >= PCM_CLOSE_MS || !g_gpu)) break;
         if (!InterlockedExchange(&g_job, 1) && !nvn_front_post_pcmenu()) InterlockedExchange(&g_job, 0);
         Sleep(16);
     }
@@ -1135,6 +1197,7 @@ static void menu_open(const char *why, int controls, int ch) {
     g_swap = nnpad_menu_swapped();
     g_fam = nnpad_button_prompts();
     g_letter = nnpad_prompts_by_letter();
+    g_open_at = GetTickCount64(); g_close_at = 0;
     g_ch = ch; g_direct = controls;
     binds_load();
     page_go(controls);

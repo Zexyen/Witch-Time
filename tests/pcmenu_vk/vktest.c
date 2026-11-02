@@ -5,7 +5,10 @@
  *   clang $FL -c t_pcm.c && clang $FL -I . -c vktest.c && clang $FL -c $RT/plat_posix.c && clang t_pcm.o vktest.o plat_posix.o -lvulkan -lm -lpthread -o vktest
  *   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation ./vktest 1920 1080 1
  * (the clock is frozen in t_pcm.c; the hands follow the wall clock, so a second's change between the two renders shows as a
- * hand's difference) */
+ * hand's difference)
+ * A fourth argument renders the panel's motion instead: <ms> milliseconds into the opening, or -<ms> into the closing
+ * (the CPU path has no motion: no comparison; the picture under the panel is a gradient, as the game's would be):
+ *   ./vktest 1920 1080 1 120 -> gpu1_open120.bmp;  ./vktest 1920 1080 1 -100 -> gpu1_close100.bmp */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,7 +74,7 @@ typedef struct { char path[300]; uint8_t *px; int w, h, bgr; } BmpJob; static LO
 static int g_sc_src;
 static void pcm_upload(int wait); static void pcm_vk_draw(VkImage tgt); static void pcm_vk_free(void);
 #include "../../runtime/nvn_vk_pcmenu.c"
-void t_setup(int which);
+void t_setup(int which, int anim);
 static void save_bmp(const char *path, const uint8_t *px, int w, int h) {
     FILE *f = fopen(path, "wb"); unsigned off = 54, size = off + (unsigned)w * h * 4;
     unsigned char hd[54] = {'B','M', size, size >> 8, size >> 16, size >> 24, 0,0,0,0, off,0,0,0, 40,0,0,0, w, w >> 8, w >> 16, w >> 24, h, h >> 8, h >> 16, h >> 24, 1,0, 32,0, 0,0,0,0};
@@ -82,7 +85,8 @@ static void save_bmp(const char *path, const uint8_t *px, int w, int h) {
 static void cmd_begin(void) { VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; VKC(vkResetCommandBuffer(R.cmd, 0)); VKC(vkBeginCommandBuffer(R.cmd, &bi)); }
 static void cmd_run(void) { VKC(vkEndCommandBuffer(R.cmd)); VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO}; si.commandBufferCount = 1; si.pCommandBuffers = &R.cmd; VKC(vkQueueSubmit(V.queue, 1, &si, NULL)); VKC(vkQueueWaitIdle(V.queue)); }
 int main(int argc, char **argv) {
-    int W = argc > 1 ? atoi(argv[1]) : 1280, H = argc > 2 ? atoi(argv[2]) : 720, which = argc > 3 ? atoi(argv[3]) : 1;
+    int W = argc > 1 ? atoi(argv[1]) : 1280, H = argc > 2 ? atoi(argv[2]) : 720, which = argc > 3 ? atoi(argv[3]) : 1, anim = argc > 4 ? atoi(argv[4]) : 0;
+    g_sc_src = 1;                                  /* the target can be read: the opening and the closing play over it */
     VkApplicationInfo ap = {VK_STRUCTURE_TYPE_APPLICATION_INFO}; ap.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo ii = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; ii.pApplicationInfo = &ap;
     VKC(vkCreateInstance(&ii, NULL, &V.inst));
@@ -96,7 +100,7 @@ int main(int argc, char **argv) {
     VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; VKC(vkCreateCommandPool(V.device, &pi, NULL, &R.pool));
     VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO}; ai.commandPool = R.pool; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1; VKC(vkAllocateCommandBuffers(V.device, &ai, &R.cmd));
     V.extent.width = W; V.extent.height = H;
-    t_setup(which);
+    t_setup(which, anim);
     /* the CPU composition, as a reference */
     uint8_t *cpu = malloc((size_t)W * H * 4), *gpu = malloc((size_t)W * H * 4);
     { int r[4]; unsigned gen; pcmenu_gpu(0); if (!pcmenu_panel_size(W, H, r, &gen)) { printf("no panel\n"); return 1; } pcmenu_panel_read(cpu, r[2], r[3]); }
@@ -109,7 +113,15 @@ int main(int argc, char **argv) {
     image_barrier(tgt, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkClearColorValue z = {{1, 0, 1, 1}}; VkImageSubresourceRange sr = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr);
+    VMem gm; VkBuffer gbuf = NULL;
+    VkBufferImageCopy gc; memset(&gc, 0, sizeof gc); gc.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; gc.imageSubresource.layerCount = 1; gc.imageExtent.width = W; gc.imageExtent.height = H; gc.imageExtent.depth = 1;
+    if (anim) {                                    /* a picture under the panel: a gradient with a grid, as a game's frame would show through */
+        gbuf = vbuf_new((uint64_t)W * H * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &gm);
+        uint8_t *g = gm.map;
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) { uint8_t *p = g + ((size_t)y * W + x) * 4; int grid = x % 80 < 2 || y % 80 < 2; p[0] = grid ? 255 : 40 + 160 * x / W; p[1] = grid ? 255 : 60 + 120 * y / H; p[2] = grid ? 255 : 120; p[3] = 255; }
+    }
     for (int pass = 0; pass < 3; pass++) {         /* three presents: the uploads in the first, then the steady state */
+        if (gbuf) { xfer_wait(); vkCmdCopyBufferToImage(R.cmd, gbuf, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &gc); }      /* (as a present blits the game's frame first) */
         pcm_vk_draw(tgt);
         if (pass < 2) { cmd_run(); cmd_begin(); pcm_upload(1); }
     }
@@ -119,11 +131,18 @@ int main(int argc, char **argv) {
     vkCmdCopyImageToBuffer(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rbuf, 1, &c);
     cmd_run();
     memcpy(gpu, rb.map, (size_t)W * H * 4);
+    char nm[64];
+    int over = 1, nspr = pcmenu_gpu_scene(W, H, (PcmSprite[PCM_NSPR]){0}, PCM_NSPR, &over);
+    if (anim) {                                    /* the motion: the picture alone */
+        snprintf(nm, sizeof nm, "gpu%d_%s%d.bmp", which, anim > 0 ? "open" : "close", abs(anim)); save_bmp(nm, gpu, W, H);
+        printf("%dx%d screen %d, %d ms into the %s: %d sprites over the picture (%d) -> %s\n", W, H, which, abs(anim), anim > 0 ? "opening" : "closing", nspr, over, nm);
+        pcm_vk_free();
+        return 0;
+    }
     /* compare */
     long bad = 0, worst = 0; double sum = 0; uint8_t *diff = calloc((size_t)W * H, 4);
     for (long i = 0; i < (long)W * H; i++) { int d = 0; for (int k = 0; k < 3; k++) { int e = abs(cpu[i * 4 + k] - gpu[i * 4 + k]); if (e > d) d = e; } sum += d; if (d > worst) worst = d; if (d > 16) bad++; diff[i * 4] = diff[i * 4 + 1] = diff[i * 4 + 2] = d > 255 ? 255 : d * 4 > 255 ? 255 : d * 4; }
-    printf("%dx%d screen %d: %d sprites; worst channel difference %ld, mean %.3f, pixels over 16: %ld of %ld (%.3f%%)\n", W, H, which, pcmenu_gpu_scene(W, H, (PcmSprite[32]){0}, 32), worst, sum / ((double)W * H), bad, (long)W * H, 100.0 * bad / ((double)W * H));
-    char nm[64];
+    printf("%dx%d screen %d: %d sprites; worst channel difference %ld, mean %.3f, pixels over 16: %ld of %ld (%.3f%%)\n", W, H, which, nspr, worst, sum / ((double)W * H), bad, (long)W * H, 100.0 * bad / ((double)W * H));
     snprintf(nm, sizeof nm, "cpu%d.bmp", which); save_bmp(nm, cpu, W, H); snprintf(nm, sizeof nm, "gpu%d.bmp", which); save_bmp(nm, gpu, W, H); snprintf(nm, sizeof nm, "diff%d.bmp", which); save_bmp(nm, diff, W, H);
     pcm_vk_free();
     return 0;

@@ -4612,7 +4612,7 @@ static VkImage hdr_picture(VkFormat fmt) {
         VkMemoryRequirements rq;
         ci.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT; ci.imageType = VK_IMAGE_TYPE_2D; ci.format = fmt;
         ci.extent.width = V.extent.width; ci.extent.height = V.extent.height; ci.extent.depth = 1; ci.mipLevels = 1; ci.arrayLayers = 1;
-        ci.samples = VK_SAMPLE_COUNT_1_BIT; ci.tiling = VK_IMAGE_TILING_OPTIMAL; ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ci.samples = VK_SAMPLE_COUNT_1_BIT; ci.tiling = VK_IMAGE_TILING_OPTIMAL; ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;      /* SRC: the panel's opening reads it (pcm_gpu_draw) */
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VKC(vkCreateImage(V.device, &ci, NULL, &g_hdr.img));
         vkGetImageMemoryRequirements(V.device, g_hdr.img, &rq);

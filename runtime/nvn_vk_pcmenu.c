@@ -5,8 +5,11 @@
  *     drew (once a version) is copied into a canvas of the panel's size, the moving parts (the wheels' rings and gears, the
  *     hands) are drawn over it as turned textured quads from pcmenu_gpu_scene, with the hubs and the words (layers pcmenu.c
  *     drew once a version) between, and the canvas is copied over the picture. The art is 16 textures uploaded once.
- *     pcmenu.c then never draws a frame for the turning wheel; SSBU_PCMENU_CPU=1 keeps the CPU path (the fallback when the
- *     pipeline cannot be made).
+ *     While the panel opens or closes, the canvas starts instead from the game's picture under it (when it can be read:
+ *     the swapchain images with TRANSFER_SRC, or the HDR picture) and the whole panel is sprites over it (the ground and a
+ *     flat pearl as textures too), so the wedge can slide in and the rows step in. pcmenu.c then never draws a frame for
+ *     the turning wheel; SSBU_PCMENU_CPU=1 keeps the CPU path (the fallback when the pipeline cannot be made; it has no
+ *     opening or closing motion).
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:
  *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync, the images and stages of a new resolution scale), the panel's pixels
  *     into a staging buffer when they changed, then the game's last picture presented again with the panel (vk_present2's
@@ -19,20 +22,25 @@ int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void);      /* kind:
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
-typedef struct { int art; float x, y, w, h, deg, alpha, ann0, ann1, clip_top; int clip_right; } PcmSprite;      /* as pcmenu.c */
-void pcmenu_gpu(int on); int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max);
+typedef struct {                                   /* as pcmenu.c */
+    int art; float x, y, w, h, deg, alpha, ann0, ann1;
+    float clip_top; int clip_right; float clip2_top; int clip2_right; float y0, y1;
+} PcmSprite;
+void pcmenu_gpu(int on); int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game);
 void *pcmenu_art_pixels(int id, int *w, int *h); int pcmenu_layer_read(int which, void *dst, int w, int h);
-#define PCM_NART 16
-#define PCM_NTEX (PCM_NART + 2)
+#define PCM_NART 17                                /* pcmenu_art_pixels' ids: 16 pieces of art and a flat pearl (16) */
+#define PCM_NTEX (PCM_NART + 3)                    /* then the hubs layer, the words layer and the ground, of the canvas's size */
+#define PCM_NSPR 64
 typedef struct { VkImage img; VMem mem; VkImageView view; VkDescriptorSet set; int w, h, ready; } PcmTex;      /* ready: it holds pixels the shaders may read */
 static struct {
     int tried, on;                                 /* on: the GPU path; decided at the first upload */
     VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkShaderModule vs, fs; VkPipeline pipe;
-    PcmTex tex[PCM_NTEX];                          /* the art (PCM_NART), then the hubs layer and the words layer, of the canvas's size */
+    PcmTex tex[PCM_NTEX];                          /* the art (PCM_NART), then the hubs layer, the words layer and the ground, of the canvas's size */
     VkImage canvas; VMem canvas_mem; VkImageView canvas_view; int cw, ch;
     VkBuffer art_buf; VMem art_mem; uint64_t art_off[PCM_NART]; int art_staged, art_uploaded;      /* the art's staging: filled once, copied by a present, then freed */
     unsigned layers_gen;                           /* the panel version whose layers the layer textures hold */
     int have[2];                                   /* the staging buffer holds a hubs / words layer for this version */
+    unsigned ground_gen;                           /* the panel version whose ground the ground texture holds (~0u: none) */
 } g_gpu;
 static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: whose pixels these are (pcmenu_kind) */
 static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, said; } g_pcm_shot;
@@ -40,11 +48,12 @@ static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, sai
 /* ---- the GPU path ---- */
 /* One pipeline draws every sprite: a quad of half size h about the centre c, turned by rot (cos, sin), its texture
  * premultiplied, at the opacity alpha, over the canvas (ONE, ONE_MINUS_SRC_ALPHA, as pcmenu.c's put_pre); the fragment
- * stage keeps the ring ann (inner and outer radius, in pixels; none when the outer is 0) and the side of the slanted edge
- * (clip.x + y * tan 22, the same integer edge as art_blit's; clip.y: 0 all, 1 left of it, -1 right of it). */
+ * stage keeps the ring ann (inner and outer radius, in pixels; none when the outer is 0), the side of the slanted edge
+ * (clip.x + y * tan 22, the same integer edge as art_blit's; clip.y: 0 all, 1 left of it, -1 right of it), the side of a
+ * second such edge (clip2), and the band of rows band.x <= y < band.y (none when band.y <= band.x). */
 static const char k_pcm_vs[] =
     "#version 460\n"
-    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; float alpha; float pad; } pc;\n"
+    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; vec2 clip2; vec2 band; float alpha; float pad; } pc;\n"
     "layout(location = 0) out vec2 v_uv;\n"
     "void main() {\n"
     "    const vec2 k[6] = vec2[](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));\n"
@@ -56,16 +65,19 @@ static const char k_pcm_vs[] =
 static const char k_pcm_fs[] =
     "#version 460\n"
     "layout(set = 0, binding = 0) uniform sampler2D u_pic;\n"
-    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; float alpha; float pad; } pc;\n"
+    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; vec2 clip2; vec2 band; float alpha; float pad; } pc;\n"
     "layout(location = 0) in vec2 v_uv;\n"
     "layout(location = 0) out vec4 o_col;\n"
     "void main() {\n"
     "    vec2 d = gl_FragCoord.xy - pc.c;\n"
     "    if (pc.ann.y > 0.0) { float rr = dot(d, d); if (rr < pc.ann.x * pc.ann.x || rr > pc.ann.y * pc.ann.y) discard; }\n"
-    "    if (pc.clip.y != 0.0) { float e = floor(pc.clip.x + floor(gl_FragCoord.y) * 0.4040), x = floor(gl_FragCoord.x); if (pc.clip.y > 0.0 ? x >= e : x < e) discard; }\n"
+    "    float x = floor(gl_FragCoord.x), y = floor(gl_FragCoord.y);\n"
+    "    if (pc.band.y > pc.band.x && (y < pc.band.x || y >= pc.band.y)) discard;\n"
+    "    if (pc.clip.y != 0.0) { float e = floor(pc.clip.x + y * 0.4040); if (pc.clip.y > 0.0 ? x >= e : x < e) discard; }\n"
+    "    if (pc.clip2.y != 0.0) { float e = floor(pc.clip2.x + y * 0.4040); if (pc.clip2.y > 0.0 ? x >= e : x < e) discard; }\n"
     "    o_col = texture(u_pic, v_uv) * pc.alpha;\n"
     "}\n";
-typedef struct { float c[2], h[2], rot[2], view[2], ann[2], clip[2], alpha, pad; } PcmPush;
+typedef struct { float c[2], h[2], rot[2], view[2], ann[2], clip[2], clip2[2], band[2], alpha, pad; } PcmPush;
 static void pcm_tex_free(PcmTex *t) {
     if (t->view) vkDestroyImageView(V.device, t->view, NULL);
     if (t->img) { vkDestroyImage(V.device, t->img, NULL); vmem_free(t->mem); }
@@ -182,11 +194,11 @@ static void pcm_gpu_canvas(int w, int h) {
     if (g_gpu.canvas && g_gpu.cw == w && g_gpu.ch == h) return;
     cmd_wait_all();                                /* a present may still draw with them */
     if (g_gpu.canvas) { vkDestroyImageView(V.device, g_gpu.canvas_view, NULL); vkDestroyImage(V.device, g_gpu.canvas, NULL); vmem_free(g_gpu.canvas_mem); g_gpu.canvas = NULL; g_gpu.canvas_view = NULL; }
-    pcm_tex_free(&g_gpu.tex[PCM_NART]); pcm_tex_free(&g_gpu.tex[PCM_NART + 1]);
-    g_gpu.cw = w; g_gpu.ch = h; g_gpu.layers_gen = ~0u;
+    for (int k = 0; k < 3; k++) pcm_tex_free(&g_gpu.tex[PCM_NART + k]);
+    g_gpu.cw = w; g_gpu.ch = h; g_gpu.layers_gen = g_gpu.ground_gen = ~0u;
     if (!w || !h) return;
     pcm_image_new(w, h, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &g_gpu.canvas, &g_gpu.canvas_mem, &g_gpu.canvas_view);
-    pcm_tex_new(&g_gpu.tex[PCM_NART], w, h); pcm_tex_new(&g_gpu.tex[PCM_NART + 1], w, h);
+    for (int k = 0; k < 3; k++) pcm_tex_new(&g_gpu.tex[PCM_NART + k], w, h);
 }
 static void pcm_tex_upload(PcmTex *t, VkBuffer buf, uint64_t off) {      /* the staging buffer's pixels into the texture, in the present's commands */
     VkBufferImageCopy c;
@@ -207,15 +219,28 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
         for (int k = 0; k < 2; k++) { PcmTex *t = &g_gpu.tex[PCM_NART + k]; t->ready = 0; if (g_gpu.have[k]) pcm_tex_upload(t, g_pcm.buf, one * (1 + k)); }
         g_gpu.layers_gen = g_pcm.gen;
     }
+    PcmSprite sp[PCM_NSPR];
+    int over = V.hdr || g_sc_src;                  /* the picture under the panel can be read: the opening and the closing play over it */
+    int n = pcmenu_gpu_scene(r[2], r[3], sp, PCM_NSPR, &over);
     VkBufferImageCopy c;
     memset(&c, 0, sizeof c);
     c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.imageSubresource.layerCount = 1;
     c.imageExtent.width = (uint32_t)r[2]; c.imageExtent.height = (uint32_t)r[3]; c.imageExtent.depth = 1;
+    VkImageCopy ic;
+    memset(&ic, 0, sizeof ic);
+    ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ic.srcSubresource.layerCount = 1; ic.dstSubresource = ic.srcSubresource;
+    ic.extent = c.imageExtent;
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    vkCmdCopyBufferToImage(R.cmd, g_pcm.buf, g_gpu.canvas, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);      /* the ground */
+    if (over) {                                    /* the game's picture under the panel, and the ground as a texture */
+        if (g_gpu.ground_gen != g_pcm.gen) { pcm_tex_upload(&g_gpu.tex[PCM_NART + 2], g_pcm.buf, 0); g_gpu.ground_gen = g_pcm.gen; }
+        xfer_wait();                               /* after the blit of the game's picture */
+        image_barrier(tgt, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        ic.srcOffset.x = r[0]; ic.srcOffset.y = r[1];
+        vkCmdCopyImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_gpu.canvas, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
+        image_barrier(tgt, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        ic.srcOffset.x = ic.srcOffset.y = 0;
+    } else vkCmdCopyBufferToImage(R.cmd, g_pcm.buf, g_gpu.canvas, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);      /* the ground */
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    PcmSprite sp[32];
-    int n = pcmenu_gpu_scene(r[2], r[3], sp, 32);
     VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     ca.imageView = g_gpu.canvas_view; ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; ca.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -227,11 +252,13 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
     for (int i = 0; i < n; i++) {
         const PcmSprite *s = &sp[i];
-        PcmTex *t = s->art >= 0 && s->art < PCM_NART ? &g_gpu.tex[s->art] : s->art == -1 ? &g_gpu.tex[PCM_NART] : s->art == -2 ? &g_gpu.tex[PCM_NART + 1] : NULL;
+        PcmTex *t = s->art >= 0 && s->art < PCM_NART ? &g_gpu.tex[s->art] : s->art == -1 ? &g_gpu.tex[PCM_NART] : s->art == -2 ? &g_gpu.tex[PCM_NART + 1]
+                  : s->art == -3 ? &g_gpu.tex[PCM_NART + 2] : s->art == -4 ? &g_gpu.tex[PCM_NART - 1] : NULL;
         if (!t || !t->ready) continue;
         float a = s->deg * 3.14159265f / 180;
         PcmPush pc = {{s->x + s->w / 2, s->y + s->h / 2}, {s->w / 2, s->h / 2}, {cosf(a), sinf(a)}, {(float)r[2], (float)r[3]},
-                      {s->ann1 > 0 ? s->ann0 * s->w / 2 : 0, s->ann1 > 0 ? s->ann1 * s->w / 2 : 0}, {s->clip_top, s->clip_top >= 0 ? (s->clip_right ? -1.0f : 1.0f) : 0}, s->alpha, 0};
+                      {s->ann1 > 0 ? s->ann0 * s->w / 2 : 0, s->ann1 > 0 ? s->ann1 * s->w / 2 : 0}, {s->clip_top, s->clip_top > -1e8f ? (s->clip_right ? -1.0f : 1.0f) : 0},
+                      {s->clip2_top, s->clip2_top > -1e8f ? (s->clip2_right ? -1.0f : 1.0f) : 0}, {s->y0, s->y1}, s->alpha, 0};      /* (NOCLIP: -1e9) */
         vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_gpu.pl, 0, 1, &t->set, 0, NULL);
         vkCmdPushConstants(R.cmd, g_gpu.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 6, 1, 0, 0);
@@ -240,10 +267,7 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     R.pipe_bound = NULL; R.dyn_dirty = 1; R.dyn3_dirty = 1;
     dsh_forget();
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    VkImageCopy ic;
-    memset(&ic, 0, sizeof ic);
-    ic.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ic.srcSubresource.layerCount = 1; ic.dstSubresource = ic.srcSubresource;
-    ic.dstOffset.x = r[0]; ic.dstOffset.y = r[1]; ic.extent = c.imageExtent;
+    ic.dstOffset.x = r[0]; ic.dstOffset.y = r[1];
     xfer_wait();                                   /* over the blit of the game's picture */
     vkCmdCopyImage(R.cmd, g_gpu.canvas, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
 }

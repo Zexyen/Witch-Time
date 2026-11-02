@@ -41,9 +41,12 @@ static void save(const char *path) {
 
 /* hooks for the Vulkan test (vktest.c): the menu open, or the first-start screen */
 
-void t_setup(int which) {
+void t_setup(int which, int anim) {              /* anim: ms into the opening (> 0) or the closing (< 0); 0 the steady panel */
     if (!g_inited) { if (!fonts_init()) { printf("fonts\n"); exit(1); } menu_init(); g_inited = 1; }
-    if (which == 1) { g_open = 1; g_prep.on = 0; g_sel = 4; g_cur[4] = 2; g_start[4] = 0; }
+    if (which == 1) {
+        g_open = 1; g_prep.on = 0; g_sel = 4; g_cur[4] = 2; g_start[4] = 0;
+        g_open_at = GetTickCount64() - (anim > 0 ? anim : 100000); g_close_at = anim < 0 ? GetTickCount64() + anim : 0;
+    }
     else { g_open = 0; g_prep.on = 1; g_prep.pct = 62; g_prep.done = 2311; g_prep.total = 3720; g_prep.eta = 48; snprintf(g_prep.info, sizeof g_prep.info, "Vulkan  \xC2\xB7  llvmpipe"); g_ver++; }
 }
 short GetAsyncKeyState(int vk) { (void)vk; return 0; }

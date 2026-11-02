@@ -1267,6 +1267,24 @@ a value saved for the next start. The launcher never names the game: the code na
   (title, the count of stages and the time left, a slanted bar, the dark wheel, a pearl panel at the right), copied over
   the held frame by `pcm_vk_draw` (`pcmenu_kind` 3; `nvn_vk_pcmenu.c` `pcm_upload`). The 5 x 7 dot font and the
   overlay's own bar are gone from that screen (the thin loading bar of normal frames stays).
+- **Motion** (2026-11-02, Kevin's ask; no footage of the game's menus could be viewed from here, so the timing follows
+  Platinum's own account of their UI: a quick start and a gradual finish, `ease_out` = 1 - (1 - t)^3). The launcher:
+  a screen's rows step in from the left one after another (`stair-in`, 0.35 s + 0.08 s a row; a section tab replays
+  them with its own keyframe name), the halo and the settings' chevrons grow in, a changed value nudges toward the
+  arrow pressed (`SettingRow::bump`), and a leaving screen steps out the other way in 0.22 s before the next shows
+  (`App::go` sets `leaving` and `next_screen`; `tick` changes the screen). RmlUi inherits opacity rather than
+  compositing it, so things that must vanish scale to nothing instead; `WITCHTIME_SLOWMO=<n>` slows every animation
+  for a look. The in-game panel (GPU path only): `pcmenu_gpu_scene` draws the whole panel as sprites over the game's
+  picture while it opens (`PCM_OPEN_MS` 320) or closes (`PCM_CLOSE_MS` 220): the indigo wedge slides in from the
+  left with its wheel and words, a flat pearl fills between it and its place, the pearl side and its light wheel fade
+  in, the rows step in from the right one after another (40 ms apart at most, 0.26 s each), the foot bands rise; the
+  closing runs it all back together, and the game goes on when it has. `pcm_gpu_draw` then copies the picture under the
+  panel into the canvas (the swapchain image when it has TRANSFER_SRC, else the HDR picture, which now has it) before
+  the sprites, with the ground and a 1 x 1 pearl as two more textures; a second slanted edge and a band of rows are
+  more `discard`s of the fragment stage. A slanted edge may now start left of the window (`NOCLIP` is the sentinel
+  for none, not a negative edge). The CPU fallback has no motion: the panel just waits the closing's time. Verified
+  on lavapipe only (`tests/pcmenu_vk/vktest.c`'s fourth argument renders a moment of the opening or the closing over a
+  gradient); not seen at speed on a real GPU.
 - **Checked**: the launcher built here (SDL3 3.4.18 from conda-forge, RmlUi 6.3) and all five screens screenshotted
   under Xvfb with lavapipe; the panel, the Controls page, the hint and the first-start screen rendered through a
   stand-alone harness that includes `pcmenu.c` (1280 x 720 and 1920 x 1080). Not run: the game itself (no dump here),
