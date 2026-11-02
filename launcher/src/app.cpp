@@ -636,12 +636,15 @@ void App::handle(SDL_Event& ev)
 	RmlSDL::InputEventHandler(ctx, window, ev);
 	if (ev.type == SDL_EVENT_MOUSE_MOTION)
 		hover_focus();
+	// a click into the dump folder's box, or an IME's text, is using it too: the mouse leaves its focus there
+	if (Rml::Element* f = ctx->GetFocusElement(); (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_TEXT_INPUT) && f && f->GetTagName() == "input")
+		typed = true;
 	if (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || ev.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
 		rescale();
 }
 
 // the control under the mouse takes the focus (not shown as the keys' focus), so one row is lit, not the hovered one and
-// the one the keys left, and the keys go on from where the mouse is. Not once the dump folder's box has been typed in.
+// the one the keys left, and the keys go on from where the mouse is. Not once the dump folder's box is in use (typed).
 void App::hover_focus()
 {
 	auto control = [](Rml::Element* e) {

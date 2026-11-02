@@ -143,7 +143,7 @@ body {
 
 /* ---- the build screen ---- */
 .build .wheel { left: 600dp; top: 70dp; }
-.build .mi { tab-index: none; }   /* the steps show the build, they do nothing: the keys and the mouse stay on the buttons */
+.build .mi { tab-index: none; focus: none; }   /* the steps show the build, they do nothing: the keys, the mouse and clicks stay on the buttons */
 /* the progress ring on the wheel's grey band (the wheel's box is 660dp at 600, 70: its centre 930, 400; the band at 0.79 of its half) */
 .build .track { left: 660dp; top: 130dp; width: 540dp; height: 540dp; }
 .build progress { position: absolute; left: 660dp; top: 130dp; width: 540dp; height: 540dp; fill-image: gen:ring?c=6a49d0&w=16; }

@@ -99,7 +99,7 @@ private:
 	bool running = true, want_play = false, want_focus = true;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	bool play_after_stop = false;      // Play during the texture conversion: it is stopped, and the game starts when it has
-	bool typed = false;                // a key went into the dump folder's box since the screen opened
+	bool typed = false;                // the dump folder's box was typed or clicked in since the screen opened
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)

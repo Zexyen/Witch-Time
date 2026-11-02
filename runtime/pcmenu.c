@@ -770,10 +770,9 @@ static void draw_panel_words(int W, int H, float s) {
     if (hw <= bw) text(&g_f_ui, bx + (bw - hw) / 2, (int)(band_y + 26 * s + hpx * 0.35f), help, hpx, C_WHITE, 1.5f * s);
     else {
         char ln[3][160];
-        int n;                                             /* the band holds two lines: smaller type until all of it fits */
+        int n;                                             /* two lines, in smaller type until all of it fits; a narrow window (4:3): three */
         for (hpx = 17 * s; (n = wrap(&g_f_ui, ln, 3, help, hpx, 1 * s, bw * 0.92f)) > 2 && hpx > 14 * s; hpx -= 0.5f * s) {}
-        if (n > 2) n = 2;
-        for (int l = 0; l < n; l++) { float w = text_w(&g_f_ui, ln[l], hpx, 1 * s); text(&g_f_ui, bx + (bw - w) / 2, (int)(band_y + (n == 1 ? 26 * s + hpx * 0.35f : 17 * s + l * 21 * s + hpx * 0.35f)), ln[l], hpx, C_WHITE, 1 * s); }
+        for (int l = 0; l < n; l++) { float w = text_w(&g_f_ui, ln[l], hpx, 1 * s); text(&g_f_ui, bx + (bw - w) / 2, (int)(band_y + (n == 1 ? 26 * s : n == 2 ? 17 * s + l * 21 * s : 11 * s + l * 15 * s) + hpx * 0.35f), ln[l], hpx, C_WHITE, 1 * s); }
     }
     int fb = (int)(H - 37 * s + 7 * s);
     float fpx = 20 * s;
