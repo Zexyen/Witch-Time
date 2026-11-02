@@ -14,8 +14,8 @@ sdk at `0x7500000000` in the runtime). Everything here can be re-checked with th
 | `rtld` | 7,132 | `567cdd4c5251494c5cd70822e3ccc740c190c2b2` | | the loader |
 | `main.npdm` | 1,604 | | | program id `01004A4010FEA000`, "Application", main thread priority 44, core 0, stack 0x100000 |
 
-- All three segments of every NSO are LZ4-compressed with SHA-256 hashes (flags `0x3f`); B2recomp's
-  `tools/extract/nso2elf.py` converts them unchanged and the hashes match.
+- All three segments of every NSO are LZ4-compressed with SHA-256 hashes (flags `0x3f`); `wtbuild nso2elf`
+  (`tools/wtbuild/src/nso.rs`, a port of B2recomp's `nso2elf.py`) converts them unchanged and the hashes match.
 - main: MOD0 at text+8; DYNAMIC at 0x249b028; 626 dynamic symbols = 600 imports + 26 exports (`nnMain`,
   `nninitStartup`, `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`, `operator new`/`delete`, a few typeinfo and SDK
   class destructors). `DT_NEEDED`: `multimedia.nss`, `nnSdk.nss`. 180,844 relative relocations, 2,318 to imported
@@ -47,13 +47,15 @@ B3's SDK 13 better than B2's 3.6.0 did (e.g. `nvnBootstrapLoader` / proc names, 
 ### Version check
 
 The dump has no control data (no NACP); the game itself shows **1.2.0** on its title screen. The port identifies the
-build by main's build id. `scripts/setup.py` (step `verify`) holds the SHA-256 and size of each ExeFS file, three small RomFS archives
+build by main's build id. `tools/wtbuild/src/setup.rs` (step `verify`) holds the SHA-256 and size of each ExeFS file, three small RomFS archives
 and a manifest hash of the RomFS file list (552 files, 15,047,510,227 bytes), the same way B2recomp checks for 1.2.
 
 ## 2. Imports the runtime must provide
 
-`python scripts/runtime_coverage.py runtime targets/exefs/main.elf <strings.tsv> <out.tsv>` lists every import with the
-runtime file that handles it. Copied from B2recomp unchanged, the runtime handled 375 of the 600. After stage 1:
+`runtime/gen/imports_all.txt` (written by the tables step) lists every import; a run with `SSBU_STRICT=report` prints
+each one without a handler (`STRICT: import "..." has no handler`) and the `fake audit:` counts (`runtime/hostrt.c`).
+The numbers below were counted by B2recomp's `runtime_coverage.py` (removed 2026-11-02), which matched every import with
+the runtime file that handles it. Copied from B2recomp unchanged, the runtime handled 375 of the 600. After stage 1:
 402 by host handlers + 24 lifted from the player's sdk (`lifter/sdklift_roots.txt`) + the `nn::util` constants
 (`runtime/gen/sdkdata.c`). 174 have no handler yet; none of them is reached before the point where boot stops
 (section 7). By family (handled / imported, stage 1 end):
@@ -76,13 +78,15 @@ fetches all of them at start; whether it calls any is not known yet (calling one
 
 ## 3. The lifter on B3's main
 
-- `lifter/recomp.py` reads the layout from the ELF (B2's constants are gone). `recomp_eh.py` lifts main with landing-pad
-  resume entries in 5 s: 55,277 functions, 5,122,339 instructions, 407 C files (~0.6 GB).
+- The lifter (`tools/wtbuild/src/lifter`, a port of `recomp.py` and `recomp_eh.py`: `lifter/README.md`) reads the
+  layout from the ELF (B2's constants are gone) and lifts main with landing-pad resume entries in 5 s: 55,277
+  functions, 5,122,339 instructions, 407 C files (~0.6 GB).
 - New AdvSIMD forms (about 40 encodings, 1,100 sites): integer min/max, shifts by register (`ushl` is the most common),
   saturating add/sub, `mla`/`mls`, pairwise and across-lane sums, add/sub long/wide, `frint*`, `fcvta*`, `{s,u}sra`,
   `{r}shrn`, `orr`/`bic` immediate, integer by-element multiplies, one-lane `ld2`-`ld4`/`st2`-`st4`, `ld2r`-`ld4r`.
-  Checked against Unicorn by `lifter/test_b3.py` (200 words, 4,000 cases). What is left untranslated is zero padding,
-  the MOD0 header and `udf` traps.
+  Checked against Unicorn by `lifter/test_b3.py` (200 words, 4,000 cases), now by `tools/lifter-check`, which also finds
+  `sq{r}dmulh` by element wrong when both lanes are INT32_MIN (v_ielem's 64-bit product overflows). What is left
+  untranslated is zero padding, the MOD0 header and `udf` traps.
 - **Jump tables**: B3's compiler emits `adr xB, base; ldrb/ldrh wE, [table, idx]; add xB, xB, wE, lsl #2; br xB`, with up
   to 20 other instructions scheduled in between. The `adr` target was taken as a function entry (B2's lifter adds every
   `adr`/`adrp+add` code address), which cut each switch function in two. Now a code address whose register reaches a `br`
@@ -92,8 +96,9 @@ fetches all of them at start; whether it calls any is not known yet (calling one
 
 ## 4. RomFS: `.pkz` archives
 
-72 archives + `movie/` (478 `.webm`, 2 `.avi`, folders `tutorial/`, `skilltree/`, `gallery/`). `scripts/pkz.py` lists,
-checks and extracts them; `scripts/pgdat.py` (from B2recomp) reads the DAT files inside.
+72 archives + `movie/` (478 `.webm`, 2 `.avi`, folders `tutorial/`, `skilltree/`, `gallery/`). `wtbuild pkz list` lists
+them and `witch-time-game --pkz-dump` extracts them; `wtbuild dat list | extract` reads the DAT files inside (layout
+below).
 
 ```
 header (0x20 bytes, little endian)
@@ -115,7 +120,7 @@ entry (0x20 bytes)
 - Codec names are strings in the name table: `"OodleKraken"` (11,760 entries) and `"None"` (6,972: the Wwise banks,
   text). A Kraken entry is one Oodle stream (header bytes `8c 06`: no CRC flag). **Not zstd.** Oodle is closed source; main
   contains its own Kraken decoder, so the recompiled game decompresses its files itself, and `witch-time-game --pkz-dump` runs it
-  for the tools (STATUS.md, "RomFS archives"; `pkz.py --dump`).
+  for the tools (STATUS.md, "RomFS archives").
 - **Codec in the loader**: `f_7100cbdf80` reads each entry and maps the codec name to an id: `"None"` 0, `"ZStandard"`
   0x65, `"OodleKraken"` 0xc9 (any other name: the entry is skipped). The id is kept per entry, so a stored entry can
   replace a Kraken one (checked in a run).
@@ -130,6 +135,19 @@ entry (0x20 bytes)
 - Entry names are paths (`core/core.dat`, `Text/BATTLE/bayo_EUde.bin`, `sound/bgm/BGM.bnk`); `root_000.pkz` holds the
   shader archives (`shader.dat`, `shadereff*.dat`, ...). The inner `.dat`/`.dtt` files are PlatinumGames DAT
   (`DAT\0`, as in B2), with `.bxm` XML; sound is Wwise `.bnk`.
+- **DAT** (little endian; B2recomp's `pgdat.py` had the only written copy; read by `tools/wtbuild/src/text.rs`
+  `dat_entries`):
+
+```
+header
+  0x00 char[4]  'DAT\0'
+  0x04 u32      member count
+  0x08 u32      offset of the offsets table (a u32 data offset per member)
+  0x0c u32      offset of the extensions table (4 bytes a member, NUL-padded)
+  0x10 u32      offset of the names table: a u32 slot width, then one NUL-padded slot of that width per member
+  0x14 u32      offset of the sizes table (a u32 per member)
+  0x18 u32      offset of the hash map
+```
 - At boot the game mounts the RomFS as `Contents:`, lists `Contents:/` and `movie/`, opens all 72 archives and reads
   each header and entry table (seen in `boot_trace.txt`).
 
@@ -147,16 +165,16 @@ block). B2's runtime gave each thread a zeroed block, which worked for B2. B3's 
 - **API version**: the game requires major 55 and minor >= 12 (main 0x7100d176c8).
 - **Proc table**: NVN 13.3.2 keeps no `"nvn..."` strings. `nvnDeviceGetProcAddress` (sdk 0x4ac810) binary-searches 532
   names stored without the `nvn` prefix (u32 offsets at sdk 0xb21038 into the names at 0xb1d723, search at 0x4ac310)
-  and takes the function from a parallel pointer array (GOT slot 0xce8030 -> 0xcd2bc0). `scripts/nvn_procs.py` prints
+  and takes the function from a parallel pointer array (GOT slot 0xce8030 -> 0xcd2bc0). `wtbuild nvn-procs` prints
   all 532 from the player's own sdk (e.g. `nvnTextureBuilderGetStorageSize` = 0x4b66e0, B2's was 0x2c9748). NVX
   extensions are a separate `strcmp` chain (0x4abee0).
 - **nvnDeviceGetInteger** (0x4a6db0 -> 0x4abd90): a switch with an `adr`/`ldrb` table; w0 preset to 55; a getter
-  `bool f(pname, int *out)` (0x499b60) answers the fixed ones. `runtime/gen/make_gen.py` finds both by their constants
-  and takes 90 of 105 answers (GPU code versions 1.5 .. 1.16, pool / descriptor sizes and alignments) from the player's sdk.
+  `bool f(pname, int *out)` (0x499b60) answers the fixed ones. The tables step (`tools/wtbuild/src/tables.rs`) finds both by
+  their constants and takes 90 of 105 answers (GPU code versions 1.5 .. 1.16, pool / descriptor sizes and alignments) from the player's sdk.
 
 ### NVN 13.3.2 objects, as the sdk's own code reads them (stage 2)
 
-Found by disassembling the entry points `scripts/nvn_procs.py` names; offsets are into the opaque objects the game hands
+Found by disassembling the entry points `wtbuild nvn-procs` names; offsets are into the opaque objects the game hands
 over. The runtime keeps its own layout in those objects; these are what `runtime/nvn_sdk.c` rebuilds to run the sdk's
 texture-storage code.
 
@@ -188,8 +206,8 @@ nvnDeviceInitialize; a value 0x76165656 disables compression), +0x1b30 kind of b
 (`N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE`) method +0x90, which calls +0xa0, +0x120 .. +0x170 and reads the chip
 descriptor's kind table. HAL object = 0x38 bytes {vtable, descriptor, 2 factory arguments, 0}; descriptor of the Tegra X1:
 name "NVIDIA Tegra/Nintendo Switch" (twice) at +0 / +8, GPU id 0x12b at +0x10, factory at +0x18, kind table at +0x48
-(2-byte entries), count at +0x50. `lifter/sdklift.py` lifts all of these by name (`nvn` and `vmethod` roots) and writes
-their addresses to `runtime/gen/nvn_sdk_addrs.h`.
+(2-byte entries), count at +0x50. The tables step (`tools/wtbuild/src/sdklift.rs`) lifts all of these by name (`nvn`
+and `vmethod` roots) and writes their addresses to `runtime/gen/nvn_sdk_addrs.h`.
 
 **Shader data** (nvnProgramSetShaders, NVNshaderData = {GPU code, control section}): the machine code starts at
 data + control +0x708. Graphics stages: 0x30, behind magic 0x12345678 (program header at +0x30); compute stages: 0 (bare

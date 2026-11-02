@@ -1,5 +1,5 @@
-//! The instruction lifter: AArch64 -> C, one statement per instruction. A port of lifter/recomp.py (GPL-3.0, from
-//! ssbu-recomp through B2recomp) that writes byte for byte the same C; `wtbuild selftest-lift` compares the two.
+//! The instruction lifter: AArch64 -> C, one statement per instruction. Ported from ssbu-recomp's tools/lifter/recomp.py
+//! (GPL-3.0, through B2recomp), writing byte for byte the C it wrote; the tests at the end pin that output.
 //!
 //! Every guest function becomes `void f_<addr>(Ctx *c)` working on a register context; guest memory is mapped at its
 //! real address, so guest pointers are host pointers.
@@ -10,7 +10,7 @@ pub mod fps;
 use crate::util::{bits, cstr, hx, i64_at, py_repr, sext, u16_at, u32_at, u64_at};
 use std::collections::HashMap;
 
-/// An nso2elf ELF image and the layout values the lifter needs (recomp.py's module globals).
+/// An nso2elf ELF image and the layout values the lifter needs.
 pub struct Image {
     pub img: Vec<u8>,
     pub base: i64,
@@ -28,7 +28,7 @@ pub struct Image {
     pub fps_counters: std::collections::HashSet<i64>,
 }
 
-/// recomp._layout: .text size (the first PT_LOAD) and the DYNAMIC tags (first value of each tag).
+/// .text size (the first PT_LOAD) and the DYNAMIC tags (first value of each tag).
 pub fn layout(img: &[u8]) -> (i64, HashMap<i64, u64>) {
     let phoff = u64_at(img, 0x20) as usize;
     let phnum = u16_at(img, 0x38) as usize;
@@ -58,7 +58,7 @@ pub fn layout(img: &[u8]) -> (i64, HashMap<i64, u64>) {
 }
 
 impl Image {
-    /// main.elf as recomp.py reads it: BASE 0x7100000000, layout from the ELF.
+    /// main.elf: BASE 0x7100000000, layout from the ELF.
     pub fn main(img: Vec<u8>) -> Image {
         let (text_size, dt) = layout(&img);
         let g = |t: i64| *dt.get(&t).unwrap_or(&0) as i64;
@@ -1748,7 +1748,7 @@ pub fn lift_lines(
     (lines, bad)
 }
 
-/// For the comparison with recomp.py: the statement one word lifts to, with calls written as `f_<target>(c);`.
+/// For lift-words and the tests: the statement one word lifts to, with calls written as `f_<target>(c);`.
 pub fn lift_word(w: u32, pc: i64, entry: i64, end: i64) -> (String, bool) {
     struct Plain;
     impl CallEnv for Plain {
@@ -1760,5 +1760,95 @@ pub fn lift_word(w: u32, pc: i64, entry: i64, end: i64) -> (String, bool) {
     match f.lift(&mut Plain, w, pc) {
         Ok(s) => (s, f.has_br),
         Err(Unimpl(e)) => (format!("UNIMPL {}", e), f.has_br),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    /// splitmix64
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e3779b97f4a7c15);
+            let z = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            let z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            z ^ (z >> 31)
+        }
+        fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
+            xs[(self.next() % xs.len() as u64) as usize]
+        }
+    }
+
+    /// random words: 35% FP / SIMD, 20% loads and stores, 10% data processing (register), 35% any; the entry and end
+    /// around pc pick between goto and call. Gives each word's lift-words input line and the line it prints
+    fn lift_words(n: usize, each: &mut dyn FnMut(String, String)) {
+        let mut r = Rng(1);
+        for _ in 0..n {
+            let k = r.next() % 100;
+            let mut w = r.next() as u32;
+            if k < 35 {
+                w |= 7 << 25;
+            } else if k < 55 {
+                w = (w & !(0xf << 25)) | (r.pick(&[4, 6, 12, 14]) << 25);
+            } else if k < 65 {
+                w = (w & !(0xf << 25)) | (r.pick(&[5, 13]) << 25);
+            }
+            let pc = 0x7100000000 + (r.next() % (1 << 22)) as i64 * 4;
+            let (entry, end) = (pc - r.pick(&[0, 4, 64, 4096]), pc + r.pick(&[4, 8, 256, 1 << 16]));
+            let (s, br) = lift_word(w, pc, entry, end);
+            each(format!("{:x} {:x} {:x} {:x}\n", w, pc, entry, end), format!("{}{}\n", if br { "BR " } else { "" }, s));
+        }
+    }
+
+    #[test]
+    fn lift_words_digest() {
+        const N: usize = 4_000_000;
+        let mut h = Sha256::new();
+        lift_words(N, &mut |_, l| h.update(l.as_bytes()));
+        let digest = format!("{}\n", crate::util::hex(&h.finalize()));
+        if std::fs::read_to_string(crate::golden::path("lift_words.sha256")).ok().as_deref() != Some(digest.as_str()) {
+            // another build's output for the same words: wtbuild lift-words < wtbuild-lift_words.in
+            let tmp = |x: &str| std::env::temp_dir().join(format!("wtbuild-lift_words-{}.{}", std::process::id(), x));
+            let (i, o) = (tmp("in"), tmp("txt"));
+            let (mut fi, mut fo) = (std::io::BufWriter::new(std::fs::File::create(&i).unwrap()), std::io::BufWriter::new(std::fs::File::create(&o).unwrap()));
+            lift_words(N, &mut |j, l| {
+                fi.write_all(j.as_bytes()).unwrap();
+                fo.write_all(l.as_bytes()).unwrap();
+            });
+            eprintln!("lift-words input {}, output {}", i.display(), o.display());
+        }
+        crate::golden::check("lift_words.sha256", &digest);
+    }
+
+    /// ldaxp / stlxp ([Recomps#1]) for every register and both sizes: register 31 is xzr / wzr, never SP
+    #[test]
+    fn exclusive_pairs() {
+        let x = |n: u32| if n == 31 { "0ULL".to_string() } else { format!("c->x[{}]", n) };
+        let w = |n: u32| if n == 31 { "0U".to_string() } else { format!("(uint32_t)c->x[{}]", n) };
+        let dst = |n: u32, t: &str| if n == 31 { format!("(void)({});", t) } else { format!("c->x[{}] = (uint64_t)({});", n, t) };
+        for sf in [false, true] {
+            for (rt, rt2, rn) in (0..32 * 32 * 32).map(|i| (i & 31, (i >> 5) & 31, i >> 10)) {
+                let ins = (sf as u32) << 30 | rt2 << 10 | rn << 5 | rt;
+                let (t1, t2) = if sf { ("t1", "t2") } else { ("(uint32_t)t", "t >> 32") };
+                let (s, _) = lift_word(0x887F8000 | ins, 0x7101000000, 0x7100000000, 0x7102000000);
+                for want in [dst(rt, t1), dst(rt2, t2), format!("uint64_t a = c->x[{}];", rn)] {
+                    assert!(s.contains(&want), "ldaxp {:08x}: {} lacks {}", 0x887F8000 | ins, s, want);
+                }
+                for rs in 0..32 {
+                    let e = if sf {
+                        format!("stx128(c, c->x[{}], {}, {})", rn, x(rt), x(rt2))
+                    } else {
+                        format!("stx64(c, c->x[{}], (uint64_t)(uint32_t){} | ((uint64_t)(uint32_t){} << 32))", rn, w(rt), w(rt2))
+                    };
+                    let want = if rs == 31 { format!("(void)({});", e) } else { format!("c->x[{}] = (uint32_t)({});", rs, e) };
+                    let (s, _) = lift_word(0x88208000 | rs << 16 | ins, 0x7101000000, 0x7100000000, 0x7102000000);
+                    assert!(s.contains(&want), "stlxp {:08x}: {} lacks {}", 0x88208000 | rs << 16 | ins, s, want);
+                }
+            }
+        }
     }
 }

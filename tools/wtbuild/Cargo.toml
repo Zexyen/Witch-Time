@@ -2,7 +2,7 @@
 name = "wtbuild"
 version = "0.1.0"
 edition = "2021"
-description = "Witch Time build pipeline: from your own dump to a runnable build (replaces scripts/setup.py on Linux)"
+description = "Witch Time build pipeline: from your own dump to a runnable build, on Linux and Windows"
 license = "GPL-3.0-only"
 publish = false
 

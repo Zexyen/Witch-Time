@@ -453,7 +453,7 @@ static int b3_main(int argc, char **argv) {
 
 int main(int argc, char **argv) { return b3_main(argc, argv); }
 
-/* [witchtime] the same entry in libwitchtime.so (scripts/build_runtime.py, Linux): the Witch Time launcher (launcher/) loads it
+/* [witchtime] the same entry in libwitchtime.so (tools/wtbuild/src/link.rs, Linux): the Witch Time launcher (launcher/) loads it
  * and calls this to run the game in its own process and window (display.c takes the launcher's window) */
 int wt_host_main(int argc, char **argv) {
     __argc = argc; __argv = argv;     /* the process's own are the launcher's: sdk.elf is found next to main.elf (sdklift_rt.c, nvn_vk_store.c) */

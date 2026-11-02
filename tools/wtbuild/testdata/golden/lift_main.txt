@@ -1,0 +1,18 @@
+seg 0 vaddr 0 size 18a30 sha256 OK
+seg 1 vaddr 19000 size c1c8 sha256 OK
+seg 2 vaddr 26000 size 890 sha256 OK
+build id 54c2a1247c6319f41396ac2c5161cb3778ceb34d
+dynamic 26450 dynsym 1a2e0 (439 syms) dynstr 1cc08
+3a3832f1780aa708b13e7a29b7959d079e2ca9da552c21ff91289d4ac71e629f  main.elf
+a46215804cd80ba073e3d867b95413be5a711f68b2069852b9aa4aa6b9c8516d  c_0000.c
+20fc397621b61b706ad47bcef969a2528c63212acd44eed65d29bdc2a9175f39  c_0001.c
+94fac83f02d0a2e94c877976018d1e828b65b7408a3b301de590ccd6fdbc8cdd  c_0002.c
+7a3f8531cdf3899e5608982a5ee9c10f34dd8e631d31d3ec472a55a2b9ce313c  funcs.h
+c99245013750417014e0881a68a537e0cd38c2c5434ab8e0db22bbe6e87b3c9e  imports.c
+0e3d784067db001d6fbd49255e379f561392bbd4ffff2ab747a880d9ae7a1ec7  table.c
+exception tables of main: 5 functions with an LSDA, 16 landing pads, 3 functions entered through nro_catch_call (10 call-site records lead straight to __clang_call_terminate and need none)
+FDE function starts: 418
+function entries: 510
+discovery: 510 functions, 0 extra branch targets
+functions: 510   files: 3 (3 rewritten)   instructions: 24850   not translated: 0
+resume entries: 16 landing pads (0 pads of the tables are in no lifted function), 3 functions through nro_catch_call

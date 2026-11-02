@@ -7,7 +7,7 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 
 ## What builds
 
-`python scripts/setup.py --dump <dump>` runs all nine steps and they pass:
+`wtbuild setup --dump <dump>` runs the steps and they pass (check is a developer's run; `setup` skips it):
 
 | step | result |
 |---|---|
@@ -16,11 +16,11 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
 | link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libssbu_glslang.so` |
-| check | B2's lifter self-test (382 pair words, 25 SIMD words) and the B3 one (200 words, 4,000 cases) against Unicorn: 0 failures (needs `pip install unicorn`; `build/venv` is fine) |
+| check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each: one failure, `sqrdmulh` by element when both 32-bit lanes are INT32_MIN (`v_ielem` in runtime/rt_ext.h, open); `--synthetic 2000` passes |
 
-Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 archives; Kraken entries from a
-`--pkz-dump` dump, section "RomFS archives"), `scripts/pgdat.py` (DAT),
-`scripts/nvn_procs.py` (NVN entry points of the sdk), `scripts/runtime_coverage.py` (imports vs handlers).
+Tools: `wtbuild pkz list` (`.pkz` entries; `witch-time-game --pkz-dump` extracts and checks every entry, Kraken
+included, section "RomFS archives"), `wtbuild dat list | extract` (DAT), `wtbuild nvn-procs` (NVN entry points of the
+sdk); imports vs handlers: `runtime/gen/imports_all.txt` and a run with `SSBU_STRICT=report` (docs/RE_NOTES.md section 2).
 
 ## How far it boots (stage 2, 2026-10-23)
 
@@ -269,9 +269,9 @@ from frame 22,800 to the end: taken as outside CPU load and left out.)
   memory at a dispatch, texture uploads, the copy-back of compute results), `cb_keep_back`, `draw_prepare`. The dips
   (min 50-52 fps windows) were not looked into one by one.
 - **`SSBU_LPROF=<start s>,<seconds>[,<file>]`** (Linux, test only, `runtime/lprof.c`): every thread is sampled with a
-  real-time signal (SDL3's threads block SIGPROF), PC + host call chain; `scripts/lprof_report.py <file>` lists the busy
-  threads (innermost frame not waiting in libc) with their self / inclusive functions (nm of witch-time-game, game.so: `f_<guest
-  address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
+  real-time signal (SDL3's threads block SIGPROF), PC + host call chain; `wtbuild lprof <file>` lists the busy
+  threads (innermost frame not waiting in libc) with their self / inclusive functions (the symbol tables of
+  witch-time-game, game.so: `f_<guest address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
 
 ## Tessellation (2026-10-24)
 
@@ -420,7 +420,7 @@ erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
   the sampler gets about 25 samples a thread over three such frames. A table lock split 64 ways (`nvn_stub.c nobj`) was
   tried: no measurable change, not kept.
 - Tools added on the way: `SSBU_FRAMETIMES`, `SSBU_HITCH` with a 19 ms threshold for late frames, `SSBU_LPROF` with 4M
-  samples and the presented frame of each sample (`@<frame>`; `scripts/lprof_report.py` reads both forms).
+  samples and the presented frame of each sample (`@<frame>`; `wtbuild lprof` reads both forms).
 
 ## Chapter 3 spider ride: render thread (2026-10-30, #45)
 
@@ -769,7 +769,7 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
   12.9898 is also in glass, fog and sky. The game sets it per scene: 0 in Chapter 2 gameplay, 0.078-0.2 on frames 575-1248,
   0.5 on the opening book (2218-2423 of the test route). There the noise floor is 0.633 with grain, 0.180 without.
 - **Options screen rows** (`runtime/options_row.c`, rows 34 and 35): Model Detail (Default / Highest) and Film Grain (ON /
-  OFF, the game's own words), after Texture Detail; their text in `scripts/pc_settings_mod.py` and `text_strings.rs`.
+  OFF, the game's own words), after Texture Detail; their text in `tools/wtbuild/src/text_strings.rs`.
   "Highest" is spelled with each file's glyphs: Highest (en, ja, ko), Maximal, Maximum, Massimo, Максимум, Ultra (es, zh-Hans,
   zh-Hant: no 'x', 最 or 高 there). Seen in 10 languages from the title and from the chapter menu: both rows change
   graphics.ini and apply at once; nothing overflows; the ko label and the ja Film Grain are English, as the other rows there.
@@ -804,14 +804,14 @@ not changed; it is to be retired).
   main (12,147 int32 immediates, 4,233 float adds of a register, ...).
 - **Census**: `WT_FPS_CENSUS=1 wtbuild setup --from lift` makes every site's store call `fps_census` first
   (`runtime/game_shim_eh.c`; `build/gen_eh/fps_sites.txt` lists them); a run with `SSBU_FPS_CENSUS=<file>` records per
-  site the visits per field against the clock's updates and what each visit adds. `scripts/fps_census.py <at 60>
-  <above 60>` compares two runs of the same scene: a site that adds as much per visit at 120 as at 60 is frame-locked;
+  site the visits per field against the clock's updates and what each visit adds. `wtbuild fps-census <at 60>
+  <above 60> [--all]` compares two runs of the same scene: a site that adds as much per visit at 120 as at 60 is frame-locked;
   half as much, it takes the frame's time already. One run at each rate replaces B2's alternating 60 / 120 run. A normal
   lift writes the files back (about 3.5 minutes of compile each way).
 - **Shibuya street fight, 300 s at 60 and at 120**: of the sites visited once per update, 147 already take the frame's
   time (most of the gameplay: B3 times with the frame's delta far more than B2), 61 are frame-locked but on a thread
   with its own clock (visited as often per second at both rates: engine, audio, 60 Hz vsync), **62 are frame-locked on
-  the game's frames**: the list to read (`build/perf/census_report.txt` of the run; regenerate with the script).
+  the game's frames**: the list to read (`build/perf/census_report.txt` of the run; regenerate with `wtbuild fps-census`).
 - **Fix, variable rate** (`tools/wtbuild/fps_counters.txt`: the store addresses; the lifter rewrites each site's op):
   an integer counter moves by the whole frames of game time due since its last visit (`fps_ci`: B2's rules: a countdown
   never passes 0 in one visit, an up-counter moves at most 1, the rest is owed), a float +/-1.0 the same (`fps_cf`), a
@@ -884,7 +884,7 @@ import handlers only); 8 threads (`SSBU_PKZ_JOBS`); a filter keeps entries whose
 decodes without writing. Entry names are unique across the archives, so the folder mirrors the game's paths. Write it
 under a git-ignored folder (`cache/pkz/`): the files are game assets.
 - **All 72 archives**: 18,732 entries (11,760 Kraken, 6,972 stored), **0 failures**: every Kraken stream used exactly its
-  stored size and gave exactly its recorded size (`pkz.py check targets/romfs --dump cache/pkz` agrees for every entry).
+  stored size and gave exactly its recorded size (the former `pkz.py check targets/romfs --dump cache/pkz` agreed for every entry).
   25.8 GB: 10.7 s decode only, 45.4 s with the writes (8 threads on a 16-thread CPU, NVMe, the archives partly in the page cache).
 - **Content**: every Kraken entry has its type's magic (6,408 `.dtt`, 2,986 `.dat`, 1,305 `.eff`, 262 `.evn` = `DAT`;
   161 `.bin` = `PTD`; `EPB`, `WME3`, `VAT`, `VFD`, `WTB`, `BXM`; the 327 `.wtp` are headerless texture data); all 15,526
@@ -1044,7 +1044,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   - **Runtime** (`runtime/options_row.c`, at boot): that page with the numbers 18 .. 23, 25, 24; row 25 is an object
     whose method table is the Brightness row's (an action row) with two host methods: the label (message
     MENU_OPTION_LIST_PC_SETTINGS) and "decide" (the game's own confirm test and sounds; opens the panel, returns "used").
-  - **Text** (`scripts/pc_settings_mod.py`, setup step `text`): the message added to all 13 `messmenu.mcd` (spelled with
+  - **Text** (`tools/wtbuild/src/text.rs`, setup step `text`): the message added to all 13 `messmenu.mcd` (spelled with
     each file's own glyphs: PC Settings / PC-Einstellungen / Paramètres PC / Ajustes de PC / Impostazioni PC /
     Настройки ПК / PC設定 / PC设置 / PC 설정; the Chinese and Korean "PC" from the files' Latin font), served as
     `mods/witchtime-pc-settings/romfs/ui_000.pkz`: the dump's archive byte for byte plus the 13 entries appended stored
@@ -1152,7 +1152,7 @@ How it is built:
   `set_value`), so graphics.ini is written with its comments kept and the live keys applied exactly as from the panel.
   When the panel opened from the PC Settings row closes, that row calls the game's list build (as Restore Defaults does),
   so the rows show what was changed in the panel.
-- **Text** (`scripts/pc_settings_mod.py`, setup step `text`): 8 labels (MENU_OPTION_LIST_PC_*) into the 13 `messmenu.mcd`
+- **Text** (`tools/wtbuild/src/text.rs`, setup step `text`): 8 labels (MENU_OPTION_LIST_PC_*) into the 13 `messmenu.mcd`
   and 21 values (CORE_PC_*) into the 13 `messcore.mcd`: a list row names the bank of its values (+0x50: crc32("core") for
   the language names, crc32("menu") for the control types), and only messcore has all digits (messmenu lacks 0 and 5-9 in
   every language). ON / OFF are the game's own CORE_SETTING_003 / 004. Each text is spelled with the file's own glyphs,
@@ -1314,7 +1314,7 @@ Discord without an error.
 
 ## Performance report (2026-10-26)
 
-**Method**: `scripts/perf_bench.py run <scene> <scale>` then `report <run dirs>`. Each run: a copy of the save, audio
+**Method**: `wtbuild perf-bench run <scene> <scale>` then `wtbuild perf-bench report <run dirs>` (`tools/wtbuild/src/perf_bench.rs`). Each run: a copy of the save, audio
 muted, the committed `config/graphics.ini` (`SSBU_GRAPHICS_CONFIG`), output 1600x900 / 2560x1440 / 3840x2160 for scale
 1.0 / 1.6 / 2.4. Frame times from `SSBU_FRAMETIMES`, GPU ms per frame from Vulkan timestamps (`SSBU_VK_GPUTIME=1` +
 `SSBU_GPUTIMES`: the spans of the frame's command buffers), CPU ms a frame per thread from `/proc/self/task/*/stat` (the
@@ -1395,7 +1395,7 @@ combo points and the halo counter at the right; the pause menu and Options (Cont
 whole, no row cut; `hud_area = 16:9` as before. Elements placed by code (lock-on markers, damage numbers) were not seen
 to move.
 **In-game option**: "HUD Layout" (Full Screen / Centered) is a row of the Options screen's Screen Display page (after
-Aspect Ratio; label and values in the text mod, all 13 languages: `text_strings.rs`, `pc_settings_mod.py`) and of the PC
+Aspect Ratio; label and values in the text mod, all 13 languages: `text_strings.rs`) and of the PC
 settings panel. It writes `hud_area` and applies at once (`game_hud_centre`, exported by the game library like
 `game_cutscene_fps`). Checked at 21:9 with the virtual pad: the row shows Full Screen, right makes it Centered
 (`pcmenu: hud_area = 16:9 (applied)`), and after leaving the menus the HUD is in the 16:9 area in the middle.
@@ -1451,7 +1451,7 @@ the camera's space: the 1280 x 720 in the middle, unstretched, with more around 
 the middle now. What that needed besides:
 - **Sprites in the UI's screen mode** (+0x4c = 1: the dims, 16 x 9 in `core0030`, 100 x 100 in `menu0103`) are as large as the
   screen by 1280.0 and 720.0, immediates: 32 loads in `eh.rs` `UI_SIZE_SITES` read `wt_ui_w_bits` / `wt_ui_h_bits`. Rust lifter
-  only: the stand-in of `compare_lift` has none of them, `--main` on a real dump will differ.
+  only: the stand-in main of the lift test (`tools/wtbuild/testdata/fake_main/main.nso`) has none of them.
 - **What is 1280 across in its layout** (size at the element's +0x1a4, kinds 1 and 2, not screen mode, not turned, within 30 of
   the middle; 1240 for thin bands): `h_ui_element` widens it. None has children. A whole screen keeps its shape and loses a
   little at the edges, except the capture types 1000 and 1021, which are the screen's shape already. The cutscene bars are

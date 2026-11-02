@@ -1,4 +1,4 @@
-# Witch Time: the launcher. Builds the game from the player's dump (scripts/setup.py) and plays it in the same window
+# Witch Time: the launcher. Builds the game from the player's dump (wtbuild setup) and plays it in the same window
 # (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release

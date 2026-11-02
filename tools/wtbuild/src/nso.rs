@@ -1,5 +1,6 @@
-//! NSO -> ELF: a port of tools/extract/nso2elf.py (GPL-3.0, from ssbu-recomp). LZ4 segments, the SHA-256 of each
-//! segment checked against the NSO header; reads no keys. The ELF is byte for byte the one nso2elf.py writes.
+//! NSO -> ELF, ported from ssbu-recomp's tools/extract/nso2elf.py (GPL-3.0). LZ4 segments, the SHA-256 of each segment
+//! checked against the NSO header; reads no keys. The ELF is byte for byte the one nso2elf.py wrote (the lift test's
+//! golden pins its hash).
 
 use crate::util::{hex, i32_at, put_u64, u32_at, u64_at};
 use sha2::{Digest, Sha256};
@@ -7,7 +8,7 @@ use std::collections::HashMap;
 
 pub struct Converted {
     pub elf: Vec<u8>,
-    /// what nso2elf.py printed
+    /// the conversion's lines: segment hashes, build ID, dynamic
     pub report: Vec<String>,
     /// every segment's hash matched
     pub hashes_ok: bool,

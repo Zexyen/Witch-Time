@@ -1,8 +1,8 @@
 //! Every NVN entry point of YOUR sdk by name, read from the sdk's own proc table, and what runtime/nvn_sdk.c's GPU
-//! model points at: a port of scripts/nvn_procs.py. Nothing is hard-coded; docs/RE_NOTES.md "NVN" has the details.
+//! model points at (`wtbuild nvn-procs` lists them). Nothing is hard-coded; docs/RE_NOTES.md "NVN" has the details.
 
 use crate::lifter::layout;
-use crate::util::{cstr, i64_at, sext, u32_at, u64_at};
+use crate::util::{cstr, hx, i64_at, sext, u32_at, u64_at};
 use std::collections::{BTreeMap, HashMap};
 
 /// R_AARCH64_RELATIVE relocations: slot -> addend, in the order Python's dict keeps them (first insertion)
@@ -73,7 +73,7 @@ fn refs(ws: &[u32], lo: i64, hi: i64) -> Vec<(Kind, i64)> {
     out
 }
 
-/// name -> sdk offset of every NVN entry point (nvn_procs.procs)
+/// name -> sdk offset of every NVN entry point
 pub fn procs(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
     let (text, _) = layout(d);
     let rel = Rel::read(d);
@@ -125,6 +125,19 @@ pub fn procs(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
     Err("sdk.elf: no NVN proc table found (not nnSdk 13.3.2?)".into())
 }
 
+/// `wtbuild nvn-procs`: "addr <offset> <name>" per name (every entry point when none is given), for lifter/sdklift_roots.txt
+pub fn listing(table: &BTreeMap<String, i64>, names: &[&str]) -> Vec<String> {
+    let all: Vec<&str> = table.keys().map(String::as_str).collect();
+    let names = if names.is_empty() { &all[..] } else { names };
+    names
+        .iter()
+        .map(|n| match table.get(*n) {
+            Some(&a) if a != 0 => format!("addr {} {}", hx(a), n),
+            _ => format!("# {}: not in this sdk", n),
+        })
+        .collect()
+}
+
 pub fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
@@ -169,7 +182,7 @@ pub fn vtable(d: &[u8], typeinfo_name: &str) -> Result<i64, String> {
     Ok(vt[0] + 8)
 }
 
-/// What nvn_sdk.c's device model points at (nvn_procs.gpu_model), by key.
+/// What nvn_sdk.c's device model points at, by key.
 pub fn gpu_model(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
     let rel = Rel::read(d);
     let p = procs(d)?;
@@ -215,4 +228,16 @@ pub fn gpu_model(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
     m.insert("vt_nvgpu_device".into(), vtable(d, "N8nvrm_gpu5nvgpu15NvRmNvgpuDeviceE")?);
     m.insert("vt_hal_gm200".into(), vtable(d, "N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE")?);
     Ok(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listing_lines() {
+        let t: BTreeMap<String, i64> = [("nvnQueueFinish", 0x4b30d0), ("nvnDeviceGetInteger", 0x4a6db0)].into_iter().map(|(k, v)| (k.into(), v)).collect();
+        assert_eq!(listing(&t, &[]), ["addr 4a6db0 nvnDeviceGetInteger", "addr 4b30d0 nvnQueueFinish"]);
+        assert_eq!(listing(&t, &["nvnQueueFinish", "nvnNope"]), ["addr 4b30d0 nvnQueueFinish", "# nvnNope: not in this sdk"]);
+    }
 }

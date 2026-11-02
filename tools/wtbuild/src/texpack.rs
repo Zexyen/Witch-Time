@@ -151,7 +151,7 @@ fn write_index(dir: &Path, shards: &[(String, Vec<Entry>)]) -> R<()> {
     fs::rename(&tmp, dir.join("index.wtx")).map_err(|e| e.to_string())
 }
 
-// ---- finding the textures: DAT archives (nested), WTA / WTB records, WTP data (scripts/pgdat.py has the DAT format)
+// ---- finding the textures: DAT archives (nested), WTA / WTB records, WTP data (text::dat_entries has the DAT format)
 
 /// (entry name, offset, size) of a DAT at `base`; damaged tables end the list
 fn dat_entries(b: &[u8], base: usize) -> Vec<(String, usize, usize)> {

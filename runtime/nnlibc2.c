@@ -6,7 +6,7 @@
  * long double: AArch64 passes and returns binary128 in v0/v1 (q registers), so arguments are c->v[n] as 128 bits
  * and results go to c->v[0]. The arithmetic below is a self-contained soft-float (round to nearest even, the only
  * mode the game can be in: it never changes FPCR rounding through these helpers), tested by the self-test in
- * nncxxrt.c against vectors generated with exact rational arithmetic (gen_quad_tests.py -> quad_tests.h). */
+ * nncxxrt.c against vectors generated with exact rational arithmetic (runtime/gen_static/quad_tests.h). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -56,8 +56,7 @@ moved anywhere: copied by default (hard links on the same drive, so no extra spa
 with `--move-dump` (the launcher's "Move the game data here" switch).
 
 The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
-are those of `scripts/setup.py`, which stays as the reference the Rust port is checked
-against (`tools/wtbuild/README.md`). The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
+are described in `tools/wtbuild/README.md`, "Steps". The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
 
 ## Build (Windows)
 

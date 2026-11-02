@@ -125,6 +125,12 @@ double folder_bytes(const std::string& dir)
 	return used;
 }
 
+// why BuildRunner::start failed: a checkout where wtbuild was never built is told how to build it
+const char* start_error(const std::string& repo)
+{
+	return build_command(repo, "setup").empty() ? NO_BUILD_TOOL : "The build tool cannot be started.";
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------------------- start and loop
@@ -957,7 +963,7 @@ void App::convert_textures()
 	if (runner.start(paths.repo, {}, "textures"))
 		job = Job::textures;
 	else
-		build_error = "The build tool cannot be started.";
+		build_error = start_error(paths.repo);
 	go("build");
 }
 
@@ -1009,7 +1015,7 @@ void App::check_dump()
 		checking = true;
 	}
 	else
-		checks = {{"The build tool cannot be started", "", "fail"}};
+		checks = {{start_error(paths.repo), "", "fail"}};
 	for (const char* v : {"checks", "checking", "verified"})
 		model.DirtyVariable(v);
 }
@@ -1030,7 +1036,7 @@ void App::start_build()
 	if (runner.start(paths.repo, args))
 		job = Job::build;
 	else
-		build_error = "The build tool cannot be started.";
+		build_error = start_error(paths.repo);
 	go("build");
 }
 
@@ -1134,8 +1140,7 @@ void App::tick()
 		else if (built_game)
 			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
 		refresh_title();
-		if (built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete")
-			&& build_command(paths.repo, "textures")[1] == "textures")      // not the Python fallback: it has no such step
+		if (built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
 		{
 			std::error_code ec;
 			if (double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED)

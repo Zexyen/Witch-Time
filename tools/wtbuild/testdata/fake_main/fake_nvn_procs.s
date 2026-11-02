@@ -1,4 +1,4 @@
-/* tables comparison: the shapes scripts/nvn_procs.py finds NVN by (no sdk code): a proc table (sorted name offsets,
+/* tables test: the shapes src/nvn_procs.rs finds NVN by (no sdk code): a proc table (sorted name offsets,
  * a GOT slot to the function pointers, "mov w23, #count - 1"), two classes with typeinfo names and vtables, a format
  * table loaded through a GOT slot, the Tegra X1 descriptor and a texture layout function. */
     .text

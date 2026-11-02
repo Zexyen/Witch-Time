@@ -222,7 +222,7 @@ int libc2_stdio_selftest(Ctx *c) {
  * `mov w0, #-1; ret` in the SDK: the handler sb_eof (x0 = 0xffffffff) is the same function.
  * std::bad_cast::~bad_cast() D2 [0x4c8138] is `b std::exception::~exception()` [0x4c7c08 = `ret`]: x0 unchanged,
  * which is exc_dtor (nncxxrt.c).
- * std::string exceptions: sdklift.py now binds libc++'s __throw_length_error / __throw_out_of_range to the host
+ * std::string exceptions: the sdk lift (tools/wtbuild/src/sdklift.rs) binds libc++'s __throw_length_error / __throw_out_of_range to the host
  * handlers that construct and throw the exception (nncxxrt.c), and sdklift_rt.c registers the SDK's unwind tables. */
 #include <setjmp.h>
 #include "eh_runtime.h"

@@ -1,4 +1,4 @@
-/* tables comparison, main side: the exports make_gen.py reads (no game code), a constructor for DT_INIT_ARRAY, and
+/* tables test, main side: the exports tables.rs reads (no game code), a constructor for DT_INIT_ARRAY, and
  * data imported from the stand-in sdk (nn::util / nn::hid names only as symbol names) */
 void ext_log(int);
 int sdk_helper(int);

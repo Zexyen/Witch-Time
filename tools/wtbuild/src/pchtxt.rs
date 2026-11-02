@@ -1,6 +1,23 @@
-//! Emulator-style code mods: IPSwitch text patches (.pchtxt) and IPS / IPS32 patches (.ips), applied to
-//! targets/exefs/main.elf before the lift; a port of scripts/pchtxt.py (same switches in config/mods.ini, same
-//! fingerprint, same `tree` lines for the launcher's Mods window). The module comment of pchtxt.py has the rules.
+//! Emulator-style code mods: IPSwitch text patches (.pchtxt) and IPS / IPS32 patches (.ips), the formats Yuzu / Ryujinx
+//! mods use, applied to targets/exefs/main.elf before the lift (the `mods` step; `mods-tree` lines for the launcher's
+//! Mods window). The repository ships only this mechanism, never anyone's patches. Files are read from the mods folder
+//! and every folder under it (an emulator mod pack's `<mod>/exefs/` layout works as it is), in path order; a later file
+//! wins where two patch the same bytes.
+//!
+//! On / off switches, like the emulators' per-mod check boxes: config/mods.ini (the launcher's Mods window writes it),
+//! section [mods], lines `<key> = off` or `<key> = on`. A key is a mod (the first folder below the mods folder, or a
+//! file lying directly in it), a file (its path below the mods folder, with /), or one block of a .pchtxt
+//! (`<file> :: <block title>`, or `<file> :: #<n>` for an untitled or repeated title; `on` also applies a block written
+//! under @disabled). Keys are compared without case. Anything not listed keeps its default: mods and files on, blocks as
+//! their @enabled / @disabled line says. A mod or file switched off is not read at all, so one for another version of
+//! the game does not stop the build. Renaming a file (e.g. to .pchtxt.off) also leaves it out.
+//!
+//! Offsets, as the emulators apply them: the patched buffer is the 0x100-byte NSO header followed by the program image
+//! (text, rodata, data at their memory offsets). So a .pchtxt offset X means image offset X + offset_shift - 0x100
+//! (mods written with `@flag offset_shift 0x100` give image offsets directly), and an .ips offset means offset - 0x100.
+//! Image offset = the address minus the module base; nso2elf writes the image at file offset 0x1000 + image offset
+//! (found here through the ELF's PT_LOAD headers). Every file must name the build ID of your main (`@nsobid-<id>` /
+//! `<id>.ips`); a file for another build or module is refused.
 
 use crate::py;
 use crate::util::{hex, u16_at, u32_at, u64_at};
@@ -496,7 +513,7 @@ fn has_romfs(m: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// every mod, file and block with its switch: the launcher's Mods window (pchtxt.py tree)
+/// every mod, file and block with its switch: the launcher's Mods window (`wtbuild mods-tree`)
 pub fn tree(folder: &Path, main_nso: Option<&Path>, settings: &HashMap<String, bool>) -> R<Vec<String>> {
     let want = main_nso.map(nso_build_id).transpose()?;
     let on = |k: &str, d: bool| (*settings.get(&norm_key(k)).unwrap_or(&d) as u8).to_string();
@@ -666,4 +683,341 @@ pub fn apply(elf: &mut [u8], mods: &[Mod], log: &mut dyn FnMut(String)) -> R<usi
         }
     }
     Ok(written.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// splitmix64
+    struct Rng(u64);
+    impl Rng {
+        fn u(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e3779b97f4a7c15);
+            let z = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+            let z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+            z ^ (z >> 31)
+        }
+        fn f(&mut self) -> f64 {
+            (self.u() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn p(&mut self, x: f64) -> bool {
+            self.f() < x
+        }
+        fn range(&mut self, lo: usize, hi: usize) -> usize {
+            lo + (self.u() % (hi - lo) as u64) as usize
+        }
+        fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
+            xs[self.range(0, xs.len())]
+        }
+    }
+
+    const WORDS: [&str; 12] = [
+        "Speed",
+        "Infinite magic",
+        "No HUD",
+        "Camera",
+        "FPS",
+        "",
+        "",
+        "Fix",
+        "Fix",
+        "Unlock = all",
+        "Größe",
+        "視点",
+    ];
+    const TEXT: usize = 0x3000; // the stand-in's text size
+    const CASES: usize = 60;
+
+    fn pchtxt(r: &mut Rng, bid: &str) -> String {
+        let mut out = Vec::new();
+        if r.p(0.9) {
+            let id = if r.p(0.95) {
+                bid.to_string()
+            } else {
+                format!("{:016x}{:016x}{:08x}", r.u(), r.u(), r.u() as u32)
+            };
+            out.push(format!("@nsobid-{}", id));
+        }
+        let shift = if r.p(0.3) {
+            out.push("@flag offset_shift 0x100".to_string());
+            0x100
+        } else {
+            0
+        };
+        for _ in 0..r.range(1, 5) {
+            if r.p(0.8) {
+                out.push(format!("// {}", r.pick(&WORDS)));
+            }
+            if r.p(0.2) {
+                out.push(r.pick(&["@little-endian", "@big-endian", "@flag little-endian", "# a comment", ""]).to_string());
+            }
+            out.push(r.pick(&["@enabled", "@enabled", "@disabled"]).to_string());
+            for _ in 0..r.range(0, 5) {
+                let mut off = r.range(0, TEXT - 64) + 0x100 - shift;
+                let k = r.f();
+                let val = if k < 0.5 {
+                    let w = 2 * r.range(1, 9);
+                    format!("{:01$x}", r.u(), w) // a minimum width, as Python's %0*x: 15 digits are an odd count
+                } else if k < 0.75 {
+                    format!(
+                        "\"{}\"",
+                        r.pick(&["abc", "a\\nb", "\\x41\\x42", "q\\\"x", "\\101\\7", "\\u00e9", "tab\\there", "é"])
+                    )
+                } else if k < 0.77 {
+                    // mistakes and odd escapes
+                    format!("\"{}\"", r.pick(&["\\u4e2d", "\\x4", "\\q", "漢"]))
+                } else if k < 0.78 {
+                    "abc".to_string() // an odd number of digits
+                } else if k < 0.79 {
+                    off = r.pick(&[TEXT * 64, 0]); // outside the program / before it
+                    "aabb".to_string()
+                } else {
+                    format!("{:08x}", r.u() as u32)
+                };
+                let end = if r.p(0.98) { r.pick(&["", "", " // note", "\t"]) } else { "zz" };
+                out.push(format!("{:x} {}{}", off, val, end));
+            }
+        }
+        if r.p(0.1) {
+            out.push("@stop".to_string());
+            out.push("garbage after stop".to_string());
+        }
+        out.join("\n") + r.pick(&["\n", "", "\r\n"])
+    }
+
+    fn ips(r: &mut Rng, big: bool) -> Vec<u8> {
+        let mut out = if big { b"IPS32".to_vec() } else { b"PATCH".to_vec() };
+        for _ in 0..r.range(0, 6) {
+            let off = (r.range(0, TEXT - 64) + 0x100) as u32;
+            out.extend_from_slice(&off.to_be_bytes()[if big { 0 } else { 1 }..]);
+            if r.p(0.3) {
+                out.extend([0, 0]);
+                out.extend_from_slice(&(r.range(1, 40) as u16).to_be_bytes());
+                out.push(r.u() as u8);
+            } else {
+                let data: Vec<u8> = (0..r.range(1, 12)).map(|_| r.u() as u8).collect();
+                out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                out.extend(data);
+            }
+        }
+        out.extend_from_slice(if big { b"EEOF" } else { b"EOF" });
+        if r.p(0.2) {
+            out.truncate(out.len() - 2); // truncated
+        }
+        out
+    }
+
+    /// a mods folder in `d`; -> the text of its mods.ini
+    fn make_case(r: &mut Rng, d: &Path, bid: &str) -> String {
+        let mut names = Vec::new();
+        for _ in 0..r.range(1, 5) {
+            let m = r.pick(&["Speed Mod", "cam", "Zeta", "alpha", "Ünicode mod", "x"]);
+            for _ in 0..r.range(1, 4) {
+                let sub = r.pick(&["", "exefs/", "exefs/", "Extra/"]);
+                let (name, data) = if r.p(0.3) {
+                    // the upper-case name is 48 digits long: beside '<bid>.ips' it would be the same file on NTFS
+                    let name = match r.range(0, 3) {
+                        0 => format!("{}.ips", &bid[..r.pick(&[40, 64, 32])]),
+                        1 => "notabuildid.ips".to_string(),
+                        _ => format!("{}.IPS", bid[..48].to_uppercase()),
+                    };
+                    let big = r.p(0.5);
+                    (name, ips(r, big))
+                } else {
+                    let name = format!("{}.pchtxt", r.pick(&["main", "patch", "Patch2", "readme"]));
+                    let mut data = pchtxt(r, bid).into_bytes();
+                    if r.p(0.1) {
+                        data.splice(0..0, *b"\xef\xbb\xbf");
+                    }
+                    (name, data)
+                };
+                let rel = if r.p(0.85) { format!("{}/{}{}", m, sub, name) } else { name };
+                let p = d.join(&rel);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, data).unwrap();
+                names.push(rel);
+            }
+            if r.p(0.2) {
+                fs::create_dir_all(d.join(m).join("romfs")).unwrap();
+            }
+        }
+        if r.p(0.3) {
+            fs::create_dir_all(d.join("Texture pack").join(r.pick(&["romfs", "inner/romfs"]))).unwrap();
+        }
+        let mut ini = vec!["[mods]".to_string()];
+        for n in &names {
+            if r.p(0.3) {
+                let k = match r.range(0, 6) {
+                    0 => n.clone(),
+                    1 => n.split('/').next().unwrap().to_string(),
+                    2 => n.to_uppercase(),
+                    3 => format!("{} :: #1", n),
+                    4 => format!("{}::{}", n, r.pick(&WORDS)),
+                    _ => format!("{}  ::  #2", n),
+                };
+                ini.push(format!("{} = {}", k, r.pick(&["off", "on", "OFF ; why", "0", "yes", "maybe"])));
+            }
+        }
+        ini.push(r.pick(&["", "[other]\nx = off", "; comment"]).to_string());
+        ini.join("\n") + "\n"
+    }
+
+    /// text, rodata and data at file offset 0x1000 + image offset, as nso2elf writes them
+    fn stand_in_elf(r: &mut Rng) -> Vec<u8> {
+        let mut e = vec![0u8; 0x1000];
+        e[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        e[0x20..0x28].copy_from_slice(&0x40u64.to_le_bytes());
+        e[0x36..0x3a].copy_from_slice(&[0x38, 0, 3, 0]);
+        for (i, (va, n)) in [(0, TEXT), (TEXT, 0x800), (TEXT + 0x800, 0x400)].into_iter().enumerate() {
+            let p = 0x40 + 0x38 * i;
+            e[p] = 1;
+            for (at, v) in [(8, 0x1000 + va), (16, va), (24, va), (32, n), (40, n)] {
+                e[p + at..p + at + 8].copy_from_slice(&(v as u64).to_le_bytes());
+            }
+        }
+        e.extend((0..TEXT + 0xc00).map(|_| r.u() as u8));
+        e
+    }
+
+    /// random mod folders: `mods-tree` with and without the main, then `mods-apply` (exit code, stdout, stderr, the ELF);
+    /// the golden was pchtxt.py's output on the same folders
+    #[test]
+    fn random_mod_folders() {
+        // WTBUILD_CASES=<dir> keeps the cases there
+        let keep = std::env::var_os("WTBUILD_CASES").map(|d| PathBuf::from(d).join("pchtxt"));
+        let t = keep
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("wt_pchtxt_{}", std::process::id())));
+        let _ = fs::remove_dir_all(&t);
+        fs::create_dir_all(&t).unwrap();
+        let mut r = Rng(1);
+        let mut nso = vec![0u8; 0x100];
+        nso[..4].copy_from_slice(b"NSO0");
+        nso[0x40..0x54].iter_mut().for_each(|b| *b = r.u() as u8); // a GNU build ID: 20 bytes, then zeros
+        let bid = hex(&nso[0x40..0x60]);
+        let elf = stand_in_elf(&mut r);
+        let main = t.join("main.nso");
+        fs::write(&main, &nso).unwrap();
+        fs::write(t.join("main.elf"), &elf).unwrap();
+        let mut g = String::new();
+        let (mut applied, mut failed) = (0, 0);
+        for i in 0..CASES {
+            let d = t.join(format!("case{}", i));
+            let mods = d.join("mods");
+            fs::create_dir_all(&mods).unwrap();
+            let ini = make_case(&mut r, &mods, &bid);
+            fs::write(d.join("mods.ini"), ini).unwrap();
+            let settings = read_settings(&d.join("mods.ini"));
+            g += &format!("== case {}\n", i);
+            for (what, with) in [("tree", Some(main.as_path())), ("tree without main", None)] {
+                g += &format!("-- {}\n", what);
+                match tree(&mods, with, &settings) {
+                    Ok(lines) => g += &(lines.join("\n") + "\n"),
+                    Err(ModError(e)) => g += &format!("error: {}\n", e),
+                }
+            }
+            let (mut out, mut patched) = (String::new(), elf.clone());
+            let res = load_mods(&mods, Some(&main), &settings).and_then(|m| apply(&mut patched, &m, &mut |l| out += &(l + "\n")));
+            match res {
+                Ok(n) => {
+                    applied += 1;
+                    g += &format!(
+                        "-- apply exit 0\n{}{} bytes patched -> out.elf\n-- elf {}\n",
+                        out,
+                        n,
+                        hex(&Sha256::digest(&patched))
+                    );
+                }
+                Err(ModError(e)) => {
+                    failed += 1;
+                    g += &format!("-- apply exit 1\n{}error: {}\n-- elf none\n", out, e);
+                }
+            }
+        }
+        if keep.is_none() {
+            let _ = fs::remove_dir_all(&t);
+        }
+        assert!(applied > 5 && failed > 5, "{} applied, {} failed: the cases miss a side", applied, failed);
+        // rel() keeps '\\' on Windows
+        crate::golden::check("pchtxt_mods.txt", &g.replace('\\', "/"));
+    }
+
+    #[test]
+    fn unescape_is_pythons_unicode_escape() {
+        let ok: [(&str, &[u8]); 7] = [
+            ("\\x41\\x42", b"AB"),
+            ("\\101\\7", b"A\x07"),
+            ("\\u00e9", b"\xe9"),
+            ("q\\\"x", b"q\"x"),
+            ("\\q", b"\\q"),
+            ("tab\\there", b"tab\there"),
+            ("é", b"\xe9"),
+        ];
+        for (s, want) in ok {
+            assert_eq!(unescape(s).as_deref(), Ok(want), "{}", s);
+        }
+        let bad = [
+            ("\\x4", "'unicodeescape' codec can't decode bytes in position 0-2: truncated \\xXX escape"),
+            (
+                "\\u4e2d",
+                "'latin-1' codec can't encode character '\\u4e2d' in position 0: ordinal not in range(256)",
+            ),
+            (
+                "漢",
+                "'latin-1' codec can't encode character '\\u6f22' in position 0: ordinal not in range(256)",
+            ),
+            ("a\\", "'unicodeescape' codec can't decode byte 0x5c in position 1: \\ at end of string"),
+            (
+                "\\U0011ffff",
+                "'unicodeescape' codec can't decode bytes in position 0-9: illegal Unicode character",
+            ),
+        ];
+        for (s, want) in bad {
+            assert_eq!(unescape(s), Err(want.to_string()), "{}", s);
+        }
+    }
+
+    #[test]
+    fn ips_eof_truncation_size_and_rle() {
+        let recs = |d: &[u8]| parse_ips(d, "p").map_err(|e| e.0);
+        let ips = [&b"PATCH"[..], &[0, 1, 0x10, 0, 2, 0xaa, 0xbb], &[0, 1, 0x20, 0, 0, 0, 5, 0x7f], b"EOF"].concat();
+        let want: Vec<Rec> = vec![(0x10, vec![0xaa, 0xbb], 1), (0x20, vec![0x7f; 5], 2)];
+        assert_eq!(recs(&ips), Ok(want.clone()));
+        assert_eq!(recs(&[&ips[..], &[0, 0x10, 0]].concat()), Ok(want), "EOF and a truncation size");
+        assert_eq!(recs(&ips[..ips.len() - 2]), Err("p: ends without EOF".to_string()));
+        // a record at offset 0x454f46 ('EOF') is not the end when more than a truncation size follows
+        assert_eq!(
+            recs(&[&b"PATCHEOF"[..], &[0, 2, 1, 2], b"EOF"].concat()),
+            Ok(vec![(0x454f46 - 0x100, vec![1, 2], 1)])
+        );
+        assert_eq!(
+            recs(&[&b"IPS32"[..], &[0, 0, 1, 0x10, 0, 1, 9], b"EEOF"].concat()),
+            Ok(vec![(0x10, vec![9], 1)])
+        );
+        assert_eq!(recs(b"IPS"), Err("p: not an IPS / IPS32 file".to_string()));
+    }
+
+    #[test]
+    fn settings_keys_and_build_ids() {
+        let ini = std::env::temp_dir().join(format!("wt_pchtxt_ini_{}", std::process::id()));
+        let text = "\u{feff}[mods]\ncam = off ; why\nb = on;x\nc=off\t#x\nx = maybe\n; y = off\n[other]\nd = off\n[ Mods ]\n\
+                    e/f.pchtxt  ::  #2 = Yes\ng = a = on\r\nh = 0\n";
+        fs::write(&ini, text).unwrap();
+        let mut s: Vec<(String, bool)> = read_settings(&ini).into_iter().collect();
+        let _ = fs::remove_file(&ini);
+        s.sort();
+        let want = [("c", false), ("cam", false), ("e/f.pchtxt :: #2", true), ("g = a", true), ("h", false)];
+        assert_eq!(s, want.map(|(k, v)| (k.to_string(), v)));
+        assert_eq!(norm_key("  Cam\\Exefs\\Main.pchtxt::Speed  "), "cam/exefs/main.pchtxt :: speed");
+        assert_eq!(norm_key("x  ::  #2"), "x :: #2");
+        assert_eq!(norm_key("a :: b::c"), "a :: b :: c");
+        let blocks: Vec<Block> = ["Speed", "", "Fix", "Fix"].iter().map(|t| (t.to_string(), true, Vec::new())).collect();
+        assert_eq!(
+            block_keys("m\\f.pchtxt", &blocks),
+            ["m/f.pchtxt :: Speed", "m/f.pchtxt :: #2", "m/f.pchtxt :: #3", "m/f.pchtxt :: #4"]
+        );
+        assert!(same_build("ABC000", "abc") && same_build("abc", "abc0") && same_build("0", "00"));
+        assert!(!same_build("abc0001", "abc"));
+    }
 }

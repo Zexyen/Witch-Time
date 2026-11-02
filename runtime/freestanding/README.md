@@ -6,8 +6,8 @@ cut down to what the lifted game code (`build/gen_eh/*.c`), `runtime/gen/sdkdata
 needs no libc development package: `stdint.h`, `stddef.h` and `stdarg.h` come from clang's own resource directory.
 
 Each declaration is glibc's own, with the same attributes (`nothrow`, `const`, `pure`, `nonnull`), and the macros are
-the ones glibc's `math.h` defines, so clang makes the same code from them: `tools/wtbuild/compare_freestanding.py`
-compiles stand-in lifted code with these headers and with the system's and checks that every object file is the
+the ones glibc's `math.h` defines, so clang makes the same code from them: `wtbuild check-freestanding`
+(`tools/wtbuild/src/freestanding_check.rs`) compiles stand-in lifted code with these headers and with the system's and checks that every object file is the
 same, byte for byte. The rest of the runtime (prebuilt in CI, or by `wtbuild` on a developer's PC) uses the system's
 headers as before.
 
@@ -17,4 +17,4 @@ headers as before.
 On Windows (`_WIN32`, the MinGW target `wtbuild` gives clang there) the headers follow mingw-w64's UCRT ones instead:
 `jmp_buf` is its 256-byte layout and `setjmp` expands as mingw-w64's does (the UCRT's `_setjmp` with the frame from
 `__builtin_sponentry`), and `ldexpf` / `frexpf`, which the UCRT lacks, are inline over the double versions as mingw-w64
-gives them. `compare_freestanding.py --target windows` checks those objects against mingw-w64's headers.
+gives them. `wtbuild check-freestanding --target windows` checks those objects against mingw-w64's headers.

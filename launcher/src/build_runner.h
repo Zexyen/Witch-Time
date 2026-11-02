@@ -1,6 +1,5 @@
-// Runs the build from the player's dump (wtbuild setup; scripts/setup.py where wtbuild was not built) as a child
-// process and follows its output: which of its steps runs, which are done, how far the compile step is, and the last
-// lines of the log. poll() never blocks.
+// Runs the build from the player's dump (wtbuild setup) as a child process and follows its output: which of its steps
+// runs, which are done, how far the compile step is, and the last lines of the log. poll() never blocks.
 #pragma once
 #include "platform.h"
 #include <ios>
@@ -11,9 +10,10 @@
 
 class BuildRunner {
 public:
-	// the build's steps, in order (tools/wtbuild/src/setup.rs STEPS, scripts/setup.py STEPS)
+	// the build's steps, in order (tools/wtbuild/src/setup.rs STEPS)
 	static const std::vector<std::string>& steps();
 
+	// false when it could not start; build_command() is empty when wtbuild was never built (NO_BUILD_TOOL)
 	bool start(const std::string& repo, const std::vector<std::string>& args, const std::string& command = "setup");
 	void stop();                         // ends the build; it resumes from the step it was in next time
 	bool poll();                         // reads what is new; true when anything changed

@@ -1,5 +1,5 @@
-//! Small helpers shared by the steps: little-endian reads, sign extension, Python-compatible number formatting (the
-//! generated C must be byte for byte what the Python pipeline wrote, so that a switch from setup.py recompiles nothing).
+//! Small helpers shared by the steps: little-endian reads, sign extension, number formatting in Python's spelling (the
+//! lifted C keeps the bytes the Python build wrote, so that no player's objects are compiled again).
 
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -25,7 +25,7 @@ pub fn put_u64(b: &mut [u8], o: usize, v: u64) {
     b[o..o + 8].copy_from_slice(&v.to_le_bytes());
 }
 
-/// The NUL-terminated string at `o` (latin-1, as the Python scripts decode names).
+/// The NUL-terminated string at `o` (latin-1).
 pub fn cstr(b: &[u8], o: usize) -> String {
     let end = b[o..].iter().position(|&c| c == 0).map(|n| o + n).unwrap_or(b.len());
     b[o..end].iter().map(|&c| c as char).collect()
@@ -122,7 +122,7 @@ pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
-/// setup.py's time format: "1m05s" or "4.2s"
+/// the steps' time format: "1m05s" or "4.2s"
 pub fn fmt_secs(secs: f64) -> String {
     if secs >= 60.0 {
         let s = secs as u64;

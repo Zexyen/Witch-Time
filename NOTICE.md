@@ -21,18 +21,19 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 | Our path | Origin | Licence | Changes |
 |---|---|---|---|
 | `runtime/` | [ssbu-recomp](https://github.com/Denkishi/ssbu-recomp) `runtime/`, commit `3a96916` (2026-10-16), by Denkishi | GPL-3.0-or-later | Marked `[Recomps#1]` in the code; listed with dates in `runtime/UPSTREAM.md`; Smash-only files removed (same file) |
-| `lifter/recomp.py`, `lifter/recomp_eh.py` | ssbu-recomp `tools/lifter/`, same commit | GPL-3.0-or-later | Marked `[Recomps#1]`; listed in `lifter/README.md` |
-| `lifter/gen_quad_tests.py` | ssbu-recomp `tools/lifter/`, same commit (binary128 test vectors, game-independent) | GPL-3.0-or-later | None (a provenance comment added at the top) |
-| `tools/extract/nso2elf.py` | ssbu-recomp `tools/extract/`, same commit (NSO to ELF, LZ4 only, no keys) | GPL-3.0-or-later | None (a provenance comment added at the top) |
+| `tools/wtbuild/src/lifter/mod.rs`, `tools/wtbuild/src/lifter/eh.rs` | A Rust port of ssbu-recomp `tools/lifter/recomp.py` and `recomp_eh.py`, same commit (copied as `lifter/recomp.py`, `lifter/recomp_eh.py`, removed 2026-11-02) | GPL-3.0-or-later | Marked `[Recomps#1]` / `[witchtime]`; listed in `lifter/README.md` |
+| `runtime/gen_static/quad_tests.h` | Output of ssbu-recomp `tools/lifter/gen_quad_tests.py`, same commit (binary128 test vectors, game-independent, seed 20261008); the generator was copied as `lifter/gen_quad_tests.py`, removed 2026-11-02 | GPL-3.0-or-later | None |
+| `tools/wtbuild/src/nso.rs` | A Rust port of ssbu-recomp `tools/extract/nso2elf.py`, same commit (NSO to ELF, LZ4 only, no keys; copied as `tools/extract/nso2elf.py`, removed 2026-11-02) | GPL-3.0-or-later | None (writes the same ELF) |
 | `runtime/mx_ops.h` (via ssbu-recomp) | Generated from suyu `src/video_core/.../maxwell.inc` (Maxwell opcode table) | GPL-3.0-or-later (suyu) | None by us |
 | `runtime/mx_translate.c`, `runtime/nnalbum.c`, `runtime/nnapplet.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
 | `runtime/tex_decode.c` (via ssbu-recomp) | Tables from the Khronos Data Format Specification (BCn / ASTC) | Specification | — |
 | `runtime/third_party/stb_truetype.h` | [stb](https://github.com/nothings/stb) `stb_truetype.h` v1.26, by Sean Barrett | Public domain or MIT (the file's own text) | None |
 | `runtime/third_party/NotoSerif-pcmenu.ttf` | Noto Serif Regular 2.015 (The Noto Project Authors), the PC menu's font | SIL Open Font License 1.1 (`runtime/third_party/OFL-NotoSerif.txt`) | Subset to Latin-1 and a few punctuation marks (`pyftsubset`, kerning kept, hinting removed) |
 
-Our own files (everything else: `scripts/`, `launcher/`, `tests/`, `lifter/regcache.py`, `lifter/sdklift.py`,
-`runtime/gen/make_gen.py`, new runtime files) are under the same licence. `scripts/setup.py` follows the structure of
-ssbu-recomp's `scripts/setup.py` (resumable steps, state file, logs).
+Our own files (everything else: `scripts/`, `launcher/`, `tests/`, `tools/` apart from the ports above, among them
+`tools/wtbuild/src/sdklift.rs` and `tools/wtbuild/src/tables.rs`, new runtime files) are under the same licence.
+`tools/wtbuild/src/setup.rs` follows the structure of ssbu-recomp's `scripts/setup.py` (resumable steps, state file,
+logs).
 
 ## Public sources cited for values in the runtime
 
@@ -41,7 +42,7 @@ No code is copied from these; they are named in comments as the source of number
 | Where | Values | Source |
 |---|---|---|
 | `runtime/nncxxlib.c` `classic_table` | `std::ctype<char>` masks of the "C" locale | LLVM libc++ (`src/locale.cpp` builtin table, `include/__locale` `ctype_base`; Apache-2.0 with LLVM exception) and the glibc `<ctype.h>` `_ISbit` layout (LGPL-2.1) |
-| `runtime/nvn_stub.c` `g_devinfo` (most answers come from the player's own SDK at build time, `runtime/gen/make_gen.py`) | Tegra X1 / Maxwell limits (descriptor sizes, handle layout, alignments) | deko3d `include/deko3d.h` (devkitPro, zlib licence); the yuzu-lineage emulators (Citron `src/video_core/engines/maxwell_3d.cpp`, GPL-3.0); the Vulkan specification (Khronos) |
+| `runtime/nvn_stub.c` `g_devinfo` (most answers come from the player's own SDK at build time, `wtbuild tables`, `tools/wtbuild/src/tables.rs`) | Tegra X1 / Maxwell limits (descriptor sizes, handle layout, alignments) | deko3d `include/deko3d.h` (devkitPro, zlib licence); the yuzu-lineage emulators (Citron `src/video_core/engines/maxwell_3d.cpp`, GPL-3.0); the Vulkan specification (Khronos) |
 
 ## Tools used to reverse engineer the game (not included, not needed to build)
 
@@ -60,9 +61,9 @@ No code is copied from these; they are named in comments as the source of number
 | Vulkan-Headers | vulkan-sdk-1.4.341.0 | Apache-2.0 / MIT |
 | glslang (built into `ssbu_glslang.dll`) | 16.6.0 | BSD-3-Clause, Apache-2.0 and others (see its LICENSE.txt) |
 | LLVM / clang (optional MSVC build, `--toolchain msvc`) | 9.0.0 | Apache-2.0 with LLVM exception |
-| Python packages: lz4, Pillow, (self-test) unicorn, capstone | — | BSD / HPND / GPL-2.0 / BSD |
+| unicorn-engine (Rust crate, only in `tools/lifter-check`, a developer's check never built for or shipped to players) | 2.1.5 | GPL-2.0 |
 
-The game is never distributed in any form: every player builds it locally with `scripts/setup.py`. The **builder
+The game is never distributed in any form: every player builds it locally with `wtbuild setup` (`tools/wtbuild`; the launcher runs it). The **builder
 package** (`scripts/make_package.py`) contains this source plus the tools above in `deps\` (llvm-mingw trimmed to x86_64,
 Python with lz4 and Pillow, SDL3, Vulkan-Headers, `ssbu_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
 needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `ssbu_glslang.dll` is the one program of ours
@@ -76,7 +77,7 @@ them.
 
 No code, data, assets, icons, fonts, firmware or keys of Nintendo, PlatinumGames or SEGA, and nothing generated from
 them. Names of SDK functions and addresses used for interoperability appear in comments and in
-`lifter/sdklift_roots.txt`. `scripts/setup.py` holds SHA-256 hashes and sizes of the supported version's files, to
+`lifter/sdklift_roots.txt`. `tools/wtbuild/src/setup.rs` holds SHA-256 hashes and sizes of the supported version's files, to
 check a player's dump before building.
 <!-- OPEN before publishing (notes/release-audit.md section 5): confirm with the ssbu-recomp author how they want to be
      credited (no per-file copyright lines upstream); confirm the suyu revision mx_ops.h came from (ssbu-recomp's

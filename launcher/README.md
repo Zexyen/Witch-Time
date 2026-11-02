@@ -32,18 +32,18 @@ needs only a Vulkan driver and OpenGL from the system ("Build (Linux)" in the ma
 workflow by hand only builds the archive and keeps it as a workflow artifact.
 
 The same tag also publishes `WitchTime-<tag>-windows-x86_64.zip`, cross-built on Ubuntu with llvm-mingw and then tested
-on a Windows runner (`smoke_link.py` against the runtime it ships): `witch-time.exe`, `build\witch-time.exe`, `SDL3.dll`,
+on a Windows runner (`wtbuild smoke` against the runtime it ships): `witch-time.exe`, `build\witch-time.exe`, `SDL3.dll`,
 `build\wtbuild.exe`, the runtime (`prebuilt\`, with FFmpeg) and LLVM's Windows clang + lld (`deps\llvm`). It needs only a Vulkan
 driver ("Build (Windows)" in the main README).
 
 ## How it works
 
-- **Build.** Runs `wtbuild setup` (`build/wtbuild` in a release, `tools/wtbuild/target/release/wtbuild` in a checkout;
-  without either, `python3 scripts/setup.py`) and reads its `[i/10]` step lines and `build/logs/compile.log` for
+- **Build.** Runs `wtbuild setup` (`build/wtbuild` in a release, `tools/wtbuild/target/release/wtbuild` in a checkout,
+  built with cargo first; the launcher says so when it is missing) and reads its `[i/10]` step lines and `build/logs/compile.log` for
   progress. Stop sends SIGTERM (on Windows it ends the build's job object); the next build resumes.
 - **Button hints.** The footer shows the game's own prompts (`gen:glyph`, drawn by `runtime/prompt_art.h`): those of the
   device used last, or of `button_prompts` in `config/controllers.ini` when that names one (read at start).
-- **Mods.** Listed with `wtbuild mods-tree` (or `scripts/pchtxt.py tree`); switches are written to `config/mods.ini`. Code mods need a rebuild
+- **Mods.** Listed with `wtbuild mods-tree`; switches are written to `config/mods.ini` (the rules: `tools/wtbuild/README.md`, "Mods"). Code mods need a rebuild
   from the mods step, data mods apply at the next start.
 - **Converted textures.** After a build that succeeds, `wtbuild textures` (#54) runs on the build screen unless `bc7_textures`
   is off or the drive lacks the room, which the screen says. It can be stopped; Settings shows its size and continues it.
