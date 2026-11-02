@@ -1004,9 +1004,14 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
   the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
   through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
-- **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
-  stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
-  game's textures). Sized by the window: 980 x 824 at 1080p, 1960 x 1648 at 4K.
+- **Look** (redrawn 2026-11-01, section "Launcher and in-game look" below): the whole window, its ground drawn on the
+  CPU into BGRA when something changes, composed on the GPU every frame with the turning wheel over it (`pcm_gpu_draw`,
+  below) and copied over the presented picture (never into the game's textures); Marcellus and Source Sans 3 subsets
+  (SIL OFL 1.1) through stb_truetype.
+- **The foot hints follow the prompts** (2026-11-02, Kevin's report): "Change" and "Close" show the button that acts as
+  Pro A and Pro B on player 1's pad as the Button prompts and Face buttons rows say (`hint_btn`: a letter in a disc for
+  Switch and Xbox, by letter or by position; Circle / Cross shapes on PlayStation; ENT / ESC key caps on the keyboard),
+  and change at once when either row changes; swap_confirm swaps them as before.
 - **The game's own Options screen** (2026-10-26; since 2026-10-27 seven native rows above it, next section): **a "PC Settings" row** on its Screen Display page, before Restore
   Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
   that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
@@ -1183,6 +1188,68 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
   repeat (the same shaders, 4.1 and 82.5 us): compare later runs only. #4943 / #4945 went from 51 to 98 us a draw in one run
   and not in another; not explained.
 - Not run on AMD's Windows driver, NVIDIA or Intel.
+## Launcher and in-game look (2026-11-01)
+
+One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's
+design page (project files, `design/witch-time-design-language.html`; mockups `design/mockup-*.png`): a pearl ground
+(#EEEDF2) crossed by an indigo panel (#1B1628) on a 22 degree diagonal with a stripe of runic text on its edge, lists as
+a staircase of dark bars stepping down the diagonal, the chosen one a violet to lavender to white glow with a » chevron,
+a clockwork wheel with ornate hands at the local time, a dark message band (one sentence) and a pale hint band (dark
+glyph discs) at the bottom. Marcellus for titles, Source Sans 3 Regular and SemiBold for the rest; red (#E5334B) marks
+a value saved for the next start. The launcher never names the game: the code name and the logo.
+
+- **Launcher** (`launcher/ui/witch.rcss`, `launcher.rml`): every screen is absolute boxes on a 1280 x 800 dp stage. The
+  diagonal is `transform: skewX(22deg)` on plain boxes; gradients come from a new `gen:grad` texture (up to four
+  stops, `ui_render.cpp`); the pictures are 8-bit BMPs in `launcher/ui/img` whose palette carries alpha (premultiplied)
+  in its reserved byte, read by `ui_render.cpp` itself (SDL3_image stays shimmed away): the wheel in seven layers
+  (two rings, the base, three gears, the hub; light and dark sets) that turn as the design page's SVG does (rings 120 s
+  and 160 s the other way, gears 10 s and 14 s; `@keyframes spin`), the two hands, the runic stripe, the logo. The title menu is a `data-for` staircase (`menu` in the model, `menu(i)` the action); the
+  build screen's log hides behind Show log; the settings are the panel's own rows, names and values (`setting_defs()`
+  in `app.cpp`, in the panel's order: Window size, Frame rate and Texture detail are new there; Face buttons is left out, it stays auto) under three
+  tabs, Display, Graphics and Controls (Q / E or the shoulder buttons, `tab` in the model), each a staircase of rows. On
+  the text-heavy screens (dump, mods, settings) the wheel is small, at the bottom left on the indigo side. Fonts:
+  Marcellus, Source Sans 3 (`launcher/ui/fonts`, OFL); Cinzel, Cormorant and Barlow are gone.
+- **PC settings panel** (`runtime/pcmenu.c`): the same stage over the whole window (the held frame is covered; the
+  copy is opaque), the light wheel behind the rows, a lilac one on the indigo side, the rows stepping down the
+  diagonal at both ends as the launcher's do, 460 wide, the last ending 50 from the edge (the Controls page's 18 rows
+  with a smaller step and row), the chosen row's help in the message band, the state ("Saved; applies at the next
+  start", a lock) under the rows. The pictures are `runtime/art/*.bmp` `#embed`ded; fonts
+  `runtime/third_party/*-pcmenu.ttf` (subsets, OFL). The mouse map (`g_row_y`, `g_val_x0/1[]` a row, `g_close_r`)
+  follows. The pause-menu hint is a slanted indigo bar.
+- **The wheels turn** in the panel and on the first-start screen as in the launcher (2026-11-01): the wheel art is the
+  launcher's seven layers a set (`runtime/art/wheel-*.bmp`, `wheel-dark-*.bmp`, 5.6 MB embedded). A frame is the
+  cached ground (`g_pbg`: ground, wedge, the wheels' bases) plus the rings and gears turned by the clock
+  (`wheel_turn`, `anim_t`: `GetTickCount64`), the hubs and then the words composed over it from two layers drawn once
+  a version (`Layer`, `g_to`: `put` and `put_pre` draw into a layer while it is set).
+- **Composed on the GPU** (same day, Kevin's ask): `nvn_vk_pcmenu.c` `pcm_gpu_draw`. The CPU draws only what changes
+  with a version: the ground (`g_pbg`, and the first-start screen's numbers over `g_bg`) and the two layers; they go
+  up in one staging buffer (`pcm_upload`, ground + hubs + words). Every present copies the ground into a canvas of
+  the panel's size (B8G8R8A8_UNORM, so the stored values are the CPU's, whatever the swapchain's colour class), draws
+  the moving parts over it as turned textured quads (`pcmenu_gpu_scene`: `art_blit` lists a `PcmSprite` instead of
+  drawing while `g_emit` is set, so the geometry is the CPU path's own: the same box, turn, opacity, ring annulus
+  and slanted clip; the hubs and the words are two more quads between them), then copies the canvas over the picture
+  at the panel's place. One pipeline (dynamic rendering, premultiplied blend ONE / ONE_MINUS_SRC_ALPHA as `put_pre`,
+  push constants, a linear sampler with a transparent border; the annulus and the clip edge are `discard`s in the
+  fragment stage), 16 art textures uploaded once from `pcmenu_art_pixels` (the staging buffer freed at the next
+  job), the layer textures made again at a new size (`pcm_gpu_canvas`, after `cmd_wait_all`). `pcmenu_gpu(1)` stops
+  the CPU path's 30 frames a second; `SSBU_PCMENU_CPU=1` keeps it, and so does a refused pipeline (the log says which).
+  The hint is still copied as drawn. Verified on lavapipe (`tests/pcmenu_vk/`: the GPU picture against the CPU
+  composition at the same clock, under the Khronos validation layer, no messages): mean channel difference 0.05-0.07
+  at 720p, 1080p and 800x450, the worst pixels at ring edges; the first-start screen the same (its only difference
+  the minute hand, when the second changed between the two renders). Not run on a real GPU yet.
+- The CPU path, kept as the fallback: `pcmenu_panel_size` draws a new frame up to 30 times a second, never more often
+  than a frame takes (`took`), so the thread keeps half a core at most; `pcm_upload` copies it each time. Measured
+  with the harness at -O2 on the cloud machine: 18 ms a frame at 1280x720, 36 ms at 1080p, 132 ms at 4K (about 8
+  frames a second there; the rings move 3 degrees a second, the gears 36 and 26, so 4K is visibly stepped). The
+  rotating blits sample only the ring's annulus and a picture's alpha box.
+- **First-start screen** (`pcmenu.c` `draw_prep`, `nvn_vk_draw.c` `prep_first_hold`): drawn by the panel's code too
+  (title, the count of stages and the time left, a slanted bar, the dark wheel, a pearl panel at the right), copied over
+  the held frame by `pcm_vk_draw` (`pcmenu_kind` 3; `nvn_vk_pcmenu.c` `pcm_upload`). The 5 x 7 dot font and the
+  overlay's own bar are gone from that screen (the thin loading bar of normal frames stays).
+- **Checked**: the launcher built here (SDL3 3.4.18 from conda-forge, RmlUi 6.3) and all five screens screenshotted
+  under Xvfb with lavapipe; the panel, the Controls page, the hint and the first-start screen rendered through a
+  stand-alone harness that includes `pcmenu.c` (1280 x 720 and 1920 x 1080). Not run: the game itself (no dump here),
+  so the panel over a real frame, its input, and the first-start screen's timing are untested; a Windows build.
 
 ## Performance report (2026-10-26)
 

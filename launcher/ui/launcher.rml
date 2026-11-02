@@ -6,228 +6,245 @@
 <body data-model="wt">
 
 <!-- ======================================================================= title menu -->
-<div class="screen bg-title" data-if="screen == 'title'">
-	<div class="title-main">
-		<div class="title-left">
-			<div class="brand">
-				<div class="kicker">NATIVE PORT</div>
-				<div class="wordmark">WITCH<br/>TIME</div>
-				<div class="rule"><div class="line"></div><div class="diamond"></div><div class="line"></div></div>
-				<div class="tagline">Built on this machine, from your own copy.</div>
-			</div>
-			<div class="menu">
-				<div class="item autofocus" data-if="built" data-event-click="play()"><div class="mark"></div><span>PLAY</span><div class="trail"></div></div>
-				<div class="item autofocus" data-if="!built" data-event-click="go('setup')"><div class="mark"></div><span>SET UP</span><div class="trail"></div></div>
-				<div class="item" data-if="built" data-event-click="go('build')"><div class="mark"></div><span>REBUILD</span><div class="trail"></div></div>
-				<div class="item" data-if="update_tag != '' &amp;&amp; !building" data-event-click="update()"><div class="mark"></div><span>UPDATE TO {{ update_tag }}</span><div class="trail"></div></div>
-				<div class="item" data-event-click="go('mods')"><div class="mark"></div><span>MODS</span><div class="trail"></div></div>
-				<div class="item" data-event-click="go('settings')"><div class="mark"></div><span>SETTINGS</span><div class="trail"></div></div>
-				<div class="item" data-if="built" data-event-click="go('setup')"><div class="mark"></div><span>CHANGE DUMP</span><div class="trail"></div></div>
-				<div class="item muted" data-event-click="quit()"><div class="mark"></div><span>QUIT</span><div class="trail"></div></div>
-			</div>
-		</div>
-		<div class="title-right">
-			<div class="dial">
-				<img class="ring-outer" src="gen:ring?c=c9a35a&amp;a=140&amp;w=2"/>
-				<img class="ring-min" src="gen:ticks?n=60&amp;c=c9a35a&amp;a=200&amp;w=3&amp;l=10"/>
-				<img class="ring-hour" src="gen:ticks?n=12&amp;c=e8cf94&amp;w=5&amp;l=24"/>
-				<img class="ring-inner" src="gen:ring?c=c9a35a&amp;a=90&amp;w=3"/>
-				<div class="abs num" style="left: 190dp; top: 39dp;">XII</div>
-				<div class="abs num" style="left: 274.5dp; top: 61.6dp;">I</div>
-				<div class="abs num" style="left: 336.4dp; top: 123.5dp;">II</div>
-				<div class="abs num" style="left: 359dp; top: 208dp;">III</div>
-				<div class="abs num" style="left: 336.4dp; top: 292.5dp;">IIII</div>
-				<div class="abs num" style="left: 274.5dp; top: 354.4dp;">V</div>
-				<div class="abs num" style="left: 190dp; top: 377dp;">VI</div>
-				<div class="abs num" style="left: 105.5dp; top: 354.4dp;">VII</div>
-				<div class="abs num" style="left: 43.6dp; top: 292.5dp;">VIII</div>
-				<div class="abs num" style="left: 21dp; top: 208dp;">IX</div>
-				<div class="abs num" style="left: 43.6dp; top: 123.5dp;">X</div>
-				<div class="abs num" style="left: 105.5dp; top: 61.6dp;">XI</div>
-				<div class="abs hub"></div>
-				<img class="moon" src="gen:moon?c=e8cf94"/>
-				<div class="abs hand hour" data-style-transform="'rotate(' + hour_deg + 'deg)'"></div>
-				<div class="abs hand minute" data-style-transform="'rotate(' + minute_deg + 'deg)'"></div>
-				<div class="abs pin"></div>
-			</div>
-			<div class="caption">
-				<div class="state" data-class-bad="status_bad">{{ status_title }}</div>
-				<div class="line">{{ status_line }}</div>
-			</div>
-		</div>
+<div class="screen title" data-if="screen == 'title'" data-class-leaving="leaving">
+	<div class="ground"></div>
+	<div class="glow"></div>
+	<div class="wheel">
+		<img class="ring1" src="img/wheel-ring1.bmp?a=170"/>
+		<img class="ring2" src="img/wheel-ring2.bmp?a=170"/>
+		<img class="base" src="img/wheel-base.bmp?a=170"/>
+		<img class="gear1" src="img/wheel-gear1.bmp?a=170"/>
+		<img class="gear2" src="img/wheel-gear2.bmp?a=170"/>
+		<img class="gear3" src="img/wheel-gear3.bmp?a=170"/>
+		<img class="top" src="img/wheel-top.bmp?a=170"/>
+		<img src="img/hand-hour.bmp" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
-	<div class="footer">
-		<div>{{ footer_info }}</div>
-		<div class="spacer"></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
+	<div class="wedge"></div>
+	<div class="stripe"><img src="img/stripe.bmp"/></div>
+	<div class="rule r1"></div><div class="rule r2"></div>
+	<img class="logo" src="img/logo.bmp"/>
+	<div data-for="m, i : menu" class="mi autofocus" data-class-dim="m.dim" data-style-left="(70 + 26 * i) + 'dp'" data-style-top="(330 + 50 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" data-event-click="menu(i)">
+		<div class="halo"></div><div class="fill"></div><div class="chev">»</div>
+		<span>{{ m.label }}</span><span class="tag" data-if="m.tag != ''">{{ m.tag }}</span>
+	</div>
+	<div class="band" data-class-bad="status_bad">{{ status_line }}</div>
+	<div class="foot">
+		<div class="fl">{{ footer_info }}</div>
+		<div class="grow"></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
 <!-- ======================================================================= first run: the dump -->
-<div class="screen bg-top" data-if="screen == 'setup'">
-	<div class="header">
-		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
-		<div class="diamond"></div>
-		<h1>{{ built ? 'YOUR DUMP' : 'FIRST RUN' }}</h1>
-		<div class="aside">Step 1 of 2 · Your dump</div>
+<div class="screen wide" data-if="screen == 'setup'" data-class-leaving="leaving">
+	<div class="ground"></div>
+	<div class="glow"></div>
+	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
-	<div class="body">
-		<div class="col">
-			<h2>Point the launcher at your dump</h2>
-			<p class="lead">A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
-			<div class="label">DUMP FOLDER</div>
-			<div class="field-row">
-				<input type="text" class="text autofocus" data-value="dump"/>
-				<div class="button" data-event-click="browse()">BROWSE</div>
-			</div>
-			<div class="row mod">
-				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
-				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
-			</div>
-			<div class="row mod" data-if="dump_modified || accept_modified">
-				<div class="switch" data-class-on="accept_modified" data-event-click="toggle_accept_modified()"><div class="knob"></div></div>
-				<div class="what"><div class="name">Use a modified dump</div><div class="note">Some files differ from the supported version (another version, or mods). It may build and run, or it may not; it is unsupported.</div></div>
-			</div>
-			<div class="rows">
-				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
-					<div class="diamond"></div>
-					<div class="grow">{{ c.text }}</div>
-					<div class="right">{{ c.right }}</div>
-				</div>
+	<div class="stripe"><img src="img/stripe.bmp"/></div>
+	<div class="rule r1"></div><div class="rule r2"></div>
+	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>{{ built ? 'Your dump' : 'First run' }}</span></div>
+	<div class="lead-block">
+		<h2>Point the launcher at your dump</h2>
+		<div class="flourish"></div>
+		<p>A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
+		<p>The launcher turns your copy's code into a native program on this PC. You do this once; updates rebuild only what changed.</p>
+	</div>
+	<div class="col">
+		<div class="label">DUMP FOLDER</div>
+		<div class="field-row">
+			<input type="text" class="text autofocus" data-value="dump"/>
+			<div class="btn" data-event-click="browse()"><div class="fill"></div><span>Browse</span></div>
+		</div>
+		<div class="row">
+			<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
+			<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
+		</div>
+		<div class="row" data-if="dump_modified || accept_modified">
+			<div class="switch" data-class-on="accept_modified" data-event-click="toggle_accept_modified()"><div class="knob"></div></div>
+			<div class="what"><div class="name">Use a modified dump</div><div class="note">Some files differ from the supported version (another version, or mods). It may build and run, or it may not; it is unsupported.</div></div>
+		</div>
+		<div class="rows">
+			<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
+				<div class="diamond"></div>
+				<div class="grow">{{ c.text }}</div>
+				<div class="right">{{ c.right }}</div>
 			</div>
 		</div>
-		<div class="panel">
-			<div class="label">WHAT HAPPENS NEXT</div>
-			<p>The launcher turns your copy's code into a native program on this PC. You do this once; updates rebuild only what changed.</p>
-			<div class="facts">
-				<div>About 15 minutes on 16 threads</div>
-				<div>About 9 GB of free space</div>
-				<div>Close the window any time; it resumes</div>
-			</div>
-			<div class="button primary" data-if="!verified" data-event-click="check_dump()">{{ checking ? 'CHECKING…' : 'CHECK DUMP' }}</div>
-			<div class="button primary" data-if="verified" data-event-click="start_build()">BEGIN BUILD</div>
+		<div class="actions" style="position: relative; left: 0; top: 0;">
+			<div class="btn primary" data-if="!verified" data-event-click="check_dump()"><div class="fill"></div><span>{{ checking ? 'Checking…' : 'Check dump' }}</span></div>
+			<div class="btn primary" data-if="verified" data-event-click="start_build()"><div class="fill"></div><span>Begin build</span></div>
 		</div>
 	</div>
-	<div class="footer">
-		<div class="spacer"></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
+	<div class="band">{{ verified ? 'Your dump checks out. Begin the build.' : 'Choose the folder, then check the dump.' }}</div>
+	<div class="foot">
+		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
+		<div class="grow"></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
 <!-- ======================================================================= building -->
-<div class="screen bg-left" data-if="screen == 'build'">
-	<div class="header">
-		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
-		<div class="diamond"></div>
-		<h1>BUILDING</h1>
+<div class="screen build" data-if="screen == 'build'" data-class-leaving="leaving">
+	<div class="ground"></div>
+	<div class="glow"></div>
+	<div class="wheel">
+		<img class="ring1" src="img/wheel-ring1.bmp?a=150"/>
+		<img class="ring2" src="img/wheel-ring2.bmp?a=150"/>
+		<img class="base" src="img/wheel-base.bmp?a=150"/>
+		<img class="gear1" src="img/wheel-gear1.bmp?a=150"/>
+		<img class="gear2" src="img/wheel-gear2.bmp?a=150"/>
+		<img class="gear3" src="img/wheel-gear3.bmp?a=150"/>
+		<img class="top" src="img/wheel-top.bmp?a=150"/>
+	</div>
+	<img class="track" src="gen:ring?c=24202e&amp;a=24&amp;w=16"/>
+	<progress direction="clockwise" start-edge="top" data-attr-value="progress"></progress>
+	<div class="wedge" style="width: 640dp;"></div>
+	<div class="stripe" style="left: 340dp;"><img src="img/stripe.bmp"/></div>
+	<div class="rule r1" style="left: 390dp;"></div><div class="rule r2" style="left: 395dp;"></div>
+	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Building</span></div>
+	<div data-for="s, i : steps" class="mi" data-class-on="s.state == 'run'" data-class-run="s.state == 'run'" data-class-dim="s.state == 'wait'" data-class-fail="s.state == 'fail'" data-style-left="(60 + 36 * i) + 'dp'" data-style-top="(170 + 70 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" style="width: 300dp;">
+		<div class="halo"></div><div class="fill"></div><div class="chev">»</div>
+		<span class="num">{{ s.num }}</span><div class="lbl"><div>{{ s.name }}</div></div>
+		<span class="dia" data-if="s.state == 'done'"></span>
+	</div>
+	<div class="readout">
+		<div class="pct">{{ percent }}<span>%</span></div>
 		<div class="aside">{{ build_aside }}</div>
 	</div>
-	<div class="body" style="padding-left: 72dp;">
-		<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18dp; width: 420dp;">
-			<div class="dial progress-dial">
-				<img class="ring-outer" src="gen:ring?c=c9a35a&amp;a=128&amp;w=2"/>
-				<img class="ring-min" src="gen:ticks?n=60&amp;c=c9a35a&amp;a=190&amp;w=3&amp;l=10"/>
-				<img class="track" src="gen:ring?c=2a1834&amp;w=22"/>
-				<progress direction="clockwise" start-edge="top" data-attr-value="progress"></progress>
-				<img class="ring-inner" src="gen:ring?c=c9a35a&amp;a=80&amp;w=3"/>
-				<div class="abs needle" data-style-transform="'rotate(' + (progress * 360) + 'deg)'"></div>
-				<div class="abs readout">
-					<div class="pct">{{ percent }}<span>%</span></div>
-					<div class="phase">{{ phase }}</div>
-				</div>
-			</div>
-			<div style="display: flex; flex-direction: row; gap: 14dp;">
-				<div class="button small autofocus" data-if="building" data-event-click="stop_build()">STOP</div>
-				<div class="button small primary autofocus" data-if="!building &amp;&amp; built &amp;&amp; !stale" data-event-click="play()">PLAY</div>
-				<div class="button small autofocus" data-if="!building" data-event-click="start_build()">{{ built ? 'REBUILD' : 'BUILD' }}</div>
-			</div>
-		</div>
-		<div class="col">
-			<div class="rows steps">
-				<div data-for="s : steps" class="row" data-class-done="s.state == 'done'" data-class-run="s.state == 'run'" data-class-wait="s.state == 'wait'" data-class-fail="s.state == 'fail'">
-					<div class="num">{{ s.num }}</div>
-					<div class="what"><div class="name">{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
-					<div class="right">{{ s.right }}</div>
-				</div>
-			</div>
-			<div class="error" data-if="build_error != ''">{{ build_error }}</div>
-			<div class="log"><div data-for="l : log">{{ l }}</div></div>
-		</div>
+	<div class="actions">
+		<div class="btn autofocus" data-if="building" data-event-click="stop_build()"><div class="fill"></div><span>Stop</span></div>
+		<div class="btn primary autofocus" data-if="!building &amp;&amp; built &amp;&amp; !stale" data-event-click="play()"><div class="fill"></div><span>Play</span></div>
+		<div class="btn autofocus" data-if="!building" data-event-click="start_build()"><div class="fill"></div><span>{{ built ? 'Rebuild' : 'Build' }}</span></div>
+		<div class="btn" data-event-click="toggle_log()"><div class="fill"></div><span>{{ show_log ? 'Hide log' : 'Show log' }}</span></div>
 	</div>
-	<div class="footer">
-		<div>You can close the window; the build picks up where it stopped.</div>
-		<div class="spacer"></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
+	<div class="logbox" data-if="show_log">
+		<div class="error" data-if="build_error != ''">{{ build_error }}</div>
+		<div data-for="l : log">{{ l }}</div>
+	</div>
+	<div class="band">{{ build_line }}</div>
+	<div class="foot">
+		<div class="grow"></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
 <!-- ======================================================================= mods -->
-<div class="screen bg-top" data-if="screen == 'mods'">
-	<div class="header">
-		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
-		<div class="diamond"></div>
-		<h1>MODS</h1>
-		<div class="aside"><div class="button small" data-event-click="open_mods()">OPEN MODS FOLDER</div></div>
+<div class="screen wide" data-if="screen == 'mods'" data-class-leaving="leaving">
+	<div class="ground"></div>
+	<div class="glow"></div>
+	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
-	<div class="body">
-		<div class="col" style="gap: 0;">
-			<div class="rows">
-				<div data-for="m, i : mods" class="row mod">
-					<div class="switch autofocus" data-class-on="m.on" data-event-click="toggle_mod(i)"><div class="knob"></div></div>
-					<div class="what"><div class="name">{{ m.name }}</div><div class="note">{{ m.note }}</div></div>
-					<div class="tag">{{ m.kind }}</div>
-				</div>
+	<div class="stripe"><img src="img/stripe.bmp"/></div>
+	<div class="rule r1"></div><div class="rule r2"></div>
+	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Mods</span></div>
+	<div class="lead-block">
+		<h2>Mods</h2>
+		<div class="flourish"></div>
+		<p>Each mod sits in its own folder in the mods folder: code patches (<em>.pchtxt</em>, <em>.ips</em>) or a romfs folder. Turn them on or off here.</p>
+		<p>Data mods apply at the next start. Code mods rebuild from the mods step.</p>
+		<div class="actions">
+			<div class="btn primary" data-if="mods_rebuild" data-event-click="start_build()"><div class="fill"></div><span>Apply and rebuild</span></div>
+			<div class="btn" data-event-click="open_mods()"><div class="fill"></div><span>Open mods folder</span></div>
+		</div>
+	</div>
+	<div class="col">
+		<div class="rows">
+			<div data-for="m, i : mods" class="row">
+				<div class="switch autofocus" data-class-on="m.on" data-event-click="toggle_mod(i)"><div class="knob"></div></div>
+				<div class="what"><div class="name">{{ m.name }}</div><div class="note">{{ m.note }}</div></div>
+				<div class="tag">{{ m.kind }}</div>
 			</div>
-			<div class="empty" data-if="mods.size == 0">No mods yet. Put each one in its own folder in the mods folder: code patches (.pchtxt, .ips) or a romfs folder.</div>
-			<div class="error" data-if="mods_error != ''">{{ mods_error }}</div>
 		</div>
-		<div class="panel">
-			<div class="label">BEFORE YOU PLAY</div>
-			<p class="plain">{{ mods_summary }}</p>
-			<div class="button primary" data-if="mods_rebuild" data-event-click="start_build()">APPLY AND REBUILD</div>
-			<div class="facts"><div>Data mods apply at the next start. Code mods rebuild from the mods step.</div></div>
-		</div>
+		<div class="empty" data-if="mods.size == 0">No mods yet. Put each one in its own folder in the mods folder: code patches (.pchtxt, .ips) or a romfs folder.</div>
+		<div class="error" data-if="mods_error != ''">{{ mods_error }}</div>
 	</div>
-	<div class="footer">
-		<div class="spacer"></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
+	<div class="band">{{ mods_summary }}</div>
+	<div class="foot">
+		<div class="grow"></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
 <!-- ======================================================================= settings -->
-<div class="screen bg-top" data-if="screen == 'settings'">
-	<div class="header">
-		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
-		<div class="diamond"></div>
-		<h1>SETTINGS</h1>
+<div class="screen wide" data-if="screen == 'settings'" data-class-leaving="leaving">
+	<div class="ground"></div>
+	<div class="glow"></div>
+	<div class="wedge"></div>
+	<div class="wheel dark">
+		<img class="ring1" src="img/wheel-dark-ring1.bmp?a=85"/>
+		<img class="ring2" src="img/wheel-dark-ring2.bmp?a=85"/>
+		<img class="base" src="img/wheel-dark-base.bmp?a=85"/>
+		<img class="gear1" src="img/wheel-dark-gear1.bmp?a=85"/>
+		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
+		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
+		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
+		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
-	<div class="body">
-		<div class="col" style="gap: 0;">
-			<div class="rows">
-				<div data-for="s, i : settings" class="row setting autofocus" data-attr-index="i">
-					<div class="what"><div class="name">{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
-					<div class="chooser">
-						<div class="arrow" data-event-click="setting(i, -1)">&lt;</div>
-						<div class="value">{{ s.value }}</div>
-						<div class="arrow" data-event-click="setting(i, 1)">&gt;</div>
-					</div>
-				</div>
-			</div>
-			<div class="row texrow">
-				<div class="what"><div class="name">Converted textures</div><div class="note">{{ tex_note }}</div></div>
-				<div class="button small" data-if="tex_action != ''" data-event-click="convert_textures()">{{ tex_action }}</div>
-				<div class="button small quiet" data-if="tex_remove" data-event-click="remove_textures()">REMOVE</div>
-			</div>
-			<div class="note-line">Saved to the config folder as you change them. The same options are in the game while you play (F1).</div>
-		</div>
+	<div class="stripe"><img src="img/stripe.bmp"/></div>
+	<div class="rule r1"></div><div class="rule r2"></div>
+	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Settings</span></div>
+	<div class="lead-block">
+		<h2>Settings</h2>
+		<div class="flourish"></div>
+		<p>The same rows as the game's PC Settings panel (F1, or Start + Select), saved to the config folder as you change them.</p>
+		<p data-if="tab == 0">The window, the display and the frame rate.</p>
+		<p data-if="tab == 1">What the game draws and how sharply.</p>
+		<p data-if="tab == 2">Prompts and menu buttons. Every button of gameplay is rebound in the game's panel, under Controls.</p>
+		<p data-if="tab == 1">{{ tex_note }}</p>
 	</div>
-	<div class="footer">
-		<div class="spacer"></div>
-		<div class="hint"><div class="key wide">&lt; &gt;</div><span>Change</span></div>
-		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
+	<div class="tabs">
+		<img class="gl" data-attr-src="glyph_tab_l" data-event-click="tab(tab - 1)"/>
+		<div class="tab" data-class-on="tab == 0" data-event-click="tab(0)"><div>Display</div></div>
+		<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
+		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
+		<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
+	</div>
+	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(620 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * i) + 's cubic-out stair-in-r' + tab">
+		<div class="fill"></div><div class="chev">»</div>
+		<div class="k"><div>{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
+		<span class="v"><span class="arrow" data-event-click="setting(s.index, -1)">‹</span><span class="value" data-style-animation="s.bump">{{ s.value }}</span><span class="arrow" data-event-click="setting(s.index, 1)">›</span></span>
+	</div>
+	<div class="srow" data-if="tab == 1" data-style-left="(620 + 26 * settings.size) + 'dp'" data-style-top="(110 + 56 * settings.size) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * settings.size) + 's cubic-out stair-in-r' + tab">
+		<div class="fill"></div>
+		<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_remove ? 'In use' : 'Not available' }}</div></div>
+		<span class="v">
+			<div class="btn light" data-if="tex_action != ''" data-event-click="convert_textures()"><div class="fill"></div><span>{{ tex_action }}</span></div>
+			<div class="btn light" data-if="tex_remove" data-event-click="remove_textures()"><div class="fill"></div><span>Remove</span></div>
+		</span>
+	</div>
+	<div class="band">Changes are saved as you make them.</div>
+	<div class="foot">
+		<div class="grow"></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 

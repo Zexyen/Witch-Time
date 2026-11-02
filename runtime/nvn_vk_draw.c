@@ -23,7 +23,7 @@ static int have_targets_live(void);
     X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetLineWidth) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) \
     X(vkCmdSetPrimitiveTopology) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
     X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) \
-    X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) \
+    X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) \
     X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetQueryPoolResults) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkResetQueryPool) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) X(vkDestroyPipelineCache) X(vkCmdCopyBuffer) \
     X(vkCreateDescriptorUpdateTemplate) X(vkUpdateDescriptorSetWithTemplate) X(vkDestroyDescriptorUpdateTemplate)
 #define X(n) static PFN_##n n;
@@ -4367,41 +4367,9 @@ static int g_isem;
  *     the bar growing (jobs done of jobs queued when the hold began), so the screen is not a still picture;
  *   - while the container store is read from data.arc (first start) and while the preparation runs: a thinner bar on every
  *     presented frame, NOT near a fight.
- * SSBU_VK_PROGRESS=0 turns it off. The image: 8x8, two layers (bar colour, track colour), cleared once; drawn by two blits. */
-static struct { VkImage img; VMem mem; int made, on; float frac; int thick; void *bar_arg; int screen; char text[4][48]; } g_ovl = {.on = -1};
-/* Session 14: text of the first-run preparation screen. A built-in 5x7 dot font (digits, capitals, % / : . -), each lit dot
- * one blit of the overlay's light layer; no game asset. */
-static void ovl_text(VkImage dst, int x, int y, int dot, const char *s) {
-    static const char k_ch[] = "0123456789%/:.-ABCDEFGHIKLMNOPRSTUVWXY";
-    static const uint8_t k_gl[][7] = {
-        {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}, {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}, {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}, {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}, {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},
-        {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}, {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}, {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},
-        {0x18,0x19,0x02,0x04,0x08,0x13,0x03}, {0x01,0x01,0x02,0x04,0x08,0x10,0x10}, {0x00,0x0C,0x0C,0x00,0x0C,0x0C,0x00}, {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C}, {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
-        {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}, {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}, {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}, {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}, {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
-        {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}, {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F}, {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}, {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E}, {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
-        {0x10,0x10,0x10,0x10,0x10,0x10,0x1F}, {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}, {0x11,0x19,0x15,0x13,0x11,0x11,0x11}, {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}, {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
-        {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}, {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E}, {0x1F,0x04,0x04,0x04,0x04,0x04,0x04}, {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}, {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
-        {0x11,0x11,0x11,0x15,0x15,0x15,0x0A}, {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}, {0x11,0x11,0x11,0x0A,0x04,0x04,0x04}};
-    int W = (int)V.extent.width, H = (int)V.extent.height;
-    for (; *s; s++, x += 6 * dot) {
-        const char *q = strchr(k_ch, *s);
-        if (!q || *s == ' ') continue;
-        const uint8_t *g = k_gl[q - k_ch];
-        for (int r = 0; r < 7; r++) for (int c = 0; c < 5; c++) {
-            if (!(g[r] >> (4 - c) & 1)) continue;
-            int run = 1;
-            while (c + run < 5 && (g[r] >> (4 - c - run) & 1)) run++;      /* one blit per run of lit dots */
-            VkImageBlit b;
-            memset(&b, 0, sizeof b);
-            b.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.srcSubresource.layerCount = 1; b.dstSubresource = b.srcSubresource;
-            b.srcOffsets[1].x = 8; b.srcOffsets[1].y = 8; b.srcOffsets[1].z = 1;
-            b.dstOffsets[0].x = x + c * dot; b.dstOffsets[0].y = y + r * dot; b.dstOffsets[1].x = x + (c + run) * dot; b.dstOffsets[1].y = y + (r + 1) * dot; b.dstOffsets[1].z = 1;
-            if (b.dstOffsets[0].x >= 0 && b.dstOffsets[0].y >= 0 && b.dstOffsets[1].x <= W && b.dstOffsets[1].y <= H)
-                vkCmdBlitImage(R.cmd, g_ovl.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
-            c += run - 1;
-        }
-    }
-}
+ * SSBU_VK_PROGRESS=0 turns it off. The image: 8x8, two layers (bar colour, track colour), cleared once; drawn by two blits.
+ * The first-start screen (screen = 1) is pcmenu.c's draw_prep, copied over the frame by pcm_vk_draw: nothing is drawn here. */
+static struct { VkImage img; VMem mem; int made, on; float frac; int thick; void *bar_arg; int screen; } g_ovl = {.on = -1};
 static void xfer_wait(void) {                  /* a transfer write before another into the same pixels (sync validation: WRITE_AFTER_WRITE) */
     VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -4410,6 +4378,7 @@ static void xfer_wait(void) {                  /* a transfer write before anothe
 static void overlay_draw(VkImage dst) {                /* dst: the swapchain image, or in HDR the 8-bit picture (finding 147) */
     if (g_ovl.on < 0) g_ovl.on = !(getenv("SSBU_VK_PROGRESS") && !atoi(getenv("SSBU_VK_PROGRESS")));
     if ((!g_ovl.on && !g_ovl.screen) || g_ovl.thick <= 0) return;
+    if (g_ovl.screen) return;                                  /* the first-start screen, bar included, is the panel (pcm_vk_draw) */
     if (g_ovl.thick < 8) g_ovl_frames++;
     VkImageSubresourceRange sr2 = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (!g_ovl.made) {
@@ -4446,10 +4415,6 @@ static void overlay_draw(VkImage dst) {                /* dst: the swapchain ima
         b.srcOffsets[1].x = 8; b.srcOffsets[1].y = 8; b.srcOffsets[1].z = 1;
         b.dstOffsets[0].x = pass ? x0 : x0 - 2; b.dstOffsets[0].y = pass ? y0 : y0 - 2; b.dstOffsets[1].x = pass ? xe : x1 + 2; b.dstOffsets[1].y = pass ? y1 : y1 + 2; b.dstOffsets[1].z = 1;
         vkCmdBlitImage(R.cmd, g_ovl.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
-    }
-    if (g_ovl.screen) { xfer_wait();                           /* session 14: the first-run preparation screen: four lines of text over the bar */
-        int dot = H / 180 > 1 ? H / 180 : 2;
-        for (int i = 0; i < 4; i++) if (g_ovl.text[i][0]) { int d = i ? dot : dot * 2; ovl_text(dst, (W - (int)strlen(g_ovl.text[i]) * 6 * d) / 2, H / 4 + i * dot * 22, d, g_ovl.text[i]); }
     }
 }
 
@@ -4719,7 +4684,9 @@ static void hdr_pass(uint32_t index, VkImage pic) {
     image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 static void vk_present2(void *arg, int progress);
-static PresentJob g_pcm_last; static void pcm_vk_draw(VkImage tgt); static void pcm_vk_free(void);      /* [witchtime] the PC menu (nvn_vk_pcmenu.c) */
+static PresentJob g_pcm_last; static void pcm_vk_draw(VkImage tgt); static void pcm_vk_free(void); static void pcm_upload(int wait);      /* [witchtime] the PC menu (nvn_vk_pcmenu.c) */
+void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info);      /* pcmenu.c: the first-start screen */
+void pcmenu_prep_hide(void);
 /* Session 14: THE KEPT PRESENT. vk_present2 has blitted and submitted the frame; when display.c says the frame is to be shown
  * at the next tick, vkQueuePresentKHR is not called there: what it needs is kept here and the vsync thread posts
  * nvn_vk_present_flush_job at the tick (render thread, between two other jobs). An out-of-date swapchain found here is
@@ -4770,6 +4737,8 @@ static void prep_first_hold(LONG64 frame) {
     printf("nvn_vk_prep: FIRST-RUN PREPARATION: no marker %s for this GPU, driver and version (first start here, a new driver, or new game data): the game is held at its first frame (%lld) until every shader is prepared; %d workers at normal priority\n", g_prep_marker, (long long)frame, g_pw_nthread);
     fflush(stdout);
     g_ovl.screen = 1;
+    char info[96];
+    snprintf(info, sizeof info, "Vulkan  \xC2\xB7  %s  \xC2\xB7  %s", V.props.deviceName, D.drv.driverName);
     for (;;) {
         int st = g_prep_state;
         if (st == 2 || st == 3) break;
@@ -4783,17 +4752,15 @@ static void prep_first_hold(LONG64 frame) {
         else f = 0.10 + 0.90 * (qd > 0 ? (double)dn / (double)(qd + left_files * 90) : 0.0);
         if (f > 0.999) f = 0.999;
         int pct = (int)(f * 100.0), eta = f > 0.03 && el > 3 ? (int)(el * (1.0 - f) / f) : -1;
-        snprintf(g_ovl.text[0], sizeof g_ovl.text[0], "PREPARING SHADERS %d %%", pct);
-        if (st == 5 || !g_prep_nfiles) snprintf(g_ovl.text[1], sizeof g_ovl.text[1], "READING THE GAME DATA");
-        else snprintf(g_ovl.text[1], sizeof g_ovl.text[1], "%lld / %lld", (long long)dn, (long long)(qd + left_files * 90));
-        if (eta >= 0) snprintf(g_ovl.text[2], sizeof g_ovl.text[2], "ABOUT %d:%02d LEFT", eta / 60, eta % 60); else snprintf(g_ovl.text[2], sizeof g_ovl.text[2], "TIME LEFT: ...");
-        snprintf(g_ovl.text[3], sizeof g_ovl.text[3], "FIRST START ONLY");
+        pcmenu_prep_show(pct, (long long)dn, (long long)(qd + left_files * 90), eta, st == 5 || !g_prep_nfiles, info);
+        pcm_upload(1);                                 /* its pixels into the staging buffer (render thread, as here) */
         present_progress((float)f);
         if (tk() - tlog > 10 * fq.QuadPart) { tlog = tk(); printf("nvn_vk_prep: first-run screen: %d %%, %lld of about %lld stages, %.0f s so far, about %d s left\n", pct, (long long)dn, (long long)(qd + left_files * 90), el, eta); fflush(stdout); }
         Sleep(100);
     }
     g_prep_urgent = 0;
     g_ovl.screen = 0;
+    pcmenu_prep_hide();
     double el = (double)(tk() - t0) / (double)fq.QuadPart;
     if (stopped) printf("nvn_vk_prep: FIRST-RUN PREPARATION STOPPED after %.1f s (the window was closed): the pipeline cache is saved on the exit path, no marker: the next start goes on from the stage records and the cache\n", el);
     else {

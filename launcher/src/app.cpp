@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -60,25 +61,35 @@ const char* phase_of(const std::string& step)
 struct SettingDef {
 	const char *key, *name, *note;
 	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
+	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls
+	const char *dflt = nullptr;                                 // the reader's value when the key is not in the file; else the first option
 	const char *file = "/graphics.ini", *section = "";
 };
+// The rows, names and values of the game's own PC settings panel (runtime/pcmenu.c), in its order, so the two read alike.
 const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
-		{"resolution_scale", "Internal resolution", "Takes effect at the next start",
-			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"},
-				{"0.4", "0.4× · 360p"}, {"0.6", "0.6× · 540p"}, {"0.8", "0.8× · 720p"}}},   // after 2.4: the first option is the default, and left from 1.0 goes down
-		{"cutscene_fps", "Cutscene frame rate", "Menus and cutscenes; movies keep their own", {{"30", "30"}, {"60", "60"}}},
-		{"window", "Display mode", "How the game uses the window", {{"windowed", "Window"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}},
-		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
-		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at an angle", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}},
-		{"aspect", "Aspect", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}},
+		{"window", "Display mode", "Windowed, or the monitor the window is on", {{"windowed", "Windowed"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}, 0},
+		{"size", "Window size", "The window in windowed mode",
+			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0, "1920x1080"},
+		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
+			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
+		{"cutscene_fps", "Cutscene frame rate", "Title, menus and cutscenes; movies keep theirs", {{"30", "30 fps"}, {"60", "60 fps"}}, 0},
+		{"frame_rate", "Frame rate (experimental)", "Above 60 some effects may run fast; next start", {{"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
+		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
+			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
+			1, "1.0"},
+		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}, 1},
+		{"texture_lod_bias", "Texture detail", "Below 0 sharper in the distance, above 0 blurrier",
+			{{"-1", "–1"}, {"-0.5", "–0.5"}, {"0", "0 — game"}, {"0.5", "+0.5"}, {"1", "+1"}}, 1, "0"},
+		{"aspect", "Aspect ratio", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
-			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, "/controllers.ini", "general"},
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Menus confirm with B, back with A; gameplay stays", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
+const char* default_value(const SettingDef& d) { return d.dflt ? d.dflt : d.options.front().first; }
 bool same_value(const std::string& a, const std::string& b)
 {
 	char *ea = nullptr, *eb = nullptr;
@@ -138,6 +149,8 @@ bool App::init(int argc, char** argv)
 	refresh_title();
 	refresh_build();
 	update::check(paths);
+	if (const char* t = std::getenv("WITCHTIME_TAB"))       // test aid: the settings' section
+		tab = std::atoi(t) % 3;
 	if (const char* s = std::getenv("WITCHTIME_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -176,7 +189,7 @@ bool App::create_window()
 bool App::create_ui()
 {
 	render = std::make_unique<UiRender>(gpu, window);
-	system = std::make_unique<SystemInterface_SDL>(window);
+	system = std::make_unique<SlowSystem>(window);
 	Rml::SetSystemInterface(system.get());
 	Rml::SetRenderInterface(render.get());
 	Rml::SetTextInputHandler(&ime);
@@ -184,13 +197,9 @@ bool App::create_ui()
 	// by file, with the family named here: the files of one family do not all carry the same family name
 	struct Font { const char *file, *family; Rml::Style::FontStyle style; int weight; };
 	const Font fonts[] = {
-		{"Cinzel-Medium.ttf", "Cinzel", Rml::Style::FontStyle::Normal, 500},
-		{"Cinzel-SemiBold.ttf", "Cinzel", Rml::Style::FontStyle::Normal, 600},
-		{"CormorantGaramond-Medium.ttf", "Cormorant Garamond", Rml::Style::FontStyle::Normal, 500},
-		{"CormorantGaramond-MediumItalic.ttf", "Cormorant Garamond", Rml::Style::FontStyle::Italic, 500},
-		{"BarlowSemiCondensed-Regular.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 400},
-		{"BarlowSemiCondensed-Medium.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 500},
-		{"BarlowSemiCondensed-SemiBold.ttf", "Barlow Semi Condensed", Rml::Style::FontStyle::Normal, 600},
+		{"Marcellus-Regular.ttf", "Marcellus", Rml::Style::FontStyle::Normal, 400},
+		{"SourceSans3-Regular.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 400},
+		{"SourceSans3-SemiBold.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 600},
 	};
 	for (const Font& f : fonts)
 	{
@@ -248,19 +257,30 @@ void App::bind_model()
 		h.RegisterMember("kind", &ModRow::kind);
 		h.RegisterMember("on", &ModRow::on);
 	}
+	if (auto h = c.RegisterStruct<MenuRow>())
+	{
+		h.RegisterMember("label", &MenuRow::label);
+		h.RegisterMember("tag", &MenuRow::tag);
+		h.RegisterMember("dim", &MenuRow::dim);
+	}
 	if (auto h = c.RegisterStruct<SettingRow>())
 	{
 		h.RegisterMember("name", &SettingRow::name);
 		h.RegisterMember("note", &SettingRow::note);
 		h.RegisterMember("value", &SettingRow::value);
+		h.RegisterMember("index", &SettingRow::index);
+		h.RegisterMember("bump", &SettingRow::bump);
 	}
 	c.RegisterArray<std::vector<CheckRow>>();
 	c.RegisterArray<std::vector<StepRow>>();
 	c.RegisterArray<std::vector<ModRow>>();
 	c.RegisterArray<std::vector<SettingRow>>();
+	c.RegisterArray<std::vector<MenuRow>>();
 	c.RegisterArray<std::vector<Rml::String>>();
 	c.Bind("screen", &screen);
 	c.Bind("built", &built);
+	c.Bind("menu", &menu);
+	c.Bind("version", &version);
 	c.Bind("stale", &stale);
 	c.Bind("hour_deg", &hour_deg);
 	c.Bind("minute_deg", &minute_deg);
@@ -281,6 +301,8 @@ void App::bind_model()
 	c.Bind("percent", &percent);
 	c.Bind("phase", &phase);
 	c.Bind("build_aside", &build_aside);
+	c.Bind("build_line", &build_line);
+	c.Bind("show_log", &show_log);
 	c.Bind("build_error", &build_error);
 	c.Bind("steps", &steps);
 	c.Bind("log", &log);
@@ -289,23 +311,47 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
+	c.Bind("tab", &tab);
+	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_remove", &tex_remove);
 	// footer hints: by the label on the button, as confirm and back in handle() go
-	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter" : prompts == 2 ? "gen:glyph?n=cross" : "gen:glyph?n=a"); });
-	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc" : prompts == 2 ? "gen:glyph?n=circle" : "gen:glyph?n=b"); });
+	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
+	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=26222f" : prompts == 2 ? "gen:glyph?n=circle&c=26222f" : "gen:glyph?n=b&c=26222f"); });
+	// the settings' sections (Q / E, the shoulder buttons) and a row's value (the arrow keys, the d-pad)
+	c.BindFunc("glyph_tab_l", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=Q&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=L&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=L1&c=26222f" : "gen:glyph?n=bumper&t=LB&c=26222f"); });
+	c.BindFunc("glyph_tab_r", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=E&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=R&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=R1&c=26222f" : "gen:glyph?n=bumper&t=RB&c=26222f"); });
+	c.BindFunc("glyph_change", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=arrows&c=26222f" : "gen:glyph?n=dpad&c=26222f"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
 			go(a[0].Get<Rml::String>());
 	});
 	c.BindEventCallback("play", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { want_play = true; });
+	c.BindEventCallback("menu", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
+		const int i = arg_int(a, 0);
+		if (i < 0 || i >= int(menu.size()))
+			return;
+		const std::string act = menu[size_t(i)].action;
+		if (act == "play")
+			want_play = true;
+		else if (act == "update")
+		{
+			if (!runner.running())
+				update::start(paths);
+		}
+		else if (act == "quit")
+			running = false;
+		else
+			go(act);
+	});
 	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		if (!runner.running())
 			update::start(paths);
 	});
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
+	c.BindEventCallback("tab", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) { set_tab(arg_int(a, 0)); });
 	c.BindEventCallback("convert_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { convert_textures(); });
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
@@ -323,6 +369,10 @@ void App::bind_model()
 	});
 	c.BindEventCallback("start_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { start_build(); });
 	c.BindEventCallback("stop_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { runner.stop(); });
+	c.BindEventCallback("toggle_log", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		show_log = !show_log;
+		model.DirtyVariable("show_log");
+	});
 	c.BindEventCallback("open_mods", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		SetupState st = SetupState::read(paths.build);
 		std::string dir = st.mods_dir.empty() ? paths.mods : st.mods_dir;
@@ -389,7 +439,7 @@ void App::draw()
 	}
 	SDL_GPUColorTargetInfo clear{};
 	clear.texture = target;
-	clear.clear_color = {10 / 255.f, 6 / 255.f, 16 / 255.f, 1};
+	clear.clear_color = {238 / 255.f, 237 / 255.f, 242 / 255.f, 1};   // pearl, the screens' ground
 	clear.load_op = SDL_GPU_LOADOP_CLEAR;
 	clear.store_op = SDL_GPU_STOREOP_STORE;
 	SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr));
@@ -442,8 +492,8 @@ void App::prompts_use(int family)
 	prompts = family;
 	if (model)
 	{
-		model.DirtyVariable("glyph_ok");
-		model.DirtyVariable("glyph_back");
+		for (const char* g : {"glyph_ok", "glyph_back", "glyph_tab_l", "glyph_tab_r", "glyph_change"})
+			model.DirtyVariable(g);
 	}
 }
 
@@ -496,6 +546,10 @@ void App::handle(SDL_Event& ev)
 			key(KI_LEFT);
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
 			key(KI_RIGHT);
+		else if (button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)
+			key(KI_Q);
+		else if (button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)
+			key(KI_E);
 		return;
 	}
 	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
@@ -534,6 +588,11 @@ bool App::key(Rml::Input::KeyIdentifier k)
 		focus->Click();
 		return true;
 	}
+	if ((k == KI_Q || k == KI_E) && screen == "settings" && !editing)
+	{
+		set_tab(tab + (k == KI_Q ? -1 : 1));
+		return true;
+	}
 	if ((k == KI_LEFT || k == KI_RIGHT) && focus && focus->IsClassSet("setting"))
 	{
 		step_setting(std::atoi(focus->GetAttribute<Rml::String>("index", "0").c_str()), k == KI_LEFT ? -1 : 1);
@@ -567,6 +626,18 @@ void App::back()
 // ---------------------------------------------------------------------------------------------------- screens
 void App::go(const Rml::String& to)
 {
+	if (to != screen && !screen.empty() && !std::getenv("WITCHTIME_SCREEN"))
+	{                                      // the screen on show leaves first (its animations); tick() opens the next one
+		next_screen = to;
+		if (!leaving) { leaving = true; leave_at = system->GetElapsedTime(); model.DirtyVariable("leaving"); }
+		return;
+	}
+	go_now(to);
+}
+void App::go_now(const Rml::String& to)
+{
+	leaving = false;
+	model.DirtyVariable("leaving");
 	screen = to;
 	if (to == "title")
 		refresh_title();
@@ -592,6 +663,16 @@ void App::refresh_title()
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
 	update_tag = us == update::State::available || us == update::State::failed ? tag : "";
+	// the message band: one sentence on where things stand
+	std::string when_built;
+	if (built)
+	{
+		struct stat st;
+		char when[64] = "";
+		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
+			std::strftime(when, sizeof when, "%e %b", std::localtime(&st.st_mtime));
+		when_built = when[0] == ' ' ? when + 1 : when;
+	}
 	if (us == update::State::working)
 	{
 		status_title = "UPDATING";
@@ -606,32 +687,57 @@ void App::refresh_title()
 	else if (stale)
 	{
 		status_title = "UPDATED";
-		status_line = "Now " WT_VERSION ". Rebuild before you play";
+		status_line = "Now " WT_VERSION ". Rebuild before you play.";
 	}
 	else if (returned_code > 0)
 	{
 		status_bad = true;
 		status_title = "THE GAME STOPPED";
-		status_line = "Exit code " + std::to_string(returned_code) + ". Its log is in build/run.";
+		status_line = "The game stopped with exit code " + std::to_string(returned_code) + ". Its log is in build/run.";
 	}
 	else if (built)
 	{
-		struct stat st;
-		char when[64] = "";
-		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
-			std::strftime(when, sizeof when, "%e %b, %H:%M", std::localtime(&st.st_mtime));
-		std::string scale = ini_get(paths.config + "/graphics.ini", "", "resolution_scale", "1.0");
 		status_title = returned_code == 0 ? "WELCOME BACK" : "READY";
-		status_line = std::string("Built ") + (when[0] == ' ' ? when + 1 : when) + " · " + scale + "× internal";
+		status_line = returned_code == 0 ? "Welcome back." : "Ready to play.";
 	}
 	else
 	{
 		status_title = "NOT BUILT YET";
-		status_line = "Set up the build to play";
+		status_line = "Set up the build to play.";
 	}
 	const char* driver = gpu ? SDL_GetGPUDeviceDriver(gpu) : nullptr;
+	int mods_on = 0;
+	const SetupState st = SetupState::read(paths.build);
+	std::string mods_err;
+	for (const ModEntry& m : list_mods(paths, st.mods_dir.empty() ? paths.mods : st.mods_dir, mods_err))
+		mods_on += m.on;
 	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
+	if (built)
+	{
+		footer_info += " · Built " + when_built + " from your dump";
+		if (mods_on)
+			footer_info += ", " + std::to_string(mods_on) + (mods_on == 1 ? " mod on" : " mods on");
+	}
+	if (!update_tag.empty() && us == update::State::available)
+		footer_info += " · Update " + update_tag + " available";
+	version = WT_VERSION;
+	// the staircase of bars
+	menu.clear();
+	if (built)
+		menu.push_back({"Play", "", "play", false});
+	else
+		menu.push_back({"Set up", "", "setup", false});
+	if (!update_tag.empty() && us != update::State::working)
+		menu.push_back({"Update", update_tag, "update", false});
+	menu.push_back({"Mods", "", "mods", false});
+	menu.push_back({"Settings", "", "settings", false});
+	if (built)
+	{
+		menu.push_back({"Rebuild", "", "build", false});
+		menu.push_back({"Change dump", "", "setup", false});
+	}
+	menu.push_back({"Quit", "", "quit", true});
 	model.DirtyVariable("built");
 	model.DirtyVariable("stale");
 	model.DirtyVariable("status_bad");
@@ -639,6 +745,8 @@ void App::refresh_title()
 	model.DirtyVariable("status_line");
 	model.DirtyVariable("footer_info");
 	model.DirtyVariable("update_tag");
+	model.DirtyVariable("menu");
+	model.DirtyVariable("version");
 }
 
 void App::refresh_build()
@@ -649,11 +757,12 @@ void App::refresh_build()
 		progress = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
 		percent = int(progress * 100 + .5f);
 		phase = "converting textures";
-		build_aside = "Archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
+		build_aside = "archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " · " + minutes(now_seconds() - runner.started_at) + " so far";
+		build_line = "Converting textures. Close the window any time; it resumes.";
 		log.clear();
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "log"})
+		for (const char* v : {"progress", "percent", "building", "phase", "build_aside", "build_line", "log"})
 			model.DirtyVariable(v);
 		return;
 	}
@@ -711,14 +820,33 @@ void App::refresh_build()
 			r.right = run ? "Next" : "";
 		steps.push_back(r);
 	}
+	if (const char* d = std::getenv("WITCHTIME_BUILD_DEMO"))     // test aid: the first n stages done, the next running
+	{
+		const int n = std::atoi(d);
+		for (int i = 0; i < int(steps.size()); i++)
+			steps[i].state = i < n ? "done" : i == n ? "run" : "wait";
+		progress = std::clamp(float(n) / float(steps.size()) + 0.1f, 0.f, 1.f);
+		percent = int(progress * 100 + .5f);
+	}
 	building = run;
 	phase = run ? phase_of(runner.current) : complete ? "ready" : !runner.failed.empty() ? "stopped" : progress > 0 ? "paused" : "not started";
-	build_aside = run ? "Step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : "";
+	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
+	if (run)
+	{
+		std::string doing = phase_of(runner.current);
+		doing[0] = char(std::toupper(static_cast<unsigned char>(doing[0])));
+		if (runner.current == "compile" && runner.to_compile > 0)
+			doing += " " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " files";
+		build_line = doing + ". Close the window any time; it resumes.";
+	}
+	else
+		build_line = complete ? "Built from your dump. Ready to play." : !runner.failed.empty() ? "The build stopped. Show the log to see why, then build again." :
+			progress > 0 ? "Paused part way. Build to go on from where it stopped." : "Not built yet.";
 	log.clear();
 	if (job == Job::build || !runner.lines.empty())
 		for (size_t i = runner.lines.size() > 6 ? runner.lines.size() - 6 : 0; i < runner.lines.size(); i++)
 			log.push_back(runner.lines[i]);
-	for (const char* v : {"progress", "percent", "steps", "building", "phase", "build_aside", "log", "build_error"})
+	for (const char* v : {"progress", "percent", "steps", "building", "phase", "build_aside", "build_line", "log", "build_error"})
 		model.DirtyVariable(v);
 }
 
@@ -758,13 +886,20 @@ void App::toggle_mod(int index)
 void App::refresh_settings()
 {
 	settings.clear();
-	for (const SettingDef& d : setting_defs())
+	const auto& defs = setting_defs();
+	for (size_t n = 0; n < defs.size(); n++)
 	{
-		std::string v = ini_get(paths.config + d.file, d.section, d.key, d.options.front().first);
+		const SettingDef& d = defs[n];
+		if (d.tab != tab)
+			continue;
+		std::string v = ini_get(paths.config + d.file, d.section, d.key, default_value(d));
 		int i = option_index(d, v);
-		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v});
+		const int b = n < 64 ? bump_count[n] : 0;   // the value nudges the way it went; two names a direction, so a second change the same way starts it again
+		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
+			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
 	model.DirtyVariable("settings");
+	model.DirtyVariable("tab");
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;
@@ -789,6 +924,13 @@ void App::refresh_settings()
 		model.DirtyVariable(v);
 }
 
+void App::set_tab(int t)
+{
+	tab = (t + 3) % 3;
+	refresh_settings();
+	want_focus = true;
+}
+
 void App::step_setting(int index, int dir)
 {
 	const auto& defs = setting_defs();
@@ -796,10 +938,12 @@ void App::step_setting(int index, int dir)
 		return;
 	const SettingDef& d = defs[size_t(index)];
 	const std::string ini = paths.config + d.file;
-	int i = option_index(d, ini_get(ini, d.section, d.key, d.options.front().first));
+	int i = option_index(d, ini_get(ini, d.section, d.key, default_value(d)));
 	int n = int(d.options.size());
 	i = i < 0 ? 0 : (i + dir + n) % n;
 	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
+	if (index < 64)                        // the value nudges the way it went (the row's animation name changes with each count)
+		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
 	refresh_settings();
 	prompts_read();
 }
@@ -908,6 +1052,8 @@ void App::tick_clock()
 void App::tick()
 {
 	tick_clock();
+	if (leaving && system->GetElapsedTime() - leave_at >= 0.22)
+		go_now(next_screen);
 	{
 		std::lock_guard<std::mutex> lock(picked_mutex);
 		if (picked)
@@ -952,18 +1098,16 @@ void App::tick()
 			dump_modified = true;
 			model.DirtyVariable("dump_modified");
 		}
-		if (checks.size() > 8)
-			checks.erase(checks.begin(), checks.end() - 8);
+		// the screen shows one line: what runs now, "Version verified", or why it failed (the log keeps the rest)
 		if (runner.running())
-			checks.push_back({phase_of(runner.current.empty() ? "deps" : runner.current), "", "run"});
+			checks = {{phase_of(runner.current.empty() ? "deps" : runner.current), "", "run"}};
 		else
 		{
 			checking = false;
 			verified = std::find(runner.done.begin(), runner.done.end(), "verify") != runner.done.end();
-			if (!runner.failed.empty() && !checks.empty())
-				checks.back().state = "fail";      // the line that says why
-			checks.push_back(verified ? CheckRow{"Your dump is the version this port supports", "Matches", "done"}
-									  : CheckRow{"The dump did not pass the checks above", "", "fail"});
+			CheckRow why = checks.empty() ? CheckRow{"The dump did not pass the checks", "", "fail"} : checks.back();
+			why.state = "fail";
+			checks = verified ? std::vector<CheckRow>{{"Version verified", "", "done"}} : std::vector<CheckRow>{why};
 			job = Job::none;
 		}
 		for (const char* v : {"checks", "checking", "verified"})
