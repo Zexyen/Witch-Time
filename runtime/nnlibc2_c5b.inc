@@ -148,7 +148,7 @@ int libc2_stdio_selftest(Ctx *c) {
     /* files on a scratch mount under %TEMP% */
     char base[MAX_PATH], p[MAX_PATH];
     GetTempPathA(MAX_PATH - 64, base);
-    snprintf(base + strlen(base), 64, "ssbu_stdio_selftest_%lu", (unsigned long)GetCurrentProcessId());
+    snprintf(base + strlen(base), 64, "wt_stdio_selftest_%lu", (unsigned long)GetCurrentProcessId());
     CreateDirectoryA(base, NULL);
     STCHECK(fs_mount_plain("c5bstdio", base) == 0, "scratch mount");
     snprintf(p, sizeof p, "%s.work.%lu\\w.txt", base, (unsigned long)GetCurrentProcessId());   /* nnfs.c: changes of a mount live in its working folder until a commit */

@@ -150,12 +150,12 @@ int nvn_sdk_format_known(uint32_t format) {
     return format < SDKA_format_count && (fmt_rec(format)[0] & 1);
 }
 
-/* Self-test (SSBU_SDK_SELFTEST): answers read in our sdk's disassembly, plus a sweep that must not stop anywhere
- * (every method the choosers reach must have been lifted). SSBU_NVN_STORAGE_TABLE=<file> writes the sweep. */
+/* Self-test (WT_SDK_SELFTEST): answers read in our sdk's disassembly, plus a sweep that must not stop anywhere
+ * (every method the choosers reach must have been lifted). WT_NVN_STORAGE_TABLE=<file> writes the sweep. */
 int nvn_sdk_selftest(Ctx *c) {
     int bad = 0, n = 0;
     NvnSdkTexBuilder b;
-    const char *out = getenv("SSBU_NVN_STORAGE_TABLE");
+    const char *out = getenv("WT_NVN_STORAGE_TABLE");
     FILE *f = out && *out ? fopen(out, "w") : NULL;
 #define SET(fl, tg, w_, h_, d_, lv, fm, sm) do { memset(&b, 0, sizeof b); b.flags = (fl); b.target = (tg); b.width = (w_); b.height = (h_); b.depth = (d_); b.levels = (lv); b.format = (fm); b.samples = (sm); } while (0)
 #define WANT(what, got, want) do { uint64_t g_ = (got), w_ = (want); n++; if (g_ != w_) { bad++; printf("  FAIL nvn storage %s: 0x%llx, expected 0x%llx\n", what, (unsigned long long)g_, (unsigned long long)w_); } } while (0)

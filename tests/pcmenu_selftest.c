@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
     mkdir(dir, 0755);
     /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
     spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
-    setenv("SSBU_GRAPHICS_CONFIG", ini, 1);
+    setenv("WT_GRAPHICS_CONFIG", ini, 1);
     assert(gfx_options()->present == 0);                   /* the last vsync line wins: clock */
     assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
     assert(fabsf(gfx_options()->aspect_ratio - 21.0f / 9.0f) < 1e-5f && fabs(atof(getenv("RECOMPS_ASPECT")) - 21.0 / 9.0) < 1e-5);      /* <w>:<h>, handed on */

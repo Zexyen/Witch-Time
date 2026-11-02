@@ -2,10 +2,10 @@
  *
  * The SDK library is a port of Android's stagefright (NuMediaExtractor / MediaCodec); the game's own
  * copy lives in subsdk0, whose exported symbols (movie::NnExtractor, movie::DecoderImpl, movie::NnMediaData,
- * android::FileSource, ...) give the object layouts below.  Legend: [game] read off the game's player code
- * (0x71036e6000-0x71036f9000), [subsdk] read off subsdk0's code and vtables, [doc] public documentation.
+ * android::FileSource, ...) give the object layouts below.  Legend: [game] read off a game's player code (upstream:
+ * Smash's), [subsdk] read off subsdk0's code and vtables, [doc] public documentation.
  *
- * Objects the game allocates (16 bytes each, with f_710392dce0(16, 16)) and drives through a vtable:
+ * Objects the game allocates (16 bytes each, with its own allocator) and drives through a vtable:
  *   movie::Extractor  {vtable, impl*}   [subsdk ctor 0x22eb0]      movie::Decoder {vtable, impl*}  [subsdk 0x20db0]
  * Extractor vtable (object pointer = _ZTV + 0x10, so slot 0 is the first virtual function) [subsdk _ZTVN5movie9ExtractorE]:
  *   +00 ~Extractor   +08 deleting dtor   +10 SetDataSource(const char*)   +18 SetDataSource(const void*, int)
@@ -23,27 +23,27 @@
  *   +80 GetLastError()   +88 GetOutputBuffer(int, Buffer*, MediaData*)   +90 GetOutputBufferFormat(int, MediaData*)
  * Results: 0 = ok; the SDK wrappers return 0x1000 when there is no implementation and 0x100b for bad arguments
  * [subsdk]; the game treats 0x2000 from GetTrackIndexForAvailableData/Read as "end of data" and retries on 0x5003
- * [game 0x71036f0230, 0x71036f6ce0]; any other non-zero result from Read makes it send an end-of-stream input
- * buffer (flags 4) [game 0x71036f6dd8].  Buffer flags follow MediaCodec: 4 = end of stream [game 0x71036f0784].
+ *; any other non-zero result from Read makes it send an end-of-stream input
+ * buffer (flags 4).  Buffer flags follow MediaCodec: 4 = end of stream.
  * DecoderEvents = four pointers to nn::os::EventType: +0 input buffer available, +8 output buffer available,
- * +10 output format changed, +18 error [subsdk DecoderImpl::Send*EventToClient 0x1fec0..0x1ff20; game 0x71036f0590].
- * The game's player [game 0x71036f04c0] waits on those events: input -> AcquireInputBufferIndex (repeated
- * "moreAvailable" times) and hands the index to a feed thread; the feed thread [game 0x71036f6ce0] does
+ * +10 output format changed, +18 error [subsdk DecoderImpl::Send*EventToClient 0x1fec0..0x1ff20].
+ * The game's player waits on those events: input -> AcquireInputBufferIndex (repeated
+ * "moreAvailable" times) and hands the index to a feed thread; the feed thread does
  * GetTrackIndexForAvailableData -> (own track?) GetInputBuffer -> Extractor::Read(Buffer) -> GetSampleTime ->
  * SendInputBufferForDecode(index, Offset(), Size(), time, flags) -> Advance.  Output event -> AcquireOutputBufferIndex,
- * entries {index, timeUs, flags} are queued and the render path [game 0x71036f7410] calls GetOutputBufferFormat(index)
+ * entries {index, timeUs, flags} are queued and the render path calls GetOutputBufferFormat(index)
  * ("width", "height", "nv12-y-stride", "nv12-uv-offset", "nv12-y-offset"), GetOutputFormat ("nv12-colorspace"),
  * GetOutputBuffer(index, Buffer{base = its own texture memory, capacity}) and ReleaseOutputBufferIndex; it uploads
  * the Y plane (w x h at nv12-y-offset) and the UV plane (w/2 x h/2 at nv12-uv-offset).  Format event ->
- * GetOutputFormat ("width", "height").  The game's clock is in microseconds (ConvertToTimeSpan / 1000) [game 0x71036f6ff0].
+ * GetOutputFormat ("width", "height").  The game's clock is in microseconds (ConvertToTimeSpan / 1000).
  * Decoder(type, outputFormat, mode, n): type 1 = H.264 ("video/avc"), 2 = VP8, 3 = VP9, 4 = AAC ("audio/mp4a-latm"),
- * 5 = Vorbis [game 0x71036f19a0 maps the track mime to these values; seen in a run: VP9 track -> type 3]; the game asks output format 4 for video and 1 for audio,
- * mode 1 [game 0x71036f0a0c, 0x71036f0e90]; format 4 is tightly packed NV12 (size w*h + 2*((w+1)/2)*((h+1)/2),
+ * 5 = Vorbis [the game maps the track mime to these values; seen in a run: VP9 track -> type 3]; the game asks output format 4 for video and 1 for audio,
+ * mode 1; format 4 is tightly packed NV12 (size w*h + 2*((w+1)/2)*((h+1)/2),
  * Y rows then interleaved UV rows of w bytes) and 2 is ARGB [subsdk GetOutputBufferSize, ConvertDecoderOutputFormat].
  * Track configuration keys the game reads: "mime", "durationUs", "width", "height", "sample-rate", "channel-count",
- * "max-input-size" (it adds 0x5000 and passes the MediaData to Decoder::Configure) [game 0x71036f19a0, 0x71036f0a68].
- * Container types: 1 = .mp4/.m4a, 2 = .mkv, 3 = .webm [game 0x71036f1d70].  The game selects the tracks it decodes
- * with SelectTrack [game 0x71036e74cc, 0x71036f2f90] and unselects audio it will not decode [game 0x71036f0f20].
+ * "max-input-size" (it adds 0x5000 and passes the MediaData to Decoder::Configure).
+ * Container types: 1 = .mp4/.m4a, 2 = .mkv, 3 = .webm.  The game selects the tracks it decodes
+ * with SelectTrack and unselects audio it will not decode.
  * ClientStreamReader (the object the game passes to SetDataSource; android::FileSource uses it) [subsdk 0x1d90e0..0x1d93a0]:
  *   +10 bool Open(const char *path, void **handle)   +18 int64 ReadAt(void *handle, int64 offset, void *buf, size_t n)
  *   +20 bool Close(void *handle)   +28 int GetSize(void *handle, int64 *size)
@@ -51,7 +51,7 @@
  *   +18 capacity(u64) +20 int64 +28 base +30 nvnDev +38 nvnSync; Buffer(size_t) allocates through movie::SetAllocator's
  *   alloc(size, align, user) and the destructor frees owned memory.
  * movie::MediaData is one pointer to a key/value store [subsdk 0x23d70]; here that is a host structure.
- * movie::SetAllocator(alloc(size, align, user), free(p, user), realloc(p, size, user), user) [game 0x71036e66b4].
+ * movie::SetAllocator(alloc(size, align, user), free(p, user), realloc(p, size, user), user).
  * The opening movie is stream:/movie/... in data.arc: WebM, VP9 1280x720, two Vorbis 48 kHz stereo tracks, 420 s
  * (extracted copy in movie_samples\).  FFmpeg decodes in software, so no codec of the system's and no GPU is needed. A movie
  * that cannot start must not happen: the game gives up on it, and without the opening New Game falls for ever (#68).
@@ -62,9 +62,8 @@
  * sample to the output queue, GetOutputBuffer copies the decoded NV12 / PCM data into the game's buffer and
  * ReleaseOutputBufferIndex frees the slot.
  *
- * Environment: SSBU_MOVIE=0 keeps the failing placeholder (nnmovie.c); SSBU_MOVIE_SAVE=<file> saves what the game's
- * reader returned; SSBU_MOVIE_LOG=1 logs every decoder call; SSBU_MOVIE_TEST_RESYNC=<flag>,<n> makes the game
- * re-synchronise (pause, seek, resume) the movie at the n-th video sample, see dec_SendInputBufferForDecode. */
+ * Environment: WT_MOVIE=0 keeps the failing placeholder (nnmovie.c); WT_MOVIE_SAVE=<file> saves what the game's
+ * reader returned; WT_MOVIE_LOG=1 logs every decoder call. */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -106,14 +105,13 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 #define SLOT_BYTES 64
 #include "image_layout.h"
 #define GAME_FREE (GUEST_BASE + GAME_FREE_OFF)        /* [Recomps#1] our main's exported free, as in libcxx.c */
-/* [witchtime] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new [game 0x7100cd50f0], which free()
+/* [witchtime] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new, which free()
  * does not know ("not a live block" at the end of the opening movie): the deleting destructors release them with operator delete. */
 #define GAME_DELETE (GUEST_BASE + GAME_OPDELETE_OFF)
 #define TOKEN_MAGIC 0x4d4f564945544f4bULL             /* "MOVIETOK" */
 
 /* ---------------------------------------------------------------- small helpers */
-static int g_log;                                     /* SSBU_MOVIE_LOG */
-static int g_test_resync_flag, g_test_resync_at;      /* SSBU_MOVIE_TEST_RESYNC */
+static int g_log;                                     /* WT_MOVIE_LOG */
 static uint64_t g_alloc_fn, g_free_fn, g_alloc_user;  /* movie::SetAllocator */
 
 /* Call a guest function with up to five arguments; the caller's registers are preserved. */
@@ -321,7 +319,7 @@ typedef struct Ext {
  *                             stops consuming input (back-pressure): the sent input stays "in decode".
  * Flush [subsdk 0x1e440] = MediaCodec::flush + both lists emptied, no event: every index the client still holds is
  * void, and nothing is offered until Start (MediaCodec::start after a flush offers all input buffers again).
- * The game's Seek [game 0x71036e7620] does exactly Flush(video), Flush(audio), empties its own index lists,
+ * The game's Seek does exactly Flush(video), Flush(audio), empties its own index lists,
  * Extractor::SeekTo, sleeps 16 ms, empties the lists again, Start(video), Start(audio). */
 #define MAX_IN 16
 #define MAX_OUT 64
@@ -576,12 +574,12 @@ static void src_close(Ext *e) {
  * Returns 0 with a pending sample, or ST_END. Caller holds the lock. */
 static int ext_fill(Ext *e) {
     if (e->have_pending) return ST_OK;
-    {   /* TEST ONLY, SSBU_SKIP_MOVIES=1 (tests\DEBUG_MODE.md): every movie ends at once, as a stream with no samples left */
+    {   /* TEST ONLY, WT_SKIP_MOVIES=1 (tests\DEBUG_MODE.md): every movie ends at once, as a stream with no samples left */
         static int skip = -1;
-        if (skip < 0) { const char *v = getenv("SSBU_SKIP_MOVIES"); skip = v && atoi(v) != 0; }
-        static unsigned long long keep = 0;                /* SSBU_SKIP_MOVIES=<n>: n > 1 lets the first n samples through (default 1 = 12) */
-        if (skip > 0 && !keep) { const char *v = getenv("SSBU_SKIP_MOVIES"); keep = atoi(v) > 1 ? (unsigned long long)atoi(v) : 12; }
-        if (skip && e->samples_read >= keep) { if (!e->eos) printf("movie: SSBU_SKIP_MOVIES: end of stream after %llu samples%c", e->samples_read, 10); e->eos = 1; return ST_END; }
+        if (skip < 0) { const char *v = getenv("WT_SKIP_MOVIES"); skip = v && atoi(v) != 0; }
+        static unsigned long long keep = 0;                /* WT_SKIP_MOVIES=<n>: n > 1 lets the first n samples through (default 1 = 12) */
+        if (skip > 0 && !keep) { const char *v = getenv("WT_SKIP_MOVIES"); keep = atoi(v) > 1 ? (unsigned long long)atoi(v) : 12; }
+        if (skip && e->samples_read >= keep) { if (!e->eos) printf("movie: WT_SKIP_MOVIES: end of stream after %llu samples%c", e->samples_read, 10); e->eos = 1; return ST_END; }
     }
     if (e->eos || !e->rd) return ST_END;
     int best = -1;
@@ -591,9 +589,9 @@ static int ext_fill(Ext *e) {
         for (int guard = 0; !e->ahead[i].have && !tr->eos && guard < 256; guard++) {
             Sample *s = NULL; int64_t us = 0;
             int r = src_read(e, i, &s, &us);              /* [witchtime] FFmpeg (above) */
-            {   /* test: SSBU_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
+            {   /* test: WT_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
                 static int fail_at = -1;
-                if (fail_at < 0) { const char *v = getenv("SSBU_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
+                if (fail_at < 0) { const char *v = getenv("WT_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
                 if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { hs_free(s); s = NULL; } r = -1; }
             }
             if (r < 0) {
@@ -628,13 +626,13 @@ static void ext_dtor_common(Ctx *c, int deleting) {
         free(e);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new */
 }
 static void ext_dtor(Ctx *c) { ext_dtor_common(c, 0); }
 static void ext_deleting_dtor(Ctx *c) { ext_dtor_common(c, 1); }
 
 static int ext_set_source_bytes(Ext *e, unsigned char *data, size_t size) {
-    const char *save = getenv("SSBU_MOVIE_SAVE");
+    const char *save = getenv("WT_MOVIE_SAVE");
     if (save) { FILE *f = fopen(save, "wb"); if (f) { fwrite(data, 1, size, f); fclose(f); printf("movie: saved %zu bytes to %s\n", size, save); } }
     int ok = ext_open_bytes(e, data, size);
     return ok ? ST_OK : ST_FAILED;
@@ -816,7 +814,7 @@ static void ext_GetBufferedRange(Ctx *c) {            /* (int64 *startUs, int64 
 static void dec_lock(Dec *d) { EnterCriticalSection(&d->cs); }
 static void dec_unlock(Dec *d) { LeaveCriticalSection(&d->cs); }
 
-static void dlog(Dec *d, const char *fmt, ...) {      /* SSBU_MOVIE_LOG: one line per call, with thread and time */
+static void dlog(Dec *d, const char *fmt, ...) {      /* WT_MOVIE_LOG: one line per call, with thread and time */
     if (!g_log) return;
     char line[256];
     va_list ap;
@@ -877,7 +875,7 @@ static void dec_dtor_common(Ctx *c, int deleting) {
         free(d);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new */
 }
 static void dec_dtor(Ctx *c) { dec_dtor_common(c, 0); }
 static void dec_deleting_dtor(Ctx *c) { dec_dtor_common(c, 1); }
@@ -940,14 +938,14 @@ static void dec_GetOutputFormat(Ctx *c) { Dec *d = dec_of(A0); MD *m = md_of(A1)
 static void dec_GetOutputBufferFormat(Ctx *c) { Dec *d = dec_of(A0); MD *m = md_of(A2); if (!d || !m) { RET(ST_INVALID); return; } dec_fill_format(d, m); RET(ST_OK); }
 
 /* P3 round 3: which decoders send the "output format" event (DecoderEvents + 0x10). The game's handler thread
- * [game 0x71036f3500] signals the player's "formats known" event (player + 0x498) only when the format event of EVERY
+ * signals the player's "formats known" event (player + 0x498) only when the format event of EVERY
  * decoder it created has arrived (cases 3 and 7 of its switch: flags + 0x4c1 and + 0x4c0), and the playback thread
- * waits for it for 5 s while holding the player's mutex [0x71036f2580]: with the event sent by the video decoder only,
- * every movie start waited the full 5 s and the main thread stood at that mutex [0x71036e7690]. So the real audio
- * decoder sends it as well. SSBU_MOVIE_NO_AUDIO_FORMAT_EVENT=1: video only, as before. */
+ * waits for it for 5 s while holding the player's mutex: with the event sent by the video decoder only,
+ * every movie start waited the full 5 s and the main thread stood at that mutex. So the real audio
+ * decoder sends it as well. WT_MOVIE_NO_AUDIO_FORMAT_EVENT=1: video only, as before. */
 static int fmt_event_wanted(const Dec *d) {
     static int video_only = -1;
-    if (video_only < 0) video_only = getenv("SSBU_MOVIE_NO_AUDIO_FORMAT_EVENT") != NULL;
+    if (video_only < 0) video_only = getenv("WT_MOVIE_NO_AUDIO_FORMAT_EVENT") != NULL;
     return (d->is_video || !video_only) && !d->fmt_signalled;
 }
 static void dec_Start(Ctx *c) {
@@ -1031,7 +1029,7 @@ static void dec_GetInputBuffer(Ctx *c) {              /* (int index, Buffer *out
 
 static void dec_SendInputBufferForDecode(Ctx *c) {    /* (int index, int offset, int size, int64 timeUs, unsigned flags) */
     Dec *d = dec_of(A0);
-    int i = (int)A1, size = (int)A3;                  /* A2 = offset, A3 = size, A4 = timeUs, x5 = flags [game 0x71036f6e2c] */
+    int i = (int)A1, size = (int)A3;                  /* A2 = offset, A3 = size, A4 = timeUs, x5 = flags */
     int64_t ts = (int64_t)A4;
     uint32_t flags = (uint32_t)c->x[5];
     if (!d || i < 0 || i >= d->nin) { RET(ST_INVALID); return; }
@@ -1063,18 +1061,6 @@ static void dec_SendInputBufferForDecode(Ctx *c) {    /* (int index, int offset,
         return;
     }
     d->in_count++;
-    if (g_test_resync_at && d->is_video && d->in_count == (unsigned long long)g_test_resync_at) {
-        /* SSBU_MOVIE_TEST_RESYNC=<flag>,<n>: at the n-th video sample raise the game's own "re-synchronise movies" request
-         * (byte 0x7107446040, set by its system-notification handler f_7103741700: 8 = operation mode changed, 4 / 2 = the
-         * two halves of a focus change); the movie manager [game 0x71036e3984] then pauses, seeks and resumes the player. */
-        uint8_t *req = (uint8_t *)(uintptr_t)0x7107446040ULL;
-#ifdef __MINGW32__
-        __atomic_fetch_or(req, (uint8_t)g_test_resync_flag, __ATOMIC_SEQ_CST);     /* [Recomps#1] mingw: no _InterlockedOr8 intrinsic */
-#else
-        InterlockedOr8((char *)req, (char)g_test_resync_flag);
-#endif
-        printf("movie: TEST: resync request %d raised at video sample %d\n", g_test_resync_flag, g_test_resync_at);
-    }
     if (!sample && !(flags & FLAG_EOS)) {             /* nothing to decode: the buffer is offered again */
         d->dropped++;
         d->in_state[i] = IN_OFFERED; d->in_list[d->in_n++] = i;
@@ -1245,7 +1231,7 @@ static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, De
     d->type = (int)A1; d->fmt = (int)A2; d->mode = (int)A3;
     d->is_video = d->type >= 1 && d->type <= 3;
     d->nin = 8;                                       /* compressed-data buffers: only bound how far the feed runs ahead of the codec */
-    /* [witchtime] decoded frames the game may hold before the codec stalls. B3's player [game 0x7100cd6cb4] keeps them in a
+    /* [witchtime] decoded frames the game may hold before the codec stalls. B3's player keeps them in a
      * pool of 16 nodes; a frame acquired while the pool is empty [0x7100cd7244] is neither queued nor released, so the
      * picture stops (ev0011, which is pre-rolled while ev0010 plays and then taken in one burst: this decoder has no
      * decoding time). 16 = the pool: the codec stalls first. (SSBU's player wanted 48: over a second before its first frame.) */
@@ -1392,10 +1378,9 @@ static const ImportDef movie_mf_imports[] = {
 };
 
 void register_movie_mf_imports(void) {
-    const char *env = getenv("SSBU_MOVIE");
-    if (env && atoi(env) == 0) { printf("movie: SSBU_MOVIE=0, keeping the failing placeholder\n"); return; }
-    g_log = getenv("SSBU_MOVIE_LOG") != NULL;
-    if (getenv("SSBU_MOVIE_TEST_RESYNC")) sscanf(getenv("SSBU_MOVIE_TEST_RESYNC"), "%d,%d", &g_test_resync_flag, &g_test_resync_at);
+    const char *env = getenv("WT_MOVIE");
+    if (env && atoi(env) == 0) { printf("movie: WT_MOVIE=0, keeping the failing placeholder\n"); return; }
+    g_log = getenv("WT_MOVIE_LOG") != NULL;
     InitializeCriticalSection(&g_init_lock);
     register_imports(movie_mf_imports, (int)(sizeof movie_mf_imports / sizeof movie_mf_imports[0]));
 }

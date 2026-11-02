@@ -55,7 +55,7 @@
  * area coverage. iType's own hinting / grid fitting, its bold algorithm and its exact fixed-point rounding
  * are not reproduced: advances are advanceWidth * pixels / unitsPerEm rounded to 16.16.
  *
- * Debug: SSBU_FONTLOG=<n> prints the first n calls of every kind; SSBU_FONTDUMP=<dir> writes each distinct
+ * Debug: WT_FONTLOG=<n> prints the first n calls of every kind; WT_FONTDUMP=<dir> writes each distinct
  * font file as <dir>/<name>.ttf. */
 #include <stdio.h>
 #include <stdint.h>
@@ -128,8 +128,8 @@ static void put32(uint8_t *p, int32_t v) { memcpy(p, &v, 4); }
 static int g_log = -1;
 static volatile LONG g_counts[16];
 enum { L_CHECK, L_SETFONT, L_SCALE, L_ADVANCE, L_GLYPH, L_METRICS, L_BOLD, L_OUTLINE, L_FLAGS, L_KERN, L_OTF, L_LOAD };
-static int flog(int what) {                       /* SSBU_FONTLOG=<n>: log the first n calls of each kind */
-    if (g_log < 0) { const char *v = getenv("SSBU_FONTLOG"); g_log = v ? atoi(v) : 0; }
+static int flog(int what) {                       /* WT_FONTLOG=<n>: log the first n calls of each kind */
+    if (g_log < 0) { const char *v = getenv("WT_FONTLOG"); g_log = v ? atoi(v) : 0; }
     return g_log > 0 && InterlockedIncrement(&g_counts[what]) <= g_log;
 }
 
@@ -282,7 +282,7 @@ static FontData *font_data(const uint8_t *data, uint32_t index) {
     g_fontdata_count++;
     printf("nn::fontll: font \"%s\": %u bytes, %s, %d units per em, %d glyphs, cmap format %d%s%s\n", f->name, size, f->cff ? "CFF outlines" : "TrueType outlines",
            f->upem, f->glyphs, f->sub ? f->sub_format : -1, f->kern ? ", kern table" : "", f->gpos ? ", GPOS table" : "");
-    const char *dump = getenv("SSBU_FONTDUMP");
+    const char *dump = getenv("WT_FONTDUMP");
     if (dump) {
         char path[MAX_PATH];
         snprintf(path, sizeof path, "%s\\%s.%s", dump, f->name, f->cff ? "otf" : "ttf");

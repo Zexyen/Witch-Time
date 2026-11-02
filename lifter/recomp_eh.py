@@ -208,7 +208,7 @@ def lift_function(env, entry):
 
 
 # [witchtime] Game functions whose direct calls (BL) go to a host function instead (runtime/game_shim_eh.c); the lifted body
-# stays (indirect calls, the check SSBU_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd bits
+# stays (indirect calls, the check WT_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd bits
 # with three bit reversals and a 32-step loop; a tree walk of B3 calls it so often that the main thread spent 115-130 ms a
 # frame in it in trains of frames in Tokyo.
 # 0x7100d02de0: the main loop's frame-rate mode setter (one caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with

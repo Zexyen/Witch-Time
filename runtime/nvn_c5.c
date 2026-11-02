@@ -9,9 +9,8 @@
  *   nvnDeviceGetSeparateSamplerHandle [sdk 0x41bc50]  sbfiz x0, x1, #20, #32
  * The table below is the output of `PYTHONPATH=. python tools_audit/patches/close5/uc_nvn_e.py handles` (those five functions
  * run in the Unicorn emulator on sdk.elf, upper halves of the argument registers filled with garbage).
- * What the game does with the value (Ghidra, main 13.0.4): FUN_71038037d0 and its five siblings (pointer kept at 0x710593f938)
- * and FUN_71000333b0 (pointer through 0x71052a2500) pass it unchanged to the next NVN call (nvnCommandBufferBindTexture);
- * no arithmetic on it was found at those call sites.
+ * What a game does with the value (upstream, Smash's main): it is passed unchanged to the next NVN call
+ * (nvnCommandBufferBindTexture); no arithmetic on it was found at those call sites.
  */
 #include <stdio.h>
 #include <stdint.h>

@@ -5,19 +5,8 @@
  * Sources of each layout: [sdk] = read from the real SDK module (binaries\13.0.4\sdk.elf; `python sdkdata.py
  * <symbol>` dumps a data object with its relocations, `python sdkdis.py <symbol>` disassembles a function).
  *
- * EXCEPTIONS -- measured on main 13.0.4 (python eh_census.py; python eh_census2.py):
- *   295 call sites of __cxa_throw (91 std::bad_function_call, 68 std::exception-derived game types, 63 std::out_of_range,
- *   47 std::bad_alloc, 17 std::length_error, 9 boost exceptions), 17 of __cxa_rethrow, and about 10,400 calls of
- *   libc++'s __throw_length_error / __throw_out_of_range helpers (libcxx.c).
- *   .eh_frame (found through MOD0) has 110,842 FDEs, 1,040 with an LSDA: 10,346 call-site records, 7,291 with a landing
- *   pad: 3,668 clean-up only, 40 exception-specification filters, 3,583 with a catch clause = 3,540 distinct pads:
- *     3,456 go straight to __clang_call_terminate (noexcept boundaries), 66 are clean-ups that end there,
- *     14 are `catch (...) { clean up; throw; }` (they rethrow),
- *     1 is `catch (std::ios_base::failure &)` at 0x7103839de8 (only the stream library could throw that; ours never does),
- *     4 are `catch (...) { }` that SWALLOW the exception: 0x710382d0a0 and 0x710382d1cc in f_7103828300,
- *       0x7103847670 and 0x710384779c in f_7103841d10 (two text parsers; the protected calls are
- *       f_7103835e60 / f_7103836070 / f_7103836150 / f_7103836230 / f_71038368e0, i.e. tokenising and boost::lexical_cast).
- *   So on the console every throw ends in std::terminate, except a throw inside those four protected regions.
+ * EXCEPTIONS: upstream measured Smash's main, where every throw ends in std::terminate except inside a few
+ * `catch (...)` regions; our main has no LSDA at all (finding 20), so the same holds for every throw here.
  *
  * What is implemented here: the exception RUNTIME (interface and flow in eh_runtime.h): exception objects with
  * libc++abi's header layout, per-context throw state, __cxa_throw / rethrow / begin_catch / end_catch / _Unwind_Resume /
@@ -60,7 +49,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * page tables to the end of the run of pages with the same state, which takes 2-3 ms inside the game's heap (gigabytes
  * committed in one run), and one throw asks about 22 addresses there (the fiber's stack). The answer for memory the GAME
  * manages (regions from nn::os::AllocateAddressRegion, registered with cxxrt_guest_region) is therefore remembered per
- * thread. Host memory is asked about every time, as before. SSBU_NO_READABLE_CACHE=1 = ask every time everywhere.
+ * thread. Host memory is asked about every time, as before. WT_NO_READABLE_CACHE=1 = ask every time everywhere.
  *
  * PR #2 (jfb112697): what makes a remembered run wrong is guest memory being decommitted, released or protected
  * (cxxrt_mem_changed, called by those entry points before and after the change; prototype in hostrt.h). Forgetting
@@ -72,7 +61,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * is still committed and accessible. A record older than the kept events is forgotten. Same match with this: 8 of 1,497
  * throws over 1 ms (1.4-6.3 ms). Those are the first question a thread asks about a run (the record starts at the page
  * asked about, so a fiber stack lower in the same run asks again), which this does not remove.
- * SSBU_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
+ * WT_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
 static struct { uint64_t base, size; } g_guest_region[64];
 static volatile LONG g_guest_regions, g_mem_epoch = 1;
 #define RD_CHANGES 256      // PR #2 (jfb112697): ring of the last changes of guest memory, with their page ranges
@@ -129,7 +118,7 @@ int cxxrt_readable(uint64_t p, size_t n) {
     if (p < 0x10000) return 0;
     LONG epoch = g_mem_epoch;
     int guest = 0;
-    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("SSBU_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("SSBU_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): SSBU_READABLE_FORGET_ALL=1 = the old forget-everything rule
+    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("WT_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("WT_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): WT_READABLE_FORGET_ALL=1 = the old forget-everything rule
     if (!g_rd_nocache) {
         for (int i = 0; i < g_guest_regions && i < 64 && !guest; i++) guest = p - g_guest_region[i].base < g_guest_region[i].size;
         if (guest) for (int i = 0; i < 4; i++) {      // PR #2 (jfb112697): an older record is brought up to date instead of being dropped
@@ -320,7 +309,7 @@ typedef struct { Ctx *c; uint64_t in_flight, caught; int uncaught; } EhState;
  * The C++ ABI keeps this state per THREAD (__cxa_get_globals); a guest fiber is a Windows fiber here (os_threads.c), so
  * fiber-local storage is exactly "one state per guest thread and per guest fiber", needs no table, cannot fill up, and is
  * freed by the system when the thread or fiber ends. A context on the stack now shares the state of the fiber it runs
- * on, which is what a throw that crosses it needs. SSBU_EH_STATE=table restores the old table (bounded: it stops with a
+ * on, which is what a throw that crosses it needs. WT_EH_STATE=table restores the old table (bounded: it stops with a
  * report instead of spinning). */
 #define EH_STATES 4096
 static EhState g_eh_state[EH_STATES];
@@ -354,7 +343,7 @@ static EhState *eh_state(Ctx *c) {
     if (!g_eh_mode) {
         AcquireSRWLockExclusive(&g_eh_state_lock);
         if (!g_eh_mode) {
-            const char *e = getenv("SSBU_EH_STATE");
+            const char *e = getenv("WT_EH_STATE");
             if (e && !strcmp(e, "table")) g_eh_mode = 2;
             else { g_eh_fls = FlsAlloc(eh_fls_free); g_eh_mode = g_eh_fls != FLS_OUT_OF_INDEXES ? 1 : 2; }
         }
@@ -1017,14 +1006,14 @@ void register_cxxrt_imports(void) {
     register_libc2_imports();
     if (!eh_register_image(GUEST_BASE, 0x7500000ull, 0)) printf("nncxxrt: the exception tables of main were not found\n");
     eh_bind_main();
-    const char *path = getenv("SSBU_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
+    const char *path = getenv("WT_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
     if (path && path[0]) {
         FILE *f = fopen(path, "w");
         for (int i = 0; f && i < dyn_sym_count; i++)
             if (!dyn_syms[i].defined && dyn_syms[i].name[0] && !import_lookup(dyn_syms[i].name)) fprintf(f, "%d %s\n", (int)(import_address(i) != IMPORT_BASE + (uint64_t)i * IMPORT_SLOT), dyn_syms[i].name);
         if (f) fclose(f);
     }
-    if (getenv("SSBU_CXXRT_SELFTEST")) cxxrt_selftest();
+    if (getenv("WT_CXXRT_SELFTEST")) cxxrt_selftest();
 }
 
 #include "cxxrt_selftest.h"

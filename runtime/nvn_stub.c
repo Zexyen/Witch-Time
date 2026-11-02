@@ -1,7 +1,7 @@
 /* Graphics entry points: hands out a host function for every NVN name the game asks for.
  * Device information, memory pools and buffers are here; everything else is in nvn_gl.c (OpenGL).
  * A name that neither implements is MISSING: it is announced when the game fetches it, and calling it stops the game with
- * the function's name (SSBU_NVN_MISSING=warn: report the call, answer 0 and go on, for exploration). The audit of all names
+ * the function's name (WT_NVN_MISSING=warn: report the call, answer 0 and go on, for exploration). The audit of all names
  * is plan\phases\G1_nvn_audit.md (python nvn_audit.py). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +24,7 @@ static void log_call(Ctx *c) {
 /* An entry point with no implementation. */
 static int missing_warn_only(void) {
     static int mode = -1;
-    if (mode < 0) { const char *e = getenv("SSBU_NVN_MISSING"); mode = e && !strcmp(e, "warn"); }
+    if (mode < 0) { const char *e = getenv("WT_NVN_MISSING"); mode = e && !strcmp(e, "warn"); }
     return mode;
 }
 static void nvn_generic(Ctx *c) {
@@ -33,7 +33,7 @@ static void nvn_generic(Ctx *c) {
            (unsigned long long)c->x[2], (unsigned long long)c->x[3], 10);
     fflush(stdout);
     if (!missing_warn_only()) {
-        printf("nvn: stopping: %s has no implementation (SSBU_NVN_MISSING=warn to continue with a zero answer)%c", hostfn_current_name(), 10);
+        printf("nvn: stopping: %s has no implementation (WT_NVN_MISSING=warn to continue with a zero answer)%c", hostfn_current_name(), 10);
         fflush(stdout);
         report_and_exit(6);
     }

@@ -35,8 +35,8 @@ Tools and libraries: the option, else the environment variable, else <repo>/deps
     SDL3            --sdl3        SDL3_ROOT       deps/SDL3         SDL3 3.4.18, the VC development package
     Vulkan-Headers  --vulkan-headers VULKAN_HEADERS deps/Vulkan-Headers  vulkan-sdk-1.4.341.0
     glslang         --glslang     GLSLANG_ROOT    deps/glslang      glslang 16.6.0 windows release + MSVC Build Tools, to build
-                                                                    ssbu_glslang.dll; or a built one:
-    ssbu_glslang.dll --glslang-dll GLSLANG_DLL    deps/ssbu_glslang.dll
+                                                                    wt_glslang.dll; or a built one:
+    wt_glslang.dll --glslang-dll GLSLANG_DLL    deps/wt_glslang.dll
 """
 import argparse
 import hashlib
@@ -168,8 +168,8 @@ class Ctx:
             json.dump(self.state, f, indent=1)
 
     def env(self):
-        # test switches of the runtime / lifter (SSBU_*, RECOMP_*, RECOMPS_*) never reach the build
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('SSBU_', 'RECOMP_', 'RECOMPS_'))}
+        # test switches of the runtime / lifter (WT_*, RECOMP_*, RECOMPS_*) never reach the build
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('WT_', 'RECOMP_', 'RECOMPS_'))}
         env['PYTHONIOENCODING'] = 'utf-8'
         env['PYTHONUNBUFFERED'] = '1'
         env.update(self.tools)
@@ -256,14 +256,14 @@ def step_deps(cx):
         cx.tools[env] = found
         say('  %-15s %s' % (sub, found))
 
-    # ssbu_glslang.dll: a built one (option / GLSLANG_DLL / deps), the one already in build/, or built from glslang with MSVC
-    dll = next((os.path.abspath(f) for f in (a.glslang_dll, os.environ.get('GLSLANG_DLL'), os.path.join(DEPS, 'ssbu_glslang.dll'),
+    # wt_glslang.dll: a built one (option / GLSLANG_DLL / deps), the one already in build/, or built from glslang with MSVC
+    dll = next((os.path.abspath(f) for f in (a.glslang_dll, os.environ.get('GLSLANG_DLL'), os.path.join(DEPS, 'wt_glslang.dll'),
                                                      saved.get('GLSLANG_DLL'))
                 if f and os.path.isfile(f)), None)
     glslang = find_first([a.glslang, os.environ.get('GLSLANG_ROOT'), os.path.join(DEPS, 'glslang'), saved.get('GLSLANG_ROOT')], os.path.join('lib', 'glslang.lib'))
     if dll:
         cx.tools['GLSLANG_DLL'] = dll
-        say('  ssbu_glslang.dll %s (copied into build/ by link)' % dll)
+        say('  wt_glslang.dll %s (copied into build/ by link)' % dll)
     elif glslang or name == 'msvc':
         if not glslang:
             raise Fail('glslang not found (--glslang <glslang 16.6.0 windows release>, GLSLANG_ROOT, or deps\\glslang)')
@@ -273,15 +273,15 @@ def step_deps(cx):
                              '-property', 'installationPath'], capture_output=True, text=True).stdout.strip() \
             if os.path.exists(vsw) else ''
         if not vs:
-            raise Fail('glslang is there, but the MSVC Build Tools (C++ x64 tools) that build ssbu_glslang.dll from it are not; '
-                       'install them, or give a built ssbu_glslang.dll (--glslang-dll <file>)')
+            raise Fail('glslang is there, but the MSVC Build Tools (C++ x64 tools) that build wt_glslang.dll from it are not; '
+                       'install them, or give a built wt_glslang.dll (--glslang-dll <file>)')
         cx.tools['GLSLANG_ROOT'] = glslang
-        say('  glslang         %s (ssbu_glslang.dll built with MSVC: %s)' % (glslang, vs))
-    elif os.path.isfile(os.path.join(cx.build, 'ssbu_glslang.dll')):
-        say('  ssbu_glslang.dll: the one in build/')
+        say('  glslang         %s (wt_glslang.dll built with MSVC: %s)' % (glslang, vs))
+    elif os.path.isfile(os.path.join(cx.build, 'wt_glslang.dll')):
+        say('  wt_glslang.dll: the one in build/')
     else:
-        raise Fail('ssbu_glslang.dll (the shader compiler shim) has no source: give a built one (--glslang-dll <file>, '
-                   'GLSLANG_DLL, deps\\ssbu_glslang.dll), or glslang 16.6.0 + the MSVC Build Tools to build it (--glslang <folder>)')
+        raise Fail('wt_glslang.dll (the shader compiler shim) has no source: give a built one (--glslang-dll <file>, '
+                   'GLSLANG_DLL, deps\\wt_glslang.dll), or glslang 16.6.0 + the MSVC Build Tools to build it (--glslang <folder>)')
     cx.state['tools'] = dict(cx.tools)
 
 
@@ -457,7 +457,7 @@ def step_link(cx):
                else 'no libwitchtime.so (the launcher starts witch-time-game)'))
         return
     cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
-    for f in ('game.dll', 'witch-time-game.exe', 'SDL3.dll', 'ssbu_glslang.dll'):
+    for f in ('game.dll', 'witch-time-game.exe', 'SDL3.dll', 'wt_glslang.dll'):
         if not os.path.isfile(os.path.join(cx.build, f)):
             raise Fail('build\\%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
     say('  build\\witch-time-game.exe %.1f MB, game.dll %.0f MB, launcher.exe'
@@ -529,7 +529,7 @@ def main():
     ap.add_argument('--sdl3', help='SDL3 development package (VC) folder: include\\, lib\\x64\\')
     ap.add_argument('--vulkan-headers', help='Khronos Vulkan-Headers folder (include\\vulkan\\vulkan.h)')
     ap.add_argument('--glslang', help='glslang windows release folder (include\\, lib\\glslang.lib); needs MSVC')
-    ap.add_argument('--glslang-dll', help='a built ssbu_glslang.dll instead of building it')
+    ap.add_argument('--glslang-dll', help='a built wt_glslang.dll instead of building it')
     a = ap.parse_args()
     cx = Ctx(a)
     done = cx.state.setdefault('done', {})

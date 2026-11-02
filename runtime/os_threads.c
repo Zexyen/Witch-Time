@@ -10,7 +10,7 @@
 #include <windows.h>
 #include "runtime.h"
 #include "hostrt.h"
-/* L1 round 3, TEST ONLY: guest sync calls during the SSBU_L1_TRACE window (display.c) */
+/* L1 round 3, TEST ONLY: guest sync calls during the WT_L1_TRACE window (display.c) */
 int display_l1_trace(void); double display_l1_ms(void); const char *guest_thread_name_of(DWORD tid);
 #define L1O(what, key) do { if (display_l1_trace()) { const char *n_ = guest_thread_name_of(GetCurrentThreadId()); printf("l1-trace: %+8.2f %-26s lr %09llx %s %llx%c", display_l1_ms(), n_ ? n_ : "?", (unsigned long long)c->x[30], what, (unsigned long long)(key), 10); } } while (0)
 
@@ -40,26 +40,21 @@ typedef struct Obj {
     uint64_t target, user;                   /* multi-wait holders */
     struct Obj *holders[64];                 /* multi-wait */
     int holder_count;
-    Ctx *fctx;                               /* fibers: the guest context of the fiber (R1 save / restore) */
-    volatile DWORD run_tid;                  /* fibers: host thread running it now, 0 = switched away (R1) */
-    void *fls;                               /* fibers: the fighter runtime's per-fiber block (FLS slot g_r1_fls_idx) when it last switched away (R1) */
 } Obj;
 
 #define BUCKETS 65536
 static Obj *g_table[BUCKETS];
-extern int g_r1_keep_fibers;                           /* R1 (r1_state.c): set only with SSBU_R1 */
-DWORD g_r1_fls_idx = 0xFFFFFFFF;                       /* R1: FLS slot of fighter_host.c's per-fiber block (from the map) */
 static SRWLOCK g_table_lock = SRWLOCK_INIT;
 
 /* Round 17 (P3 section 16): every lock / unlock / event call of every guest thread came through this look-up, which
  * took ONE process-wide lock exclusively. Records are never removed and a record's key and next pointer never change
  * once it is in the table, so a look-up can walk the bucket without the lock; only a miss takes the lock (and looks
- * again under it). SSBU_OBJ_LOCKFREE=0: the lock at every look-up, as before. */
+ * again under it). WT_OBJ_LOCKFREE=0: the lock at every look-up, as before. */
 #define OBJ_LOCKFREE_DEFAULT 0
 static int g_obj_lf = -1;
 static Obj *obj(uint64_t key) {
     unsigned h = (unsigned)((key >> 3) * 2654435761u) & (BUCKETS - 1);
-    if (g_obj_lf < 0) { const char *e = getenv("SSBU_OBJ_LOCKFREE"); g_obj_lf = e && e[0] ? atoi(e) != 0 : OBJ_LOCKFREE_DEFAULT; }
+    if (g_obj_lf < 0) { const char *e = getenv("WT_OBJ_LOCKFREE"); g_obj_lf = e && e[0] ? atoi(e) != 0 : OBJ_LOCKFREE_DEFAULT; }
     if (g_obj_lf) {
         Obj *f = *(Obj *volatile *)&g_table[h];
         while (f && f->key != key) f = f->next;
@@ -102,10 +97,10 @@ static void sleep_ns(int64_t ns) {
     /* [Recomps#1] a short sleep yields until its deadline instead of arming the timer: a waitable timer, even a
      * high-resolution one, does not wake before ~0.5 ms, and Bayonetta 2's job system joins its workers with
      * `while (pending > 0) nn::os::SleepThread(1 ns)` [0x7100ead0fc]: on the console a reschedule of a few us, here
-     * 0.5 ms or more per check of the counter (finding 78). SSBU_SHORT_SLEEP_US=0 restores the timer for every sleep. */
+     * 0.5 ms or more per check of the counter (finding 78). WT_SHORT_SLEEP_US=0 restores the timer for every sleep. */
     {
         static int short_us = -1;
-        if (short_us < 0) { const char *e = getenv("SSBU_SHORT_SLEEP_US"); short_us = e ? atoi(e) : 200; }
+        if (short_us < 0) { const char *e = getenv("WT_SHORT_SLEEP_US"); short_us = e ? atoi(e) : 200; }
         if (ns <= (int64_t)short_us * 1000) {
             static LARGE_INTEGER qf;
             LARGE_INTEGER s0, now;
@@ -121,9 +116,9 @@ static void sleep_ns(int64_t ns) {
         if (!timer) no_timer = 1;
     }
     due.QuadPart = -((ns + 99) / 100);
-    /* Session 8 (track V), SSBU_SLEEP_LOG=1: a line for every sleep that lasted 2 ms longer than asked (first 200). */
+    /* Session 8 (track V), WT_SLEEP_LOG=1: a line for every sleep that lasted 2 ms longer than asked (first 200). */
     static int lg = -1; static LONG nl;
-    if (lg < 0) lg = getenv("SSBU_SLEEP_LOG") && atoi(getenv("SSBU_SLEEP_LOG"));
+    if (lg < 0) lg = getenv("WT_SLEEP_LOG") && atoi(getenv("WT_SLEEP_LOG"));
     LARGE_INTEGER q0, q1, fq;
     if (lg) QueryPerformanceCounter(&q0);
     if (!timer || !SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) Sleep(ns_to_ms(ns));
@@ -150,7 +145,7 @@ static void sleep_ns(int64_t ns) {
  * the order is kept, the spacing is not. */
 #define OS_DEFAULT_PRIORITY 16
 #define OS_DEFAULT_CORE 0                    /* main.npdm: default core id 0 */
-/* Console scheduling model, OPT-IN: SSBU_OS_CONSOLE_CORES=1 (bounded round 2026-10-09). What the game asks of nn::os in a
+/* Console scheduling model, OPT-IN: WT_OS_CONSOLE_CORES=1 (bounded round 2026-10-09). What the game asks of nn::os in a
  * match (os_thread_report, the list at the end of every run): every thread is created on ONE core of the console's
  * three (mask 1, 2 or 4) except four with mask 7, at the priorities 1, 8, 9, 15, 16, 23 and 31, and the console runs on
  * each core only the highest-priority ready thread of that core. With the switch on:
@@ -168,13 +163,13 @@ static DWORD_PTR g_cc_core[3];
 static int console_cores(void) {
     if (g_cc < 0) {
         int n = 0, on = 0;
-        if (getenv("SSBU_OS_CONSOLE_CORES")) {
+        if (getenv("WT_OS_CONSOLE_CORES")) {
             DWORD_PTR proc = 0, sys = 0;
             GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
             for (int b = (int)(sizeof(DWORD_PTR) * 8) - 1; b >= 0 && n < 3; b--)      /* from the top, every second processor: not two hardware threads of one core */
                 if (proc >> b & 1) { g_cc_core[n++] = (DWORD_PTR)1 << b; b--; }
             on = n == 3;
-            printf("nn::os: console core model %s (SSBU_OS_CONSOLE_CORES): host processor masks %llx %llx %llx for cores 0 1 2\n", on ? "ON" : "NOT possible (fewer than 3 usable processors)",
+            printf("nn::os: console core model %s (WT_OS_CONSOLE_CORES): host processor masks %llx %llx %llx for cores 0 1 2\n", on ? "ON" : "NOT possible (fewer than 3 usable processors)",
                    (unsigned long long)g_cc_core[0], (unsigned long long)g_cc_core[1], (unsigned long long)g_cc_core[2]);
         }
         g_cc = on;
@@ -237,7 +232,7 @@ void dump_guest_threads(FILE *out) {
     }
 }
 
-/* hitch.c (SSBU_HITCH): guest thread i -> context, name, host handle; 0 past the end. */
+/* hitch.c (WT_HITCH): guest thread i -> context, name, host handle; 0 past the end. */
 int guest_thread_info(int i, Ctx **c, const char **name, HANDLE *h) {
     if (i < 0 || i >= g_threads_n || i >= 256 || !g_threads[i].o || !g_threads[i].c) return 0;
     *c = g_threads[i].c; *name = g_threads[i].o->name ? (const char *)(uintptr_t)g_threads[i].o->name : NULL; *h = g_threads[i].o->finished ? NULL : g_threads[i].o->thread;
@@ -256,7 +251,7 @@ const char *guest_thread_name_of(DWORD tid) {
 static DWORD WINAPI thread_main(LPVOID arg) {
     Obj *o = arg;
     t_thread = o->key;
-    { void display_perf_thread(void); display_perf_thread(); }      /* track V session 14: the game's threads on the performance cores of a hybrid CPU (display.c; SSBU_PCORES=0 off) */
+    { void display_perf_thread(void); display_perf_thread(); }      /* track V session 14: the game's threads on the performance cores of a hybrid CPU (display.c; WT_PCORES=0 off) */
     Ctx *c = new_ctx(o->stack + o->stack_size);
     wr64(c->tpidr + 0x1f8, o->key);                   /* Horizon thread-local region: the ThreadType pointer lives at +0x1f8 */
     LONG slot = InterlockedIncrement(&g_threads_n) - 1;
@@ -305,19 +300,6 @@ static void oslog(const char *fmt, ...) {
     while (InterlockedCompareExchange(&g_oslog_lock, 1, 0)) YieldProcessor();
     if (g_oslog_n + n < (LONG)sizeof g_oslog - 1) { memcpy(g_oslog + g_oslog_n, line, (size_t)n); g_oslog_n += n; }
     g_oslog_lock = 0;
-}
-/* Track R1 (r1_state.c, SSBU_R1 only): every emulated object's waitable state (event flag, semaphore count, queue
- * length), to compare a save point with a restore point. Reads without the objects' locks (diagnostic). */
-void os_r1_objs(void (*cb)(uint64_t key, int signaled, int count, uint64_t len, uint64_t thread, uint64_t stack, uint64_t stack_size)) {
-    for (int h = 0; h < BUCKETS; h++)
-        for (Obj *o = g_table[h]; o; o = o->next)
-            cb(o->key, o->signaled, o->count, o->len, (uint64_t)(uintptr_t)o->thread | (uint64_t)(uintptr_t)o->fiber, o->thread ? o->stack : 0, o->thread ? o->stack_size : 0);
-}
-/* R1: every fiber that has run: its guest context and stack */
-void os_r1_fibers(void (*cb)(uint64_t key, Ctx *c, uint64_t stack, uint64_t stack_size, void *fiber)) {
-    for (int h = 0; h < BUCKETS; h++)
-        for (Obj *o = g_table[h]; o; o = o->next)
-            if (o->fiber) cb(o->key, o->fctx, o->stack, o->stack_size, o->fiber);
 }
 void os_thread_report(FILE *out) {
     if (!g_oslog_n) return;
@@ -378,19 +360,7 @@ static void os_ChangeThreadPriority(Ctx *c) {
 }
 static void os_GetThreadId(Ctx *c) { Obj *o = obj(A0); RET(o->thread ? GetThreadId(o->thread) : GetCurrentThreadId()); }
 static void os_YieldThread(Ctx *c) { (void)c; SwitchToThread(); }
-/* SSBU_MOVIE_LOG: the movie player's pre-roll loop [game 0x71036f27b4] sleeps 10 ms up to 125 times until its video
- * renderer holds more than 1 frame (+0xb0) and its audio renderer has filled more than 8 / 16 buffers (+0x110). */
-static void movie_preroll_diag(Ctx *c) {
-    static int on = -1, n;
-    if (on < 0) on = getenv("SSBU_MOVIE_LOG") != NULL;
-    if (!on || c->import_from != 0x71036f2814ULL || (n++ % 25)) return;
-    uint64_t p = c->x[21], vr = rd64(p + 0x58) ? rd64(rd64(p + 0x58)) : 0, ar = rd64(p + 0x68) ? rd64(rd64(p + 0x68)) : 0;
-    printf("movie: pre-roll sleep %d (loop count %u of %u): video frames queued %lld", n, (unsigned)c->x[24], (unsigned)c->x[25], vr ? (long long)rd64(vr + 0xb0) : -1LL);
-    if (ar) printf("; audio: filled %lld, accumulate %u, pool %d buffers of %d bytes (flush at %d), free %lld, pending outputs %lld, +0x40 %d", (long long)rd64(ar + 0x110), rd8(ar + 0x50), (int)rd32(ar + 0x44), (int)rd32(ar + 0x48), (int)rd32(ar + 0x4c),
-        (long long)((rd64(ar + 0x78) - rd64(ar + 0x70)) / 0x40), (long long)((rd64(ar + 0x60) - rd64(ar + 0x58)) / 0x18), (int)rd32(ar + 0x40));
-    printf("%c", 10);
-}
-static void os_SleepThread(Ctx *c) { movie_preroll_diag(c); sleep_ns((int64_t)A0); }
+static void os_SleepThread(Ctx *c) { sleep_ns((int64_t)A0); }
 static void os_GetCurrentStackInfo(Ctx *c) {
     Obj *o = t_thread ? obj(t_thread) : NULL;
     if (A0) wr64(A0, o ? o->stack : g_main_stack_base);
@@ -459,7 +429,7 @@ static void os_SetTlsValue(Ctx *c) { t_tls[A0 & 63] = A1; }
 
 /* ---------------------------------------------------------------- mutexes */
 static void mtx_init(Ctx *c) { (void)obj(A0); }
-/* Round 17, MEASUREMENT (SSBU_MUTEXSTAT=1; nothing runs without it): calls of the libc++ / nn::os mutex lock import, the
+/* Round 17, MEASUREMENT (WT_MUTEXSTAT=1; nothing runs without it): calls of the libc++ / nn::os mutex lock import, the
  * time in the table look-up and in the lock itself, and how many calls found the mutex taken, for the thread that
  * queues the presents (the game's main thread) and for all other threads; a line every 200,000 calls of the main thread. */
 unsigned long nvn_front_present_tid(void);                 /* nvn_gl.c */
@@ -494,13 +464,13 @@ static void mtx_lock_stat(Ctx *c) {
     }
 }
 static void mtx_lock(Ctx *c) {
-    if (g_mstat < 0) g_mstat = getenv("SSBU_MUTEXSTAT") != NULL;
+    if (g_mstat < 0) g_mstat = getenv("WT_MUTEXSTAT") != NULL;
     if (g_mstat) { mtx_lock_stat(c); return; }
     EnterCriticalSection(&obj(A0)->cs);
 }
 static void mtx_unlock(Ctx *c) { LeaveCriticalSection(&obj(A0)->cs); }
 static void mtx_trylock(Ctx *c) { RET(TryEnterCriticalSection(&obj(A0)->cs) ? 1 : 0); }
-/* hitch.c (SSBU_HITCH): host thread id that owns the guest mutex `key` now, 0 = nobody. Diagnostics only. */
+/* hitch.c (WT_HITCH): host thread id that owns the guest mutex `key` now, 0 = nobody. Diagnostics only. */
 DWORD os_mutex_owner(uint64_t key) { return key ? (DWORD)(uintptr_t)obj(key)->cs.OwningThread : 0; }
 static void pmtx_lock(Ctx *c) { EnterCriticalSection(&obj(A0)->cs); RET(0); }
 static void pmtx_unlock(Ctx *c) { LeaveCriticalSection(&obj(A0)->cs); RET(0); }
@@ -663,7 +633,6 @@ static void mw_trywaitany(Ctx *c) { RET(mw_poll(obj(A0))); }
 static void CALLBACK fiber_main(void *arg) {
     Obj *o = arg;
     Ctx *c = new_ctx(o->stack + o->stack_size);
-    o->fctx = c;
     VirtualFree((void *)(uintptr_t)c->tpidr, 0, MEM_RELEASE);   /* a fiber has no thread block of its own: it uses the one of the thread running it */
     for (;;) {
         c->tpidr = o->tp;
@@ -673,7 +642,6 @@ static void CALLBACK fiber_main(void *arg) {
         uint64_t next = c->x[0];
         if (next) obj(next)->tp = c->tpidr;
         t_fiber = next;
-        if (g_r1_keep_fibers) { o->run_tid = 0; if (g_r1_fls_idx != 0xFFFFFFFF) o->fls = FlsGetValue(g_r1_fls_idx); if (next) obj(next)->run_tid = GetCurrentThreadId(); }
         SwitchToFiber(next ? obj(next)->fiber : t_thread_fiber);
     }
 }
@@ -688,7 +656,6 @@ static void fib_switch(Ctx *c) {
     uint64_t next = A0, self = t_fiber;
     if (next) obj(next)->tp = c->tpidr;               /* the thread block (errno, ...) belongs to the host thread, not to the fiber */
     t_fiber = next;
-    if (g_r1_keep_fibers) { if (self) { obj(self)->run_tid = 0; if (g_r1_fls_idx != 0xFFFFFFFF) obj(self)->fls = FlsGetValue(g_r1_fls_idx); } if (next) obj(next)->run_tid = GetCurrentThreadId(); }
     if (next && !obj(next)->fiber) {                  /* [Recomps#1] say which fiber, instead of SwitchToFiber(NULL) reading address 0 */
         Obj *n = obj(next);
         printf("\nSwitchToFiber(0x%llx) from %llx: no host fiber (entry %llx, stack %llx+%llx; %s)\n", (unsigned long long)next,
@@ -700,28 +667,8 @@ static void fib_switch(Ctx *c) {
     if (self) c->tpidr = obj(self)->tp;               /* resumed, possibly by another thread */
     hitch_cur_ctx(c);
 }
-/* R1: a fiber object's host-side fields (fiber, context, entry, argument, stack, size): read at the save, written back at the restore */
-/* R1: look-up without the table lock (R1 holds threads that may be inside obj(); records are never removed) */
-static Obj *obj_peek(uint64_t key) {
-    unsigned h = (unsigned)((key >> 3) * 2654435761u) & (BUCKETS - 1);
-    Obj *f = *(Obj *volatile *)&g_table[h];
-    while (f && f->key != key) f = f->next;
-    return f;
-}
-DWORD os_r1_fiber_tid(uint64_t key) { Obj *o = obj_peek(key); return o ? o->run_tid : 0; }
-void *os_r1_fiber_fls(uint64_t key) { Obj *o = obj_peek(key); return o ? o->fls : NULL; }
-void os_r1_fiber_get(uint64_t key, uint64_t v[6]) { Obj *o = obj_peek(key); if (!o) return; v[0] = (uint64_t)(uintptr_t)o->fiber; v[1] = (uint64_t)(uintptr_t)o->fctx; v[2] = o->fn; v[3] = o->arg; v[4] = o->stack; v[5] = o->stack_size; }
-void os_r1_fiber_put(uint64_t key, const uint64_t v[6]) { Obj *o = obj_peek(key); if (!o) return; o->fiber = (void *)(uintptr_t)v[0]; o->fctx = (Ctx *)(uintptr_t)v[1]; o->fn = v[2]; o->arg = v[3]; o->stack = v[4]; o->stack_size = v[5]; }
-/* R1 restore: give a guest fiber back the host fiber it had at the save (kept alive by g_r1_keep_fibers), or a fresh one */
-void os_r1_fiber_set(uint64_t key, void *fiber, Ctx *fctx, int fresh) {
-    Obj *o = obj_peek(key); if (!o) return;
-    if (fresh) { o->fiber = CreateFiberEx(1 << 20, (SIZE_T)256 << 20, 0, fiber_main, o); o->fctx = NULL; }
-    else { o->fiber = fiber; o->fctx = fctx; }
-}
 static void fib_current(Ctx *c) { RET(t_fiber); }
-int g_r1_keep_fibers;                                  /* R1 (r1_state.c, SSBU_R1 only): a finalized fiber's host fiber is kept, so a
-                                                        * restore that brings the guest fiber back finds it (resumed, it starts over) */
-static void fib_finalize(Ctx *c) { Obj *o = obj(A0); if (o->fiber && !g_r1_keep_fibers) { DeleteFiber(o->fiber); o->fiber = NULL; } }
+static void fib_finalize(Ctx *c) { Obj *o = obj(A0); if (o->fiber) { DeleteFiber(o->fiber); o->fiber = NULL; } }
 
 /* ---------------------------------------------------------------- misc */
 static void os_ConvertToTick(Ctx *c) { RET((uint64_t)((double)(int64_t)A0 * (double)TICK_HZ / 1e9)); }
@@ -729,13 +676,13 @@ static void os_ConvertToTimeSpan(Ctx *c) { RET((uint64_t)((double)(int64_t)A0 * 
 /* The console fills the buffer from a generator seeded with kernel entropy: unpredictable bytes. Same here, from the
  * system generator (RtlGenRandom). */
 BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
-/* Test switch SSBU_FIXED_SEED=<n> (track V, session 4): the bytes come from a splitmix64 stream seeded with n instead, so
+/* Test switch WT_FIXED_SEED=<n> (track V, session 4): the bytes come from a splitmix64 stream seeded with n instead, so
  * that a scripted match meets the same random stage / CPU fighter in every run. Each call is logged (first 16). */
 int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr) {
     static int mode = -1;
     static volatile LONG lock, calls;
     static uint64_t state;
-    if (mode < 0) { const char *e = getenv("SSBU_FIXED_SEED"); if (e && *e) { state = strtoull(e, NULL, 0) * 0x9E3779B97F4A7C15ull + 1; mode = 1; } else mode = 0; }
+    if (mode < 0) { const char *e = getenv("WT_FIXED_SEED"); if (e && *e) { state = strtoull(e, NULL, 0) * 0x9E3779B97F4A7C15ull + 1; mode = 1; } else mode = 0; }
     if (!mode) return 0;
     while (InterlockedExchange(&lock, 1)) YieldProcessor();
     for (uint64_t i = 0; i < size; i += 8) {

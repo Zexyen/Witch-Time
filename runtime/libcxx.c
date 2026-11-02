@@ -25,7 +25,7 @@
 typedef uint8_t Str;                                     /* pointer to a guest std::string */
 
 /* String buffers must come from the game's own allocator: most std::string code is inlined in
- * the game and allocates/frees through f_710392dce0(align, size) / f_710392e590(ptr) directly,
+ * the game and allocates/frees through its own aligned_alloc(align, size) / free(ptr) directly,
  * so a buffer created here can be freed there and vice versa. The stored capacity is the
  * allocation size (libc++ keeps "size | 1"), rounded up to 16 as the inlined code does. */
 #include "image_layout.h"          /* [Recomps#1] our main's exported aligned_alloc(align, size) / free(ptr) */

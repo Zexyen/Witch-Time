@@ -1,6 +1,6 @@
 /* nn::pl: the system's shared fonts.
  *
- * Each font is looked up in %SSBU_FONTS% or ..\sysdata\fonts, first as a plain TrueType file (<name>.ttf), then
+ * Each font is looked up in %WT_FONTS% or ..\sysdata\fonts, first as a plain TrueType file (<name>.ttf), then
  * in the form the console stores it (<name>.bfttf, decoded here). The files come from the player's own console.
  * When neither is there, a font of this PC stands in for it (k_standin, from the Windows fonts folder): the game
  * runs and draws its system text in another typeface; characters only the console's fonts have (Nintendo's
@@ -70,7 +70,7 @@ static void load_font(unsigned type) {
     EnterCriticalSection(&g_lock);
     if (!g_fonts[type].tried) {
         g_fonts[type].tried = 1;
-        const char *dir = getenv("SSBU_FONTS");
+        const char *dir = getenv("WT_FONTS");
         if (!dir) dir = "..\\sysdata\\fonts";
         char *path = g_fonts[type].path;
         size_t size = 0;
@@ -117,7 +117,7 @@ static void load_font(unsigned type) {
         g_fonts[type].size = size;
         if (!data) {
             printf("nn::pl: shared font %u (%s.ttf or .bfttf) not in %s and no stand-in in the Windows fonts folder: put your "
-                   "console's shared fonts into targets\\sysdata\\fonts (or SSBU_FONTS=<folder>): stopping\n", type, font_files[type], dir);
+                   "console's shared fonts into targets\\sysdata\\fonts (or WT_FONTS=<folder>): stopping\n", type, font_files[type], dir);
             fflush(stdout);
             report_and_exit(7);
         }

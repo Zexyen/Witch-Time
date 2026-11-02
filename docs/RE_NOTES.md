@@ -217,7 +217,7 @@ What stopped boot, in order, and what fixed it:
 9. A switch at main 0xcc69c4 still cut in two: its `adr` base was 7 instructions before the `br` (the rule looked 6 ahead)
    -> up to 24, stopping at anything that writes the register or branches.
 10. The game stops presenting after ~90 frames: the applet model suspends it when its window is not in the foreground
-    (`SSBU_FOCUS_NOTIFY=0` for test runs).
+    (`WT_FOCUS_NOTIFY=0` for test runs).
 11. `div` reached as a stub (garbage quotients) -> the lifted sdk `div` installed (`lifter/sdklift_install.txt`).
 12. Crash while loading: main's state function at 0x6d760 was cut by a jump-table base whose `adr` and `br` had an
     `fmov s10` between them (taken as a write of x10) -> SIMD / FP destinations ignored; no table base is an entry now.
@@ -319,7 +319,7 @@ every per-category choice (row table, count, Controller's own table) is a 4-case
 
 **Glyphs**: messmenu.mcd has no 0 and 5-9 in any language (its texts use 1-4 only); messcore.mcd has all digits in 11 of
 the 13 files (font 7, or the CJK font in cn / tw / kr). nl and pt messcore are stubs (40 / 44 symbols; CORE_SETTING_003
-"ON" is an empty text there, and the game shows blank ON / OFF and button guides with SSBU_LANGUAGE=nl). A glyph of
+"ON" is an empty text there, and the game shows blank ON / OFF and button guides with WT_LANGUAGE=nl). A glyph of
 another font than the paragraph's is drawn at its own size.
 
 **Confirm and cancel** (2026-11-01; `swap_confirm`). The menu layer keeps a pad state of its own (0x38 bytes per pad, guest

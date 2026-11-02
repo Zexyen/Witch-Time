@@ -682,7 +682,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     if fps::census_on() {
         // the census build: every counter site reports its store (runtime/game_shim_eh.c), and the list of the sites
         f += "void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code);\n";
-        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WT_FPS_CENSUS=1)\n");
+        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WTBUILD_FPS_CENSUS=1)\n");
         for &a in &all_funcs {
             for s in fps::sites(im, a, extent(&starts, a, im.text_end())) {
                 let k = match s.kind {

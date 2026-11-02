@@ -264,7 +264,7 @@ impl Ctx {
 pub fn child_env(c: &mut Command) {
     for (k, _) in std::env::vars_os() {
         let u = k.to_string_lossy().to_uppercase();
-        if u.starts_with("SSBU_") || u.starts_with("RECOMP_") || u.starts_with("RECOMPS_") {
+        if u.starts_with("WT_") || u.starts_with("RECOMP_") || u.starts_with("RECOMPS_") {
             c.env_remove(&k);
         }
     }

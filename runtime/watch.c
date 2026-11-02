@@ -9,8 +9,8 @@
  * (os_threads.c creates them suspended). Nothing happens without the variable.
  * [Recomps#1] finding 118, TEST: RECOMPS_WATCH_ABS=<address>[,len] watches an absolute address (static game data) instead;
  * RECOMPS_WATCH_AFTER=<seconds> reports only later accesses; the first 30 reports print the guest frame-pointer chain.
- * watch_find_and_arm (nvn_vk_draw.c SSBU_VK_SHWATCH_PAT) finds a float pattern in the heap / main's data and watches READS
- * and writes of up to four matches (DR0..DR3); watch_arm_at arms on an address found at run time (SSBU_VK_SHWATCH). */
+ * watch_find_and_arm (nvn_vk_draw.c WT_VK_SHWATCH_PAT) finds a float pattern in the heap / main's data and watches READS
+ * and writes of up to four matches (DR0..DR3); watch_arm_at arms on an address found at run time (WT_VK_SHWATCH). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -129,7 +129,7 @@ void watch_find_and_arm(const float *pat, int n, int at, int which) {
     g_addr = first + 4 * (uint64_t)at; g_len = 4; g_rw = 3;
     arm_all("reads and writes, pattern match");
 }
-/* [Recomps#1] TEST: arm the watch once on an address found at run time (shadow flicker: SSBU_VK_SHWATCH, nvn_vk_draw.c) */
+/* [Recomps#1] TEST: arm the watch once on an address found at run time (shadow flicker: WT_VK_SHWATCH, nvn_vk_draw.c) */
 void watch_arm_at(uint64_t addr, int len) {
     static volatile LONG once;
     if (g_addr || InterlockedExchange(&once, 1)) return;

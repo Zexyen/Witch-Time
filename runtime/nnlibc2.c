@@ -412,9 +412,7 @@ static void c_gmtime_r(Ctx *c) {
 }
 
 /* ================================================================ pthread_join
- * The game imports pthread_join but NOT pthread_create (nor any other way to obtain a pthread_t): the single caller,
- * 0x710399f994, is the thread-pool teardown of a statically linked library (it joins pool->threads[i] after
- * broadcasting two condition variables), and that pool can never have started a thread. No pthread_t can therefore
+ * The game imports pthread_join but NOT pthread_create (nor any other way to obtain a pthread_t), so no pthread_t can
  * exist; a call with a non-null handle is reported in the trace and answered with ESRCH. */
 static void c_pthread_join(Ctx *c) {
     if (A0) trace_printf("     pthread_join(%llx): no pthread can exist in this program (pthread_create is not imported) -> ESRCH\n", (unsigned long long)A0);

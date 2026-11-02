@@ -1,4 +1,4 @@
-"""Report of an SSBU_LPROF sample file (runtime/lprof.c, Linux): per thread, the functions most often innermost ("self")
+"""Report of an WT_LPROF sample file (runtime/lprof.c, Linux): per thread, the functions most often innermost ("self")
 and anywhere in the sampled chain ("incl", once per sample).
 
     python scripts/lprof_report.py <lprof.txt> [threads to show (default 6)] [functions per list (default 25)]

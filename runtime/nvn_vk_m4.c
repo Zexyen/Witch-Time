@@ -22,7 +22,7 @@ typedef struct VStage {
     uint32_t local[3];
     VSmp smp[64];
     VkShaderModule mod; struct VStage *next, *next_h;
-    VkPipeline lib, lib2; volatile LONG lib_state, lib2_state;      /* session 9 (SSBU_VK_GPL=2): the stage's pipeline library; lib2: a vertex stage with the empty fragment shader state */
+    VkPipeline lib, lib2; volatile LONG lib_state, lib2_state;      /* session 9 (WT_VK_GPL=2): the stage's pipeline library; lib2: a vertex stage with the empty fragment shader state */
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
@@ -60,7 +60,7 @@ enum { H_STAGE_DRAW, H_STAGE_WAIT, H_PIPE_DRAW, H_PIPE_WAIT, H_N };
 static LONG64 g_hold_n[H_N], g_hold_tk[H_N], g_hold_max;
 static LONG64 g_w_progs, g_w_stages, g_w_pipes, g_pred_made, g_pred_used, g_set_held, g_set_held_tk;
 static void hold_note(int what, LONG64 ticks) { g_hold_n[what]++; g_hold_tk[what] += ticks; if (ticks > g_hold_max) g_hold_max = ticks; }
-static int holdlog_on(void) { static int on = -1; if (on < 0) on = getenv("SSBU_VK_HOLDLOG") && atoi(getenv("SSBU_VK_HOLDLOG")); return on; }      /* session 7: a "nvn_vk_hold:" line for every stage / pipeline made at a draw */
+static int holdlog_on(void) { static int on = -1; if (on < 0) on = getenv("WT_VK_HOLDLOG") && atoi(getenv("WT_VK_HOLDLOG")); return on; }      /* session 7: a "nvn_vk_hold:" line for every stage / pipeline made at a draw */
 static volatile LONG g_in_fight;
 /* Session 7: the last frame that had compute dispatches. g_in_fight is per frame and some frames of a fight have none (run
  * s7fn2, frame 2072: nvnProgramSetShaders held the main thread 45 ms for background work in the middle of the countdown):
@@ -69,7 +69,7 @@ static volatile LONG64 g_fight_last = -100000;
 static int fight_recent(void) { return g_in_fight || nvn_front_frame_next() - g_fight_last < 600; }
 static LONG64 g_var_known;
 static LONG64 g_jq_queued, g_jq_done, g_bq_queued, g_bq_done;
-/* SSBU_VK_HOLDLOG=1 only: when and by whom a stage's code was first handed to the workers (0 = nvnProgramSetShaders,
+/* WT_VK_HOLDLOG=1 only: when and by whom a stage's code was first handed to the workers (0 = nvnProgramSetShaders,
  * 1 = the container scan's background queue), so that a hold can say whether anyone knew the code before its draw. */
 static struct { uint64_t hb; int32_t frame; int32_t origin; } g_ho[65536];
 static void ho_note(uint64_t hb, int origin) {
@@ -83,11 +83,11 @@ static const char *ho_text(uint64_t hb) {
     return "code never handed over before this draw";
 }
 static uint64_t fnv(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001B3ULL; return h; }
-/* Session 7: the cache folder. SSBU_VK_CACHE=<folder> (tests: a first run on a cache of one's own, without touching the
+/* Session 7: the cache folder. WT_VK_CACHE=<folder> (tests: a first run on a cache of one's own, without touching the
  * shared ..\cache\vk); first called on the starting thread, before the workers exist. */
 static const char *vkc_dir(void) {
     static char d[200];
-    if (!d[0]) { const char *e = getenv("SSBU_VK_CACHE"); snprintf(d, sizeof d, "%s", e && e[0] ? e : "../cache/vk"); }
+    if (!d[0]) { const char *e = getenv("WT_VK_CACHE"); snprintf(d, sizeof d, "%s", e && e[0] ? e : "../cache/vk"); }
     return d;
 }
 static const char *vkc_file(const char *name) { static char p[4][260]; static LONG i; char *b = p[InterlockedIncrement(&i) & 3]; snprintf(b, 260, "%s/%s", vkc_dir(), name); return b; }
@@ -126,11 +126,11 @@ static int ssrc_of(SSrc *o, const Prog *p, int s) {
     memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
 }
-/* [issue 26] TEST: SSBU_VK_LOOPDEBUG=<n>: graphics stages are ended after n jumps back (0 or empty: the usual limit) and a
+/* [issue 26] TEST: WT_VK_LOOPDEBUG=<n>: graphics stages are ended after n jumps back (0 or empty: the usual limit) and a
  * fragment stage ended so writes magenta. Part of the stage hash, so the cache keeps the two translations apart. */
 static unsigned vk_loopdebug(void) {
     static int v = -1;
-    if (v < 0) { const char *e = getenv("SSBU_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: SSBU_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
+    if (v < 0) { const char *e = getenv("WT_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: WT_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
     return (unsigned)v;
 }
 static uint64_t ssrc_hb(const SSrc *o) {
@@ -140,7 +140,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
-    if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
+    if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -237,13 +237,13 @@ static void module_name(VkShaderModule mod, const SSrc *src) {
  * (or read from its record) is copied and its scaled translation made by one thread at the lowest priority and written to the cache as a scaled run
  * writes it (spv, the stage record, the variants list under the scaled code hash), unless it is there; its module is not
  * kept. It waits while the workers have jobs or a fight is near: measured, without that it added 3-5 s to the first run's
- * held loading screens (20.9 / 22.7 s off, 25.9 / 25.9 s on). SSBU_VK_RS_PREP=0: off. The driver's pipelines (they need a draw's state) are not made ahead. */
+ * held loading screens (20.9 / 22.7 s off, 25.9 / 25.9 s on). WT_VK_RS_PREP=0: off. The driver's pipelines (they need a draw's state) are not made ahead. */
 typedef struct RsJob { struct RsJob *next; SSrc src; uint32_t key[4], fo; uint8_t data[1]; } RsJob;
 static RsJob *g_rs_head, **g_rs_tail = &g_rs_head;
 static CRITICAL_SECTION g_rs_lock; static CONDITION_VARIABLE g_rs_cv; static volatile LONG g_rs_started; static HANDLE g_rs_thread; static int g_m4_quit;
 static LONG64 g_rs_pre_made, g_rs_pre_had, g_rs_pre_queued;
 static void vstage_build(VStage *v, const SSrc *src);
-static int rs_pre_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("SSBU_VK_RS_PREP"); on = !(e && !atoi(e)) && !g_offline; } return on; }
+static int rs_pre_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("WT_VK_RS_PREP"); on = !(e && !atoi(e)) && !g_offline; } return on; }
 static int rs_pre_have(const SSrc *src, uint64_t hb, const uint32_t *key, uint32_t fo) {      /* a scaled variant serving key is on disk */
     char path[128]; VarRec e; StageRec r; int have = 0;
     snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), src->stage, (unsigned long long)hb);
@@ -336,7 +336,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         else {
             uint64_t spv_hash = 0;
             if (src->nograin) { char *g = strstr(out.glsl, "(F(c4[13u]))"); if (g) memcpy(g, "(0.0       )", 12); }      /* issue 86, stage_fx */
-            if (getenv("SSBU_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: SSBU_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
+            if (getenv("WT_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: WT_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
                 uint32_t dep = s == 0 ? out.int_dep : 0, ck[4] = { v->key[0] & dep, v->key[1] & dep, v->key[2] & out.tex_units, v->key[3] & out.tex_units };
                 glsl_dump(src->serial, s, fnv(fnv(v->hb, ck, 16), &v->fo, 4), out.glsl);
             }
@@ -401,12 +401,12 @@ static VStage *stage_ensure(const SSrc *src, uint64_t hb, const uint32_t *key, u
     return v;
 }
 /* Render thread, at a draw or dispatch. */
-/* ---- Session 9: shader_wait = skip (graphics.ini; SSBU_VK_NOHOLD=1 / =0 wins). What emulators call asynchronous shader
+/* ---- Session 9: shader_wait = skip (graphics.ini; WT_VK_NOHOLD=1 / =0 wins). What emulators call asynchronous shader
  * compilation: near a fight (fight_recent) a draw whose stage or pipeline is not ready is NOT waited for: the draw is left
  * out, a worker makes what was missing, and the draw appears in a later frame. Every draw left out is counted
  * ("nvn_vk_skip:" lines, "nvn_vk_skipf:" per frame, total at exit). Compute stages (skinning) are never skipped. Off by
  * default: the picture is wrong for the frames in which something is left out. */
-static int skip_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("SSBU_VK_NOHOLD"); on = e ? atoi(e) != 0 : gfx_options()->shader_skip; } return on; }
+static int skip_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("WT_VK_NOHOLD"); on = e ? atoi(e) != 0 : gfx_options()->shader_skip; } return on; }
 static int fight_recent(void);
 static int skip_active(void) { return skip_on() && fight_recent(); }
 static LONG64 g_skip_n, g_skip_frames, g_skip_fr_n, g_skip_stage, g_skip_pipe;
@@ -575,7 +575,7 @@ static Pipe *pipe_new(const PKey *k, VStage *vs, VStage *fs, uint64_t h, int sta
     p->next = g_pipes[h & 1023]; g_pipes[h & 1023] = p;
     return p;
 }
-/* ---- Session 9: graphics pipeline libraries (VK_EXT_graphics_pipeline_library; D.has_gpl, SSBU_VK_GPL=1).
+/* ---- Session 9: graphics pipeline libraries (VK_EXT_graphics_pipeline_library; D.has_gpl, WT_VK_GPL=1).
  * What a first run did not know at loading is (a) the pass formats a stage pair will be drawn with and (b) the topology
  * class: everything else of the key is dynamic state since session 4. With libraries the expensive part, the two shader
  * stages, is compiled WITHOUT those: one "pair library" per (vertex stage, fragment stage, samples, sample shading) holds
@@ -592,7 +592,7 @@ static volatile LONG g_in_fight;
  * from the pipeline cache". Chained to every stage library and every link. [0] stage libraries, [1] links; hit = the
  * driver set APPLICATION_PIPELINE_CACHE_HIT, miss = valid feedback without it, none = the driver gave no valid feedback.
  * The same split for creations on the render thread in a fight frame ("f"), with the time of the misses. Line
- * "nvn_vk_feedback:" at exit; with SSBU_VK_HOLDLOG=1 one line "nvn_vk_first:" per creation at a draw in a fight frame. */
+ * "nvn_vk_feedback:" at exit; with WT_VK_HOLDLOG=1 one line "nvn_vk_first:" per creation at a draw in a fight frame. */
 typedef struct { uint32_t flags; uint64_t duration; } FbRec;
 typedef struct { VkStructureType sType; const void *pNext; FbRec *pPipelineCreationFeedback; uint32_t pipelineStageCreationFeedbackCount; FbRec *pPipelineStageCreationFeedbacks; } FbInfo;
 static volatile LONG64 g_pc_dirty, g_pc_dirty_saved;      /* session 14: creations the driver's cache did not answer (stage libraries by feedback; whole pipelines by their time, over 3 ms), and the count at the last read-out */
@@ -651,11 +651,11 @@ static void gpl_ms(VkPipelineMultisampleStateCreateInfo *ms, VkSampleMask *smask
  * one vertex stage of 1,294 returned VK_ERROR_INITIALIZATION_FAILED) no longer ends the game. A library that cannot be made
  * leaves its stage to WHOLE pipelines; a whole pipeline that cannot be made leaves its draws out. One line per failure names
  * the stage by its variant hash: translation is deterministic, so the same .st / .spv files are in our own cache.
- * TEST: SSBU_VK_FAILLIB=<n> makes the n-th stage or pair library fail (-1: every one), SSBU_VK_FAILPIPE=<n> the n-th whole pipeline. */
+ * TEST: WT_VK_FAILLIB=<n> makes the n-th stage or pair library fail (-1: every one), WT_VK_FAILPIPE=<n> the n-th whole pipeline. */
 static LONG64 g_fail_lib, g_fail_pipe, g_fail_draws;
 static int fail_test(const char *env, volatile LONG *count) {
     static int lib = -2, pipe = -2;
-    int *v = env[12] == 'L' ? &lib : &pipe;        /* SSBU_VK_FAIL[L]IB / SSBU_VK_FAIL[P]IPE */
+    int *v = env[12] == 'L' ? &lib : &pipe;        /* WT_VK_FAIL[L]IB / WT_VK_FAIL[P]IPE */
     if (*v == -2) *v = getenv(env) ? atoi(getenv(env)) : 0;
     return *v && (*v < 0 || InterlockedIncrement(count) == *v);
 }
@@ -725,7 +725,7 @@ static PairLib *pairlib_ensure(VStage *vs, VStage *fs, int samples, int sshade, 
     gi.pNext = &gl; gi.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT; gi.stageCount = fs ? 2 : 1; gi.pStages = st; gi.pViewportState = &vp; gi.pRasterizationState = &rs; gi.pMultisampleState = &ms;
     gi.pDepthStencilState = &ds; gi.pDynamicState = &dy; gi.layout = l->layout;
     static volatile LONG nfail;
-    VkResult r = fail_test("SSBU_VK_FAILLIB", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &l->lib);
+    VkResult r = fail_test("WT_VK_FAILLIB", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &l->lib);
     if (r != VK_SUCCESS) {                         /* finding 120: its pipelines are made whole */
         l->lib = VK_NULL_HANDLE;
         InterlockedIncrement64(&g_fail_lib);
@@ -797,7 +797,7 @@ static VkPipeline gpl_olib(const PKey *k0) {
     LeaveCriticalSection(&g_gpl_lock);
     return p;
 }
-/* ---- SSBU_VK_GPL=2: one library per STAGE instead of per pair, so that no pair has to be known before its draw (a fragment
+/* ---- WT_VK_GPL=2: one library per STAGE instead of per pair, so that no pair has to be known before its draw (a fragment
  * stage of a program without a vertex stage is drawn with the vertex stage of another program: 24 of the 30 libraries still
  * compiled at a draw in run s9gn2). Two libraries of one pipeline must agree on every descriptor set layout both use, and our
  * sets hold the bindings of both stages; so every stage library is made with ONE layout that declares every binding a vertex
@@ -868,7 +868,7 @@ static VkPipeline stagelib_ensure(VStage *v, int alone, int *how) {
     VkGraphicsPipelineLibraryCreateInfoEXT gl = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT};
     gl.pNext = &ri; gl.flags = isfs ? VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT : VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | (alone ? VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT : 0);
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    /* session 10: the link-time-optimisation information is kept only when something will ask for it (SSBU_VK_GPL_OPT=1) */
+    /* session 10: the link-time-optimisation information is kept only when something will ask for it (WT_VK_GPL_OPT=1) */
     gi.pNext = &gl; gi.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (gpl_opt_on() ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0); gi.stageCount = 1; gi.pStages = &st; gi.pDynamicState = &dy; gi.layout = g_ulayout;
     if (!isfs) { gi.pViewportState = &vp; gi.pRasterizationState = &rs; }
     if (isfs || alone) gi.pDepthStencilState = &ds;
@@ -876,7 +876,7 @@ static VkPipeline stagelib_ensure(VStage *v, int alone, int *how) {
     FbInfo fbi = {(VkStructureType)1000192000, NULL, &fb_all, 1, &fb_st};
     ri.pNext = &fbi;
     static volatile LONG nfail;
-    VkResult r = fail_test("SSBU_VK_FAILLIB", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, lib);
+    VkResult r = fail_test("WT_VK_FAILLIB", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, lib);
     if (r != VK_SUCCESS) {                         /* finding 120: state 3 = no library; pipe_build makes this stage's pipelines whole */
         *lib = VK_NULL_HANDLE;
         InterlockedIncrement64(&g_fail_lib);
@@ -911,7 +911,7 @@ static void gpl_destroy(void) {
 /* A pipeline linked at once from libraries is not optimised across its stages (run s9g2n1, NVIDIA: 3.3 ms of GPU time per
  * fight frame against 1.6 ms). So every pipeline linked from stage libraries is linked AGAIN by a worker with
  * VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION (a full compilation, background queue) and the handle is exchanged; the first
- * one stays alive until shutdown (command buffers in flight use it). SSBU_VK_GPL_OPT=0 turns this off. */
+ * one stays alive until shutdown (command buffers in flight use it). WT_VK_GPL_OPT=0 turns this off. */
 static void gpl_opt_push(struct Pipe *p);          /* g_sh_lock held (defined after the job queue) */
 static LONG64 g_gpl_opt_q, g_gpl_opt_n, g_gpl_opt_tk;
 static int g_m4_quit;
@@ -919,7 +919,7 @@ static int g_m4_quit;
  * (Intel) of worker time in one run, the GPU time per fight frame did not change (NVIDIA 3.23 against 3.34 ms, Intel 8.60
  * against 8.80) and the holds went UP (16 / 744 ms against 13 / 732 ms; Intel 53 / 2,055 ms against 37 / 1,199 ms). A second
  * run has the normal GPU time without it (s9g2n2: 1.59 ms), so the higher first-run number is not the missing optimisation. */
-static int gpl_opt_on(void) { static int on = -1; if (on < 0) on = getenv("SSBU_VK_GPL_OPT") && atoi(getenv("SSBU_VK_GPL_OPT")); return on; }
+static int gpl_opt_on(void) { static int on = -1; if (on < 0) on = getenv("WT_VK_GPL_OPT") && atoi(getenv("WT_VK_GPL_OPT")); return on; }
 static void gpl_optimise(Pipe *p) {                /* a worker */
     const PKey *k = &p->k;
     LONG64 t0 = tk();
@@ -946,7 +946,7 @@ static double pipe_build(Pipe *p) {
     const PKey *k = &p->k;
     VStage *vs = p->vs, *fs = p->fs;
     LONG64 t0 = tk();
-    if (!p->tcs && D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, SSBU_VK_GPL=2: linked from one library per stage */
+    if (!p->tcs && D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, WT_VK_GPL=2: linked from one library per stage */
         int how, how2 = 0, n = 0;
         VkPipeline libs[4];
         libs[n++] = gpl_vilib(k->topo_class < 3 ? k->topo_class : 2);
@@ -1085,7 +1085,7 @@ whole:;
     gi.pDepthStencilState = &ds; gi.pColorBlendState = &cb; gi.pDynamicState = &dy; gi.layout = p->layout;
     if (!D.has_vids) gi.pVertexInputState = &vi;
     static volatile LONG nfail;
-    VkResult r = fail_test("SSBU_VK_FAILPIPE", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &p->p);
+    VkResult r = fail_test("WT_VK_FAILPIPE", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &p->p);
     if (r != VK_SUCCESS) {                         /* finding 120: no pipeline: its draws are left out (pipe_get's callers), the game goes on */
         p->p = VK_NULL_HANDLE;
         InterlockedIncrement64(&g_fail_pipe);
@@ -1189,12 +1189,12 @@ static void gpl_opt_push(Pipe *p) { Job *j = calloc(1, sizeof *j); j->kind = 6; 
 static int g_m4_on, g_m4_quit, g_scan_on;
 static LONG64 g_scan_jobs, g_scan_pipes, g_cs_pairs;
 static volatile LONG g_in_fight;
-static struct { int w, h, ncol, cf, df, lv; long long n, fight, first; } g_rtlog[256];      /* SSBU_VK_RTLOG=1: render-target sizes (nvn_vk_draw.c, where a pass begins) */
+static struct { int w, h, ncol, cf, df, lv; long long n, fight, first; } g_rtlog[256];      /* WT_VK_RTLOG=1: render-target sizes (nvn_vk_draw.c, where a pass begins) */
 static int g_rtlog_n;
-static int g_ncont, g_cscan, g_cscan_log, g_cpredict, g_game_tables = 0;     /* the container scan (end of this file). [Recomps#1] g_game_tables off: Smash 13.0.4 offset tables at 0x71052a32d8 / 0x7104470aa8, outside our image */
+static int g_ncont, g_cscan, g_cscan_log, g_cpredict;     /* the container scan (end of this file) */
 static LONG64 g_cs_scans, g_cs_vars, g_cs_jobs, g_cs_tk, g_cs_pred, g_cs_bytes;
 static LONG64 g_cs_neg_hit, g_cs_neg_ext, g_cs_search, g_cs_gaveup;      /* session 8: the container search's negative intervals and time budget */
-static uint64_t g_cscan_reach = 64, g_cscan_step = 0x1000;    /* MB searched below a control section for the header of its container, and the alignment a header is looked for at (SSBU_VK_CSCAN_STEP) */
+static uint64_t g_cscan_reach = 64, g_cscan_step = 0x1000;    /* MB searched below a control section for the header of its container, and the alignment a header is looked for at (WT_VK_CSCAN_STEP) */
 static void job_push(Job *j) {                     /* g_sh_lock held */
     j->next = NULL;
     if (g_jq_tail) g_jq_tail->next = j; else g_jq_head = j;
@@ -1302,7 +1302,7 @@ static Pipe *pipe_get(const PKey *k, VStage *vs, VStage *fs) {
     }
     if (!p->used) {
         p->used = 1;
-        g_fu_fr_n++; if (mine) { if (D.has_gpl && p->lib_how == 0) g_fu_fr_linked++; else g_fu_fr_made++; g_fu_fr_tk += tk() - t0; } if (waited) g_fu_fr_made++;      /* round 16, SSBU_VK_FIRSTLOG: first draws of a pipeline (pair + pass signature) per frame */
+        g_fu_fr_n++; if (mine) { if (D.has_gpl && p->lib_how == 0) g_fu_fr_linked++; else g_fu_fr_made++; g_fu_fr_tk += tk() - t0; } if (waited) g_fu_fr_made++;      /* round 16, WT_VK_FIRSTLOG: first draws of a pipeline (pair + pass signature) per frame */
         if (p->predicted && !mine) g_pred_used++;
         if (!p->recorded) { piperec_append(k, vs, fs, 0); p->recorded = 1; }
     }
@@ -1365,7 +1365,7 @@ static void spawn_stage(const SSrc *src, const uint32_t *key) {
     job_push_front(j);
     LeaveCriticalSection(&g_sh_lock);
 }
-/* ---- Session 9: pairs nobody announces. A program without a vertex stage (session 8, SSBU_VK_FRAGONLY) is drawn with the
+/* ---- Session 9: pairs nobody announces. A program without a vertex stage (session 8, WT_VK_FRAGONLY) is drawn with the
  * vertex stage of ANOTHER program, so its pair is only known at the draw. The vertex stages used that way are few (one
  * screen-quad stage made 13 of the 26 unknown pipelines of run s8n1): every vertex stage ever drawn with such a fragment
  * stage is remembered ("shared"), and the pair library of shared vertex stage x fragment stage without a program of its own
@@ -1373,11 +1373,11 @@ static void spawn_stage(const SSrc *src, const uint32_t *key) {
 static VStage *g_fo[8192], *g_shvs[64];
 static int g_nfo, g_nshvs;
 static LONG64 g_gpl_cross;
-/* SSBU_VK_GPL_CROSS: 0 no such pairs are made ahead; 1 (default) only where the fragment stage reads EXACTLY what the vertex
+/* WT_VK_GPL_CROSS: 0 no such pairs are made ahead; 1 (default) only where the fragment stage reads EXACTLY what the vertex
  * stage writes; 2 wherever the draw would take this vertex variant (run s9gn1: 3,906 such fragment stages x 21 shared vertex
  * stages = 37,059 libraries asked for, 17,693 compiled in 1,216 s of worker time: the workers were busy through the whole
  * fight and the run was WORSE than without libraries: 82 holds, 5.8 s). */
-static int gpl_cross_mode(void) { static int m = -1; if (m < 0) m = getenv("SSBU_VK_GPL_CROSS") ? atoi(getenv("SSBU_VK_GPL_CROSS")) : 1; return m; }
+static int gpl_cross_mode(void) { static int m = -1; if (m < 0) m = getenv("WT_VK_GPL_CROSS") ? atoi(getenv("WT_VK_GPL_CROSS")) : 1; return m; }
 static int gpl_pair_fits(const VStage *vs, const VStage *fs) {
     if (gpl_cross_mode() == 1) return !vs->fo && fs->in_attr == vs->out_attr;
     return (fs->in_attr & ~(vs->out_attr & ~vs->fo)) == vs->fo;      /* the draw takes the vertex variant whose forced outputs are exactly the fragment inputs the code does not write */
@@ -1412,11 +1412,11 @@ static void spawn_stage_fo(const SSrc *src, const uint32_t *key) {      /* as sp
 }
 /* The barrier (session 9): a frame that is a loading screen (at most 60 draws) is not presented while the workers still have
  * a queued stage, pair library or pipeline: the game leaves its loading screen only when everything handed over is ready.
- * On by default with pipeline libraries (SSBU_VK_BARRIER=0 / =1 forces it). Time-out 20 s, logged loudly. */
+ * On by default with pipeline libraries (WT_VK_BARRIER=0 / =1 forces it). Time-out 20 s, logged loudly. */
 static LONG64 g_bar_n, g_bar_tk, g_bar_max, g_bar_timeout;
 static void m4_barrier(LONG64 frame, LONG64 draws) {
     static int on = -1;
-    if (on < 0) { const char *e = getenv("SSBU_VK_BARRIER"); on = e ? atoi(e) != 0 : D.has_gpl; }
+    if (on < 0) { const char *e = getenv("WT_VK_BARRIER"); on = e ? atoi(e) != 0 : D.has_gpl; }
     if (!on || draws > 60 || !g_pw_nthread) return;
     int save = 0;
     EnterCriticalSection(&g_sh_lock);
@@ -1514,7 +1514,7 @@ static void job_prog(Job *j) {
         cont_learn(pc);
         LeaveCriticalSection(&g_sh_lock);
     }
-    if (D.has_gpl && !g_offline && gpl_sep() && !(fs && j->sshade) && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) { int lh; stagelib_ensure(vs, 0, &lh); if (fs) stagelib_ensure(fs, 0, &lh); else stagelib_ensure(vs, 1, &lh); }      /* SSBU_VK_GPL=2: a library per stage (a program without a fragment stage: both forms of its vertex stage) */
+    if (D.has_gpl && !g_offline && gpl_sep() && !(fs && j->sshade) && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) { int lh; stagelib_ensure(vs, 0, &lh); if (fs) stagelib_ensure(fs, 0, &lh); else stagelib_ensure(vs, 1, &lh); }      /* WT_VK_GPL=2: a library per stage (a program without a fragment stage: both forms of its vertex stage) */
     else
     if (D.has_gpl && !g_offline && !j->prep) { int lh; pairlib_ensure(vs, fs, 1, fs ? j->sshade : 0, &lh); }      /* session 9: the pair's shaders compiled now, without pass formats; a draw links */
     if (!g_predict || j->prep) return;
@@ -1730,9 +1730,9 @@ static DWORD WINAPI pw_main(void *arg) {
     for (;;) {                                     /* 2. what the game hands over while it runs */
         {   /* Session 7: in a fight the workers run BELOW the game's threads (measured, run s7fn1 frames 2101-2118: the 16
              * workers making the container scan's pipelines kept the CPU 80% busy and the main thread's frames took 32-40 ms).
-             * SSBU_VK_WORKER_PRIO=0 keeps them at normal priority. */
+             * WT_VK_WORKER_PRIO=0 keeps them at normal priority. */
             static int on = -1;
-            if (on < 0) on = !(getenv("SSBU_VK_WORKER_PRIO") && !atoi(getenv("SSBU_VK_WORKER_PRIO")));
+            if (on < 0) on = !(getenv("WT_VK_WORKER_PRIO") && !atoi(getenv("WT_VK_WORKER_PRIO")));
             int want = on && g_in_fight ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_NORMAL;
             if (want != prio) { SetThreadPriority(GetCurrentThread(), want); prio = want; }
         }
@@ -1774,7 +1774,7 @@ static DWORD WINAPI pw_main(void *arg) {
 /* nvnProgramSetShaders, GUEST thread (called by the front end when the renderer is Vulkan): the program's stages go to
  * the workers now. The caller is held only while more jobs wait than there are workers (a burst of a loading thread),
  * so that loading ends when its shaders are ready; a single program created during a fight does not hold its caller. */
-/* Session 7 (SSBU_VK_STAGECOPY=1; OFF by default until it has a whole verification). Measured in a first run (s7gn1, hold
+/* Session 7 (WT_VK_STAGECOPY=1; OFF by default until it has a whole verification). Measured in a first run (s7gn1, hold
  * log): 32 of the 34 stages made or waited for at a draw had a code hash that NOBODY had handed over, although their programs
  * were set long before: Stage.code points into the GAME's memory and that memory no longer held at the draw what it held at
  * nvnProgramSetShaders (a console's driver compiles at that call and never reads the memory again). With the switch the
@@ -1806,22 +1806,22 @@ void nvn_vk_program_set(void *prog) {
     SSrc s[3];
     if (!g_m4_on || p->st[2].state || p->st[3].state || p->st[4].state) return;
     {   static int on = -1;
-        if (on < 0) on = getenv("SSBU_VK_STAGECOPY") && atoi(getenv("SSBU_VK_STAGECOPY"));
+        if (on < 0) on = getenv("WT_VK_STAGECOPY") && atoi(getenv("WT_VK_STAGECOPY"));
         if (on) { EnterCriticalSection(&g_sh_lock); stage_copy(&p->st[0], 0); stage_copy(&p->st[1], 1); stage_copy(&p->st[5], 5); LeaveCriticalSection(&g_sh_lock); }
     }
     int has[3] = {ssrc_of(&s[0], p, 0), ssrc_of(&s[1], p, 1), ssrc_of(&s[2], p, 5)};
     if (!has[0] && !has[2] && has[1]) {
-        /* Session 7, SSBU_VK_FRAGONLY=1 (written at the end of the session, compiled, NOT RUN: off by default). A program
+        /* Session 7, WT_VK_FRAGONLY=1 (written at the end of the session, compiled, NOT RUN: off by default). A program
          * with a fragment stage and no vertex stage (the game binds stages of different programs) was never handed over:
          * its fragment stage was translated at its first draw. Believed to be the "code never handed over" stages of the
          * hold log (28-32 of the 29-34 stage holds of a first run: all fragment stages of programs set at start). */
-        /* Session 8: RUN, and ON by default (SSBU_VK_FRAGONLY=0 = as before). First run on an empty cache, same exe, quiet PC:
+        /* Session 8: RUN, and ON by default (WT_VK_FRAGONLY=0 = as before). First run on an empty cache, same exe, quiet PC:
          * off (s8e0) 24 stages made at a draw (297 ms) + 13 waited for (127 ms), 123 holds / 730 ms in all, 0 of 6 fight
          * windows clean; on (s8e1) 0 made + 4 waited for (29 ms), 81 holds / 250 ms, 6 of 8 clean. The price is at loading:
          * 7,740 stages made by the workers instead of 3,872, callers of nvnProgramSetShaders held 17.5 s instead of 7.4 s
          * over the whole first run (a second run reads them from the cache). */
         static int on = -1;
-        if (on < 0) on = !(getenv("SSBU_VK_FRAGONLY") && !atoi(getenv("SSBU_VK_FRAGONLY")));
+        if (on < 0) on = !(getenv("WT_VK_FRAGONLY") && !atoi(getenv("WT_VK_FRAGONLY")));
         if (on) { static const uint32_t zero[4]; if (holdlog_on()) { EnterCriticalSection(&g_sh_lock); ho_note(ssrc_hb(&s[1]), 0); LeaveCriticalSection(&g_sh_lock); } spawn_stage_fo(&s[1], zero); }
         return;
     }
@@ -1860,10 +1860,10 @@ static void prewarm_start(void) {
     InitializeCriticalSection(&g_sh_lock); InitializeCriticalSection(&g_gpl_lock); InitializeCriticalSection(&g_vlay_lock);
     InitializeConditionVariable(&g_sh_cv); InitializeConditionVariable(&g_jq_cv);
     CreateDirectoryA(vkc_dir(), NULL); CreateDirectoryA(vkc_file("spv"), NULL); CreateDirectoryA(vkc_file("stage"), NULL);
-    if (getenv("SSBU_VK_CACHE")) printf("nvn_vk: cache folder %s (SSBU_VK_CACHE)\n", vkc_dir());
-    {   HMODULE m = LoadLibraryA("ssbu_glslang.dll");
-        g_glsl_to_spirv = m ? (void *)GetProcAddress(m, "ssbu_glsl_to_spirv") : NULL; g_spirv_free = m ? (void *)GetProcAddress(m, "ssbu_spirv_free") : NULL;
-        if (!g_glsl_to_spirv || !g_spirv_free) vkd_fail("ssbu_glslang.dll cannot be loaded (build_glslang.bat makes it)");
+    if (getenv("WT_VK_CACHE")) printf("nvn_vk: cache folder %s (WT_VK_CACHE)\n", vkc_dir());
+    {   HMODULE m = LoadLibraryA("wt_glslang.dll");
+        g_glsl_to_spirv = m ? (void *)GetProcAddress(m, "wt_glsl_to_spirv") : NULL; g_spirv_free = m ? (void *)GetProcAddress(m, "wt_spirv_free") : NULL;
+        if (!g_glsl_to_spirv || !g_spirv_free) vkd_fail("wt_glslang.dll cannot be loaded (the build puts it beside the program)");
     }
     {   /* the driver's pipeline cache, ours on disk: keyed by GPU and driver version (the driver checks its own header too) */
         VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
@@ -1879,18 +1879,18 @@ static void prewarm_start(void) {
         printf("nvn_vk: pipeline cache %s: %llu KB read (file read %.0f ms, driver took it in %.0f ms: start-up time on the thread that creates the device)\n", g_pcache_path, (unsigned long long)(ci.initialDataSize >> 10), (double)(tp1 - tp0) * 1000.0 / (double)pfq.QuadPart, (double)(tk() - tp1) * 1000.0 / (double)pfq.QuadPart);
         free(data);
     }
-    /* Blind prediction (pair x most used pass signatures) is OFF unless SSBU_VK_PREDICT=1: measured on a first run it made
+    /* Blind prediction (pair x most used pass signatures) is OFF unless WT_VK_PREDICT=1: measured on a first run it made
      * 8,418 pipelines of which draws used 324, and kept the workers from the programs being handed over. The look-ahead
      * (scan_list below) names exactly what a batch needs instead. */
-    g_predict = D.has_eds3 && getenv("SSBU_VK_PREDICT") && atoi(getenv("SSBU_VK_PREDICT"));
-    g_scan_on = D.has_eds3 && !(getenv("SSBU_VK_LOOKAHEAD") && !atoi(getenv("SSBU_VK_LOOKAHEAD")));
-    g_cscan = !(getenv("SSBU_VK_CSCAN") && !atoi(getenv("SSBU_VK_CSCAN")));                              /* session 6: the container scan */
-    g_cpredict = D.has_eds3 && !(getenv("SSBU_VK_CPREDICT") && !atoi(getenv("SSBU_VK_CPREDICT")));      /* and the pipelines of a container's pass signatures for all its pairs */
-    g_cscan_log = getenv("SSBU_VK_CSCAN_LOG") && atoi(getenv("SSBU_VK_CSCAN_LOG"));
-    if (getenv("SSBU_VK_CSCAN_STEP") && atoi(getenv("SSBU_VK_CSCAN_STEP")) >= 8) g_cscan_step = (uint64_t)atoi(getenv("SSBU_VK_CSCAN_STEP")) & ~7ull;
-    if (getenv("SSBU_VK_CSCAN_REACH") && atoi(getenv("SSBU_VK_CSCAN_REACH")) > 0) g_cscan_reach = (uint64_t)atoi(getenv("SSBU_VK_CSCAN_REACH"));
+    g_predict = D.has_eds3 && getenv("WT_VK_PREDICT") && atoi(getenv("WT_VK_PREDICT"));
+    g_scan_on = D.has_eds3 && !(getenv("WT_VK_LOOKAHEAD") && !atoi(getenv("WT_VK_LOOKAHEAD")));
+    g_cscan = !(getenv("WT_VK_CSCAN") && !atoi(getenv("WT_VK_CSCAN")));                              /* session 6: the container scan */
+    g_cpredict = D.has_eds3 && !(getenv("WT_VK_CPREDICT") && !atoi(getenv("WT_VK_CPREDICT")));      /* and the pipelines of a container's pass signatures for all its pairs */
+    g_cscan_log = getenv("WT_VK_CSCAN_LOG") && atoi(getenv("WT_VK_CSCAN_LOG"));
+    if (getenv("WT_VK_CSCAN_STEP") && atoi(getenv("WT_VK_CSCAN_STEP")) >= 8) g_cscan_step = (uint64_t)atoi(getenv("WT_VK_CSCAN_STEP")) & ~7ull;
+    if (getenv("WT_VK_CSCAN_REACH") && atoi(getenv("WT_VK_CSCAN_REACH")) > 0) g_cscan_reach = (uint64_t)atoi(getenv("WT_VK_CSCAN_REACH"));
     if (!D.has_vids) vlay_load();                  /* finding 116: the layout numbers pipes.bin's keys hold */
-    int ahead = !(getenv("SSBU_VK_PREWARM") && !atoi(getenv("SSBU_VK_PREWARM")));
+    int ahead = !(getenv("WT_VK_PREWARM") && !atoi(getenv("WT_VK_PREWARM")));
     FILE *fp = ahead ? fopen(vkc_file("pipes.bin"), "rb") : NULL;
     if (fp) {
         fseek(fp, 0, SEEK_END); long n = ftell(fp); fseek(fp, 0, SEEK_SET);
@@ -1903,20 +1903,20 @@ static void prewarm_start(void) {
         for (int i = 0; i < g_pw_n; i++) if (g_pw_rec[i].magic == PIPEREC_MAGIC && (!kept || memcmp(&g_pw_rec[kept - 1], &g_pw_rec[i], sizeof(PipeRec)))
                                             && (g_pw_rec[i].compute || (D.has_vids ? !pkey_vlay(&g_pw_rec[i].k) : vlay_of(pkey_vlay(&g_pw_rec[i].k)) != NULL))) g_pw_rec[kept++] = g_pw_rec[i];
         g_pw_n = kept;
-    } else printf(ahead ? "nvn_vk: no ../cache/vk/pipes.bin: a first run on this PC; stages and pipelines are made when the game hands its programs over\n" : "nvn_vk: SSBU_VK_PREWARM=0: the pipeline list of earlier runs is not read\n");
+    } else printf(ahead ? "nvn_vk: no ../cache/vk/pipes.bin: a first run on this PC; stages and pipelines are made when the game hands its programs over\n" : "nvn_vk: WT_VK_PREWARM=0: the pipeline list of earlier runs is not read\n");
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     g_pw_nthread = (int)si.dwNumberOfProcessors - 2;
     if (g_pw_nthread < 1) g_pw_nthread = 1;
     if (g_pw_nthread > 16) g_pw_nthread = 16;
-    if (getenv("SSBU_VK_WORKERS") && atoi(getenv("SSBU_VK_WORKERS")) > 0 && atoi(getenv("SSBU_VK_WORKERS")) <= 16) g_pw_nthread = atoi(getenv("SSBU_VK_WORKERS"));
+    if (getenv("WT_VK_WORKERS") && atoi(getenv("WT_VK_WORKERS")) > 0 && atoi(getenv("WT_VK_WORKERS")) <= 16) g_pw_nthread = atoi(getenv("WT_VK_WORKERS"));
     g_pw_gate = CreateEventA(NULL, TRUE, FALSE, NULL);
     g_pw_left = g_pw_nthread;
     g_pw_t0 = tk();
     for (int i = 0; i < g_pw_nthread; i++) g_pw_thread[i] = CreateThread(NULL, 0, pw_main, NULL, 0, NULL);
-    g_m4_on = !(getenv("SSBU_VK_HANDOVER") && !atoi(getenv("SSBU_VK_HANDOVER")));
+    g_m4_on = !(getenv("WT_VK_HANDOVER") && !atoi(getenv("WT_VK_HANDOVER")));
     printf("nvn_vk: %d pipelines listed in ../cache/vk/pipes.bin; %d worker threads; programs are handed to them when the game sets their shaders: %s; key prediction: %s\n", g_pw_n, g_pw_nthread,
-           g_m4_on ? "yes" : "no (SSBU_VK_HANDOVER=0)", g_predict ? "blind (SSBU_VK_PREDICT=1)" : g_scan_on ? "look-ahead of every batch" : D.has_eds3 ? "none (SSBU_VK_LOOKAHEAD=0)" : "none (blend state is part of the key on this GPU)");
+           g_m4_on ? "yes" : "no (WT_VK_HANDOVER=0)", g_predict ? "blind (WT_VK_PREDICT=1)" : g_scan_on ? "look-ahead of every batch" : D.has_eds3 ? "none (WT_VK_LOOKAHEAD=0)" : "none (blend state is part of the key on this GPU)");
     prep_start();
 }
 /* ---------------------------------------------------------------- look-ahead: what a batch will draw, before it is replayed
@@ -2090,7 +2090,7 @@ static void m4_report(void) {
            (long long)g_w_progs, (long long)g_w_stages, (long long)g_w_pipes, (long long)g_scan_pipes, (long long)g_scan_jobs, (double)g_tm[9] * k, (long long)g_pred_made, (long long)g_pred_used, g_nsig, (long long)g_set_held, (double)g_set_held_tk * k);
     printf("nvn_vk_cscan: searches for a container header: %lld made (%lld given up at their time budget); answered by an interval a failed search had proved empty: %lld at once, %lld after looking at the steps above it\n", (long long)g_cs_search, (long long)g_cs_gaveup, (long long)g_cs_neg_hit, (long long)g_cs_neg_ext);
     printf("nvn_vk_cscan: container scan %s: %lld containers scanned (%d known), %lld variations, %lld handed to the workers (%lld KB of code copied), %lld pairs found, %.0f ms of the guest threads' time; pipelines made for a container's pass signatures: %lld (counted in the keys above), background jobs %lld queued / %lld done\n",
-           g_cscan ? "on" : "off (SSBU_VK_CSCAN=0)", (long long)g_cs_scans, g_ncont, (long long)g_cs_vars, (long long)g_cs_jobs, (long long)(g_cs_bytes >> 10), (long long)g_cs_pairs, (double)g_cs_tk * k, (long long)g_cs_pred, (long long)g_bq_queued, (long long)g_bq_done);
+           g_cscan ? "on" : "off (WT_VK_CSCAN=0)", (long long)g_cs_scans, g_ncont, (long long)g_cs_vars, (long long)g_cs_jobs, (long long)(g_cs_bytes >> 10), (long long)g_cs_pairs, (double)g_cs_tk * k, (long long)g_cs_pred, (long long)g_bq_queued, (long long)g_bq_done);
     rpt_end();
 }
 #undef printf
@@ -2121,11 +2121,11 @@ static void m4_stop(void) {
  * written by a thread of its own), and (2) on the exit path. The preparation's marker is written with the file, not before:
  * a run that dies before either leaves no marker and the next start prepares again (record reads and cache hits).
  * One call with a buffer sized from the file on disk instead of two (the size query serialises too); the two-call form is
- * the fallback. SSBU_VK_PCSAVE=prep = the old behaviour (the preparation thread saves at once): for the comparison only. */
+ * the fallback. WT_VK_PCSAVE=prep = the old behaviour (the preparation thread saves at once): for the comparison only. */
 static char g_prep_marker[240];
 static volatile LONG g_pcsave_want;                /* the preparation finished: cache + marker to be written at the next safe point */
 static volatile LONG64 g_gap_prev, g_gap_max;      /* nvn_vk_draw.c vk_present2: the longest time between two frames that reached the window since g_gap_max was cleared */
-static int g_prep_limited;                         /* SSBU_VK_PREP_LIMIT (test): not the whole game: no marker */
+static int g_prep_limited;                         /* WT_VK_PREP_LIMIT (test): not the whole game: no marker */
 static HANDLE g_pcw_thread;
 typedef struct { void *data; size_t n; int marker, where, one_call, prio; LONG64 t_get, t_q; } PcWrite;
 static void pcache_write(PcWrite *w) {
@@ -2140,7 +2140,7 @@ static void pcache_write(PcWrite *w) {
     if (w->where == 2) Sleep(300);                 /* the frame that was held behind the driver's lock has been presented by now */
     printf("nvn_vk: pipeline cache %s: %llu KB, %s; vkGetPipelineCacheData %.0f ms (%s), on a thread of priority %d; file written in %.0f ms%s; longest time between two presented frames while the cache was read out: %.0f ms (frame %lld, %s)\n",
            ok ? "saved" : "NOT SAVED (the file could not be written)", (unsigned long long)(w->n >> 10),
-           w->where == 0 ? "on the exit path" : w->where == 1 ? "by the render thread inside a held loading screen" : "BY THE PREPARATION THREAD DURING PLAY (SSBU_VK_PCSAVE=prep: the behaviour before session 12)",
+           w->where == 0 ? "on the exit path" : w->where == 1 ? "by the render thread inside a held loading screen" : "BY THE PREPARATION THREAD DURING PLAY (WT_VK_PCSAVE=prep: the behaviour before session 12)",
            (double)w->t_get * 1000.0 / (double)fq.QuadPart, w->one_call ? "one call" : "two calls: size, then data", w->prio, (double)(t1 - t0) * 1000.0 / (double)fq.QuadPart, w->where == 1 ? " by a thread of its own" : "",
            (double)g_gap_max * 1000.0 / (double)fq.QuadPart, (long long)nvn_front_frame_next(), g_in_fight ? "IN A FIGHT" : "no fight");
     if (ok && w->marker && !g_prep_limited && g_prep_marker[0]) {
@@ -2151,7 +2151,7 @@ static void pcache_write(PcWrite *w) {
     free(w->data);
 }
 static DWORD WINAPI pcw_main(void *arg) { PcWrite *w = arg; pcache_write(w); free(w); return 0; }
-/* TEST ONLY (with SSBU_VK_PCSAVE=prep): while the preparation thread reads the cache out, this thread (normal priority) makes
+/* TEST ONLY (with WT_VK_PCSAVE=prep): while the preparation thread reads the cache out, this thread (normal priority) makes
  * the library of a stage that already has one, again and again: a hit of the same pipeline cache, what a draw's link or a
  * worker does. Its longest call says whether the driver makes pipeline creation wait behind vkGetPipelineCacheData. */
 static volatile LONG g_pcprobe_stop;
@@ -2185,12 +2185,12 @@ static void pcache_save_at(int where, int marker) {
     int one = 0;
     if (!g_pcache) return;
     if (where == 0) {       /* session 14: the exit path rewrote the whole file (0.9 GB: 5-11 s with the window still there) even when nothing was added */
-        const char *e = getenv("SSBU_VK_PCSAVE");
+        const char *e = getenv("WT_VK_PCSAVE");
         WIN32_FILE_ATTRIBUTE_DATA fa0;
         LONG64 added = g_pc_dirty - g_pc_dirty_saved;
         int have_file = GetFileAttributesExA(g_pcache_path, GetFileExInfoStandard, &fa0) && (fa0.nFileSizeLow || fa0.nFileSizeHigh);
         if (have_file && !marker && added < 8 && !(e && !strcmp(e, "always"))) {      /* under 8 new entries: not worth 0.9 GB of writing (run s14prep1: 1 entry = 11 s of exit); they are made again next time, a few ms */
-            printf("nvn_vk: pipeline cache NOT rewritten at exit: %lld creations were added since %s (under 8: not worth rewriting the file; SSBU_VK_PCSAVE=always writes it anyway)\n", (long long)added, g_pc_dirty_saved ? "the last save of this run" : "it was read at start");
+            printf("nvn_vk: pipeline cache NOT rewritten at exit: %lld creations were added since %s (under 8: not worth rewriting the file; WT_VK_PCSAVE=always writes it anyway)\n", (long long)added, g_pc_dirty_saved ? "the last save of this run" : "it was read at start");
             fflush(stdout);
             return;
         }
@@ -2231,15 +2231,14 @@ static void pcache_save(void) { pcache_save_at(0, InterlockedExchange(&g_pcsave_
 
 /* ---------------------------------------------------------------- session 6: the shader container scan
  * The game keeps its Maxwell stages in "BNSH" containers (a file of their own, or embedded in an effect / shader-database
- * file) and creates a program from a variation only when something first draws with it: FUN_71000382a0 (13.0.4) takes the
- * six stage-code pointers of one variation's program and calls nvnProgramInitialize / nvnProgramSetShaders; its caller
- * FUN_710009c9e0 sets a container up either eagerly (every variation at once) or lazily (flag bit 0).
- * Layout, read from that code and checked against the memory of the running game (SSBU_VK_CSCAN_LOG=1 prints it):
+ * file) and creates a program from a variation only when something first draws with it (nvnProgramInitialize /
+ * nvnProgramSetShaders with the six stage-code pointers of one variation's program).
+ * Layout, read by upstream off Smash's code and checked against the memory of the running game (WT_VK_CSCAN_LOG=1 prints it):
  *   file header: "BNSH", byte-order mark 0xFEFF at +0x0C, offset of the file name at +0x10, offset of the first block at
  *                +0x16 (u16), file size at +0x1C;
  *   block "grsc": variation count at +0x1C (s32), pointer to the variation array at +0x20;
- *   variation (0x40 bytes): three program pointers (source / intermediate / binary) at the offsets the table the game keeps
- *                at *0x71052a32d8 names; a program holds its six stage-code pointers at the offsets of the table 0x7104470aa8;
+ *   variation (0x40 bytes): three program pointers (source / intermediate / binary) at +0, +8, +0x10; a program
+ *                holds its six stage-code pointers at +8 .. +0x30;
  *   stage code: among its first words a pointer to the control section (magic 0x98761234) and one to the code section
  *                (magic 0x12345678), the two blocks nvnProgramSetShaders is given.
  * The pointers are absolute once the game has relocated the file; before that they are offsets from the file start: both
@@ -2365,11 +2364,6 @@ static int cont_walk(uint64_t base, uint64_t size, int tag, int *njobs, uint64_t
     vars = CW_RB(vars);
     if (vars < size) vars += base;                 /* not relocated yet */
     if (nvar <= 0 || nvar > 200000 || vars < base || vars + (uint64_t)nvar * 0x40 > end) return -1;
-    if (g_game_tables) {                           /* the game's own offset tables (13.0.4); the defaults above are what they held when read */
-        uint64_t t = g64(0x71052a32d8ull);
-        for (int i = 0; i < 3 && t; i++) { uint64_t v = g64(t + (uint64_t)i * 8); if (v < 0x40) voff[i] = v; }
-        for (int i = 0; i < 6; i++) { uint64_t v = g64(0x7104470aa8ull + (uint64_t)i * 8); if (v && v < 0x70) soff[i] = v; }
-    }
     for (int v = 0; v < nvar; v++) {
         SSrc s[3];
         int has[3] = {0, 0, 0}, bad = 0;
@@ -2461,7 +2455,7 @@ void nvn_vk_container_seen(uint64_t control, uint64_t prog) {
     }
     unsigned ns = (unsigned)((control * 0x9E3779B97F4A7C15ull) >> 54);
     static int negiv_on = -1;
-    if (negiv_on < 0) negiv_on = !(getenv("SSBU_VK_CSCAN_NEGIV") && !atoi(getenv("SSBU_VK_CSCAN_NEGIV")));      /* =0: every address searched, as before session 8 */
+    if (negiv_on < 0) negiv_on = !(getenv("WT_VK_CSCAN_NEGIV") && !atoi(getenv("WT_VK_CSCAN_NEGIV")));      /* =0: every address searched, as before session 8 */
     long long frame = nvn_front_frame_next();
     int ext = -1;
     uint64_t ext_hi = 0;
@@ -2495,9 +2489,9 @@ void nvn_vk_container_seen(uint64_t control, uint64_t prog) {
         return;
     }
     uint64_t size = 0, neg_lo = 0, base = 0;
-    {   /* the budget: 10 ms; 20 ms for a pool outside a fight (loading). SSBU_VK_CSCAN_BUDGET=<ms> (0 = none, as before session 8) */
+    {   /* the budget: 10 ms; 20 ms for a pool outside a fight (loading). WT_VK_CSCAN_BUDGET=<ms> (0 = none, as before session 8) */
         static int bms = -1; static LONG64 fqq;
-        if (bms < 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); fqq = f.QuadPart; bms = getenv("SSBU_VK_CSCAN_BUDGET") ? atoi(getenv("SSBU_VK_CSCAN_BUDGET")) : 10; }
+        if (bms < 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); fqq = f.QuadPart; bms = getenv("WT_VK_CSCAN_BUDGET") ? atoi(getenv("WT_VK_CSCAN_BUDGET")) : 10; }
         base = cont_find(control, &size, &neg_lo, (LONG64)bms * (from_pool && !fight_recent() ? 2 : 1) * fqq / 1000);
     }
     InterlockedIncrement64(&g_cs_search);
@@ -2526,10 +2520,10 @@ void nvn_vk_container_seen(uint64_t control, uint64_t prog) {
     if (idx >= 0) { g_cont[idx].base = base; g_cont[idx].size = size; memcpy(g_cont[idx].head, (const void *)(uintptr_t)base, 32); }
     LeaveCriticalSection(&g_sh_lock);
     if (idx < 0 || known) return;                  /* the same file loaded again at another address: its pairs are known */
-    if (!(getenv("SSBU_VK_CSCAN_INLINE") && atoi(getenv("SSBU_VK_CSCAN_INLINE")))) {
+    if (!(getenv("WT_VK_CSCAN_INLINE") && atoi(getenv("WT_VK_CSCAN_INLINE")))) {
         /* Session 7: the walk (hashing and copying every variation: 20-70 ms for a fighter's effect container, measured as
          * "main: graphics call: nvnProgramSetShadersExt" in the frames where the fighters enter, runs s7fn2 / s7fi2 / s7gn2)
-         * is done by a worker on a COPY of the container; the game's thread only pays the copy. SSBU_VK_CSCAN_INLINE=1 = as before. */
+         * is done by a worker on a COPY of the container; the game's thread only pays the copy. WT_VK_CSCAN_INLINE=1 = as before. */
         Job *j = calloc(1, sizeof *j);
         void *copy = malloc((size_t)size);
         if (j && copy) {
@@ -2560,15 +2554,15 @@ void nvn_vk_container_seen(uint64_t control, uint64_t prog) {
 }
 /* ---------------------------------------------------------------- Session 10: the PREPARATION, in the game, in the background
  * Whether a stage is ready must not depend on WHEN the game hands its container over (session 9: every hold left in a fight
- * came from one container handed over about 300 frames into the fight). With a library per stage (SSBU_VK_GPL=2) a stage
+ * came from one container handed over about 300 frames into the fight). With a library per stage (WT_VK_GPL=2) a stage
  * needs no partner and no pass, so every stage of every container of the game's data can be made ahead: this thread reads the
- * containers (the folder tools_vk/bnsh_extract.py writes from data.arc: ..\cache\vk_containers, or SSBU_VK_CONTAINERS), largest
+ * containers (the folder tools_vk/bnsh_extract.py writes from data.arc: ..\cache\vk_containers, or WT_VK_CONTAINERS), largest
  * first (the largest is the effect container every fight of the test hands over at "GO"), and queues each variation on g_pq.
  * The workers make stage + module + library exactly as for a program the game hands over, keyed by the same code hash, so
  * when the game does hand the container over every stage is found made. Workers on this queue run below normal priority
  * (lowest, and at most g_prep_fight_cap of them, in a fight); the game's own work always goes first; nobody waits for it.
  * At the end the driver's pipeline cache is written, so a later start pays file reads and cache hits only.
- * SSBU_VK_PREP=0 off, =1 on also without libraries (stages only); SSBU_VK_PREP_FIGHT=<n> workers in a fight (0 = pause). */
+ * WT_VK_PREP=0 off, =1 on also without libraries (stages only); WT_VK_PREP_FIGHT=<n> workers in a fight (0 = pause). */
 #include <psapi.h>
 static int g_prep_nfiles, g_prep_read, g_prep_bad;
 static LONG64 g_prep_t0, g_prep_t1, g_prep_vars, g_prep_fight_frames;
@@ -2666,7 +2660,7 @@ static int dat_walk(const uint8_t *b, uint64_t n, int *njobs) {
 static DWORD WINAPI prep_main(void *arg) {
     /* session 11: the default store is the one the HOST writes (nvn_vk_store.c: 393 containers of effect / container files
      * + the layout archives' ones); the folder of the Python tool (..\cache\vk_containers) is used only when named. */
-    const char *dir = getenv("SSBU_VK_CONTAINERS") ? getenv("SSBU_VK_CONTAINERS") : "../cache/vk_containers2";
+    const char *dir = getenv("WT_VK_CONTAINERS") ? getenv("WT_VK_CONTAINERS") : "../cache/vk_containers2";
     char path[400];
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     (void)arg;
@@ -2676,7 +2670,7 @@ static DWORD WINAPI prep_main(void *arg) {
      * is taken as belonging to the archive that is there now and gets the file. */
     char stamp[96] = "", spath[400];
     int stale = 0;
-    {   const char *rom = getenv("SSBU_ROMFS");
+    {   const char *rom = getenv("WT_ROMFS");
         char arc[400];
         WIN32_FILE_ATTRIBUTE_DATA fa;
         snprintf(arc, sizeof arc, "%s/root_000.pkz", rom && rom[0] ? rom : "../romfs");      /* [witchtime] the archive the shaders come from */
@@ -2696,7 +2690,7 @@ static DWORD WINAPI prep_main(void *arg) {
     snprintf(path, sizeof path, "%s/store_building.txt", dir);
     if (!prep_list(dir) || GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
         g_prep_state = 5;                          /* the store is being built: the progress overlay says so */
-        if (!vks_build_pkz(dir)) vks_build(dir);
+        vks_build_pkz(dir);
         prep_list(dir);
         stale = 1;
     }
@@ -2739,7 +2733,7 @@ static DWORD WINAPI prep_main(void *arg) {
         fflush(stdout);
     }
     int todo = g_prep_marked && g_prep_nfiles > g_prep_keep ? g_prep_keep : g_prep_nfiles;      /* marked: an earlier run prepared everything; only the containers kept in memory */
-    if (getenv("SSBU_VK_PREP_LIMIT") && atoi(getenv("SSBU_VK_PREP_LIMIT")) > 0 && atoi(getenv("SSBU_VK_PREP_LIMIT")) < todo) { todo = atoi(getenv("SSBU_VK_PREP_LIMIT")); g_prep_limited = 1; printf("nvn_vk_prep: TEST: only the first %d containers are prepared (SSBU_VK_PREP_LIMIT): no marker will be written\n", todo); }
+    if (getenv("WT_VK_PREP_LIMIT") && atoi(getenv("WT_VK_PREP_LIMIT")) > 0 && atoi(getenv("WT_VK_PREP_LIMIT")) < todo) { todo = atoi(getenv("WT_VK_PREP_LIMIT")); g_prep_limited = 1; printf("nvn_vk_prep: TEST: only the first %d containers are prepared (WT_VK_PREP_LIMIT): no marker will be written\n", todo); }
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     g_prep_t0 = tk();
     g_prep_state = 1;
@@ -2748,7 +2742,7 @@ static DWORD WINAPI prep_main(void *arg) {
     /* session 11, the ORDER: (1) the files whose pool an earlier run saw laid INSIDE a fight (late_containers.txt), (2) the
      * layout archives' containers, smallest first (124 files, 9.6 MB: 12 of the 13 pools laid inside the first fight of run
      * s11n1 were of this kind: the fight's own screen layouts), (3) the others, largest first as before. Containers kept in
-     * memory (SSBU_VK_PREP_KEEP, off) keep their old place: the first g_prep_keep of the size order. */
+     * memory (WT_VK_PREP_KEEP, off) keep their old place: the first g_prep_keep of the size order. */
     static int ord[1024];
     int no = 0, nlate = 0, nlay = 0;
     {   FILE *lf = fopen(vkc_file("late_containers.txt"), "rb");
@@ -2799,8 +2793,8 @@ static DWORD WINAPI prep_main(void *arg) {
     }
     int whole = g_pq_done == g_pq_queued && g_prep_read == todo;
     LeaveCriticalSection(&g_sh_lock);
-    {   /* TEST ONLY, SSBU_VK_PREP_END_AT=<frame>: the end below is held back until that game frame (to place it in a fight or a loading screen) */
-        LONG64 at = getenv("SSBU_VK_PREP_END_AT") ? atoll(getenv("SSBU_VK_PREP_END_AT")) : 0;
+    {   /* TEST ONLY, WT_VK_PREP_END_AT=<frame>: the end below is held back until that game frame (to place it in a fight or a loading screen) */
+        LONG64 at = getenv("WT_VK_PREP_END_AT") ? atoll(getenv("WT_VK_PREP_END_AT")) : 0;
         while (whole && at > 0 && nvn_front_frame_next() < at && !g_m4_quit) Sleep(5);
         while (whole && at < 0 && g_battle_frames < -at && !g_m4_quit) Sleep(1);      /* a negative value: that many battle frames after the first one */
         if (g_m4_quit && at) whole = 0;
@@ -2814,15 +2808,15 @@ static DWORD WINAPI prep_main(void *arg) {
         prep_line("FINISHED: every stage of every container of the game's data is made");
         /* session 12: NOT saved here any more (see pcache_save_at: this thread serialising the live cache during play was the
          * owner's freeze). The render thread writes cache and marker inside the next held loading screen, or the exit path does. */
-        if (getenv("SSBU_VK_PCSAVE") && !strcmp(getenv("SSBU_VK_PCSAVE"), "prep")) pcache_save_at(2, 1);
+        if (getenv("WT_VK_PCSAVE") && !strcmp(getenv("WT_VK_PCSAVE"), "prep")) pcache_save_at(2, 1);
         else InterlockedExchange(&g_pcsave_want, 1);
         printf("nvn_vk_prep: %d containers not understood; frames of a fight that passed while the preparation ran: %lld; %s\n", g_prep_bad, (long long)g_prep_fight_frames,
-               g_pcsave_want ? "the pipeline cache and the marker are written inside the next held loading screen or at exit (not by this thread during play)" : "pipeline cache written by this thread at once (SSBU_VK_PCSAVE=prep)");
+               g_pcsave_want ? "the pipeline cache and the marker are written inside the next held loading screen or at exit (not by this thread during play)" : "pipeline cache written by this thread at once (WT_VK_PCSAVE=prep)");
         fflush(stdout);
     } else prep_line("STOPPED before its end (the game is closing)");
     return 0;
 }
-/* SSBU_VK_SWEEP_LOG=1 (a measurement, off by default): WHEN do a container's bytes arrive in the game's memory? Every 2 s a
+/* WT_VK_SWEEP_LOG=1 (a measurement, off by default): WHEN do a container's bytes arrive in the game's memory? Every 2 s a
  * thread looks at the first words of every committed, writable 4 KB step of the process (ReadProcessMemory: memory given
  * back meanwhile is a failed call, not a fault) and prints each container header the first time it is seen at an address. */
 static DWORD WINAPI sweep_main(void *arg) {
@@ -2862,13 +2856,13 @@ static DWORD WINAPI sweep_main(void *arg) {
     return 0;
 }
 static void prep_start(void) {
-    const char *e = getenv("SSBU_VK_PREP");
-    if (getenv("SSBU_VK_SWEEP_LOG") && atoi(getenv("SSBU_VK_SWEEP_LOG"))) CloseHandle(CreateThread(NULL, 0, sweep_main, NULL, 0, NULL));
+    const char *e = getenv("WT_VK_PREP");
+    if (getenv("WT_VK_SWEEP_LOG") && atoi(getenv("WT_VK_SWEEP_LOG"))) CloseHandle(CreateThread(NULL, 0, sweep_main, NULL, 0, NULL));
     int on = !e || atoi(e) != 0;                   /* without libraries (RX 400/500 on Windows, #50) it still translates every stage ahead: only the driver's pipeline compile is left for a first use */
-    if (getenv("SSBU_VK_PREP_FIGHT")) g_prep_fight_cap = atoi(getenv("SSBU_VK_PREP_FIGHT"));
+    if (getenv("WT_VK_PREP_FIGHT")) g_prep_fight_cap = atoi(getenv("WT_VK_PREP_FIGHT"));
     g_prep_cap = g_pw_nthread > 1 ? g_pw_nthread / 2 : 1;
-    if (getenv("SSBU_VK_PREP_WORKERS") && atoi(getenv("SSBU_VK_PREP_WORKERS")) > 0) g_prep_cap = atoi(getenv("SSBU_VK_PREP_WORKERS"));
-    if (getenv("SSBU_VK_PREP_KEEP")) g_prep_keep = atoi(getenv("SSBU_VK_PREP_KEEP"));
+    if (getenv("WT_VK_PREP_WORKERS") && atoi(getenv("WT_VK_PREP_WORKERS")) > 0) g_prep_cap = atoi(getenv("WT_VK_PREP_WORKERS"));
+    if (getenv("WT_VK_PREP_KEEP")) g_prep_keep = atoi(getenv("WT_VK_PREP_KEEP"));
     /* session 14: VK_KEYS_VERSION = the version of what feeds the driver's keys besides the shader text: the library layout
      * (the one-layout sets: 66 buffers, 128 samplers) and the dynamic-state list. RAISE IT when either changes: every stage
      * library then misses in the driver's cache, and without a new marker name the old marker would suppress the preparation.
@@ -2876,17 +2870,17 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 3 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 3 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (WT_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
-        printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (SSBU_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
+        printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (WT_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;
         /* session 11: the thread still runs: it makes the INDEX (hashing, under a second), so that a container is announced
          * whole at its loading screen on every start; it queues nothing (before: no thread, so no index, on a marked start) */
     }
-    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e && !atoi(e) ? "SSBU_VK_PREP=0" : "SSBU_VK_HANDOVER=0"); return; }
+    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e && !atoi(e) ? "WT_VK_PREP=0" : "WT_VK_HANDOVER=0"); return; }
     g_prep_thread = CreateThread(NULL, 0, prep_main, NULL, 0, NULL);
 }
-/* `ssbu_vk1.exe --prepare-shaders [folder]` (boot.c): no game, no window, no Vulkan device. Every *.bnsh file of the folder
+/* `witch-time-game --prepare-shaders [folder]` (boot.c): no game, no window, no Vulkan device. Every *.bnsh file of the folder
  * (tools_vk/bnsh_extract.py writes them from data.arc) is walked as the scan above walks a container in the game's memory
  * (file offsets instead of pointers) and its stages are translated on the workers: ..\cache\vk\stage and \spv are then
  * what a run finds when the game loads the container. Pipelines are NOT made here: they need the GPU and the pass a pair
@@ -2899,13 +2893,13 @@ int nvn_vk_prepare_shaders(const char *dir) {
     int files = 0, bad = 0;
     long long vars = 0, jobs = 0;
     if (!dir) dir = "../cache/vk_containers";
-    g_offline = 1; g_game_tables = 0; g_cpredict = 0;
+    g_offline = 1; g_cpredict = 0;
     InitializeCriticalSection(&g_sh_lock); InitializeCriticalSection(&g_gpl_lock);
     InitializeConditionVariable(&g_sh_cv); InitializeConditionVariable(&g_jq_cv);
     CreateDirectoryA("../cache", NULL); CreateDirectoryA(vkc_dir(), NULL); CreateDirectoryA(vkc_file("spv"), NULL); CreateDirectoryA(vkc_file("stage"), NULL);
-    {   HMODULE m = LoadLibraryA("ssbu_glslang.dll");
-        g_glsl_to_spirv = m ? (void *)GetProcAddress(m, "ssbu_glsl_to_spirv") : NULL; g_spirv_free = m ? (void *)GetProcAddress(m, "ssbu_spirv_free") : NULL;
-        if (!g_glsl_to_spirv || !g_spirv_free) { printf("prepare-shaders: ssbu_glslang.dll cannot be loaded (build_glslang.bat makes it)\n"); return 2; }
+    {   HMODULE m = LoadLibraryA("wt_glslang.dll");
+        g_glsl_to_spirv = m ? (void *)GetProcAddress(m, "wt_glsl_to_spirv") : NULL; g_spirv_free = m ? (void *)GetProcAddress(m, "wt_spirv_free") : NULL;
+        if (!g_glsl_to_spirv || !g_spirv_free) { printf("prepare-shaders: wt_glslang.dll cannot be loaded (the build puts it beside the program)\n"); return 2; }
     }
     SYSTEM_INFO si;
     GetSystemInfo(&si);

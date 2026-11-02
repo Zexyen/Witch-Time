@@ -23,7 +23,7 @@
  *     byte answer is the result. The applet can only link an account over the network; offline the user can only leave
  *     it, and the applet then answers 124-0001 "cancelled by user" ([suyu] applet_profile_select.cpp:106-107). So the
  *     function gives 0x27c whichever code of the range the module used. The applet is not shown here.
- *     [game] 0x71037558a0: (result & 0x3fffff) == 0x27c -> returns 2 without an error message.
+ *     (Upstream, Smash: (result & 0x3fffff) == 0x27c returns 2 without an error message.)
  * [sdk 0x4b500] EnsureNetworkServiceAccountIdTokenCacheAsync: FIRST detail::CheckInternetAvailability [sdk 0x3afb0]:
  *     nn::nifm::IsAnyInternetRequestAccepted(GetClientId()) false -> 0x767c (124-0059), returned before the account
  *     module is asked and before the AsyncContext is touched. [game] 0x7100249cd0 only tests it for 0.

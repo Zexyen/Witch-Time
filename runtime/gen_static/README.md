@@ -1,7 +1,7 @@
 # runtime/gen_static
 
 Generated inputs of the runtime that do not depend on the dump: the binary128 arithmetic vectors (`quad_tests.h`,
-`lifter/gen_quad_tests.py`), the exception-table vectors (`eh_tests.h`: empty, main has no LSDA), the deflate and JPEG
+`lifter/gen_quad_tests.py`), the deflate and JPEG
 self-test vectors (`sdktest_data.h`) and the empty strict-mode audit lists (`fake_whitelist.h`, `fake_openlist.h`).
 
 They are exactly what `runtime/gen/make_gen.py` writes (it needs Pillow for the JPEG vectors), made once and kept here,

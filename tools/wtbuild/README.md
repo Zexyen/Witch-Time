@@ -52,7 +52,7 @@ release.yml builds, it needs the archives under other names (the wtbuild step th
 ## Prebuilt runtime
 
 The runtime (`libwitchtime.so`, which the launcher loads, `witch-time-game`, which runs it as a program of its own,
-and `libssbu_glslang.so`) holds nothing from the dump: the numbers it needs from the player's `main.elf` and `sdk.elf`
+and `libwt_glslang.so`) holds nothing from the dump: the numbers it needs from the player's `main.elf` and `sdk.elf`
 are `extern const` variables there (`runtime/split`), defined in `game.so` by `runtime/wt_tables.c` together with the
 dump's sdk tables (`runtime/gen/sdkdata.c`, `sdklift_gen.c`). So the release workflow builds it once
 (`wtbuild runtime --out prebuilt`, against its own SDL3, FFmpeg 7.1 and a static glslang) and ships it in `prebuilt/`

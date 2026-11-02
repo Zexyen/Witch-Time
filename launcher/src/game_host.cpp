@@ -66,11 +66,11 @@ GameStart prepare_game(const Paths& paths)
 	}
 	make_dir(paths.run);
 	// as docs/STATUS.md runs it: the dump's data through targets/romfs, saves in build/userdata (..\userdata from build/run)
-	set_env("SSBU_ROMFS", paths.repo + "/targets/romfs", false);
-	set_env("SSBU_TITLE", "Witch Time", false);
-	set_env("SSBU_VK_MISSING", "warn", false);
+	set_env("WT_ROMFS", paths.repo + "/targets/romfs", false);
+	set_env("WT_TITLE", "Witch Time", false);
+	set_env("WT_VK_MISSING", "warn", false);
 	// Linux runs the game in this process, named witch-time, which nnaudio.c's test-copy rule would leave silent
-	set_env("SSBU_VOLUME", "100", false);
+	set_env("WT_VOLUME", "100", false);
 	if (!change_dir(paths.run))
 	{
 		g.error = "Cannot open " + paths.run + ".";

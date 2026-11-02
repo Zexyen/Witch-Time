@@ -438,7 +438,7 @@ fn dump_family(repo: &Path, romfs: &Path, archives: &[String], tmp: &Path, env: 
     let mut c = Command::new(&exe);
     env(&mut c);
     c.arg(repo.join("targets").join("exefs").join("main.elf")).arg("--pkz-dump").arg(tmp).args(archives);
-    c.current_dir(repo.join("build")).env("SSBU_ROMFS", romfs);
+    c.current_dir(repo.join("build")).env("WT_ROMFS", romfs);
     let r = c.output().map_err(|e| format!("{}: {}", exe.display(), e))?;
     if !r.status.success() {
         let s = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);

@@ -25,8 +25,8 @@
  * A second page, Controls, has the buttons of gameplay by character (docs/RE_NOTES.md section 9): A on a row, then the button
  * to use for it, or left / right to go through them (for a player without a pad to press). A button already in use changes
  * places with the row's: a layout stays one button per action. From the game's Options, Controller, Controls it opens by itself.
- * Test aids: SSBU_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), SSBU_PCMENU_OPEN=<seconds> opens it that long after the first pad
- * read (for scripted runs without keys), SSBU_PCMENU_LOG=1 logs each input step. */
+ * Test aids: WT_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), WT_PCMENU_OPEN=<seconds> opens it that long after the first pad
+ * read (for scripted runs without keys), WT_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,22 +88,22 @@ typedef struct {
 static const Row k_rows[] = {
     {"window", "Display mode", "Windowed: a window of the size below. Borderless and fullscreen cover the monitor the window is on.", NULL, "windowed", A_WINDOW, 0,
      {"windowed", "borderless", "fullscreen"}, {"Windowed", "Borderless", "Fullscreen"}},
-    {"size", "Window size", "The window's size in windowed mode. The game is drawn at the internal resolution and shown at this size.", "SSBU_WINDOW", NULL, A_SIZE, 0,
+    {"size", "Window size", "The window's size in windowed mode. The game is drawn at the internal resolution and shown at this size.", "WT_WINDOW", NULL, A_SIZE, 0,
      {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"1280 \xC3\x97 720", "1600 \xC3\x97 900", "1920 \xC3\x97 1080", "2560 \xC3\x97 1440", "3840 \xC3\x97 2160"}},
-    {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "SSBU_VK_PRESENT", "auto", A_VSYNC, 0,
+    {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "WT_VK_PRESENT", "auto", A_VSYNC, 0,
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
-    {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "SSBU_CUTSCENE_FPS", "30", A_CUT, 0,
+    {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "WT_CUTSCENE_FPS", "30", A_CUT, 0,
      {"30", "60"}, {"30 fps", "60 fps"}},
     {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
      {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
-    {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "SSBU_VK_SCALE", "1.0", A_SCALE, 0,
+    {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"360p", "450p", "540p", "675p", "720p", "900p", "1080p", "1440p", "1800p", "2160p", "2700p"}},
     {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
      {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
-    {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "SSBU_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 0,
+    {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "WT_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 0,
      {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
-    {"model_lod", "Model detail", "Highest: models keep their finest detail at any distance and far ones stay drawn. Weaker GPUs may lose frame rate.", "SSBU_MODEL_LOD", "game", A_MODEL, 0,
+    {"model_lod", "Model detail", "Highest: models keep their finest detail at any distance and far ones stay drawn. Weaker GPUs may lose frame rate.", "WT_MODEL_LOD", "game", A_MODEL, 0,
      {"game", "highest"}, {"Game", "Highest"}},
     {"film_grain", "Film grain", "The game's moving noise over the picture. Off: a clean picture; the vignette stays.", NULL, "on", A_LIVE, 0,
      {"on", "off"}, {"On", "Off"}},
@@ -147,7 +147,7 @@ static int g_page, g_direct;                               /* 1 = Controls, the 
 static int g_ch, g_cap = -1, g_fam, g_letter;              /* the character shown; the row that waits for a button; the button names */
 static uint8_t g_b[2][16];                                 /* the layouts shown: as saved, else the game's type */
 static int g_b_on[2];                                      /* saved */
-/* the environment as the program started (gfx_options sets SSBU_CUTSCENE_FPS itself, later) */
+/* the environment as the program started (gfx_options sets WT_CUTSCENE_FPS itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
@@ -196,7 +196,7 @@ static void menu_init(void) {                              /* the first opening:
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
         int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply >= A_LAYOUT || gfx_ini_get(r->key, v, sizeof v);
-        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* SSBU_WINDOW included */
+        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());
@@ -888,7 +888,7 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
     static int ms = -1, shown;
     static char when[16] = "first";                        /* graphics.ini pause_hint: first (the first pause of each start), always, off (issue #42) */
     if (ms < 0) {
-        const char *e = getenv("SSBU_PCMENU_HINT");        /* seconds; 0 = never */
+        const char *e = getenv("WT_PCMENU_HINT");        /* seconds; 0 = never */
         ms = e ? atoi(e) * 1000 : 8000;
         gfx_ini_get("pause_hint", when, sizeof when);
         if (!_stricmp(when, "off")) ms = 0;
@@ -900,7 +900,7 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
     g_hint_until = GetTickCount64() + (ULONGLONG)ms;
     printf("pcmenu: the game's pause menu opened: the hint is shown for %d s\n", ms / 1000);
     nvn_front_post_pcmenu();                               /* its pixels into the staging buffer; the game's presents copy them */
-    if (getenv("SSBU_PCMENU_SHOT")) { HANDLE th = CreateThread(NULL, 0, hint_late_job, NULL, 0, NULL); if (th) CloseHandle(th); }      /* (writes the picture) */
+    if (getenv("WT_PCMENU_SHOT")) { HANDLE th = CreateThread(NULL, 0, hint_late_job, NULL, 0, NULL); if (th) CloseHandle(th); }      /* (writes the picture) */
 }
 
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
@@ -1176,7 +1176,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
 static void menu_open(const char *why, int controls, int ch) {
     if (InterlockedExchange(&g_open, 1)) return;
     g_hint_until = 0;
-    if (g_log < 0) g_log = getenv("SSBU_PCMENU_LOG") && atoi(getenv("SSBU_PCMENU_LOG"));
+    if (g_log < 0) g_log = getenv("WT_PCMENU_LOG") && atoi(getenv("WT_PCMENU_LOG"));
     AcquireSRWLockExclusive(&g_lock);
     if (!g_f_ui.data && !fonts_init()) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
     if (!g_inited) menu_init();
@@ -1205,8 +1205,8 @@ int pcmenu_gate(uint32_t id, uint64_t buttons) {
     if (g_open) return 1;
     if (id == 0) {
         int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0xc00) == 0xc00;      /* Start + Select (the game uses L3 and R3) */
-        if (test < 0) { const char *e = getenv("SSBU_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
-        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN", 0, 0); return 1; }
+        if (test < 0) { const char *e = getenv("WT_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
+        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("WT_PCMENU_OPEN", 0, 0); return 1; }
         if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "Start + Select", 0, 0); return 1; }
         prev = f1 || combo;
         if (prev && (g_release & 1)) return 1;             /* the F1 that closed it is still down */
