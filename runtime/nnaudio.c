@@ -1,23 +1,14 @@
 /* nn::audio (AudioOut: raw PCM output) on Windows waveOut, and nn::codec::HardwareOpusDecoder.
  *
- * What the game does (read off its code, addresses are guest addresses):
- *   0x710373ec20  InitializeAudioOutParameter(&p); p.sampleRate (u32 at +0) = 48000; p.channelCount (u16 at +4) = n;
- *                 OpenDefaultAudioOut(&audioOut 0x7106dd48a8, &systemEvent 0x7106dd4860, p) -> Result (0 = ok);
- *                 then GetAudioOutChannelCount / SampleRate / SampleFormat. The format's value is ignored: the
- *                 mixer always writes 16-bit signed samples (0x710398b0fc: float * 32767 -> strh).
- *                 It allocates N buffers (N at 0x7106dd489c, clamped to 2..16) of 512 frames
- *                 (512 * channels * 2 bytes, capacity rounded up to 4 KB) and for each calls
- *                 SetAudioOutBufferInfo(buf, data, capacity, dataSize) and AppendAudioOutBuffer.
- *                 The AudioOutBuffer array has a stride of 0x28 bytes.
- *   0x7103987890  thread "nus3::audio update": StartAudioOut, then forever:
- *                 b = GetReleasedAudioOutBuffer(); if null: TimedWaitSystemEvent(0x7106dd4860, 32 ms) and retry;
- *                 else mix 512 frames into GetAudioOutBufferDataPointer(b) and AppendAudioOutBuffer(b).
- *                 The event is waited on at the SystemEvent's own address, so SystemEventType is its first member.
- *                 On shutdown: StopAudioOut, CloseAudioOut, GetAudioOutBufferDataPointer of every buffer to free it.
- *   0x710373f8b0  AcquireAudioDeviceNotificationForOutput(&event); a thread "AudioDeviceChange" waits on it and
- *                 calls GetActiveAudioDeviceName(char name[0x100]) (used with strcpy/strlen: a C string).
- *   0x71022bca24  SetAudioDeviceOutputVolume(name, volume): "AudioTvOutput" 1.0, "AudioStereoJackOutput" 1.4,
- *                 "AudioBuiltInSpeakerOutput" 2.0, "AudioUsbDeviceOutput" 1.0.
+ * How a game drives AudioOut (upstream read it off Smash's code; the handlers rely only on this):
+ *   InitializeAudioOutParameter(&p); p.sampleRate (u32 at +0) = 48000; p.channelCount (u16 at +4) = n;
+ *   OpenDefaultAudioOut(&audioOut, &systemEvent, p) -> Result (0 = ok); then GetAudioOutChannelCount / SampleRate /
+ *   SampleFormat. N buffers (2..16) of 512 frames, each SetAudioOutBufferInfo(buf, data, capacity, dataSize) and
+ *   AppendAudioOutBuffer; the AudioOutBuffer array has a stride of 0x28 bytes. An update thread StartAudioOut, then
+ *   forever: b = GetReleasedAudioOutBuffer(); if null, TimedWaitSystemEvent(&systemEvent, ...) and retry; else mix
+ *   into GetAudioOutBufferDataPointer(b) and AppendAudioOutBuffer(b). The event is waited on at the SystemEvent's own
+ *   address, so SystemEventType is its first member. AcquireAudioDeviceNotificationForOutput(&event) and
+ *   GetActiveAudioDeviceName(char name[0x100]) (a C string) follow output changes.
  *
  * AudioOutBuffer is only touched through these functions, so the field order inside its 0x28 bytes is ours
  * (the same as in the public SDK headers): +0 next, +8 data, +0x10 capacity, +0x18 data size, +0x20 data offset.
@@ -35,7 +26,7 @@
  *              WT_OPUS_DLL=<file>     libopus DLL for the Opus decoder (default libopus-0.dll, then MSYS2's)
  *
  * HardwareOpusDecoder: the game only imports the constructor; everything else goes through the object's
- * virtual table (0x71039937b8 and following): +0x00 destructor, +0x10 GetWorkBufferSize(sampleRate, channels),
+ * virtual table: +0x00 destructor, +0x10 GetWorkBufferSize(sampleRate, channels),
  * +0x20 Initialize(sampleRate, channels, buffer, size) -> 0 = ok, +0x28 Finalize,
  * +0x48 DecodeInterleaved(size_t *consumed, int *sampleCount, int16_t *out, size_t outBytes, in, inBytes) -> 0 = ok.
  * Each input packet starts with an 8-byte header (big-endian u32 payload length, u32 final range) as in the

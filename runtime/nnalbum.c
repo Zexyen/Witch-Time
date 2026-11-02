@@ -23,20 +23,20 @@
  *    ConvertCapsrvResult ([sdk] 0x50aa0, table 0x9fe760): module 206 description 21 -> 0xdcd6, 22 -> 0xccd6,
  *    23 -> 0xd6d6, 25 -> 0xced6, 27 -> 0xd2d6, 10..19 -> 0xd6d6, 26 / 30 -> 0xded6, anything else -> 0xcad6.
  *    The picture is 1280x720 RGBA8 and the thumbnail 320x180 ([suyu] caps_manager.cpp LoadAlbumScreenShotImage /
- *    Thumbnail; [game] 0x71036e2090 passes a 0x384000-byte buffer and 0x7d000 of work memory, 0x71036e1df8 0xa000 work).
+ *    Thumbnail).
  *    [suyu] does not implement 110 / 120 for caps:u; the decoding here follows its caps:a code (decode, resize).
  *  - DeleteExtraMovieFile [sdk 0x4f2b0]: capsrv Delete...(entry, 3) (caps:u 103); ANY failure becomes 0xd6d6.
  *  - Movie streams [sdk 0x505f0, 0x50770, 0x50800, 0x50850]: capsrv accessor session (0xd9d70..0xda250): Open(handle*,
  *    entry), Close(handle), GetSize(size*, handle), Read(read*, buffer, size, handle, offset); results through
- *    ConvertCapsrvResult.  [game] 0x71036f66bc reads at offsets rounded down to 0x40000 with sizes rounded UP to 0x40000
+ *    ConvertCapsrvResult.  A game may read at offsets rounded down to 0x40000 with sizes rounded UP to 0x40000
  *    (at most 0x80000), i.e. past the end of the data: the tail is zero-filled here and *read is the number of real bytes.
  *  - Movie maker [sdk 0x50e70 InitializeMovieMaker .. 0x51b40 EncodeMovieMakerAudioSample]: state at 0xc42264 (mutex),
  *    +0x14 initialized, +0x24 grc MovieLayer, +0x8d running.  Initialize hands the work memory to am
  *    (IApplicationFunctions::CreateMovieMaker) and opens a 1280x720 grc movie layer; Start = grc::StartMovieFile(layer,
  *    the 0x80-byte parameter) and sets "running"; the game renders into the layer's native window
  *    (GetMovieMakerNativeWindow, 0x51580) and feeds PCM with EncodeMovieMakerAudioSample (loops until every byte is
- *    taken, 0x51b74); Finish(userData, size, thumbnail RGBA, size, ImageSize) [sdk 0x517f0; game 0x71036ebaec passes the
- *    0x384000-byte 1280x720 picture] = RequestFinishMovieFile, wait, CompleteFinishMovieFile -> the album entry;
+ *    taken, 0x51b74); Finish(userData, size, thumbnail RGBA, size, ImageSize) [sdk 0x517f0; the picture is
+ *    0x384000 bytes, 1280x720] = RequestFinishMovieFile, wait, CompleteFinishMovieFile -> the album entry;
  *    Abort / Finalize = grc::AbortMovieFile.  grc results (module 212, descriptions 901..905) are mapped to 0xccd6 /
  *    0xced6 / 0xd2d6 / 0xdcd6, anything else to 0xcad6 ([sdk] 0x51700..0x51790).  PrecheckToStartMovieMaker(size)
  *    [sdk 0x51610] = capsrv::PrecheckToCreateContentsForApplication(3, size) (caps:u 130).
@@ -50,7 +50,7 @@
  *    read the presented texture back (RGBA8) and call album_movie_push_frame() instead of blitting to the screen and
  *    pacing.  Until the backend announces that with album_movie_frame_source_attach(), PrecheckToStartMovieMaker
  *    answers 0xcad6 (the SDK's "any other failure"), so the game reports an error instead of recording a video
- *    without pictures.  [game] 0x71036eb1e0: StartMovieMaker is only reached after a successful precheck.
+ *    without pictures (StartMovieMaker is only reached after a successful precheck).
  *
  * Files: screenshots <date>_<time>_<nn>.bmp (32-bit BMP; the console stores JPEG, the game never sees the file, only
  * decoded RGBA), their application data <same>.userdata.bin; movies <date>_<time>_<nn>.mp4 with <same>.thumb.bmp and

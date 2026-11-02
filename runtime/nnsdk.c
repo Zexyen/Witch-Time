@@ -164,8 +164,8 @@ static void settings_LanguageEquals(Ctx *c) { RET(rd32(A1) == 4); }   /* nn::set
 static void fs_QueryMountRomCacheSize(Ctx *c) { wr64(A0, 0x10000); RET(0); }
 
 /* ---- nu (NintendoWare utility) allocation hooks. These only observe: the game allocates
- * with its own memalign (f_710392dc40) right before VirtualAllocHook and frees with its own
- * free (f_710392e590) right after VirtualFreeHook, so the hooks must not touch the block. */
+ * with its own memalign right before VirtualAllocHook and frees with its own free right after
+ * VirtualFreeHook, so the hooks must not touch the block. */
 static void nu_VirtualAllocHook(Ctx *c) { RET(1); }
 static void nu_VirtualFreeHook(Ctx *c) { RET(1); }
 static void c_wmemcpy(Ctx *c) { memcpy(P(0), P(1), (size_t)A2 * 4); }

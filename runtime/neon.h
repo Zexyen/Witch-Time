@@ -273,7 +273,6 @@ static inline void v_stn(Ctx *c, uint64_t a, int rt, int n, int sz, int q) {
     for (int i = 0; i < count; i++)
         for (int k = 0; k < n; k++) {
             uint64_t v = vget(&c->v[(rt + k) & 31], sz, i);
-            R1M(a + (uint64_t)((i * n + k) * es), (uint64_t)es);
             memcpy((void *)(uintptr_t)(a + (uint64_t)((i * n + k) * es)), &v, (size_t)es);
         }
 }

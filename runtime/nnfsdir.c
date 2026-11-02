@@ -7,9 +7,9 @@
  * The mount-name mapping is the one documented at the top of nnfs.c and must stay identical to it:
  *   rom   -> %WT_ROMFS% or ..\romfs,   any other mount -> ..\userdata\<mount name>
  *
- * [game] 0x71037c4360: OpenDirectory(&handle, path, 3); GetDirectoryEntryCount(&count, handle);
- * allocates count * 0x310 bytes; ReadDirectory(&read, entries, handle, count); so DirectoryHandle is one
- * 8-byte value passed in a register and sizeof(DirectoryEntry) = 0x310.
+ * OpenDirectory(&handle, path, 3); GetDirectoryEntryCount(&count, handle); count * 0x310 bytes;
+ * ReadDirectory(&read, entries, handle, count): DirectoryHandle is one 8-byte value passed in a register and
+ * sizeof(DirectoryEntry) = 0x310.
  * [doc] nnheaders nn/fs: DirectoryEntry { char name[0x301]; char pad[3]; s8 type @0x304 (0 directory,
  * 1 file); s64 fileSize @0x308 }; OpenDirectoryMode 1 = directories, 2 = files, 3 = all.
  * Results (module 2): [doc] switchbrew: PathNotFound 2002-0001 (0x202), DirectoryNotEmpty... the SDK code

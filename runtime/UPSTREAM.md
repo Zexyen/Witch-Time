@@ -36,12 +36,11 @@ Kept although test/diagnostic only: `hitch.c` (frame-timing log, woven into rend
 from the player's own dump and is never committed or published.
 
 ## Known Smash leftovers, not yet dealt with
-- The self-tests (`WT_SDK_SELFTEST`, `WT_CXXRT_SELFTEST`) look handlers up by the imports Smash had. On our main the SDK
-  one stops at `floorf` (not imported); the C/C++ one fails its import checks and crashes in `st_exceptions`.
-- `R1M` (dirty-page marks) in `runtime.h`, `neon.h`, `rt_ext.h`: no code without `-DR1_MARK`; kept because those headers
-  are part of the lifted game's compile hash (editing them recompiles the whole game).
-- Comments citing `[game 0x71036...]` addresses in `nnmovie_mf.c` / `os_threads.c` / `nvn_gl.c` describe Smash's code.
-- Handlers written against Smash's SDK: checked one by one in R2.
+- Handlers for imports our main does not have (292 are reported at start as "is not an import of the game", in
+  `nnnet`, `nnmisc`, `nnapplet`, `nnsvc_c5a`, `nnalbum`, `nnfsdir`; more are registered without that check), and the
+  self-test cases that call them (`WT_SDK_SELFTEST` stops at `floorf`; `WT_CXXRT_SELFTEST` fails its import checks and
+  crashes in `st_exceptions`).
+- `[sdk 0x...]` citations: offsets in upstream's (Smash 13.0.4) sdk.elf, except where re-derived for ours (`nvn_sdk.c`).
 
 ## Smash leftovers removed (2026-11-02)
 `r0_removed.c` and every call of its stand-ins (rollback / run-ahead R1 with the `runahead` option, `nn::ro` modules,
@@ -49,7 +48,8 @@ fighter hooks, battle debug mode); the self-tests on Smash addresses (`nnmisc.c`
 exception-table, module, unwinder and ostringstream tests of `cxxrt_selftest.h`, `gen/eh_tests.h`); `WT_FIXED_SEED`'s
 clock reads at Smash return addresses (its random-bytes half stays); `WT_MOVIE_TEST_RESYNC`; the movie pre-roll log at
 a Smash address; `nvn_vk_m4.c` game tables; `nvn_vk_store.c`'s data.arc + zstd store (the root_000.pkz store stays);
-`boot.c`'s map dump; the program hook at Smash's FUN_71000382a0 in `nvn_gl.c`. Retargeted to our main:
+`boot.c`'s map dump; the program hook at Smash's FUN_71000382a0 in `nvn_gl.c`. `R1M` (dirty-page marks) in `runtime.h`, `neon.h`,
+`rt_ext.h` (the lifted game recompiles once: same code, new header hash). Comments citing Smash's main (`[game 0x71...]`). Retargeted to our main:
 `cxxrt_selftest.h` mode 2 boot and RTTI range, `nnmisc.c` close5 image-protection check. Renamed: `ssbu_glslang` ->
 `wt_glslang` (exports `wt_glsl_to_spirv` / `wt_spirv_free`), Vulkan application name `witch-time`, save mutex,
 self-test temp folders; the `ssbu_native.exe` / `ssbu_user.exe` window and sound rules dropped.

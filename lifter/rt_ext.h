@@ -12,7 +12,6 @@
 static inline uint32_t stx128(Ctx *c, uint64_t a, uint64_t lo, uint64_t hi) {
     if (c->ex_addr != a) { stx_diag(c, a, 0, 0, lo, -128); return 1; }
     c->ex_addr = ~0ull;
-    R1M(a, 16);
     unsigned __int128 expected = ((unsigned __int128)c->ex_val2 << 64) | c->ex_val;
     unsigned __int128 desired = ((unsigned __int128)hi << 64) | lo;
     if (__atomic_compare_exchange_n((unsigned __int128 *)(uintptr_t)a, &expected, desired, 0,

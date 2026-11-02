@@ -5029,10 +5029,9 @@ static void l1_early_present(void) {
     gl_post(g_rb->present, &j, sizeof j);
 }
 /* L1 round 2, PIPE (WT_L1_PIPE=1): measured (WT_L1_TRACE, tests\logs\vk13_l1t_tr1.log): after its present the game
- * acquires the next window texture, waits for it (nvnSyncWait on the acquire sync, 0x710386fce0) and for the previous
- * frame's fence (0x710386fcf0), then ends the command buffers its "render dispatch" thread recorded during the previous
- * frame plus one of its own and submits them in ONE call (0x71037f0b40, list of 6), then runs the next frame (task workers,
- * pad poll, logic) and only then presents that picture (0x710386fc84). The picture is complete after that submission
+ * acquires the next window texture, waits for it (nvnSyncWait on the acquire sync) and for the previous frame's fence,
+ * then ends the command buffers its "render dispatch" thread recorded during the previous frame plus one of its own and
+ * submits them in ONE call, then runs the next frame (task workers, pad poll, logic) and only then presents that picture. The picture is complete after that submission
  * (l1-submit: no other submission before the present). Pipe: the window wait returns at once; right after that submission
  * the picture goes to the render thread for the next tick and the GAME is held there until that tick (display_wait_refresh),
  * i.e. before its next pad poll as before; the game's later present of the same texture only does the bookkeeping.

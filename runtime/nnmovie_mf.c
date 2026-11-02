@@ -2,10 +2,10 @@
  *
  * The SDK library is a port of Android's stagefright (NuMediaExtractor / MediaCodec); the game's own
  * copy lives in subsdk0, whose exported symbols (movie::NnExtractor, movie::DecoderImpl, movie::NnMediaData,
- * android::FileSource, ...) give the object layouts below.  Legend: [game] read off the game's player code
- * (0x71036e6000-0x71036f9000), [subsdk] read off subsdk0's code and vtables, [doc] public documentation.
+ * android::FileSource, ...) give the object layouts below.  Legend: [game] read off a game's player code (upstream:
+ * Smash's), [subsdk] read off subsdk0's code and vtables, [doc] public documentation.
  *
- * Objects the game allocates (16 bytes each, with f_710392dce0(16, 16)) and drives through a vtable:
+ * Objects the game allocates (16 bytes each, with its own allocator) and drives through a vtable:
  *   movie::Extractor  {vtable, impl*}   [subsdk ctor 0x22eb0]      movie::Decoder {vtable, impl*}  [subsdk 0x20db0]
  * Extractor vtable (object pointer = _ZTV + 0x10, so slot 0 is the first virtual function) [subsdk _ZTVN5movie9ExtractorE]:
  *   +00 ~Extractor   +08 deleting dtor   +10 SetDataSource(const char*)   +18 SetDataSource(const void*, int)
@@ -23,27 +23,27 @@
  *   +80 GetLastError()   +88 GetOutputBuffer(int, Buffer*, MediaData*)   +90 GetOutputBufferFormat(int, MediaData*)
  * Results: 0 = ok; the SDK wrappers return 0x1000 when there is no implementation and 0x100b for bad arguments
  * [subsdk]; the game treats 0x2000 from GetTrackIndexForAvailableData/Read as "end of data" and retries on 0x5003
- * [game 0x71036f0230, 0x71036f6ce0]; any other non-zero result from Read makes it send an end-of-stream input
- * buffer (flags 4) [game 0x71036f6dd8].  Buffer flags follow MediaCodec: 4 = end of stream [game 0x71036f0784].
+ *; any other non-zero result from Read makes it send an end-of-stream input
+ * buffer (flags 4).  Buffer flags follow MediaCodec: 4 = end of stream.
  * DecoderEvents = four pointers to nn::os::EventType: +0 input buffer available, +8 output buffer available,
- * +10 output format changed, +18 error [subsdk DecoderImpl::Send*EventToClient 0x1fec0..0x1ff20; game 0x71036f0590].
- * The game's player [game 0x71036f04c0] waits on those events: input -> AcquireInputBufferIndex (repeated
- * "moreAvailable" times) and hands the index to a feed thread; the feed thread [game 0x71036f6ce0] does
+ * +10 output format changed, +18 error [subsdk DecoderImpl::Send*EventToClient 0x1fec0..0x1ff20].
+ * The game's player waits on those events: input -> AcquireInputBufferIndex (repeated
+ * "moreAvailable" times) and hands the index to a feed thread; the feed thread does
  * GetTrackIndexForAvailableData -> (own track?) GetInputBuffer -> Extractor::Read(Buffer) -> GetSampleTime ->
  * SendInputBufferForDecode(index, Offset(), Size(), time, flags) -> Advance.  Output event -> AcquireOutputBufferIndex,
- * entries {index, timeUs, flags} are queued and the render path [game 0x71036f7410] calls GetOutputBufferFormat(index)
+ * entries {index, timeUs, flags} are queued and the render path calls GetOutputBufferFormat(index)
  * ("width", "height", "nv12-y-stride", "nv12-uv-offset", "nv12-y-offset"), GetOutputFormat ("nv12-colorspace"),
  * GetOutputBuffer(index, Buffer{base = its own texture memory, capacity}) and ReleaseOutputBufferIndex; it uploads
  * the Y plane (w x h at nv12-y-offset) and the UV plane (w/2 x h/2 at nv12-uv-offset).  Format event ->
- * GetOutputFormat ("width", "height").  The game's clock is in microseconds (ConvertToTimeSpan / 1000) [game 0x71036f6ff0].
+ * GetOutputFormat ("width", "height").  The game's clock is in microseconds (ConvertToTimeSpan / 1000).
  * Decoder(type, outputFormat, mode, n): type 1 = H.264 ("video/avc"), 2 = VP8, 3 = VP9, 4 = AAC ("audio/mp4a-latm"),
- * 5 = Vorbis [game 0x71036f19a0 maps the track mime to these values; seen in a run: VP9 track -> type 3]; the game asks output format 4 for video and 1 for audio,
- * mode 1 [game 0x71036f0a0c, 0x71036f0e90]; format 4 is tightly packed NV12 (size w*h + 2*((w+1)/2)*((h+1)/2),
+ * 5 = Vorbis [the game maps the track mime to these values; seen in a run: VP9 track -> type 3]; the game asks output format 4 for video and 1 for audio,
+ * mode 1; format 4 is tightly packed NV12 (size w*h + 2*((w+1)/2)*((h+1)/2),
  * Y rows then interleaved UV rows of w bytes) and 2 is ARGB [subsdk GetOutputBufferSize, ConvertDecoderOutputFormat].
  * Track configuration keys the game reads: "mime", "durationUs", "width", "height", "sample-rate", "channel-count",
- * "max-input-size" (it adds 0x5000 and passes the MediaData to Decoder::Configure) [game 0x71036f19a0, 0x71036f0a68].
- * Container types: 1 = .mp4/.m4a, 2 = .mkv, 3 = .webm [game 0x71036f1d70].  The game selects the tracks it decodes
- * with SelectTrack [game 0x71036e74cc, 0x71036f2f90] and unselects audio it will not decode [game 0x71036f0f20].
+ * "max-input-size" (it adds 0x5000 and passes the MediaData to Decoder::Configure).
+ * Container types: 1 = .mp4/.m4a, 2 = .mkv, 3 = .webm.  The game selects the tracks it decodes
+ * with SelectTrack and unselects audio it will not decode.
  * ClientStreamReader (the object the game passes to SetDataSource; android::FileSource uses it) [subsdk 0x1d90e0..0x1d93a0]:
  *   +10 bool Open(const char *path, void **handle)   +18 int64 ReadAt(void *handle, int64 offset, void *buf, size_t n)
  *   +20 bool Close(void *handle)   +28 int GetSize(void *handle, int64 *size)
@@ -51,7 +51,7 @@
  *   +18 capacity(u64) +20 int64 +28 base +30 nvnDev +38 nvnSync; Buffer(size_t) allocates through movie::SetAllocator's
  *   alloc(size, align, user) and the destructor frees owned memory.
  * movie::MediaData is one pointer to a key/value store [subsdk 0x23d70]; here that is a host structure.
- * movie::SetAllocator(alloc(size, align, user), free(p, user), realloc(p, size, user), user) [game 0x71036e66b4].
+ * movie::SetAllocator(alloc(size, align, user), free(p, user), realloc(p, size, user), user).
  * The opening movie is stream:/movie/... in data.arc: WebM, VP9 1280x720, two Vorbis 48 kHz stereo tracks, 420 s
  * (extracted copy in movie_samples\).  FFmpeg decodes in software, so no codec of the system's and no GPU is needed. A movie
  * that cannot start must not happen: the game gives up on it, and without the opening New Game falls for ever (#68).
@@ -105,7 +105,7 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 #define SLOT_BYTES 64
 #include "image_layout.h"
 #define GAME_FREE (GUEST_BASE + GAME_FREE_OFF)        /* [Recomps#1] our main's exported free, as in libcxx.c */
-/* [witchtime] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new [game 0x7100cd50f0], which free()
+/* [witchtime] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new, which free()
  * does not know ("not a live block" at the end of the opening movie): the deleting destructors release them with operator delete. */
 #define GAME_DELETE (GUEST_BASE + GAME_OPDELETE_OFF)
 #define TOKEN_MAGIC 0x4d4f564945544f4bULL             /* "MOVIETOK" */
@@ -319,7 +319,7 @@ typedef struct Ext {
  *                             stops consuming input (back-pressure): the sent input stays "in decode".
  * Flush [subsdk 0x1e440] = MediaCodec::flush + both lists emptied, no event: every index the client still holds is
  * void, and nothing is offered until Start (MediaCodec::start after a flush offers all input buffers again).
- * The game's Seek [game 0x71036e7620] does exactly Flush(video), Flush(audio), empties its own index lists,
+ * The game's Seek does exactly Flush(video), Flush(audio), empties its own index lists,
  * Extractor::SeekTo, sleeps 16 ms, empties the lists again, Start(video), Start(audio). */
 #define MAX_IN 16
 #define MAX_OUT 64
@@ -626,7 +626,7 @@ static void ext_dtor_common(Ctx *c, int deleting) {
         free(e);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new */
 }
 static void ext_dtor(Ctx *c) { ext_dtor_common(c, 0); }
 static void ext_deleting_dtor(Ctx *c) { ext_dtor_common(c, 1); }
@@ -875,7 +875,7 @@ static void dec_dtor_common(Ctx *c, int deleting) {
         free(d);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new */
 }
 static void dec_dtor(Ctx *c) { dec_dtor_common(c, 0); }
 static void dec_deleting_dtor(Ctx *c) { dec_dtor_common(c, 1); }
@@ -938,10 +938,10 @@ static void dec_GetOutputFormat(Ctx *c) { Dec *d = dec_of(A0); MD *m = md_of(A1)
 static void dec_GetOutputBufferFormat(Ctx *c) { Dec *d = dec_of(A0); MD *m = md_of(A2); if (!d || !m) { RET(ST_INVALID); return; } dec_fill_format(d, m); RET(ST_OK); }
 
 /* P3 round 3: which decoders send the "output format" event (DecoderEvents + 0x10). The game's handler thread
- * [game 0x71036f3500] signals the player's "formats known" event (player + 0x498) only when the format event of EVERY
+ * signals the player's "formats known" event (player + 0x498) only when the format event of EVERY
  * decoder it created has arrived (cases 3 and 7 of its switch: flags + 0x4c1 and + 0x4c0), and the playback thread
- * waits for it for 5 s while holding the player's mutex [0x71036f2580]: with the event sent by the video decoder only,
- * every movie start waited the full 5 s and the main thread stood at that mutex [0x71036e7690]. So the real audio
+ * waits for it for 5 s while holding the player's mutex: with the event sent by the video decoder only,
+ * every movie start waited the full 5 s and the main thread stood at that mutex. So the real audio
  * decoder sends it as well. WT_MOVIE_NO_AUDIO_FORMAT_EVENT=1: video only, as before. */
 static int fmt_event_wanted(const Dec *d) {
     static int video_only = -1;
@@ -1029,7 +1029,7 @@ static void dec_GetInputBuffer(Ctx *c) {              /* (int index, Buffer *out
 
 static void dec_SendInputBufferForDecode(Ctx *c) {    /* (int index, int offset, int size, int64 timeUs, unsigned flags) */
     Dec *d = dec_of(A0);
-    int i = (int)A1, size = (int)A3;                  /* A2 = offset, A3 = size, A4 = timeUs, x5 = flags [game 0x71036f6e2c] */
+    int i = (int)A1, size = (int)A3;                  /* A2 = offset, A3 = size, A4 = timeUs, x5 = flags */
     int64_t ts = (int64_t)A4;
     uint32_t flags = (uint32_t)c->x[5];
     if (!d || i < 0 || i >= d->nin) { RET(ST_INVALID); return; }
@@ -1231,7 +1231,7 @@ static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, De
     d->type = (int)A1; d->fmt = (int)A2; d->mode = (int)A3;
     d->is_video = d->type >= 1 && d->type <= 3;
     d->nin = 8;                                       /* compressed-data buffers: only bound how far the feed runs ahead of the codec */
-    /* [witchtime] decoded frames the game may hold before the codec stalls. B3's player [game 0x7100cd6cb4] keeps them in a
+    /* [witchtime] decoded frames the game may hold before the codec stalls. B3's player keeps them in a
      * pool of 16 nodes; a frame acquired while the pool is empty [0x7100cd7244] is neither queued nor released, so the
      * picture stops (ev0011, which is pre-rolled while ev0010 plays and then taken in one burst: this decoder has no
      * decoding time). 16 = the pool: the codec stalls first. (SSBU's player wanted 48: over a second before its first frame.) */

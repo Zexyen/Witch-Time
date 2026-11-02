@@ -92,8 +92,7 @@ FWD(nnos_GetSystemTickFrequency, OS("22GetSystemTickFrequencyEv"))
 FWD(nnos_ConvertTickToNanoSeconds, OS("17ConvertToTimeSpanENS0_4TickE"))
 
 /* ---------------------------------------------------------------- setjmp / longjmp
- * The game has exactly one setjmp call (0x71038faf40) and one longjmp call (0x71038fae7c):
- * Lua's luaD_rawrunprotected and luaD_throw. [game] the call site is
+ * Upstream wrote this for a call site of this shape (Smash's only one: Lua's luaD_rawrunprotected and luaD_throw):
  *
  *     bl   setjmp              ; x0 = &lj.b   (lj on the stack, jmp_buf 0x138 bytes)
  *     cbnz w0, after
@@ -166,8 +165,8 @@ static void c_longjmp(Ctx *c) {
 /* ---------------------------------------------------------------- swprintf
  * The guest wchar_t is 32 bits. The format is narrowed, formatted by the registered snprintf
  * (same variadic argument positions: x3.. / v0..), and the result widened again.
- * Limitation: %ls / %lc arguments (wide strings) are not supported; the game's formats are
- * numeric ([game] L"%0*d" at 0x710446f514). */
+ * Limitation: %ls / %lc arguments (wide strings) are not supported; the formats upstream
+ * met (Smash) are numeric. */
 static void c_swprintf(Ctx *c) {
     static ImportFn f;
     if (!f) f = forward_target(c, "snprintf");

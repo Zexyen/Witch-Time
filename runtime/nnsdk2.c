@@ -395,7 +395,7 @@ static int libc_selftest(Ctx *c) {
  *   nn::os::SetMemoryPermission   [sdk 0x339730] accepts 0 (none), 1 (read), 3 (read-write) -> VirtualProtect
  *   nn::os::SetMemoryAttribute    cache attribute of a mapping (svc 3): no counterpart for ordinary host pages
  *   nn::os::IsVirtualAddressMemoryEnabled   [sdk 0x336af0] kernel GetInfo(16): true for a 64-bit application
- * The game gives its StandardAllocator a buffer (trace: Initialize(this, buffer, 0x100000) from 0x71036f8780), so the
+ * The game gives its StandardAllocator a buffer (trace: Initialize(this, buffer, 0x100000)), so the
  * memory-block functions are only reached by the self-test's buffer-less allocator. */
 static void pt_once(Ctx *c) {
     volatile LONG *ctl = (volatile LONG *)(uintptr_t)c->x[0];

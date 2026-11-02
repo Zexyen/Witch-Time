@@ -5,19 +5,8 @@
  * Sources of each layout: [sdk] = read from the real SDK module (binaries\13.0.4\sdk.elf; `python sdkdata.py
  * <symbol>` dumps a data object with its relocations, `python sdkdis.py <symbol>` disassembles a function).
  *
- * EXCEPTIONS -- measured on main 13.0.4 (python eh_census.py; python eh_census2.py):
- *   295 call sites of __cxa_throw (91 std::bad_function_call, 68 std::exception-derived game types, 63 std::out_of_range,
- *   47 std::bad_alloc, 17 std::length_error, 9 boost exceptions), 17 of __cxa_rethrow, and about 10,400 calls of
- *   libc++'s __throw_length_error / __throw_out_of_range helpers (libcxx.c).
- *   .eh_frame (found through MOD0) has 110,842 FDEs, 1,040 with an LSDA: 10,346 call-site records, 7,291 with a landing
- *   pad: 3,668 clean-up only, 40 exception-specification filters, 3,583 with a catch clause = 3,540 distinct pads:
- *     3,456 go straight to __clang_call_terminate (noexcept boundaries), 66 are clean-ups that end there,
- *     14 are `catch (...) { clean up; throw; }` (they rethrow),
- *     1 is `catch (std::ios_base::failure &)` at 0x7103839de8 (only the stream library could throw that; ours never does),
- *     4 are `catch (...) { }` that SWALLOW the exception: 0x710382d0a0 and 0x710382d1cc in f_7103828300,
- *       0x7103847670 and 0x710384779c in f_7103841d10 (two text parsers; the protected calls are
- *       f_7103835e60 / f_7103836070 / f_7103836150 / f_7103836230 / f_71038368e0, i.e. tokenising and boost::lexical_cast).
- *   So on the console every throw ends in std::terminate, except a throw inside those four protected regions.
+ * EXCEPTIONS: upstream measured Smash's main, where every throw ends in std::terminate except inside a few
+ * `catch (...)` regions; our main has no LSDA at all (finding 20), so the same holds for every throw here.
  *
  * What is implemented here: the exception RUNTIME (interface and flow in eh_runtime.h): exception objects with
  * libc++abi's header layout, per-context throw state, __cxa_throw / rethrow / begin_catch / end_catch / _Unwind_Resume /

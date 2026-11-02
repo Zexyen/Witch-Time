@@ -29,8 +29,8 @@ static uint64_t g_vsync_event;
 static LARGE_INTEGER g_freq;
 
 /* P3 round 3: ONE refresh clock. The game counts the signals of the vsync event on a thread of its own ("VSync Count
- * Thread", 0x7103810a40: window object + 0x138) and, at every present (0x710386fc30), advances its frame counter
- * (0x710593a440) by the number of refreshes counted since the previous present. So the refresh count IS the game's
+ * Thread": window object + 0x138) and, at every present, advances its frame counter by the number of refreshes counted
+ * since the previous present. So the refresh count IS the game's
  * time. Before this, the event came from a Sleep() loop and presentation was held by a second, independent 60 Hz
  * clock that restarted its phase after every late frame: between two presents the game counted 0, 1 or 2 refreshes,
  * and "0" counts as one step while "2" counts as two, so the match clock gained (10.77 s per 600 frames).
@@ -844,7 +844,7 @@ void display_init(void) {
      * variables: os_threads.c, SleepConditionVariableCS with whole milliseconds) end at the time asked for. At the
      * default Windows timer period they ended at the next 15.6 ms tick, so a thread that polls with a 1 ms time-out ran
      * 64 times per second: the movie player's two feed threads delivered one sample per tick and its pre-roll loop
-     * [game 0x71036f27b4, 125 x 10 ms, holding the player's mutex] ran out every time (1.3 s, main thread blocked).
+     * (125 x 10 ms, holding the player's mutex) ran out every time (1.3 s, main thread blocked).
      * WT_TIMER_PERIOD=<ms> (default 1; 0 = leave the system default). */
     { const char *e = getenv("WT_TIMER_PERIOD"); int ms = e ? atoi(e) : 1; if (ms > 0) { MMRESULT r = timeBeginPeriod((UINT)ms); printf("display: system timer period %d ms requested (%s)%c", ms, r == TIMERR_NOERROR ? "ok" : "refused", 10); } }
     hitch_init();
@@ -866,11 +866,11 @@ int display_interval(void) { return (int)g_interval; }
 static LONG64 eff_interval(void) { LONG iv = g_interval; return iv ? iv : g_pace_hz > 60 ? 1 : 0; }
 void nvn_pf_pace(LONG64 ticks);            /* nvn_gl.c: timing scopes */
 /* WT_CLOCKSTAT=1: per 600 presented frames, the real time, the vsync signals sent, the refreshes the game counted
- * (its frame counter at 0x710593a440: 600 = one step per presented frame) and the refreshes this thread slept through. */
+ * (600 = one step per presented frame) and the refreshes this thread slept through. */
 static LONG64 g_cs_steps, g_cs_hist[4];      /* game steps (1 + refreshes skipped) and the histogram of "refreshes counted since the last present" 0, 1, 2, 3+ */
 /* nvn_gl.c, at nvnWindowAcquireTexture: the game's window object is the index pointer - 0x30; + 0x138 = refreshes its
  * VSync Count Thread has counted, + 0x140 = the count at its previous present. Right after this call the game computes
- * steps = max(count - last, 1) (0x710386fc30) and then stores last = count. */
+ * steps = max(count - last, 1) and then stores last = count. */
 void display_clock_sample(uint64_t index_ptr) {
     if (index_ptr) g_wnd_count_addr = index_ptr - 0x30 + 0x138;      /* session 13 (track V): known at normal speed too, for the wait below */
     if (!g_clockstat || !index_ptr) return;
@@ -1000,7 +1000,7 @@ void display_l1_poll(uint64_t buttons, long long fight_ticks, long long poll) {
     if (g_l1_trace_left > 0) printf("l1-trace: %+8.2f %-26s POLL player 1 buttons %llx, fight ticks %lld%c", display_l1_ms(), "(poll)", (unsigned long long)buttons, fight_ticks, 10);
     if (g_l1 && fight_ticks > 0 && buttons && !(prev & buttons)) {
         unsigned long nvn_front_present_tid(void);
-        printf("l1-press: game frame counter [0x710593a440] %llu, window refresh count %llu; player 1 poll %lld (fight-frame ticks %lld, presented frames %lld, poll thread %lu, presenting thread %lu): buttons %llx, %.2f ms after the game's release%c", (unsigned long long)rd64(0x710593a440ull), (unsigned long long)(g_wnd_count_addr ? rd64(g_wnd_count_addr) : 0), poll, fight_ticks, (long long)g_frames, GetCurrentThreadId(), nvn_front_present_tid(),
+        printf("l1-press: window refresh count %llu; player 1 poll %lld (fight-frame ticks %lld, presented frames %lld, poll thread %lu, presenting thread %lu): buttons %llx, %.2f ms after the game's release%c", (unsigned long long)(g_wnd_count_addr ? rd64(g_wnd_count_addr) : 0), poll, fight_ticks, (long long)g_frames, GetCurrentThreadId(), nvn_front_present_tid(),
                (unsigned long long)buttons, g_lat_release ? (double)(now.QuadPart - g_lat_release) * 1000.0 / (double)g_freq.QuadPart : -1.0, 10);
         g_l1_press_qpc = now.QuadPart; g_l1_press_left = 6; g_l1_press_n = 0;
         if (!g_l1_trace_done && getenv("WT_L1_TRACE")) { g_l1_trace_done = 1; g_l1_trace_t0 = now.QuadPart; InterlockedExchange(&g_l1_trace_left, 7); }
@@ -1258,8 +1258,7 @@ int display_wait_refresh(void) {
     QueryPerformanceCounter(&a);
     hitch_pacing(1);
     /* Track V session 13 (the owner's microstutter at a steady 60 fps): the game steps its logic by the refreshes its own
-     * VSync Count Thread has COUNTED when the window texture is acquired right after this wait (steps = max(count - last, 1),
-     * main 0x710386fc30). That thread is woken by the same signal as this wait, so the main thread could read the count
+     * VSync Count Thread has COUNTED when the window texture is acquired right after this wait (steps = max(count - last, 1)). That thread is woken by the same signal as this wait, so the main thread could read the count
      * before the refresh was counted: 0 this frame, 2 the next = one frame with a doubled step at a perfect 60 fps
      * (R0_determinism.md measured 104 / 559 / 20 polls with 0 / 1 / 2 steps at normal speed). Here: after the refresh, wait
      * (at most 3 ms, yielding) until the count has advanced by the refreshes that passed during this wait.

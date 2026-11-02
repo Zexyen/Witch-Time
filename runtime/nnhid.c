@@ -912,8 +912,7 @@ static void hid_GetActualVibrationValue(Ctx *c) {           /* (VibrationValue *
     if (vib_slot(rd32(A1), &id, &dev) && g_vib[id][dev].set && player_connected(id)) v = g_vib[id][dev].v;
     memcpy((void *)(uintptr_t)A0, v, 16);
 }
-/* GameCube controllers: an eccentric motor with the commands 0 Stop, 1 Start, 2 StopHard (u64; [game] 0x710366a4f0 reads
- * 8 bytes and compares with 1).
+/* GameCube controllers: an eccentric motor with the commands 0 Stop, 1 Start, 2 StopHard (u64).
  * SendVibrationGcErmCommand(handle, command) [sdk 0x2537c0 -> 0x248ca0]: one request (IHidServer slot +0x258 = command 207)
  * with the u32 handle and the u64 command; a failure aborts.  GetActualVibrationGcErmCommand(out, handle) [sdk 0x253810 ->
  * 0x248d30]: slot +0x260 = command 208, the module writes the u64; a failure aborts.

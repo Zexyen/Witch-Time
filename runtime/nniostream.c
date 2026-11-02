@@ -3,8 +3,7 @@
  * The game has its own stream classes (std::ostringstream / istringstream with their stringbuf are
  * compiled into the game) but takes the base-class pieces from the SDK: ios_base::init, the
  * basic_streambuf constructor and default virtuals, ostream::sentry, operator<< for integers,
- * istream::get and operator>>(float&). Layouts are libc++'s on AArch64 (the stringbuf fields the game
- * reads in f_7102d099c0 -- pbase +0x28, pptr +0x30, high mark +0x58, mode +0x60 -- agree with them):
+ * istream::get and operator>>(float&). Layouts are libc++'s on AArch64:
  *
  *   basic_streambuf: +0 vtable, +8 locale, +0x10 eback, +0x18 gptr, +0x20 egptr, +0x28 pbase, +0x30 pptr, +0x38 epptr
  *     vtable: +0x10 imbue, +0x18 setbuf, +0x20 seekoff, +0x28 seekpos, +0x30 sync, +0x38 showmanyc, +0x40 xsgetn,

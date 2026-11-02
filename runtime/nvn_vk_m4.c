@@ -2231,15 +2231,14 @@ static void pcache_save(void) { pcache_save_at(0, InterlockedExchange(&g_pcsave_
 
 /* ---------------------------------------------------------------- session 6: the shader container scan
  * The game keeps its Maxwell stages in "BNSH" containers (a file of their own, or embedded in an effect / shader-database
- * file) and creates a program from a variation only when something first draws with it: FUN_71000382a0 (13.0.4) takes the
- * six stage-code pointers of one variation's program and calls nvnProgramInitialize / nvnProgramSetShaders; its caller
- * FUN_710009c9e0 sets a container up either eagerly (every variation at once) or lazily (flag bit 0).
- * Layout, read from that code and checked against the memory of the running game (WT_VK_CSCAN_LOG=1 prints it):
+ * file) and creates a program from a variation only when something first draws with it (nvnProgramInitialize /
+ * nvnProgramSetShaders with the six stage-code pointers of one variation's program).
+ * Layout, read by upstream off Smash's code and checked against the memory of the running game (WT_VK_CSCAN_LOG=1 prints it):
  *   file header: "BNSH", byte-order mark 0xFEFF at +0x0C, offset of the file name at +0x10, offset of the first block at
  *                +0x16 (u16), file size at +0x1C;
  *   block "grsc": variation count at +0x1C (s32), pointer to the variation array at +0x20;
- *   variation (0x40 bytes): three program pointers (source / intermediate / binary) at the offsets the table the game keeps
- *                at *0x71052a32d8 names; a program holds its six stage-code pointers at the offsets of the table 0x7104470aa8;
+ *   variation (0x40 bytes): three program pointers (source / intermediate / binary) at +0, +8, +0x10; a program
+ *                holds its six stage-code pointers at +8 .. +0x30;
  *   stage code: among its first words a pointer to the control section (magic 0x98761234) and one to the code section
  *                (magic 0x12345678), the two blocks nvnProgramSetShaders is given.
  * The pointers are absolute once the game has relocated the file; before that they are offsets from the file start: both

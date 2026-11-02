@@ -111,9 +111,8 @@
  * Platform fact modelled: this machine has NO local-wireless radio; that is a console whose wireless communication
  *     is switched off. [suyu] hle/service/ldn/user_local_communication_service.cpp Initialize: no usable interface
  *     -> ResultAirplaneModeEnabled (module 203, description 23) = 0x2ecb. So Initialize fails with 0x2ecb, GetState
- *     stays 0 (None), and the game ([game] 0x7103704504) puts the Result in an ErrorResultVariant and does not go on;
- *     it calls Finalize / SetWirelessControllerRestriction only when GetState() != 0 ([game] 0x7103703800,
- *     0x71016a60c4). Any other nn::ldn call after a failed Initialize dereferences a null service pointer on a
+ *     stays 0 (None), and (upstream, Smash) the game puts the Result in an ErrorResultVariant and does not go on;
+ *     it calls Finalize / SetWirelessControllerRestriction only when GetState() != 0. Any other nn::ldn call after a failed Initialize dereferences a null service pointer on a
  *     console: those handlers stop with that message. (The alternative, "wireless on, nobody around", would need the
  *     real module's NetworkInfo contents for CreateNetwork, which the reference invents: not established.)
  *

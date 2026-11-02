@@ -23,9 +23,8 @@
  * What happens here: no page can be shown (no browser applet; the game's offline HTML documents are in
  * its manual/legal NCA, not in the extracted RomFS), so each call answers what the applet returns when
  * the user closes the page at once: exit reason 0 (EndButtonPressed), last URL "http://localhost/" (what
- * suyu's applet without a browser frontend reports). [game] 0x710375535c ignores the Result and the value
- * of ShowOfflineHtmlPage; [game] 0x7103341e50 only acts on ShowWebPage when the exit reason is 3
- * (callback URL), which cannot happen without a network.
+ * suyu's applet without a browser frontend reports). (Upstream, in Smash: the Result and the value of
+ * ShowOfflineHtmlPage are ignored; ShowWebPage is only acted on for exit reason 3, a callback URL.)
  *
  * ---- nn::swkbd::ShowKeyboard(String *out, const ShowKeyboardArg &arg)
  * [sdk] 0x38a390. ShowKeyboardArg: KeyboardConfig (0x4d0 bytes) @0; work buffer @0x4d0, size @0x4d8;
@@ -37,7 +36,7 @@
  * @0x3c0 and length in characters @0x3c4, text-check enabled @0x3d0, callback @0x3d8.
  * String: pointer @0, buffer size in bytes @8.
  * Results: 0 with the text (UTF-16, or UTF-8 when isUseUtf8) when confirmed; 0x29f (module 159,
- * description 1) when cancelled ([sdk] 0x38a75c; [game] 0x7103300584 compares with 0x29f).
+ * description 1) when cancelled ([sdk] 0x38a75c).
  * Text check ([sdk] 0x389e40): the callback is called as cb(textCheckWorkBuf, size_t *outMessageSize,
  * String *text) with text->bufSize temporarily set to the size of the entered text; it returns
  * [doc] TextCheckResult 0 Success, 1 ShowFailureDialog, 2 ShowConfirmDialog, with the message in
@@ -118,11 +117,8 @@ static void web_fill_tlv(uint64_t ret, uint32_t shim_kind) {   /* 0x2000 bytes *
  * inside the browser applet (it shows its own error screen and returns some exit reason), and neither the SDK nor
  * [doc] suyu am/frontend/applet_web_browser.cpp shows which: suyu opens a host browser for Web (ExecuteWeb) and ends
  * Lobby at once with exit reason 0 because "Lobby Applet is not implemented".
- * What the game does with the answers: [game] 0x7103341e50 ShowWebPage: only exit reason 3 (callback URL) is acted on,
- * every other answer and every failure take the same path; [game] 0x71002ab9fc ShowLobbyPage: stores 0 when the exit
- * reason is 0x14 or 0xc and 1 for anything else -- so the unknown exit reason IS visible to the game there;
- * [game] 0x71017634cc / 0x7103341bac ShowYouTubeVideo: reads IsMediaPlayerAutoClosedByCompletion (TLV 9, absent here =
- * false). */
+ * Upstream found, in Smash: ShowWebPage acts only on exit reason 3; ShowLobbyPage stores 0 for exit reason 0x14 or
+ * 0xc and 1 for anything else; ShowYouTubeVideo reads IsMediaPlayerAutoClosedByCompletion (TLV 9, absent here = false). */
 static void web_ShowOfflineHtmlPage(Ctx *c) { uint64_t ret = A0; web_log(c, "nn::web::ShowOfflineHtmlPage", A1); web_fill_common(ret); RET(0); }
 static void web_ShowLobbyPage(Ctx *c) { uint64_t ret = A0; web_log(c, "nn::web::ShowLobbyPage", A1); web_fill_common(ret); RET(0); }
 static void web_ShowWebPage(Ctx *c) { uint64_t ret = A0; web_log(c, "nn::web::ShowWebPage", A1); web_fill_tlv(ret, 5); RET(0); }     /* [doc] ShimKind::Web = 5 */
@@ -154,8 +150,7 @@ static void ec_ShowShop(Ctx *c) {
  * The applet manager's side (not in the dump), after [doc] suyu am/service/audio_controller.cpp/.h: it keeps
  * the two values clamped to [0, 1]; initial values main 0.25, library 1.0; the reference does nothing else
  * with them. What the console's applet manager does to the SOUND with them while a library applet is in front
- * is not in any source available here: NOT implemented, NOT verified. [game] 0x71037552fc saves them around
- * the offline HTML page and restores them afterwards. */
+ * is not in any source available here: NOT implemented, NOT verified. */
 static float g_volume_main = 0.25f, g_volume_library = 1.0f;
 static float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 static void oe_GetExpectedVolumeBalance(Ctx *c) {
