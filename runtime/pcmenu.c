@@ -586,14 +586,51 @@ static int row_restart(int i) {                            /* a value that is no
     if (g_cur[i] == g_start[i]) return 0;
     return k_rows[i].apply == A_RESTART || (k_rows[i].apply == A_SCALE && g_open) || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
 }
-/* a button hint on the pale band: a dark disc with the letter cut pale, then the word; returns the width used */
-static float hint_glyph(float x, int base, float px, const char *letter, const char *what, Rgb disc_c, Rgb letter_c, Rgb text_c) {
-    float r = px * 0.6f, cx = x + r, cy = base - px * 0.33f;
-    disc(cx, cy, r, disc_c, 0);
-    float lw = text_w(&g_f_uib, letter, px * 0.72f, 0);
-    text(&g_f_uib, cx - lw / 2, (int)(cy + px * 0.26f), letter, px * 0.72f, letter_c, 0);
-    text(&g_f_ui, x + 2 * r + px * 0.4f, base, what, px, text_c, 0);
-    return 2 * r + px * 0.4f + text_w(&g_f_ui, what, px, 0);
+/* a button hint on the pale band: the button that acts as Pro button b (0 = A, 1 = B) on player 1's pad, drawn as the
+ * prompts show it (g_fam: 1 Switch, 2 PlayStation, 3 Xbox, 4 the keyboard; g_letter: PlayStation and Xbox pads by printed
+ * letter or by position, the Face buttons row): a letter cut pale in a dark disc, a PlayStation shape, or a key cap;
+ * then the word. Returns the width used; draw = 0 measures only. */
+static float hint_btn(float x, int base, float px, int b, const char *what, Rgb disc_c, Rgb mark_c, Rgb text_c, int draw) {
+    float r = px * 0.6f, cx = x + r, cy = base - px * 0.33f, gw;
+    if (g_fam == 4) {                                      /* the keyboard: Enter confirms, Esc leaves (menu_read) */
+        const char *key = b ? "ESC" : "ENT";
+        float kpx = px * 0.5f, kw = text_w(&g_f_uib, key, kpx, 1 * px / 20) + px * 0.6f, kh = 2 * r * 0.85f, rr = px * 0.15f;
+        gw = kw;
+        if (draw) {
+            float x0 = x, y0 = cy - kh / 2;
+            for (int j = (int)y0 - 1; j <= (int)(y0 + kh) + 1; j++) for (int i = (int)x0 - 1; i <= (int)(x0 + kw) + 1; i++) {      /* a rounded box */
+                float dx = fabsf(i + 0.5f - (x0 + kw / 2)) - (kw / 2 - rr), dy = fabsf(j + 0.5f - (y0 + kh / 2)) - (kh / 2 - rr);
+                float ox = dx > 0 ? dx : 0, oy = dy > 0 ? dy : 0, in = dx > dy ? dx : dy, d = sqrtf(ox * ox + oy * oy) + (in < 0 ? in : 0) - rr;
+                float a = 0.5f - d;
+                if (a > 0) put(i, j, disc_c, a > 1 ? 1 : a);
+            }
+            float lw = text_w(&g_f_uib, key, kpx, 1 * px / 20);
+            text(&g_f_uib, x0 + (kw - lw) / 2, (int)(cy + kpx * 0.36f), key, kpx, mark_c, 1 * px / 20);
+        }
+    } else {
+        gw = 2 * r;
+        if (draw) {
+            disc(cx, cy, r, disc_c, 0);
+            if (g_fam == 2) {                              /* PlayStation: by position Circle acts as A, by letter Cross does */
+                int cross = (b == 0) == (g_letter != 0);
+                if (cross) {
+                    float L = r * 0.4f, w = px * 0.07f;
+                    for (int j = (int)(cy - L - 1); j <= (int)(cy + L + 1); j++) for (int i = (int)(cx - L - 1); i <= (int)(cx + L + 1); i++) {
+                        float dx = i + 0.5f - cx, dy = j + 0.5f - cy, u = fabsf(dx + dy) * 0.70710678f, v = fabsf(dx - dy) * 0.70710678f;
+                        float d1 = u > w ? u - w : 0, e1 = v > L ? v - L : 0, d2 = v > w ? v - w : 0, e2 = u > L ? u - L : 0;
+                        float d = sqrtf(d1 * d1 + e1 * e1); float f = sqrtf(d2 * d2 + e2 * e2); if (f < d) d = f;
+                        float a = 1 - d; if (a > 0) put(i, j, mark_c, a > 1 ? 1 : a);
+                    }
+                } else disc(cx, cy, r * 0.46f, mark_c, px * 0.085f);
+            } else {
+                const char *letter = pad_name(b);
+                float lw = text_w(&g_f_uib, letter, px * 0.72f, 0);
+                text(&g_f_uib, cx - lw / 2, (int)(cy + px * 0.26f), letter, px * 0.72f, mark_c, 0);
+            }
+        }
+    }
+    if (draw) text(&g_f_ui, x + gw + px * 0.4f, base, what, px, text_c, 0);
+    return gw + px * 0.4f + text_w(&g_f_ui, what, px, 0);
 }
 static void alloc_panel(int pw, int ph) {
     if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
@@ -725,11 +762,11 @@ static void draw_panel_words(int W, int H, float s) {
     float fpx = 20 * s;
     text(&g_f_ui, 60 * s, fb, "F1  \xC2\xB7  Start + Select", 15 * s, C_MUTE, 1 * s);
     const char *close = g_page && !g_direct ? "Back" : "Close";
-    float wc = 2 * fpx * 0.6f + fpx * 0.4f + text_w(&g_f_ui, "Change", fpx, 0), wb = 2 * fpx * 0.6f + fpx * 0.4f + text_w(&g_f_ui, close, fpx, 0), x = W - 60 * s - wc - 30 * s - wb;
-    hint_glyph(x, fb, fpx, g_swap ? "B" : "A", "Change", C_INK, C_PEARL, C_INK);
+    float wc = hint_btn(0, fb, fpx, g_swap ? 1 : 0, "Change", C_INK, C_PEARL, C_INK, 0), wb = hint_btn(0, fb, fpx, g_swap ? 0 : 1, close, C_INK, C_PEARL, C_INK, 0), x = W - 60 * s - wc - 30 * s - wb;
+    hint_btn(x, fb, fpx, g_swap ? 1 : 0, "Change", C_INK, C_PEARL, C_INK, 1);
     x += wc + 30 * s;
     g_close_r[0] = (int)(x - 10 * s); g_close_r[1] = fb - (int)(30 * s); g_close_r[2] = (int)(wb + 20 * s); g_close_r[3] = (int)(44 * s);
-    hint_glyph(x, fb, fpx, g_swap ? "A" : "B", close, C_INK, C_PEARL, C_INK);
+    hint_btn(x, fb, fpx, g_swap ? 0 : 1, close, C_INK, C_PEARL, C_INK, 1);
 }
 
 /* The hint: a small slanted bar at the bottom right for a few seconds when the game's pause menu opens (nnfs.c sees it
@@ -928,7 +965,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (g_lock_why[i] || k < 0 || k >= row_count(i) || k == g_cur[i]) return;
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
-    else if (r->apply == A_PROMPTS) ok = nnpad_prompts_set(r->val[k]);
+    else if (r->apply == A_PROMPTS) { ok = nnpad_prompts_set(r->val[k]); g_fam = nnpad_button_prompts(); g_letter = nnpad_prompts_by_letter(); }      /* the hints and the bind names follow */
     else if (r->apply == A_MENU_SWAP) ok = nnpad_menu_swap_set(r->val[k]);
     else if (r->apply == A_LAYOUT) { ok = nnpad_layout_set(r->val[k]); g_letter = nnpad_prompts_by_letter(); }
     else if (r->apply == A_CHAR) { g_ch = k; binds_show(); return; }

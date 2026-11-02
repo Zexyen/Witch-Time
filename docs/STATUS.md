@@ -1008,6 +1008,10 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   CPU into BGRA when something changes, composed on the GPU every frame with the turning wheel over it (`pcm_gpu_draw`,
   below) and copied over the presented picture (never into the game's textures); Marcellus and Source Sans 3 subsets
   (SIL OFL 1.1) through stb_truetype.
+- **The foot hints follow the prompts** (2026-11-02, Kevin's report): "Change" and "Close" show the button that acts as
+  Pro A and Pro B on player 1's pad as the Button prompts and Face buttons rows say (`hint_btn`: a letter in a disc for
+  Switch and Xbox, by letter or by position; Circle / Cross shapes on PlayStation; ENT / ESC key caps on the keyboard),
+  and change at once when either row changes; swap_confirm swaps them as before.
 - **The game's own Options screen** (2026-10-26; since 2026-10-27 seven native rows above it, next section): **a "PC Settings" row** on its Screen Display page, before Restore
   Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
   that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
