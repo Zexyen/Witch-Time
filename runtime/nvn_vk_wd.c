@@ -1,6 +1,6 @@
 /* nvn_vk_wd.c (session 12; included at the end of nvn_vk_draw.c: not a build unit of its own).
  *
- * THE FREEZE WATCHDOG. On by default in the Vulkan renderer (SSBU_VK_WATCHDOG=0 off, =<seconds> another limit; default 5).
+ * THE FREEZE WATCHDOG. On by default in the Vulkan renderer (WT_VK_WATCHDOG=0 off, =<seconds> another limit; default 5).
  * A thread looks twice a second at the time of the last frame that reached the window. When no frame was presented for the
  * limit while the process is alive, a report is printed and appended to <exe name>_freeze.txt next to the exe:
  *   - what the renderer was doing (frames, present attempts, failures, queues of the workers, the preparation's state);
@@ -293,7 +293,7 @@ static LONG64 g_wd_stalls, g_wd_stall_max;
 static DWORD WINAPI wd_main(void *arg) {
     double limit = *(double *)arg, next = limit, reported = 0;
     LONG64 seen = 0, try0 = 0;
-    int dumps = 0, sampled = 0, s_where = 0, s_fight = 0, stall_on = !(getenv("SSBU_VK_STALLLOG") && !atoi(getenv("SSBU_VK_STALLLOG")));
+    int dumps = 0, sampled = 0, s_where = 0, s_fight = 0, stall_on = !(getenv("WT_VK_STALLLOG") && !atoi(getenv("WT_VK_STALLLOG")));
     static char sample[9000];
     DWORD f_prev = 0, f_seen = 0; double c_prev = 0, c_seen = 0;
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
@@ -334,16 +334,16 @@ static DWORD WINAPI wd_main(void *arg) {
 }
 static void wd_start(void) {
     static double limit = 1.0;                      /* session 13: was 5 s; the owner's freezes left no report */
-    const char *e = getenv("SSBU_VK_WATCHDOG");
+    const char *e = getenv("WT_VK_WATCHDOG");
     if (e) limit = atof(e);
-    if (limit <= 0 || g_offline) { printf("nvn_vk_watchdog: off (SSBU_VK_WATCHDOG=0)\n"); return; }
+    if (limit <= 0 || g_offline) { printf("nvn_vk_watchdog: off (WT_VK_WATCHDOG=0)\n"); return; }
     if (limit < 1) limit = 1;
     g_wd_thread = CreateThread(NULL, 0, wd_main, &limit, 0, NULL);
     if (g_wd_thread) SetThreadPriority(g_wd_thread, THREAD_PRIORITY_ABOVE_NORMAL);
-    printf("nvn_vk_watchdog: on: a report of every thread (locks, waits, call stacks) is written to the log and to <exe>_freeze.txt when no frame reaches the window for %.0f s (SSBU_VK_WATCHDOG=<seconds>, 0 = off)\n", limit);
+    printf("nvn_vk_watchdog: on: a report of every thread (locks, waits, call stacks) is written to the log and to <exe>_freeze.txt when no frame reaches the window for %.0f s (WT_VK_WATCHDOG=<seconds>, 0 = off)\n", limit);
 }
-/* Session 13, TEST ONLY (SSBU_STACKS_AT=<seconds>, read in nvn_gl.c): the report of every thread once, with either renderer
- * (found with it: why SSBU_RENDERER=gl stood still at its start). The Vulkan fields of the report are zero under OpenGL. */
+/* Session 13, TEST ONLY (WT_STACKS_AT=<seconds>, read in nvn_gl.c): the report of every thread once, with either renderer
+ * (found with it: why WT_RENDERER=gl stood still at its start). The Vulkan fields of the report are zero under OpenGL. */
 static DWORD WINAPI wd_once(void *a) { Sleep((DWORD)(uintptr_t)a * 1000); wd_dump(0, 0); return 0; }
 void nvn_vk_stacks_at(int seconds) { HANDLE h = CreateThread(NULL, 0, wd_once, (void *)(uintptr_t)seconds, 0, NULL); if (h) CloseHandle(h); }
 static void wd_stop(void) {

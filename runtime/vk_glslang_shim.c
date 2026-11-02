@@ -1,11 +1,11 @@
-/* ssbu_glslang.dll - GLSL (Vulkan dialect) -> SPIR-V through the glslang library, behind a C function.
+/* wt_glslang.dll - GLSL (Vulkan dialect) -> SPIR-V through the glslang library, behind a C function.
  *
  * Why a DLL: the glslang 16.6.0 release libraries (reference\upstream\glslang-16.6.0\lib) are MSVC C++ objects built
  * against the DLL C runtime (/MD); the game exe is C, linked by clang. The DLL keeps glslang and its runtime on its own
  * side; the exe loads it with LoadLibrary (plan\phases\V1_vulkan.md, section 4). Build: build_glslang.bat (MSVC).
  *
  * stage: 0 vertex, 1 fragment, 5 compute (the MX_* numbers of mx_translate.h).
- * Returns 1 and a malloc'ed word array (free it with ssbu_spirv_free), or 0 with the compiler's messages in log.
+ * Returns 1 and a malloc'ed word array (free it with wt_spirv_free), or 0 with the compiler's messages in log.
  * Thread-safe: glslang's process initialisation is done once, shaders and programs are per call. */
 #include <stdint.h>
 #include <stdio.h>
@@ -18,9 +18,9 @@
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 static BOOL CALLBACK init_once(PINIT_ONCE once, PVOID arg, PVOID *ctx) { (void)once; (void)arg; (void)ctx; return glslang_initialize_process() != 0; }
 
-__declspec(dllexport) void ssbu_spirv_free(uint32_t *words) { free(words); }
+__declspec(dllexport) void wt_spirv_free(uint32_t *words) { free(words); }
 
-__declspec(dllexport) int ssbu_glsl_to_spirv(int stage, const char *src, uint32_t **words, size_t *count, char *log, size_t log_size) {
+__declspec(dllexport) int wt_glsl_to_spirv(int stage, const char *src, uint32_t **words, size_t *count, char *log, size_t log_size) {
     glslang_input_t in;
     int ok = 0;
     if (log && log_size) log[0] = 0;

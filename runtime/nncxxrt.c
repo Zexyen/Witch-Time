@@ -5,19 +5,8 @@
  * Sources of each layout: [sdk] = read from the real SDK module (binaries\13.0.4\sdk.elf; `python sdkdata.py
  * <symbol>` dumps a data object with its relocations, `python sdkdis.py <symbol>` disassembles a function).
  *
- * EXCEPTIONS -- measured on main 13.0.4 (python eh_census.py; python eh_census2.py):
- *   295 call sites of __cxa_throw (91 std::bad_function_call, 68 std::exception-derived game types, 63 std::out_of_range,
- *   47 std::bad_alloc, 17 std::length_error, 9 boost exceptions), 17 of __cxa_rethrow, and about 10,400 calls of
- *   libc++'s __throw_length_error / __throw_out_of_range helpers (libcxx.c).
- *   .eh_frame (found through MOD0) has 110,842 FDEs, 1,040 with an LSDA: 10,346 call-site records, 7,291 with a landing
- *   pad: 3,668 clean-up only, 40 exception-specification filters, 3,583 with a catch clause = 3,540 distinct pads:
- *     3,456 go straight to __clang_call_terminate (noexcept boundaries), 66 are clean-ups that end there,
- *     14 are `catch (...) { clean up; throw; }` (they rethrow),
- *     1 is `catch (std::ios_base::failure &)` at 0x7103839de8 (only the stream library could throw that; ours never does),
- *     4 are `catch (...) { }` that SWALLOW the exception: 0x710382d0a0 and 0x710382d1cc in f_7103828300,
- *       0x7103847670 and 0x710384779c in f_7103841d10 (two text parsers; the protected calls are
- *       f_7103835e60 / f_7103836070 / f_7103836150 / f_7103836230 / f_71038368e0, i.e. tokenising and boost::lexical_cast).
- *   So on the console every throw ends in std::terminate, except a throw inside those four protected regions.
+ * EXCEPTIONS: upstream measured Smash's main, where every throw ends in std::terminate except inside a few
+ * `catch (...)` regions; our main has no LSDA at all (finding 20), so the same holds for every throw here.
  *
  * What is implemented here: the exception RUNTIME (interface and flow in eh_runtime.h): exception objects with
  * libc++abi's header layout, per-context throw state, __cxa_throw / rethrow / begin_catch / end_catch / _Unwind_Resume /
@@ -48,7 +37,6 @@ void cxxlib_install_data(void);          /* nncxxlib.c */
 void register_cxxlib_imports(void);
 uint64_t import_address(int sym);       /* hostrt.c */
 void cxx_string_init(Ctx *c, uint64_t str, const char *p, size_t n);     /* libcxx.c */
-const char *cxx_string_data(uint64_t str, size_t *n);
 
 /* ---------------------------------------------------------------- small helpers shared with nncxxlib.c */
 uint64_t cxxrt_main_symbol(const char *name) {           /* address of a function the game itself defines and exports */
@@ -60,7 +48,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * page tables to the end of the run of pages with the same state, which takes 2-3 ms inside the game's heap (gigabytes
  * committed in one run), and one throw asks about 22 addresses there (the fiber's stack). The answer for memory the GAME
  * manages (regions from nn::os::AllocateAddressRegion, registered with cxxrt_guest_region) is therefore remembered per
- * thread. Host memory is asked about every time, as before. SSBU_NO_READABLE_CACHE=1 = ask every time everywhere.
+ * thread. Host memory is asked about every time, as before. WT_NO_READABLE_CACHE=1 = ask every time everywhere.
  *
  * PR #2 (jfb112697): what makes a remembered run wrong is guest memory being decommitted, released or protected
  * (cxxrt_mem_changed, called by those entry points before and after the change; prototype in hostrt.h). Forgetting
@@ -72,7 +60,7 @@ uint64_t cxxrt_main_symbol(const char *name) {           /* address of a functio
  * is still committed and accessible. A record older than the kept events is forgotten. Same match with this: 8 of 1,497
  * throws over 1 ms (1.4-6.3 ms). Those are the first question a thread asks about a run (the record starts at the page
  * asked about, so a fiber stack lower in the same run asks again), which this does not remove.
- * SSBU_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
+ * WT_READABLE_FORGET_ALL=1 = the behaviour before: every event forgets every record. */
 static struct { uint64_t base, size; } g_guest_region[64];
 static volatile LONG g_guest_regions, g_mem_epoch = 1;
 #define RD_CHANGES 256      // PR #2 (jfb112697): ring of the last changes of guest memory, with their page ranges
@@ -129,7 +117,7 @@ int cxxrt_readable(uint64_t p, size_t n) {
     if (p < 0x10000) return 0;
     LONG epoch = g_mem_epoch;
     int guest = 0;
-    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("SSBU_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("SSBU_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): SSBU_READABLE_FORGET_ALL=1 = the old forget-everything rule
+    if (g_rd_nocache < 0) { g_rd_forget_all = getenv("WT_READABLE_FORGET_ALL") != NULL; g_rd_nocache = getenv("WT_NO_READABLE_CACHE") != NULL; }      // PR #2 (jfb112697): WT_READABLE_FORGET_ALL=1 = the old forget-everything rule
     if (!g_rd_nocache) {
         for (int i = 0; i < g_guest_regions && i < 64 && !guest; i++) guest = p - g_guest_region[i].base < g_guest_region[i].size;
         if (guest) for (int i = 0; i < 4; i++) {      // PR #2 (jfb112697): an older record is brought up to date instead of being dropped
@@ -258,7 +246,6 @@ uint64_t cxxrt_dynamic_cast(uint64_t sub, uint64_t src, uint64_t dst) {
     for (int k = 0; k < ns; k++) if (srcs[k] == sub) return nd == 1 ? dsts[0] : 0;
     return 0;
 }
-static void abi_dynamic_cast(Ctx *c) { RET(cxxrt_dynamic_cast(A0, A1, A2)); }
 
 /* ---------------------------------------------------------------- exception objects and the EH runtime (eh_runtime.h)
  * [sdk __cxa_throw 0x4c9ea0, __cxa_begin_catch 0x4c9fb8] the header in front of a thrown object is libc++abi's
@@ -297,7 +284,6 @@ static void exc_free(uint64_t obj) {
     ExcHeader *h = exc_header(obj);
     if (h) { h->magic = 0; _aligned_free(h); }
 }
-void cxxrt_exception_addref(uint64_t obj) { ExcHeader *h = exc_header(obj); if (h) InterlockedIncrement64(&h->refs); }
 void cxxrt_exception_release(Ctx *c, uint64_t obj) {
     ExcHeader *h = exc_header(obj);
     if (!h || InterlockedDecrement64(&h->refs) != 0) return;
@@ -320,7 +306,7 @@ typedef struct { Ctx *c; uint64_t in_flight, caught; int uncaught; } EhState;
  * The C++ ABI keeps this state per THREAD (__cxa_get_globals); a guest fiber is a Windows fiber here (os_threads.c), so
  * fiber-local storage is exactly "one state per guest thread and per guest fiber", needs no table, cannot fill up, and is
  * freed by the system when the thread or fiber ends. A context on the stack now shares the state of the fiber it runs
- * on, which is what a throw that crosses it needs. SSBU_EH_STATE=table restores the old table (bounded: it stops with a
+ * on, which is what a throw that crosses it needs. WT_EH_STATE=table restores the old table (bounded: it stops with a
  * report instead of spinning). */
 #define EH_STATES 4096
 static EhState g_eh_state[EH_STATES];
@@ -354,7 +340,7 @@ static EhState *eh_state(Ctx *c) {
     if (!g_eh_mode) {
         AcquireSRWLockExclusive(&g_eh_state_lock);
         if (!g_eh_mode) {
-            const char *e = getenv("SSBU_EH_STATE");
+            const char *e = getenv("WT_EH_STATE");
             if (e && !strcmp(e, "table")) g_eh_mode = 2;
             else { g_eh_fls = FlsAlloc(eh_fls_free); g_eh_mode = g_eh_fls != FLS_OUT_OF_INDEXES ? 1 : 2; }
         }
@@ -690,23 +676,12 @@ static void abi_rethrow(Ctx *c) {
     eh_raise(c, st->caught, EH_RAISE_THROW, "uncaught rethrown exception");
 }
 static void abi_unwind_resume(Ctx *c) { eh_raise(c, A0 + 0x20, EH_RAISE_RESUME, "_Unwind_Resume at the outermost frame"); }
-static void abi_get_exception_ptr(Ctx *c) { ExcHeader *h = exc_header(A0 + 0x20); RET(h && h->adjusted ? h->adjusted : exc_object(A0 + 0x20)); }
 static void abi_personality(Ctx *c) { eh_terminate(c, "__gxx_personality_v0 called directly (the port's unwinder uses eh_personality)"); }
-static void abi_call_unexpected(Ctx *c) {                               /* (_Unwind_Exception *): std::unexpected -> terminate */
-    abi_begin_catch(c);
-    eh_terminate(c, "an exception violated an exception specification (__cxa_call_unexpected)");
-}
 static void abi_terminate(Ctx *c) { eh_terminate(c, "std::terminate() called"); }
 static void abi_pure_virtual(Ctx *c) { fatal(c, "pure virtual function called"); }
-static void abi_deleted_virtual(Ctx *c) { fatal(c, "deleted virtual function called"); }
 static uint64_t g_ti_bad_typeid[3], g_ti_bad_cast[3], g_vt_bad_cast[5], g_vt_bad_typeid[5], g_vt_length_error[5], g_vt_out_of_range[5],
                 g_ti_length_error[3], g_ti_out_of_range[3];
 uint64_t cxxrt_refstring_new(const char *s, size_t n);
-static void throw_simple(Ctx *c, uint64_t *vt, uint64_t *ti) {         /* an exception class that is only a vptr */
-    uint64_t obj = cxxrt_allocate_exception(8);
-    wr64(obj, P64(&vt[2]));
-    eh_throw(c, obj, P64(ti), vt[2]);
-}
 static void throw_logic(Ctx *c, uint64_t *vt, uint64_t *ti, const char *msg) {      /* { vptr, refstring } */
     uint64_t obj = cxxrt_allocate_exception(16);
     wr64(obj, P64(&vt[2]));
@@ -732,42 +707,12 @@ static void iocat_condition(Ctx *c) { uint64_t self = A0; RET((uint32_t)A1); c->
 static void iocat_equivalent_cond(Ctx *c) { RET(rd32(A2) == (uint32_t)A1 && rd64(A2 + 8) == A0); }
 static void iocat_equivalent_code(Ctx *c) { RET(rd64(A1 + 8) == A0 && rd32(A1) == (uint32_t)A2); }
 static void iocat_message(Ctx *c) { const char *m = (int32_t)A1 == 1 ? "unspecified iostream_category error" : "unspecified generic_category error"; cxx_string_init(c, c->x[8], m, strlen(m)); }
-static void abi_bad_typeid(Ctx *c) { throw_simple(c, g_vt_bad_typeid, g_ti_bad_typeid); }
-static void abi_bad_cast(Ctx *c) { throw_simple(c, g_vt_bad_cast, g_ti_bad_cast); }
 /* libc++ __vector_base_common / __basic_string_common ::__throw_length_error / __throw_out_of_range */
 static void throw_vector_length(Ctx *c) { throw_logic(c, g_vt_length_error, g_ti_length_error, "vector"); }
 static void throw_vector_range(Ctx *c) { throw_logic(c, g_vt_out_of_range, g_ti_out_of_range, "vector"); }
 static void throw_string_length(Ctx *c) { throw_logic(c, g_vt_length_error, g_ti_length_error, "basic_string"); }
 static void throw_string_range(Ctx *c) { throw_logic(c, g_vt_out_of_range, g_ti_out_of_range, "basic_string"); }
-static void abi_current_exception_type(Ctx *c) { ExcHeader *h = exc_header(eh_state(c)->caught); RET(h ? h->type : 0); }
-static void abi_uncaught(Ctx *c) { RET(eh_state(c)->uncaught > 0); }                /* std::uncaught_exception() */
-static void abi_uncaught_count(Ctx *c) { RET((int64_t)eh_state(c)->uncaught); }     /* std::uncaught_exceptions() */
 
-/* std::exception_ptr: one pointer to the thrown object (null = empty); it shares the object's reference count */
-static void eptr_copy(Ctx *c) { uint64_t p = rd64(A1); wr64(A0, p); cxxrt_exception_addref(p); }
-static void eptr_dtor(Ctx *c) { uint64_t self = A0; cxxrt_exception_release(c, rd64(self)); RET(self); }
-static void eptr_assign(Ctx *c) {
-    uint64_t self = A0, other = rd64(A1), old = rd64(self);
-    if (old != other) { cxxrt_exception_addref(other); wr64(self, other); cxxrt_exception_release(c, old); }
-    RET(self);
-}
-static void eptr_rethrow(Ctx *c) {                      /* std::rethrow_exception(exception_ptr): passed by reference (non-trivial type) */
-    uint64_t obj = cxxrt_readable(A0, 8) ? rd64(A0) : 0;
-    ExcHeader *h = exc_header(obj);
-    if (!h) eh_terminate(c, "std::rethrow_exception of an empty exception_ptr");
-    /* libc++abi: a dependent exception -- its own header (handler count, adjusted pointer) referring to the object */
-    uint64_t dep = cxxrt_allocate_exception(0);
-    ExcHeader *d = exc_header(dep);
-    cxxrt_exception_addref(obj);
-    d->type = h->type; d->primary = obj; d->uw_class = UW_CLASS + 1; d->refs = 1;
-    eh_state(c)->uncaught++;
-    eh_raise(c, dep, EH_RAISE_THROW, "uncaught exception from std::rethrow_exception");
-}
-static void eptr_current(Ctx *c) {                      /* std::current_exception(): result through x8 */
-    uint64_t obj = exc_object(eh_state(c)->caught);
-    cxxrt_exception_addref(obj);
-    wr64(c->x[8], obj);
-}
 
 /* ---------------------------------------------------------------- guard variables (thread-safe static initialisation)
  * Itanium ABI: the first byte of the 64-bit guard is 1 once the object is initialised (the game tests it inline).
@@ -838,9 +783,7 @@ static void refstring_release(uint64_t s) { if (s && InterlockedDecrement((volat
 static void exc_dtor(Ctx *c) { RET(A0); }                                      /* ~exception, ~bad_alloc, ~bad_cast (D1/D2) */
 static void exc_dtor_delete(Ctx *c) { cxxrt_guest_delete(c, A0); }             /* D0 */
 static void exc_what(Ctx *c) { RET("std::exception"); }
-static void bad_alloc_ctor(Ctx *c) { wr64(A0, P64(&g_vt_bad_alloc[2])); }
 static void bad_alloc_what(Ctx *c) { RET("std::bad_alloc"); }
-static void bad_cast_ctor(Ctx *c) { wr64(A0, P64(&g_vt_bad_cast[2])); }
 static void bad_cast_what(Ctx *c) { RET("std::bad_cast"); }
 static void bad_typeid_what(Ctx *c) { RET("std::bad_typeid"); }
 static void logic_ctor_cstr(Ctx *c) {
@@ -848,14 +791,6 @@ static void logic_ctor_cstr(Ctx *c) {
     const char *s = (const char *)(uintptr_t)A1;
     wr64(self, P64(&g_vt_logic_error[2]));
     wr64(self + 8, cxxrt_refstring_new(s, strlen(s)));
-    RET(self);
-}
-static void logic_ctor_string(Ctx *c) {
-    uint64_t self = A0;
-    size_t n;
-    const char *s = cxx_string_data(A1, &n);
-    wr64(self, P64(&g_vt_logic_error[2]));
-    wr64(self + 8, cxxrt_refstring_new(s, n));
     RET(self);
 }
 static void logic_ctor_copy(Ctx *c) {
@@ -984,27 +919,13 @@ static const ImportDef cxxrt_replace[] = {
 static const ImportDef cxxrt_fill[] = {
     {"__cxa_allocate_exception", abi_allocate_exception}, {"__cxa_free_exception", abi_free_exception}, {"__cxa_throw", abi_throw},
     {"__cxa_begin_catch", abi_begin_catch}, {"__cxa_end_catch", abi_end_catch}, {"__cxa_rethrow", abi_rethrow},
-    {"_Unwind_Resume", abi_unwind_resume}, {"__gxx_personality_v0", abi_personality}, {"__cxa_call_unexpected", abi_call_unexpected},
-    {"_ZSt9terminatev", abi_terminate}, {"__cxa_pure_virtual", abi_pure_virtual}, {"__cxa_deleted_virtual", abi_deleted_virtual},
-    {"__cxa_bad_typeid", abi_bad_typeid}, {"__cxa_bad_cast", abi_bad_cast}, {"__dynamic_cast", abi_dynamic_cast},
-    {"__cxa_current_exception_type", abi_current_exception_type}, {"_ZSt18uncaught_exceptionv", abi_uncaught}, {"_ZSt19uncaught_exceptionsv", abi_uncaught_count},
-    {"__cxa_get_exception_ptr", abi_get_exception_ptr},
-    {"_ZNSt13exception_ptrC1ERKS_", eptr_copy}, {"_ZNSt13exception_ptrC2ERKS_", eptr_copy}, {"_ZNSt13exception_ptrD1Ev", eptr_dtor},
-    {"_ZNSt13exception_ptrD2Ev", eptr_dtor}, {"_ZNSt13exception_ptraSERKS_", eptr_assign},
-    {"_ZSt17rethrow_exceptionSt13exception_ptr", eptr_rethrow}, {"_ZSt17current_exceptionv", eptr_current},
-    {"_ZNSt9exceptionD0Ev", exc_dtor_delete}, {"_ZNSt9exceptionD1Ev", exc_dtor}, {"_ZNSt9exceptionD2Ev", exc_dtor}, {"_ZNKSt9exception4whatEv", exc_what},
-    {"_ZNSt9bad_allocC1Ev", bad_alloc_ctor}, {"_ZNSt9bad_allocC2Ev", bad_alloc_ctor}, {"_ZNSt9bad_allocD1Ev", exc_dtor}, {"_ZNSt9bad_allocD2Ev", exc_dtor},
-    {"_ZNKSt9bad_alloc4whatEv", bad_alloc_what},
-    {"_ZNSt8bad_castC1Ev", bad_cast_ctor}, {"_ZNSt8bad_castC2Ev", bad_cast_ctor}, {"_ZNSt8bad_castD1Ev", exc_dtor}, {"_ZNSt8bad_castD2Ev", exc_dtor},
-    {"_ZNSt11logic_errorC1EPKc", logic_ctor_cstr}, {"_ZNSt11logic_errorC2EPKc", logic_ctor_cstr},
-    {"_ZNSt11logic_errorC1ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE", logic_ctor_string},
-    {"_ZNSt11logic_errorC2ERKNSt3__112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE", logic_ctor_string},
-    {"_ZNSt11logic_errorC1ERKS_", logic_ctor_copy}, {"_ZNSt11logic_errorC2ERKS_", logic_ctor_copy},
-    {"_ZNSt11logic_errorD1Ev", logic_dtor}, {"_ZNSt11logic_errorD2Ev", logic_dtor}, {"_ZNKSt11logic_error4whatEv", logic_what},
-    {"_ZNSt12out_of_rangeD1Ev", logic_dtor}, {"_ZNSt12out_of_rangeD2Ev", logic_dtor}, {"_ZNSt12out_of_rangeD0Ev", logic_dtor_delete},
-    {"_ZNSt12length_errorD1Ev", logic_dtor}, {"_ZNSt12length_errorD2Ev", logic_dtor}, {"_ZNSt12length_errorD0Ev", logic_dtor_delete},
-    {"_ZNSt16invalid_argumentD1Ev", logic_dtor}, {"_ZNSt16invalid_argumentD2Ev", logic_dtor},
-    {"_ZNSt13runtime_errorD1Ev", logic_dtor}, {"_ZNSt13runtime_errorD2Ev", logic_dtor}, {"_ZNKSt13runtime_error4whatEv", logic_what},
+    {"_Unwind_Resume", abi_unwind_resume}, {"__gxx_personality_v0", abi_personality},
+    {"_ZSt9terminatev", abi_terminate}, {"__cxa_pure_virtual", abi_pure_virtual},
+      {"_ZNSt9exceptionD2Ev", exc_dtor}, {"_ZNKSt9exception4whatEv", exc_what},
+    {"_ZNSt11logic_errorC2EPKc", logic_ctor_cstr},
+    {"_ZNSt11logic_errorC2ERKS_", logic_ctor_copy},
+    {"_ZNSt12out_of_rangeD1Ev", logic_dtor},
+    {"_ZNSt12length_errorD1Ev", logic_dtor},
 };
 
 static void cxxrt_selftest(void);
@@ -1017,14 +938,14 @@ void register_cxxrt_imports(void) {
     register_libc2_imports();
     if (!eh_register_image(GUEST_BASE, 0x7500000ull, 0)) printf("nncxxrt: the exception tables of main were not found\n");
     eh_bind_main();
-    const char *path = getenv("SSBU_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
+    const char *path = getenv("WT_DUMP_UNREG_FINAL");      /* every import that has no handler after ALL registrations */
     if (path && path[0]) {
         FILE *f = fopen(path, "w");
         for (int i = 0; f && i < dyn_sym_count; i++)
             if (!dyn_syms[i].defined && dyn_syms[i].name[0] && !import_lookup(dyn_syms[i].name)) fprintf(f, "%d %s\n", (int)(import_address(i) != IMPORT_BASE + (uint64_t)i * IMPORT_SLOT), dyn_syms[i].name);
         if (f) fclose(f);
     }
-    if (getenv("SSBU_CXXRT_SELFTEST")) cxxrt_selftest();
+    if (getenv("WT_CXXRT_SELFTEST")) cxxrt_selftest();
 }
 
 #include "cxxrt_selftest.h"

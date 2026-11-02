@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 /// [witchtime] Game functions whose direct calls (BL) go to a host function instead (runtime/game_shim_eh.c); the lifted
-/// body stays (indirect calls, the check SSBU_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd
+/// body stays (indirect calls, the check WT_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd
 /// bits with three bit reversals and a 32-step loop; a tree walk of B3 calls it so often that the main thread spent
 /// 115-130 ms a frame in it in trains of frames in Tokyo. 0x7100d02de0: the main loop's frame-rate mode setter (one
 /// caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame
@@ -687,7 +687,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     if fps::census_on() {
         // the census build: every counter site reports its store (runtime/game_shim_eh.c), and the list of the sites
         f += "void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code);\n";
-        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WT_FPS_CENSUS=1)\n");
+        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WTBUILD_FPS_CENSUS=1)\n");
         for &a in &all_funcs {
             for s in fps::sites(im, a, extent(&starts, a, im.text_end())) {
                 let k = match s.kind {
@@ -770,7 +770,7 @@ mod tests {
     /// conversion's report and ELF, every file of the lift and the counts it logs
     #[test]
     fn lift_fake_main() {
-        assert!(!fps::census_on(), "WT_FPS_CENSUS=1 adds the census to the lift: run the tests without it");
+        assert!(!fps::census_on(), "WTBUILD_FPS_CENSUS=1 adds the census to the lift: run the tests without it");
         let nso = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/fake_main/main.nso")).unwrap();
         let c = crate::nso::nso2elf(&nso).unwrap();
         let mut m = format!("{}\n{}  main.elf\n", c.report.join("\n"), hex(&Sha256::digest(&c.elf)));

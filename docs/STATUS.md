@@ -2,7 +2,7 @@
 
 Stage 5 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg), the prologue and **the first fights** run, with
 sound and scripted pad input (punch, kick, dodge, jump, movement: Verse 1 cleared, Verse 2 reached), without a "not
-implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellation now drawn, no SSBU_VK_MISSING=warn). 30 fps movies; **chapter-1 fights about 59 fps**
+implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellation now drawn, no WT_VK_MISSING=warn). 30 fps movies; **chapter-1 fights about 59 fps**
 (were 44-52: a texture walk on every NVN flush, see Performance). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / known items, listed below.
 
 ## What builds
@@ -15,18 +15,18 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | tables | `runtime/gen/*` from the player's sdk/main: layout, 600 imports, 86 lifted SDK functions (NVN texture storage and the GPU kind chooser among them), 90 of 105 NVN device answers |
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
-| link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libssbu_glslang.so` |
+| link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libwt_glslang.so` |
 | check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each: one failure, `sqrdmulh` by element when both 32-bit lanes are INT32_MIN (`v_ielem` in runtime/rt_ext.h, open); `--synthetic 2000` passes |
 
 Tools: `wtbuild pkz list` (`.pkz` entries; `witch-time-game --pkz-dump` extracts and checks every entry, Kraken
 included, section "RomFS archives"), `wtbuild dat list | extract` (DAT), `wtbuild nvn-procs` (NVN entry points of the
-sdk); imports vs handlers: `runtime/gen/imports_all.txt` and a run with `SSBU_STRICT=report` (docs/RE_NOTES.md section 2).
+sdk); imports vs handlers: `runtime/gen/imports_all.txt` and a run with `WT_STRICT=report` (docs/RE_NOTES.md section 2).
 
 ## How far it boots (stage 2, 2026-10-23)
 
 ```
 cd build && mkdir -p run && cd run
-SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSBU_USERDATA=$PWD/userdata \
+WT_FOCUS_NOTIFY=0 WT_VK_MISSING=warn WT_ROMFS=$PWD/../../targets/romfs WT_USERDATA=$PWD/userdata \
     ../witch-time-game ../../targets/exefs/main.elf 240
 ```
 
@@ -35,19 +35,19 @@ SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSB
 clash with B2recomp: `pgrep -x "Witch Time"` finds it. The executable is `build/witch-time-game` (`witch-time-game.exe` on Windows; it was
 `game_native`, the same name as B2recomp's, until 2026-10-24, then `b3-game` until 2026-10-27).
 
-- `SSBU_FOCUS_NOTIFY=0`: turns off the applet model's focus tracking (nnmisc.c), so the game is never told it lost the
+- `WT_FOCUS_NOTIFY=0`: turns off the applet model's focus tracking (nnmisc.c), so the game is never told it lost the
   focus. Losing the focus no longer suspends the game either way (that freeze silenced it whenever another window was in
   front; removed 2026-10-29).
-- `SSBU_VK_MISSING=warn`: without it the Vulkan back end stops at the first operation it cannot do (see the blockers below);
+- `WT_VK_MISSING=warn`: without it the Vulkan back end stops at the first operation it cannot do (see the blockers below);
   with it those are skipped and logged once each.
-- Test aids used for the results below: `SSBU_SHOW=0` (window off screen), `SSBU_SHOT_EVERY=<n> SSBU_SHOT_DIR=<dir>` (a .bmp
-  every n frames), `SSBU_SCRIPT="30:Z 36:Z 42:X ..."` (timed keys: Z/X = A/B, ! = Plus, u/d = up/down).
+- Test aids used for the results below: `WT_SHOW=0` (window off screen), `WT_SHOT_EVERY=<n> WT_SHOT_DIR=<dir>` (a .bmp
+  every n frames), `WT_SCRIPT="30:Z 36:Z 42:X ..."` (timed keys: Z/X = A/B, ! = Plus, u/d = up/down).
 
 What runs now, measured on the developer's PC (RX 9070 XT, RADV), Vulkan back end:
 
 1. Everything of stage 1 (image, `DT_INIT`, constructors, `nnMain`, RomFS, 72 `.pkz`, threads, NVN device / queue / pools).
 2. **NVN texture setup**: storage size / alignment / class / sparse layout run the sdk's own NVN 13.3.2 code, found by name
-   (section "NVN" of `docs/RE_NOTES.md`); self-test 22,396 cases, 0 failures (`SSBU_SDK_SELFTEST=1 RECOMPS_NVN_SELFTEST=1`).
+   (section "NVN" of `docs/RE_NOTES.md`); self-test 22,396 cases, 0 failures (`WT_SDK_SELFTEST=1 RECOMPS_NVN_SELFTEST=1`).
    About 2,300 textures, 40,000 buffers, 7,900 shader programs (7,830 graphics, 74 compute) are set up.
 3. Wwise starts (IOThread, BankManager, EventManager, Opus decoding threads), 23 guest threads in all.
 4. **Frames are presented**: the loading emblem (frame ~15), then the **title screen** at about frame 600 (~20 s):
@@ -74,7 +74,7 @@ those runs was checked offline only (builds, the translator check below). What a
   emblem, dimmed: after Story (or Continue) the game stays on that screen; the pause menu works during it, which is why
   stage 2 took it for gameplay. Thread samples (gdb) during it: no deadlock; the main thread presents and waits on GPU
   syncs, the loader and file threads are idle. What it waits for is not known yet.
-- One frame's pass list (`SSBU_VK_DUMPTEX=<frame>,1x1,0`): about 65 draws, a 17-draw depth pass, a 16-draw shadow map, a
+- One frame's pass list (`WT_VK_DUMPTEX=<frame>,1x1,0`): about 65 draws, a 17-draw depth pass, a 16-draw shadow map, a
   bloom chain, no scene pass: consistent with GPU-driven drawing whose culling compute (atomics) did not run.
 - **Audio**: Wwise opened its output with SDK 13's event-less `OpenDefaultAudioOut(AudioOut*, const AudioOutParameter&)`,
   which had no handler. Added; a run confirmed sound (48 kHz stereo on PipeWire, buffers appended and released). Whether this
@@ -86,7 +86,7 @@ Offline, `tools/mxcheck.c` translates every stage a run dumped and compiles it w
 back end):
 
 ```
-SSBU_SHADERDUMP_ALL=<dir> ...game run...                       # once: s<program>_<index>.mxd, the game's code: keep out of the repo
+WT_SHADERDUMP_ALL=<dir> ...game run...                       # once: s<program>_<index>.mxd, the game's code: keep out of the repo
 clang -O1 -I runtime tools/mxcheck.c runtime/mx_translate.c -lglslang -lglslang-default-resource-limits -lm -o build/mxcheck
 build/mxcheck <dir> [-v] [-o <dir for the GLSL of failing stages>]
 ```
@@ -105,20 +105,20 @@ bounds test** as dynamic state.
 
 Alpha to coverage is dynamic state too (extended dynamic state 3), except on AMD's Windows driver for RDNA 2 and older (driverInfo
 "AMD proprietary shader compiler") without pipeline libraries: that driver applies it while the dynamic state says off (issue 50, an
-RX 580: a dithered, washed-out world without Bayonetta's body), so there it is part of the pipeline key. `SSBU_VK_DYN_A2C=0 / 1`
-forces either way on whole pipelines (`SSBU_VK_GPL=0`); `SSBU_VK_TEST` bit 1024 (test) applies it to every draw, as that driver does.
+RX 580: a dithered, washed-out world without Bayonetta's body), so there it is part of the pipeline key. `WT_VK_DYN_A2C=0 / 1`
+forces either way on whole pipelines (`WT_VK_GPL=0`); `WT_VK_TEST` bit 1024 (test) applies it to every draw, as that driver does.
 
 ### Game runs of 2026-10-24 (the list above, validated)
 
-Run: from the save, `SSBU_PRESS=Z,25,3` (A every 3 s), Vulkan back end, no `SSBU_VK_MISSING`. What renders now (pictures of
+Run: from the save, `WT_PRESS=Z,25,3` (A every 3 s), Vulkan back end, no `WT_VK_MISSING`. What renders now (pictures of
 the developer's run: title, Bayonetta falling through the sky at the start of chapter 1, a summoned demon sequence):
 
 1. **The chapter-1 load finishes.** The "endless loading screen" of stage 2 was the scene rendering every lit pixel as
    Inf: the lighting divides by an exposure value that three **draws without render targets** compute (a luminance
    reduction over 90x51 / 90x1 whose fragment shaders only store to buffers). The back end skipped such draws and, for the
    graphics stages, also bound stored-to buffers as stream-ring copies (the writes were lost). Both fixed; found with the
-   pass dump (`SSBU_VK_DUMPTEX`), the draw log (`SSBU_VK_DRAWLOG`, now with storage ranges and guest-memory writes) and a
-   write watch on the exposure buffer (`SSBU_VK_WATCHFS`, test only).
+   pass dump (`WT_VK_DUMPTEX`), the draw log (`WT_VK_DRAWLOG`, now with storage ranges and guest-memory writes) and a
+   write watch on the exposure buffer (`WT_VK_WATCHFS`, test only).
 2. **Frame rate**: 60 fps (vsync) on the title and in chapter 1 (16,841 frames in 300 s). The 3.5 fps case had two causes:
    (a) compute output is copied back to guest memory every frame (about 16 MB) and the compute buffers were in device-local
    host-visible memory (BAR), which the CPU reads at a few tens of MB/s: 300 ms a frame; now host-cached memory (4 ms);
@@ -131,7 +131,7 @@ the developer's run: title, Bayonetta falling through the sky at the start of ch
 5. **Depth bounds**: used by the game (stage 2 stopped on it), runs now; not checked picture by picture.
 6. **Title background and glow**: the backdrop is the 3D demon of the title; the "Press any button" glow is no longer
    blown out (both were the Inf exposure).
-7. **No "not implemented" stop** in 300 s without `SSBU_VK_MISSING=warn`; 0 skipped draws.
+7. **No "not implemented" stop** in 300 s without `WT_VK_MISSING=warn`; 0 skipped draws.
 8. Audio: Wwise output plays (stage 3, first half).
 
 Still open from the list: the translated instructions are only checked by these pictures (no reference images of the
@@ -147,7 +147,7 @@ console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no
 - **Movies on Windows (2026-10-31, #68)**: now FFmpeg too, in software, from DLLs in `prebuilt\`; Media Foundation is left to the
   album's clips. A movie that cannot start is not a cosmetic loss: the game gives up on it, and without `ev0000` New Game drops
   Bayonetta into the empty sky of the stage for ever. Reproduced frame for frame on Linux with `avcodec_find_decoder` returning
-  NULL, and with `SSBU_MOVIE=0`; a movie that fails after its first sample does not do it. Media Foundation's VP9 depends on what
+  NULL, and with `WT_MOVIE=0`; a movie that fails after its first sample does not do it. Media Foundation's VP9 depends on what
   the PC has installed, so that report's PC probably lacked it (it sent no game log, so not proven). The Windows build of this
   change under Wine, which has no such codec: New Game plays `ev0000` with its subtitles. `ev0000` decoded with the Windows DLLs:
   803 fps on 16 threads, 188 fps on one core (`--disable-autodetect`, so no GPU decoding; nasm is required, CI checks it).
@@ -164,7 +164,7 @@ console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no
 
 ## Vulkan validation (2026-10-24, layer 1.4.363, RADV on an RX 9070 XT)
 
-`SSBU_VK_VALIDATE=1 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`; the messages are counted per VUID and the sorted totals
+`WT_VK_VALIDATE=1 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`; the messages are counted per VUID and the sorted totals
 printed at exit (`vk-validation summary:`). Raise the layer's cap of 10 per ID with
 `VK_KHRONOS_VALIDATION_DUPLICATE_MESSAGE_LIMIT`. Each pass ran from the save through the title, the opening movie and the
 prologue (300-420 s, 9,000-12,600 frames, A every 3 s):
@@ -216,9 +216,9 @@ Left, judged benign or known:
 - Linux: `libopus-0.dll` maps to `libopus.so.0` (`nn::codec`'s HardwareOpusDecoder reported a work buffer of 0 bytes;
   Wwise does its own Opus, so this was not the stall).
 - Test aids: `kill -USR1 <pid>` (Linux) prints each thread's guest thread name, current guest function, LR and x29 frame
-  chain (the hang above was found with it; ptrace is not allowed here). `SSBU_MOVIE_LOG` lines now name the decoder and
+  chain (the hang above was found with it; ptrace is not allowed here). `WT_MOVIE_LOG` lines now name the decoder and
   the guest caller.
-- `SSBU_SKIP_MOVIES=1` takes another path: the A presses reach the menu and open **Chapter Select, "Prologue: A Chaotic
+- `WT_SKIP_MOVIES=1` takes another path: the A presses reach the menu and open **Chapter Select, "Prologue: A Chaotic
   Encounter"**. After the (cut) movies `ev0020`..`ev0026` it holds one camera view of water and buildings at 563 draws a
   frame for over 4 minutes (not looked into; cutting movies short may itself be the cause).
 
@@ -228,7 +228,7 @@ Left, judged benign or known:
   Encounter", movies `ev0020` .. `ev0026` at full length, then gameplay at ~760 s (frame ~23,000) with the combat HUD
   (Verse 1, the Punch / Kick / Shoot / Jump / Dodge prompts, combo points) against Homunculi and a giant Homunculus.
   With A alone Bayonetta keeps dying ("THE WITCH HUNTS ARE OVER", retry) in Verse 1.
-- **Input beyond A works.** Run `fight1` (1,500 s, the same A presses plus an `SSBU_SCRIPT` of 1,716 steps from 700 s:
+- **Input beyond A works.** Run `fight1` (1,500 s, the same A presses plus an `WT_SCRIPT` of 1,716 steps from 700 s:
   `V`=Y, `C`=X, dodge `S`=ZR, jump `X`=B (the game's controller page shows X = punch, Y = shoot, A = kick; the labels
   first written here had them swapped), left stick right / left, punch+dodge): Verse 1 is cleared (1,525
   combo points x1.75 on one shot) and the fight goes on into **Verse 2** (another giant Homunculus, another arena).
@@ -239,8 +239,8 @@ Left, judged benign or known:
 ## Performance (2026-10-24): chapter-1 fights at 60 fps
 
 **Benchmark**: the save as it is now (the user's chapter-1 progress) → Chapter Select → chapter 1 → Verse 1 on the grass
-field (from about frame 19,400), A every 3 s plus the fight script of stage 5 from 560 s, 1,100 s, `SSBU_AUDIO_MUTE=1`,
-`SSBU_VK_MISSING=warn` (the chapter's tessellated draws are skipped: blocker 3). Numbers over the 300-frame windows from
+field (from about frame 19,400), A every 3 s plus the fight script of stage 5 from 560 s, 1,100 s, `WT_AUDIO_MUTE=1`,
+`WT_VK_MISSING=warn` (the chapter's tessellated draws are skipped: blocker 3). Numbers over the 300-frame windows from
 frame 19,800 to the end of the run (`nvn_vk:` / `nvn_perf:` / `nvn_vk_timeline:` lines). The runs use a copy of the save
 (`/tmp/b3_userdata_<run>`): the game autosaves.
 
@@ -255,11 +255,11 @@ frame 19,800 to the end of the run (`nvn_vk:` / `nvn_perf:` / `nvn_vk_timeline:`
 (Run `fix1`, the same build as `fix2`, ran 17-24 fps from 640 to 810 s with every thread slowed alike, sampler included, and 59.2 fps
 from frame 22,800 to the end: taken as outside CPU load and left out.)
 
-- **The cause**: `SSBU_LPROF` (below) found **83-96 % of the busy time of the game's MainDraw and Flush threads in
+- **The cause**: `WT_LPROF` (below) found **83-96 % of the busy time of the game's MainDraw and Flush threads in
   `nvn_gl_memory_written`**: every `nvnMemoryPoolFlushMappedRange` / `nvnBufferFlushMappedRange` walked every texture ever
   made (the list is never unlinked) to mark the ones it overlaps; B3 flushes many ranges a frame. Now a span index of the
   live textures sorted by address (binary search, running maximum end), rebuilt when a texture is made or finalized;
-  `SSBU_TEXSPAN_CHECK=1` compares every lookup with the walk (240 s, no difference). After it, MainDraw is 12 % busy.
+  `WT_TEXSPAN_CHECK=1` compares every lookup with the walk (240 s, no difference). After it, MainDraw is 12 % busy.
 - **Tried, not kept**: (1) the kept vertex buffers of finding 140 (`vrc_*`) for streams no compute buffer overlaps (they are
   off whenever any compute buffer is live, i.e. always in a B3 fight): the ring copies fell from 29 to 7 MB a frame, but the
   render thread per draw did not move (13.2 against 13.6 us: the write-watch questions cost what the copies saved), so the
@@ -268,7 +268,7 @@ from frame 22,800 to the end: taken as outside CPU load and left out.)
 - **What is left on the render thread** (about 60 % busy in a fight): memcpy (46 %: compute buffers filled from guest
   memory at a dispatch, texture uploads, the copy-back of compute results), `cb_keep_back`, `draw_prepare`. The dips
   (min 50-52 fps windows) were not looked into one by one.
-- **`SSBU_LPROF=<start s>,<seconds>[,<file>]`** (Linux, test only, `runtime/lprof.c`): every thread is sampled with a
+- **`WT_LPROF=<start s>,<seconds>[,<file>]`** (Linux, test only, `runtime/lprof.c`): every thread is sampled with a
   real-time signal (SDL3's threads block SIGPROF), PC + host call chain; `wtbuild lprof <file>` lists the busy
   threads (innermost frame not waiting in libc) with their self / inclusive functions (the symbol tables of
   witch-time-game, game.so: `f_<guest address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
@@ -292,7 +292,7 @@ the control stages' program headers say 3 output vertices and 6 patch attributes
   size (`OP_PATCHSIZE`, ignored before), domain origin `LOWER_LEFT` (the viewport is flipped the OpenGL way);
   `draw_prepare` binds samplers, images, buffers and descriptors for the stages {0, 1, 3, 4}; forced outputs chain
   fragment <- evaluation <- control <- vertex. The glslang shim takes stages 3 and 4.
-- **Runs** (chapter 1 by Chapter Select, the fight script, muted, **without `SSBU_VK_MISSING=warn`**): 1,100 s, 46,666
+- **Runs** (chapter 1 by Chapter Select, the fight script, muted, **without `WT_VK_MISSING=warn`**): 1,100 s, 46,666
   frames, **0 skipped draws** (the earlier runs with `warn` skipped 4,552-5,585), no stop. One tessellated pipeline (programs
   #3945 / #3950 / #3951 / #3946, patch size 3), about 2,700 tessellated draws, one a frame in runs from frame ~17,600.
   The fight: 59.3 fps (min window 55.5, 1 %-low 48.7), as before.
@@ -300,22 +300,22 @@ the control stages' program headers say 3 output vertices and 6 patch attributes
   `Undefined-Value-ShaderOutputNotConsumed-DynamicRendering` warning; the first run found
   `VUID-RuntimeSpirv-OpVariable-08746` (built-in block mismatch vertex -> control), fixed.
 - Test aids: `nvn_vk: tessellated pipeline <n> at frame ...` and `tessellated draws in frames a..b: n` lines, the totals at
-  exit; `SSBU_VK_TESS_ALT=1` leaves the tessellated draws out on odd frames, `=2` draws them magenta there (with
-  `SSBU_SHOT_BURST=<period>,2` for pairs of pictures).
+  exit; `WT_VK_TESS_ALT=1` leaves the tessellated draws out on odd frames, `=2` draws them magenta there (with
+  `WT_SHOT_BURST=<period>,2` for pairs of pictures).
 
 ## Magenta textures: invalid ASTC blocks (2026-10-24)
 
 The user's hand run showed bright magenta on clothes (Luka's shirt), Bayonetta's guns, heels and accessories, the purple
 light pillar and the Verse results' ink splashes. The GPU here (RADV, RX 9070 XT) has no ASTC, so `tex_decode.c` decodes B3's
 ASTC textures on the CPU. It gave every **invalid** block the specification's error colour, opaque magenta. B3's chapter 1
-has about 105,000 of them (`SSBU_ASTC_LOG=1`): **all-zero blocks** (a reserved block mode), in ASTC 6x6 textures that
+has about 105,000 of them (`WT_ASTC_LOG=1`): **all-zero blocks** (a reserved block mode), in ASTC 6x6 textures that
 are bound in many places (the same counts, image after image: 7 % of the 1024x1024 level, whole 32x32 and 2x2 levels).
 Tegra returns transparent black for them (yuzu PR #8910 made its decoders do the same), so nothing shows on the console.
 
 - **Invalid blocks are transparent black now.** Same route and scene, before / after: `/tmp/shots/astc_before_27000.png`
   (Verse 1 results: magenta ink, shirt, guns), `/tmp/shots/astc_after_25500.png` (results: white / black ink),
   `/tmp/shots/astc_after_chars.png` (Bayonetta close and in the fight: gold trim, no magenta). Chapter 1, 1,100 s without
-  `SSBU_VK_MISSING=warn`: no stop, 0 skipped draws, fight 59.7 fps (min window 56.5).
+  `WT_VK_MISSING=warn`: no stop, 0 skipped draws, fight 59.7 fps (min window 56.5).
 - Found on the way: **HDR colour endpoint modes** (2, 3, 7, 11, 14, 15) also became magenta; Tegra decodes them in these
   formats (full profile). Now decoded (LNS -> FP16, clamped into the 8-bit images, per partition and channel). B3's
   chapter 1 has none (the counter says 0), so this did not cause what the user saw.
@@ -323,7 +323,7 @@ Tegra returns transparent black for them (yuzu PR #8910 made its decoders do the
   footprints: 72,524 valid blocks (22,840 with HDR endpoints), none more than 1 apart (the decoder before: 22,828 apart).
   It skips blocks either side rejects, so it does not test what an invalid block becomes.
 - The exit log has `tex_decode: ASTC blocks decoded on the CPU with HDR endpoints: N; invalid (transparent black): M`;
-  `SSBU_ASTC_LOG=1` (test) names each image with invalid blocks (format, size, count, the first non-zero one).
+  `WT_ASTC_LOG=1` (test) names each image with invalid blocks (format, size, count, the first non-zero one).
 - **Correction (2026-10-25):** most of those all-zero blocks were not in the game's data; they came from the layout bug
   below (the padding GOBs of sheared textures). Transparent black stays the right answer for the real ones.
 
@@ -334,7 +334,7 @@ blue bands and patchy gold. Both came from one bug: **byte 1 of the packaged tex
 GOBs) and `tex_layout` ignored it. B3's ASTC 6x6 effect atlases and Bayonetta's gun texture have byte 1 = 4 (layout
 `03 04 00 00 07 00 01 00`): a block of 16 x 8 GOBs, one 64 KB tile.
 
-- **The rule, read off the game's memory** (`SSBU_TEX_RAWDUMP`): a level at least one block wide has its rows padded to a
+- **The rule, read off the game's memory** (`WT_TEX_RAWDUMP`): a level at least one block wide has its rows padded to a
   multiple of the block width; a narrower level is not padded at all. 1024x1024 ASTC 6x6: rows of 43 -> 48 GOBs, 22 -> 32,
   then 11, 6, 3, ... as they are; levels at 0, 589,824, 851,968, 897,024, 909,312, ... (every level of the dumps now
   decodes with 0 invalid blocks). The layer stride counts the block width too. `tools/astccmp` checks these offsets on
@@ -350,7 +350,7 @@ GOBs) and `tex_layout` ignored it. B3's ASTC 6x6 effect atlases and Bayonetta's 
   filigree and a gold-ringed disc, so the guns stay purple and gold. In the game (Tokyo boss cutscene):
   `/tmp/shots/guns2_9936_crop.png`, solid purple and gold, no bands. Not reproduced here: the user's Verse 1 close-up
   (another save point); a look by hand there is the check left.
-- **The decoder on real data**: all 3,010 ASTC images of a 380 s run (`SSBU_ASTC_DUMP`, 11 formats, 4x4 to 10x10, linear
+- **The decoder on real data**: all 3,010 ASTC images of a 380 s run (`WT_ASTC_DUMP`, 11 formats, 4x4 to 10x10, linear
   and sRGB) compared block by block with astc-encoder (`astccmp --file`): none more than 1 apart, and every block this
   decoder rejects the reference rejects too.
 - **Speed**: the same scripted 700 s run on this save (it ends in the heavy Tokyo scenes, not the chapter-1 fight) from
@@ -366,7 +366,7 @@ holds 1,024. The heavy Tokyo scenes ran at 35-44 fps then; see the next section.
 
 ## Performance in Tokyo: Shibuya and the heavy Tokyo scenes (2026-10-25)
 
-**Benchmarks** (`SSBU_AUDIO_MUTE=1`, each run on a copy of a save; per-frame times from `SSBU_FRAMETIMES`, the
+**Benchmarks** (`WT_AUDIO_MUTE=1`, each run on a copy of a save; per-frame times from `WT_FRAMETIMES`, the
 statistics over the frames the game paces at 60 = present interval 1):
 - *Shibuya*: the user's save (Continue → Tokyo: Shibuya street fight), the stage-5 fight pattern from 40 s to 330 s,
   frames 1500 to the end.
@@ -381,7 +381,7 @@ statistics over the frames the game paces at 60 = present interval 1):
 | Tokyo, after (without the bit split) | 59.7 | 53.9 | 16.7 / 17.6 / 18.6 | 29 / 13 / 8 | 98.8 % |
 | Tokyo, after (all) | **59.5** | **52.9** | 16.7 / 17.6 / 18.9 | 98 / 15 / **0** | **98.4 %** |
 
-("Switched off": `SSBU_VK_VRC=0`, `SSBU_TEXDEC_THREADS=0` and an always-sync test switch that was not committed; the live
+("Switched off": `WT_VK_VRC=0`, `WT_TEXDEC_THREADS=0` and an always-sync test switch that was not committed; the live
 list stays. Runs of the same build differ by about ±1 % at 60 and in where the trains of long frames come; another
 Tokyo run of the last build: 59.8 fps, 98.5 % at 60, one frame over 100 ms (104, below).)
 
@@ -396,7 +396,7 @@ What it was, in order of the commits:
   saved; in Tokyo the copies are three times larger and it pays.)
 - **ASTC decode on worker threads** (`decode_par`): the 45-170 ms stalls of Shibuya were new 1024x1024 ASTC textures
   decoded on the render thread (15-20 ms each, several at once when the game streams an area in). A 1024x1024 texture now
-  takes 5.3 ms. `SSBU_TEXDEC_CHECK=1` compared 1,301 parallel jobs with one thread's decode: no difference.
+  takes 5.3 ms. `WT_TEXDEC_CHECK=1` compared 1,301 parallel jobs with one thread's decode: no difference.
 - **Live compute buffers in a list** for `buf_ref`'s searches (the walk over the table was 17 % of the render thread).
 - **Buffer copy / update / clear wait for compute only when they overlap it** (`cb_sync_needed`): each of these CPU-side
   commands waited for the GPU and landed every live compute buffer; B3 issues a clear and four 32-byte copies a frame, so
@@ -405,10 +405,10 @@ What it was, in order of the commits:
   while a train lasts): the main thread in the game's `f_7100b382c0`, called from a deep recursion of `f_71007e1fe4` (a
   tree walk): it splits a 32-bit value into its even and odd bits with three bit reversals and a 32-step loop, 171.6 ns a
   call lifted. New: `lifter/recomp_eh.py` `HOST_OVERRIDES` sends every direct call of a chosen game function to a host
-  function (`runtime/game_shim_eh.c`); `h_morton_split32` takes 1.7 ns. `SSBU_HOSTFN_CHECK=1` (test): 200,000 values
+  function (`runtime/game_shim_eh.c`); `h_morton_split32` takes 1.7 ns. `WT_HOSTFN_CHECK=1` (test): 200,000 values
   through both, 0 differ.
 Screenshots of every run (`/tmp/shots/<run>/`) compared: no visual difference (the band of purple glyphs at the clouds of
-erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
+erasure is the game's: it is also there with `WT_VK_VRC=0`).
 
 **Left** (Tokyo, 700 s runs of the last build):
 - Trains of 45-50 ms frames (7-25 frames a run): the same tree walk, `f_71007e1fe4` itself now (about 35 ms a frame), a
@@ -419,19 +419,19 @@ erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
   more work in that frame (buffers made, `nvnBufferInitialize` under a game mutex, lifted code); not attributed further:
   the sampler gets about 25 samples a thread over three such frames. A table lock split 64 ways (`nvn_stub.c nobj`) was
   tried: no measurable change, not kept.
-- Tools added on the way: `SSBU_FRAMETIMES`, `SSBU_HITCH` with a 19 ms threshold for late frames, `SSBU_LPROF` with 4M
+- Tools added on the way: `WT_FRAMETIMES`, `WT_HITCH` with a 19 ms threshold for late frames, `WT_LPROF` with 4M
   samples and the presented frame of each sample (`@<frame>`; `wtbuild lprof` reads both forms).
 
 ## Chapter 3 spider ride: render thread (2026-10-30, #45)
 
 Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
 - **Page filter in `buf_ref`** (`cb_pf_*`): 20,000 ranges a frame each walked the live and about 170 kept compute buffers, 16
-  ms a frame. A hashed bit per page of those buffers answers 98.6 % of the ranges without a walk. `SSBU_VK_CBPF=0` off,
+  ms a frame. A hashed bit per page of those buffers answers 98.6 % of the ranges without a walk. `WT_VK_CBPF=0` off,
   `=2` test: the walks run as well and a miss prints `nvn_vk_cbpf: FAILED`; none in 17 M ranges on the ride and 63.7 M in Shibuya.
-- **ASTC decoded ahead of the first draw** (`nvn_front_tex_prep`, `SSBU_TEXPREP_THREADS`, default 3): at the draw, decodes
+- **ASTC decoded ahead of the first draw** (`nvn_front_tex_prep`, `WT_TEXPREP_THREADS`, default 3): at the draw, decodes
   took 5.5 s of the render thread in 100 s of the ride, while 94 % of those textures had been known for 30 frames or more.
   Now 0.73 s; `tex_ahead` makes the image when the decode is done, in fights too. A job keeps a copy of the bytes it
-  decoded and its result is used only if the memory still equals them. `SSBU_TEXPREP_CHECK=1` (test): 3,110 textures,
+  decoded and its result is used only if the memory still equals them. `WT_TEXPREP_CHECK=1` (test): 3,110 textures,
   no level differs from a decode at the use. Shibuya 170 s from frame 1500: frames over 34 ms 11 -> 0, worst 59 -> 22 ms.
 - ASTC stays in the game data and BC3 is what GPUs without ASTC store by default. Build-time conversion was first turned down
   here (about 41 GB, a count that repeats every shared texture); it is now an option, see "Converted textures" below.
@@ -440,15 +440,15 @@ Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
   1024x1024 byte maps. A leaf is 1 where they differ, and a node draws a quad for each child that returned 1 unless all four
   did. A node whose leaves are all equal therefore draws nothing and writes only its stack, so `h_quad_walk`
   (`quad_walk.h`) reads its result off the maps. A walk: 47 -> about 0.01 ms; mixed nodes stay lifted, so the quads are the
-  game's. Ride from frame 2400: frames over 60 ms 4 -> 0, worst 105 -> 45 ms. `SSBU_QUADWALK=0` off;
-  `SSBU_QUADWALK_CHECK=1` (test) runs the lifted walk too: on the ride 239 uniform nodes in 10 walks, none differ and none drew a quad.
+  game's. Ride from frame 2400: frames over 60 ms 4 -> 0, worst 105 -> 45 ms. `WT_QUADWALK=0` off;
+  `WT_QUADWALK_CHECK=1` (test) runs the lifted walk too: on the ride 239 uniform nodes in 10 walks, none differ and none drew a quad.
 
 **Left**: about 74 textures at the ride's start are first seen in the frame that
-draws them (one frame of about 0.6 s). `SSBU_LPROF` frames are 2 ahead of `SSBU_FRAMETIMES` frames.
+draws them (one frame of about 0.6 s). `WT_LPROF` frames are 2 ahead of `WT_FRAMETIMES` frames.
 
 ## Converted textures: BC7 sidecar (2026-10-31, #54, #35)
 
-`bc7_textures = on` (the default; `SSBU_BC7_TEXTURES=0|1` wins) takes ASTC textures from `build/cache/bc7`, which `wtbuild
+`bc7_textures = on` (the default; `WT_BC7_TEXTURES=0|1` wins) takes ASTC textures from `build/cache/bc7`, which `wtbuild
 textures` makes from the player's own dump. The launcher runs it after a build, unless the option is off or the drive has
 under 19.5 GB free; without a pack the game decodes as before. It began as an opt-in; the default changed the same day. Everything below was measured on a Ryzen 7 7800X3D and an RX 9070 XT
 (RADV, no ASTC): 4 cores with `taskset` (cpus 0-3, with 8-11 for their threads), never on a Steam Deck.
@@ -501,15 +501,15 @@ are under 30 dB, all of them better than BC3 there.
 A job: 8.2 ms of decode and encode, 0.6 ms of hash, read and LZ4. Shibuya: workers 10.0 -> 0.9 s, at the use 1.8 -> 0.2 s, worst
 188 -> 119 ms. Sustained fps does not change (52-55 here): this removes stalls, it does not raise a frame rate a GPU holds down.
 
-**#35.** The three workers do not hurt on 4 cores, they help: `SSBU_TEXPREP_THREADS=0` against 3 on 4 threads is 9.0 -> 2.5 s of
+**#35.** The three workers do not hurt on 4 cores, they help: `WT_TEXPREP_THREADS=0` against 3 on 4 threads is 9.0 -> 2.5 s of
 the render thread, worst frame 2.6 -> 1.0 s. Fps stays 52-54 either way, so they do not explain a Deck topping out near 38 fps,
 though this CPU runs at about twice the Deck's clock and its GPU is another class. No log from the reporter yet.
 
 **How it works.** The key is a hash of the texture's bytes (`tex_pack.c`), which a worker takes in place of decoding, so the
 check that memory has not changed is the old one. Every texture the ride (3,300) and Shibuya (1,720) made was found but the prompt atlas
 `prompts.c` paints, which goes the old way: BC3. A hit stores BC7 in the image; if the game later changes that memory,
-`tex_encode_bc7` (mode 6) fills the same format. `SSBU_TEXPACK_REDO=1` forces that on half the textures: 793 in Shibuya, the
-picture holds. `SSBU_TEXPACK_CHECK=1`: 48 of the ride's levels under 30 dB, worst 20.7 dB, on tiny mips; `SSBU_TEXPREP_CHECK=1`
+`tex_encode_bc7` (mode 6) fills the same format. `WT_TEXPACK_REDO=1` forces that on half the textures: 793 in Shibuya, the
+picture holds. `WT_TEXPACK_CHECK=1`: 48 of the ride's levels under 30 dB, worst 20.7 dB, on tiny mips; `WT_TEXPREP_CHECK=1`
 still 0 differ. Mods: a texture a mod changes has other bytes, is not found, and is decoded as before; nothing is corrupted.
 A GPU with ASTC never looks at the pack.
 
@@ -526,7 +526,7 @@ reads: Remove gives the space back. A stopped conversion redoes its family of ar
 
 ## 60 fps menus and cutscenes (2026-10-25)
 
-`cutscene_fps = 60` (graphics.ini; `SSBU_CUTSCENE_FPS=60` wins; default 30, as on the console) runs the title, menus and
+`cutscene_fps = 60` (graphics.ini; `WT_CUTSCENE_FPS=60` wins; default 30, as on the console) runs the title, menus and
 cutscenes in the game's 60 fps mode.
 - **How the game times them**: the main loop (`7100670b80`) asks each frame for a frame-rate mode from its state flags
   (0 = 60, 1 = 30, 2 = 15; set by `7100d02de0`, applied at `7100cfd9b8`). Its per-frame clock `7100c1f600` keeps the
@@ -539,7 +539,7 @@ cutscenes in the game's 60 fps mode.
   scene keeps real time when frames are late (at most 1.0 at first; see "Late frames" below; a measured gameplay
   step is left alone). (A fixed 0.5, the first version: 97.9 s for the cutscene at 56 fps in 4K.) The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
   mode the game asks for is logged with the wall-clock time ("fps mode:" lines).
-- **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `SSBU_FRAMETIMES` has the wall clock
+- **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `WT_FRAMETIMES` has the wall clock
   per frame): 30: 2,758 frames in 92.07 s; 60: 5,496 frames in 92.33 s, 59.5 fps, p99 22.0 ms (fixed half step); with the
   measured step 91.94 s at 59.7 fps, and 92.03 s at 56.4 fps in 4K (resolution scale 2.4). Screenshots at equal
   wall-clock times after the start (+1 .. +20 s, `/tmp/shots/cutscene_30_vs_60.png`): the same shots, poses and subtitle
@@ -638,7 +638,7 @@ cutscenes in the game's 60 fps mode.
   2.3 s once a run, outside the cutscene, is not a pipeline wait and not explained yet.
 - **What the sound does, measured (2026-10-30, #47)**: a reporter found v0.4.2 worse, the sound following the picture (after a
   rebuild they no longer could; in their clip a 333 ms freeze of the picture does not stop the sound). Mixer
-  output captured whole (`SSBU_WAV` with a longer limit) against a run without stalls, Shibuya cutscene at 30, 300 ms stalls:
+  output captured whole (`WT_WAV` with a longer limit) against a run without stalls, Shibuya cutscene at 30, 300 ms stalls:
   no gaps and no change of speed in any run, every offset a whole number of Wwise's 10.67 ms ticks. With the old fixed step
   the sound stays on real time for 75 s while the picture falls up to 5 s behind, then the timeline starts the next stream
   about 4.8 s late, and about 6 s late after that. So long streams run on real time, but the timeline starts them, and it starts its
@@ -652,9 +652,9 @@ cutscenes in the game's 60 fps mode.
 
 ## Resolution scale (2026-10-25)
 
-`resolution_scale` (graphics.ini; `SSBU_VK_SCALE` wins; 0.25 .. 3.0, Vulkan) now scales B3's picture. The scale is relative
+`resolution_scale` (graphics.ini; `WT_VK_SCALE` wins; 0.25 .. 3.0, Vulkan) now scales B3's picture. The scale is relative
 to B3's window texture, 1600x900: 1.2 = 1920x1080, 1.6 = 2560x1440, 2.4 = 3840x2160 (3.0 = 4800x2700). The picture goes to
-the window at the window's size (graphics.ini `width` / `height`, `SSBU_WINDOW=<w>x<h>`; above twice the window it is
+the window at the window's size (graphics.ini `width` / `height`, `WT_WINDOW=<w>x<h>`; above twice the window it is
 halved in 2:1 steps first).
 - **What was missing**: the screen class (the images made at the scale) took only 1600x900 and its halves. B3 draws its
   scene into 1600x896 targets (1440x816 when its dynamic resolution steps down; depth-stencil, R11G11B10F, R32F, RG8) with
@@ -665,12 +665,12 @@ halved in 2:1 steps first).
   gl_FragCoord in the game's pixels; such an image is made again at the game's size the first time it is bound as a storage
   image and kept there (`g_rs_keep`; the shaders that sample it use normalised coordinates). So are the depth levels below it
   (`rs_pyramid.h`, "Depth pyramid at a scale"): 8-20 a run in all.
-- **Compute**: B3's compute dispatches touch no scaled image (one 64x64 storage image; `SSBU_VK_RTLOG=1` lists the render
+- **Compute**: B3's compute dispatches touch no scaled image (one 64x64 storage image; `WT_VK_RTLOG=1` lists the render
   targets, every stage's storage images and any scaled image a compute stage samples), so their sizes need no change.
   Viewports, scissors, clears, copies, uploads, read-backs, `gl_FragCoord` and integer texel fetches in fragment stages
   were converted already (track O).
 - **Measured** (Shibuya benchmark, 330 s, frames at 60 from 1500, window at the output size; screenshots of the scaled
-  image itself with `SSBU_VK_SHOT_NATIVE=1`, `/tmp/shots/res<scale>/`, `/tmp/shots/hud_1x_vs_4k.png`):
+  image itself with `WT_VK_SHOT_NATIVE=1`, `/tmp/shots/res<scale>/`, `/tmp/shots/hud_1x_vs_4k.png`):
 
   | scale | output | avg fps | 1 %-low | p99 | frames at 60 | scaled images |
   |---|---|---|---|---|---|---|
@@ -689,7 +689,7 @@ halved in 2:1 steps first).
   into fixed 520x360 targets (two RGBA16F + D16 and a 3-layer RGBA16F array; then a full-screen composite). 520x360 is
   not of the window's shape: named in `rs_extra_class`, scaled with the others (1248x864 at 2.4). Crops at 4K
   (`/tmp/shots/smoke_before_after_2700.png`): the blocky, dotted cloud edges against geometry are gone, the composite
-  stays aligned. `SSBU_VK_CLOUD_SCALE=<cap>` limits their scale for a weak GPU (default: the full scale; 4K A/B at equal
+  stays aligned. `WT_VK_CLOUD_SCALE=<cap>` limits their scale for a weak GPU (default: the full scale; 4K A/B at equal
   load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60).
 - **Measurements later on 2026-10-25 were taken with other programs loading the machine** (a game in Java at about two
   cores and the GPU, two long-running emulator processes): 4K runs then gave 75-81 % of frames at 60 whatever the setting
@@ -712,9 +712,9 @@ halved in 2:1 steps first).
   table lookup. 1.0 itself is the translation it always was, so no cache is made again by this change.
 - **Measured** (Linux, RX 9070 XT, Shibuya fight, hidden window, another session's two game runs on the same PC): 82-133 images
   in 2-31 ms; 1.0 -> 1.6 -> 3.0 -> 2.0 -> 1.6 -> 3.0 in the fight and through the pause menu, each size confirmed in native
-  screenshots (`SSBU_VK_SHOT_NATIVE=1`, 1200x675 to 4800x2700), 0 Vulkan call failures. The first change away from 1.0 with
+  screenshots (`WT_VK_SHOT_NATIVE=1`, 1200x675 to 4800x2700), 0 Vulkan call failures. The first change away from 1.0 with
   the `rs1` stages already on disk: frames of 114-213 ms for about 8 s, no longer stop.
-  With `SSBU_VK_VALIDATE=1`, 1.0 -> 1.2 -> 2.4 -> 0.8 -> 1.0 from the panel gave no message but the 10 unused-output warnings
+  With `WT_VK_VALIDATE=1`, 1.0 -> 1.2 -> 2.4 -> 0.8 -> 1.0 from the panel gave no message but the 10 unused-output warnings
   an equal run has without a change.
 - **Not measured**: that first change on a PC whose cache has no `rs1` stages (the game translates what each draw needs, held,
   on the render thread; 3,755 stages took 110.7 s over a whole first run). Windows, and a change from the Options rows (their
@@ -750,11 +750,11 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
 
 ## Level of detail (2026-10-25)
 
-- **`texture_lod_bias`** (graphics.ini; `SSBU_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
+- **`texture_lod_bias`** (graphics.ini; `WT_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
   level of every sampler that uses mip maps (clamped to the device's limit). At -1 the same view is sharper (high-frequency
   energy: near street 113 -> 153, far street 273 -> 292, distant buildings 292 -> 340); no measurable cost (4K A/B:
   77-80 % against 77-79 % of frames at 60).
-- **`model_lod`** (graphics.ini, PC settings and the Options screen, "Model detail"; `SSBU_MODEL_LOD`; game | highest, default game; issue 86):
+- **`model_lod`** (graphics.ini, PC settings and the Options screen, "Model detail"; `WT_MODEL_LOD`; game | highest, default game; issue 86):
   `7100bd563c` is the model level selector (its one caller `7100bd5b3c` runs the cross-fade): it writes the level to `*x1`,
   -2 none, -1 hidden, 0 finest, and past the last distance it gives -1. The Switch "Increased LOD" mod (`mov w8, #0` at
   `7100bd5b2c`) was the lead. `h_model_lod` (game_shim_eh.c) has the same effect after the call, keeping the distance cut
@@ -777,7 +777,7 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
   `modelshadervelocitymap` drew 0 times on that route (title, opening, Chapter 2 to the fight), so skipping the blur draw
   was never seen on a real frame. It needs a scene where the chain runs first.
 - **Model LOD, earlier candidates (not the selector).** Candidates read and tested with a host override that scaled their values, measured by
-  the indices a frame draws (`SSBU_VK_PRIMLOG`) on the same idle view:
+  the indices a frame draws (`WT_VK_PRIMLOG`) on the same idle view:
   - `LodDistance0..3` / `UseLodDistance0..3` (reader `71007d3a5c`, pairs of float + flag): the values seen are 0, -1, 0.5,
     0.25, 5 / 15, 10.8 / 26, and every Use flag is 0: an effect system's settings, not models;
   - `Lod { Lod0..Lod6 }` beside `Deletable { max, extend, vanishTime }` (reader `7100646060`, seven floats at
@@ -802,8 +802,8 @@ not changed; it is to be retired).
 - **Sites** (`tools/wtbuild/src/lifter/fps.rs`): every load of a field, add / sub (immediate, register, float register,
   +/-1.0) of the loaded value and store to the same field, conditional branches and a CSEL allowed between: 17,370 in
   main (12,147 int32 immediates, 4,233 float adds of a register, ...).
-- **Census**: `WT_FPS_CENSUS=1 wtbuild setup --from lift` makes every site's store call `fps_census` first
-  (`runtime/game_shim_eh.c`; `build/gen_eh/fps_sites.txt` lists them); a run with `SSBU_FPS_CENSUS=<file>` records per
+- **Census**: `WTBUILD_FPS_CENSUS=1 wtbuild setup --from lift` makes every site's store call `fps_census` first
+  (`runtime/game_shim_eh.c`; `build/gen_eh/fps_sites.txt` lists them); a run with `WT_FPS_CENSUS=<file>` records per
   site the visits per field against the clock's updates and what each visit adds. `wtbuild fps-census <at 60>
   <above 60> [--all]` compares two runs of the same scene: a site that adds as much per visit at 120 as at 60 is frame-locked;
   half as much, it takes the frame's time already. One run at each rate replaces B2's alternating 60 / 120 run. A normal
@@ -823,9 +823,9 @@ not changed; it is to be retired).
   300 s at 120 with the census build and 120 s with the normal build: no error.
 - **The demon form's double-tap** (a player report: two quick dodges while moving forward no longer transformed above
   60): the window is a frame countdown, `710055a41c` (`[x19 + 956]`, function `7100559ebc`), so at 120 it lasted half
-  as long. Scripted double-taps (`SSBU_SCRIPT` forward + ZR twice) at 60: 0.12 and 0.20 s transform, 0.30 not; at 120
+  as long. Scripted double-taps (`WT_SCRIPT` forward + ZR twice) at 60: 0.12 and 0.20 s transform, 0.30 not; at 120
   only 0.12. The six frame-locked countdowns of a double-tap census patched together, then bisected; with this one
-  listed, 120 matches 60 (0.20 transforms, 0.30 not). The first 10 sites were not the cause (`SSBU_FPS_COUNTERS=0`,
+  listed, 120 matches 60 (0.20 transforms, 0.30 not). The first 10 sites were not the cause (`WT_FPS_COUNTERS=0`,
   new: the sites' stock +/-1 at run time, the same failure). It was not in the 62 of the fight census: it runs only
   after a dodge, too few visits for its filter. Input windows like it need a census of the move itself.
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
@@ -877,10 +877,10 @@ per-site hit counts while the frame rate alternates 60 / 120, then read one by o
 
 ## RomFS archives: the game's own Kraken decoder (2026-10-25)
 
-`build/witch-time-game targets/exefs/main.elf --pkz-dump <folder | -> [filter...]` (cwd `build/<run>`, `SSBU_ROMFS` as for a
+`build/witch-time-game targets/exefs/main.elf --pkz-dump <folder | -> [filter...]` (cwd `build/<run>`, `WT_ROMFS` as for a
 run; `runtime/pkz_dump.c`) writes every `.pkz` entry to `<folder>/<entry name>`: Kraken entries decompressed by main's
 own Oodle decoder (lifted), stored ones copied. No window, no audio, no game code but the decoder (image, relocations and
-import handlers only); 8 threads (`SSBU_PKZ_JOBS`); a filter keeps entries whose archive or entry name contains it; `-`
+import handlers only); 8 threads (`WT_PKZ_JOBS`); a filter keeps entries whose archive or entry name contains it; `-`
 decodes without writing. Entry names are unique across the archives, so the folder mirrors the game's paths. Write it
 under a git-ignored folder (`cache/pkz/`): the files are game assets.
 - **All 72 archives**: 18,732 entries (11,760 Kraken, 6,972 stored), **0 failures**: every Kraken stream used exactly its
@@ -894,8 +894,8 @@ under a git-ignored folder (`cache/pkz/`): the files are game assets.
 - **Stored replacements**: a `Text_000.pkz` rebuilt with all 394 entries stored (`None`), in `mods/<name>/romfs/`, is read
   by the game; its changed copyright line showed on the title screen. So rebuilt archives need no Kraken encoder.
 - **Mods folder on Linux**: it had the `''`-only cut fixed for graphics.ini in 028ea6d (`nnfs.c`: the folder and
-  `mods.ini`), so mods worked only with `SSBU_MODS`; fixed, the default `mods/` beside `build/` is found.
-  `controllers.ini` (nnpad_sdl.c) and `dlc.txt` (nnmisc.c) still have that cut.
+  `mods.ini`), so mods worked only with `WT_MODS`; fixed, the default `mods/` beside `build/` is found.
+  `controllers.ini` (nnpad_sdl.c) still has that cut.
 
 ## Keyboard and mouse (2026-10-25)
 
@@ -939,16 +939,16 @@ Bayonetta 2's. Now:
 
 Tests:
 
-- `SSBU_PAD_SELFTEST=1 build/witch-time-game`: 61/61 (was 49), new: every default key gives exactly its Pro bit, WASD,
+- `WT_PAD_SELFTEST=1 build/witch-time-game`: 61/61 (was 49), new: every default key gives exactly its Pro bit, WASD,
   diagonal, walk, mouse to right stick (both axes), pad + keyboard together, rebinding by editing the file while
   running, invert / sensitivity, the pinned-axis receiver.
-- **Game runs with synthetic events** (`SSBU_KBM_SCRIPT`, below; muted, hidden window, a copy of the save, no other
+- **Game runs with synthetic events** (`WT_KBM_SCRIPT`, below; muted, hidden window, a copy of the save, no other
   input): Enter through the title into Shibuya; capture click swallowed; run, diagonal, walk; camera turned and tilted by
   the mouse; punch, kick, shoot, jump, dodge, lock-on, taunt; Tab subscreen and Backspace back; Esc pause, arrows / S /
   Enter / Backspace through the pause menu and Options; X rebound to U in the run's file at 150 s: U punches, the left
   mouse no longer does. The log line of each step and the Npad state the game read match. 60 fps in the free roam of
   that run. Pictures: `/tmp/shots/kbm_*.png`.
-- `SSBU_KBM_SCRIPT="<s>[+<dur>]:<input> ..."` (Linux, test only): pushes SDL key / mouse-button / motion events
+- `WT_KBM_SCRIPT="<s>[+<dur>]:<input> ..."` (Linux, test only): pushes SDL key / mouse-button / motion events
   (`MOUSE1`, `W`, `M<dx>,<dy>` = motion every 10 ms, `P<x>,<y>` = the pointer to x, y of the window, once) into the
   window's queue, seconds from window creation; the window counts as focused, and the keyboard player's Npad state is
   logged at each change (`kbm: ...`). Key names as in controllers.ini (`ENTER`, `ESC`; `RETURN` / `ESCAPE` also accepted
@@ -980,7 +980,7 @@ game's prompts, its HUD and its picture of the pad follow. The game's findings a
   is told by the panel and not by the picture.
 - **Keyboard**: while the keyboard is what player 1 used last the layouts do not count (`nnpad_bind_live`): `[keyboard]` is its binding.
 - **Checked in the running game on Linux**, with a virtual Xbox 360 pad through uinput (hidden window, copies of the save and
-  config, `SSBU_REBIND_LOG=1`: every press as the pad has it and as gameplay gets it):
+  config, `WT_REBIND_LOG=1`: every press as the pad has it and as gameplay gets it):
   - all 16 buttons give the bits of rebind.h;
   - Options, Controls opens the page; a press rebinds Dodge to LB, the file is written, Custom shows, the picture says Dodge LB and
     Weapon Switch RT;
@@ -1011,15 +1011,15 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   console's suspension (`g_guest_frozen`; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
   game's last picture again with the panel about 60 times a second, and the game reads an idle pad, also after closing
   until the buttons that closed it are let go.
-- **A new version's graphics.ini** (2026-10-31): an update leaves `config/` alone and the old launcher installs it, so the game does it at start (`gfx_ini_refresh`, gfx_options.c): a comment or key of the defaults missing from the file makes the file the defaults with the player's values, then the player's other keys, the old file in `graphics.ini.bak`. A file with every line is not touched; a file named by `SSBU_GRAPHICS_CONFIG` / `SSBU_CONFIG` (tests, benches) never. Filling in a key changes nothing: a file with no keys and the defaults load to the same options.
+- **A new version's graphics.ini** (2026-10-31): an update leaves `config/` alone and the old launcher installs it, so the game does it at start (`gfx_ini_refresh`, gfx_options.c): a comment or key of the defaults missing from the file makes the file the defaults with the player's values, then the player's other keys, the old file in `graphics.ini.bak`. A file with every line is not touched; a file named by `WT_GRAPHICS_CONFIG` / `WT_CONFIG` (tests, benches) never. Filling in a key changes nothing: a file with no keys and the defaults load to the same options.
 - **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the
   next start), vsync (live: the present mode is chosen again and the swapchain made again, display.c's pacing chosen
   again; a display lock is let go live, a new one is only taken if none was tried in this run), cutscene frame rate
   (live: `game_cutscene_fps`, exported by the game library), anisotropic filtering and texture detail (`texture_lod_bias`; live: the sampler table is
   flushed, new samplers from then on; the old ones are kept to shutdown because cached descriptor sets may name them), aspect
   (live), internal resolution (**saved, applies at the next start**, marked on the row and in the status line). A key set
-  by an environment variable (`SSBU_WINDOW`, `SSBU_VK_PRESENT`, `SSBU_CUTSCENE_FPS`, `SSBU_VK_SCALE`,
-  `SSBU_TEXTURE_LOD_BIAS`) or by `profile = low` is shown greyed with the reason. Hook for a frame-rate cap (a study so far,
+  by an environment variable (`WT_WINDOW`, `WT_VK_PRESENT`, `WT_CUTSCENE_FPS`, `WT_VK_SCALE`,
+  `WT_TEXTURE_LOD_BIAS`) or by `profile = low` is shown greyed with the reason. Hook for a frame-rate cap (a study so far,
   above): one more row (with `optional`, it appears only when graphics.ini has its key) plus its live field in
   `gfx_option_set`.
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
@@ -1052,7 +1052,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
     the mod the row is named with the pause menu's "Options" and the log says how to make the text.
   The pause menu's hint (below) stays: it names F1 / Start + Select, which work everywhere.
   Runs (muted, hidden window, copies of the save and graphics.ini; `/tmp/shots/optionshook_*`): r3 with the virtual pad
-  (SSBU_SCRIPT) and r4 with keyboard events (SSBU_KBM_SCRIPT): pause -> Options -> R x3 -> Screen Display shows the
+  (WT_SCRIPT) and r4 with keyboard events (WT_KBM_SCRIPT): pause -> Options -> R x3 -> Screen Display shows the
   row (`optionshook_row_screen_display_en.png`); down x6 and A / Enter open the panel over the game's Options
   (`optionshook_panel_from_row.png`); down moves the panel, not the game; B / Backspace closes it, up / down then move
   the game's cursor (to the greyed Naive Angel Mode and back), A / Enter opens it again, B / Esc closes it (Esc = Plus
@@ -1062,9 +1062,9 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   lost the key-up of the Backspace that closed the panel (the host's key state kept B down until the next Backspace,
   so the game read an idle pad for 17 s); three more Backspace closes (r4, a title-screen run with every SDL key event
   logged) released normally. Cause not found; it was in the synthetic-event test path, a real key was not tried.
-  Labels, with an empty save and SSBU_LANGUAGE (the language of a save wins over it; title -> OPTIONS): zh-Hans,
+  Labels, with an empty save and WT_LANGUAGE (the language of a save wins over it; title -> OPTIONS): zh-Hans,
   zh-Hant, ko, ja, de, fr, es, it, ru all show their label in the list's font, the Latin "PC" of the Chinese and Korean
-  files included (`optionshook_labels_cjk.png`, `optionshook_labels_eu_and_fallback.png`); with SSBU_MODS=none the row
+  files included (`optionshook_labels_cjk.png`, `optionshook_labels_eu_and_fallback.png`); with WT_MODS=none the row
   reads "Options". From the title's Options the panel opened and closed as in a chapter; there, reaching Naive Angel
   Mode first shows its explanation (the game's code does that for row 23 when it is not greyed), which takes the input
   until B. Not tested: a real pad or keyboard (synthetic input only), en-GB / nl / pt (their files were changed and
@@ -1074,18 +1074,18 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Tests**: `tests/pcmenu_selftest.c` (the ini rewrite byte for byte in CRLF and LF files, duplicate keys, an appended
   key, live vs next-start keys, the rows' values, left / right at the ends, the panel at 1280x720, 1920x1080, 3840x2160).
   Game runs (muted, hidden window, copies of the save and of graphics.ini): the panel opened on the title by
-  `SSBU_PCMENU_OPEN` and by the F1 key of `SSBU_SCRIPT` ('p'), moved through with the scripted pad and keys; vsync and
+  `WT_PCMENU_OPEN` and by the F1 key of `WT_SCRIPT` ('p'), moved through with the scripted pad and keys; vsync and
   cutscene_fps changed live (the next cutscene ran at 60: "runs at 60 (cutscene_fps = 60)") and written to the file (only
   those lines differ); a resolution_scale change flagged "applies at the next start"; anisotropic filtering 8 -> 16 and
   texture detail 0 -> -0.5 made the samplers again (the line in graphics.ini changed, nothing else); at resolution_scale 2.4 in a 3840x2160 window (4800x2700 pixels at 125 %) the panel is sharp and
-  SSBU_WINDOW greys the size row. Through the pause menu: the hint appeared when it opened; F1 opened the panel over the
+  WT_WINDOW greys the size row. Through the pause menu: the hint appeared when it opened; F1 opened the panel over the
   game's Options screen, the scripted down / right moved the panel and not the game's Options cursor, the window size
   change made the hidden window 2000x1125 pixels (1600x900 at 125 %), and after closing B left the game's Options and the
   pause menu as usual. Pictures: `/tmp/shots/pcmenu_*.png` (title at 1.0, 4K at 2.4 with the next-start flag, the
   virtual-pad steps, the pause hint and the panel over the game's Options).
-- Test aids: `SSBU_PCMENU_SHOT=<folder>` (every panel change: the next presented picture, panel included, as
-  `pcmenu_<n>.bmp`; the swapchain gets TRANSFER_SRC when the surface offers it), `SSBU_PCMENU_OPEN=<s>`,
-  `SSBU_PCMENU_LOG=1`.
+- Test aids: `WT_PCMENU_SHOT=<folder>` (every panel change: the next presented picture, panel included, as
+  `pcmenu_<n>.bmp`; the swapchain gets TRANSFER_SRC when the surface offers it), `WT_PCMENU_OPEN=<s>`,
+  `WT_PCMENU_LOG=1`.
 - **With the keyboard and mouse branch (after the merge, 2026-10-25)**: the merged run that "did not close on the second
   F1" had script steps the kbm parser rejected (`RETURN`, `ESCAPE`, `W+2`: "kbm script: unknown input"), so Escape was never
   sent: F1 at 45 s opened, F1 at 55 s closed, F1 at 58 s opened, and nothing closed it again. Fixed on the way: (1) the
@@ -1104,7 +1104,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   Wayland window was confirmed by its new pixel size; fullscreen was not tried), Windows (not built), HDR output (the panel is
   copied into the 8-bit picture; shots are refused there). Movies keep their clock while the game is held, so a movie
   catches up (drops frames) after the panel closes.
-- Found on the way: `SSBU_LPROF` crashed the run once (glibc's `backtrace()` in the sampler's signal handler, interrupting
+- Found on the way: `WT_LPROF` crashed the run once (glibc's `backtrace()` in the sampler's signal handler, interrupting
   a RADV driver frame without unwind information); not changed here.
 
 ## PC settings as rows of the game's Options screen (2026-10-27)
@@ -1171,20 +1171,20 @@ Runs (muted, hidden window, copies of the save and of the user's graphics.ini; s
   menu dropped to 30 fps at once), resolution 1.0 -> 1.2 -> 1.6 -> 1.2 -> 1.0 ("applies at the next start", then "applied"
   back at 1.0). A on a row does nothing; X on a changed row restores its default (`reset_aspect_en`: Stretch -> Original,
   -1 -> 0); 15 rows wrap top <-> bottom (`cursor_wrap_15rows`).
-- **Keyboard** (SSBU_KBM_SCRIPT, `kbd_panel_from_row`, `kbd_after_panel_esc`): Enter / arrows / F (= R) to the page, Enter
+- **Keyboard** (WT_KBM_SCRIPT, `kbd_panel_from_row`, `kbd_after_panel_esc`): Enter / arrows / F (= R) to the page, Enter
   on PC Settings opens the panel, Up + Right there sets aspect = stretch, Esc closes and the Aspect Ratio row shows Stretch
   at once; Left / Right then change the rows. The keyboard's X is MOUSE1, whose first click captures the mouse: it did not
   reset (not looked into further).
 - **Pause menu in chapter 1** (Continue from the save copy; `pause_rows_en`, `pause_rows2_en`, `pause_back_to_game`):
   aspect, texture, anisotropic, vsync, cutscene changed and written; leaving Options wrote GameData.dat (new time stamp),
   **byte for byte the original**; SlotData untouched; B closed the pause menu, gameplay went on.
-- **Languages** (empty save + SSBU_LANGUAGE, `lang_*`): ja, zh-Hans, zh-Hant, ko, de, fr, es, it, ru show their labels and
+- **Languages** (empty save + WT_LANGUAGE, `lang_*`): ja, zh-Hans, zh-Hant, ko, de, fr, es, it, ru show their labels and
   values in the list's font; es / ru / it / fr / ja / zh-Hans again after shortening the values that overflowed (es
   "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto"), de (Randlos)
   and ko (전체 화면) again on the last build. **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
-  no digits, so our values are partly blank there too; pt has the same files (not run). SSBU_LANGUAGE=en-GB showed the
+  no digits, so our values are partly blank there too; pt has the same files (not run). WT_LANGUAGE=en-GB showed the
   Japanese text (the game's choice; gb not tested).
-- Without the mod (SSBU_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
+- Without the mod (WT_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
 - Tests: pcmenu self-test (the new key API: set / get by key, a value none of the row's refused, the file's lines), pad
   self-test 61/61, lifter check 382 + 25 words and 200 words / 4,000 cases: all pass.
 
@@ -1201,7 +1201,7 @@ RX 6600 on Windows gave about 63 ms a frame more (12 fps).
 - **Vertex stages with no step back** (every target is known: BRA, the tokens, the BRX tables) run their blocks once, in order:
   `do { if (pc != N) continue; ... } while (false);`, and a jump leaves its block. Vertex stages with a real loop keep the
   dispatcher, and so do fragment stages, whose quad reads depend on how a quad's lanes move through the blocks.
-- **`invariant gl_Position` is the rule now** (`SSBU_VK_INVARIANT=0` off). #3747 is a colour pass with a depth test for equality
+- **`invariant gl_Position` is the rule now** (`WT_VK_INVARIANT=0` off). #3747 is a colour pass with a depth test for equality
   after depth pass #620. Without the dispatcher between the sums the two compiled differently and #3747 lost a third of its
   fragments (8,327,501 to 5,541,822). With it the count is exact.
 - **Measuring**: GPU timestamps come out in order, so 8 overlapping draws look like one slow draw and seven near zero.
@@ -1253,7 +1253,7 @@ a value saved for the next start. The launcher never names the game: the code na
   push constants, a linear sampler with a transparent border; the annulus and the clip edge are `discard`s in the
   fragment stage), 16 art textures uploaded once from `pcmenu_art_pixels` (the staging buffer freed at the next
   job), the layer textures made again at a new size (`pcm_gpu_canvas`, after `cmd_wait_all`). `pcmenu_gpu(1)` stops
-  the CPU path's 30 frames a second; `SSBU_PCMENU_CPU=1` keeps it, and so does a refused pipeline (the log says which).
+  the CPU path's 30 frames a second; `WT_PCMENU_CPU=1` keeps it, and so does a refused pipeline (the log says which).
   The hint is still copied as drawn. Verified on lavapipe (`tests/pcmenu_vk/`: the GPU picture against the CPU
   composition at the same clock, under the Khronos validation layer, no messages): mean channel difference 0.05-0.07
   at 720p, 1080p and 800x450, the worst pixels at ring edges; the first-start screen the same (its only difference
@@ -1315,9 +1315,9 @@ Discord without an error.
 ## Performance report (2026-10-26)
 
 **Method**: `wtbuild perf-bench run <scene> <scale>` then `wtbuild perf-bench report <run dirs>` (`tools/wtbuild/src/perf_bench.rs`). Each run: a copy of the save, audio
-muted, the committed `config/graphics.ini` (`SSBU_GRAPHICS_CONFIG`), output 1600x900 / 2560x1440 / 3840x2160 for scale
-1.0 / 1.6 / 2.4. Frame times from `SSBU_FRAMETIMES`, GPU ms per frame from Vulkan timestamps (`SSBU_VK_GPUTIME=1` +
-`SSBU_GPUTIMES`: the spans of the frame's command buffers), CPU ms a frame per thread from `/proc/self/task/*/stat` (the
+muted, the committed `config/graphics.ini` (`WT_GRAPHICS_CONFIG`), output 1600x900 / 2560x1440 / 3840x2160 for scale
+1.0 / 1.6 / 2.4. Frame times from `WT_FRAMETIMES`, GPU ms per frame from Vulkan timestamps (`WT_VK_GPUTIME=1` +
+`WT_GPUTIMES`: the spans of the frame's command buffers), CPU ms a frame per thread from `/proc/self/task/*/stat` (the
 `nvn_perf` lines, now on Linux too). The run records the load average and GPU busy % before and after and the other
 processes with the GPU open (`meta.json`). It holds `/tmp/b3_bench.lock` while it runs and waits while someone
 else's lock or any "Witch Time" process is there. Scenes: *shibuya* (the street fight, fight pattern from 40 s, 330 s),
@@ -1347,15 +1347,15 @@ jobs → render → present (waits, not one busy thread). The GPU is under 8 ms 
 where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bound.
 
 **The items**:
-- **4K cutscene at 57 fps**: GPU 7.45 ms a frame on average (`SSBU_VK_PASSTIME=1`): the depth prepass at 2458x1382 31 %,
+- **4K cutscene at 57 fps**: GPU 7.45 ms a frame on average (`WT_VK_PASSTIME=1`): the depth prepass at 2458x1382 31 %,
   the 3456x1958 scene 29 %, a 2458x1382 R11G11B10 pass 12 % (cutscenes render from a 1024x576 base). New test aid
-  `SSBU_VK_PASSWHY=1`: render passes are ended by `OP_TARGETS` in the replay (919k) and by `resolve_sampler` (391k).
+  `WT_VK_PASSWHY=1`: render passes are ended by `OP_TARGETS` in the replay (919k) and by `resolve_sampler` (391k).
   Keeping the pass open when the same targets are set again was tried and measured interleaved (2 + 2 runs): GPU p50 9.0
   ms either way, 84.5 / 84.2 % at 60 without against 83.5 / 83.7 % with (only 34k such repeats); not kept. Not fixed:
   with 15-20 % of the GPU busy from other programs, GPU p99 is about 16 ms. Scale 1.6 holds 97 % at 60.
 - **The 80-105 ms frame** is the first frame after the game-over screen ("The Witch Hunts Are Over": the scripted fight
   dies about every 37 s, the checkpoint retry reloads the area, and the tessellated scenery comes back with it). GPU time
-  of that frame is a normal 2.4 ms. The sampler (`SSBU_LPROF`) showed threads waiting on the `nobj` table lock (the main
+  of that frame is a normal 2.4 ms. The sampler (`WT_LPROF`) showed threads waiting on the `nobj` table lock (the main
   and job threads querying buffers and pools from `7100d0b7d0`), the jobs join and sync waits. **Lock-free `nobj`
   lookups** (`nvn_stub.c`): those frames 80-86 ms against 88-92 before (Tokyo 1.0; the lockfree run 59.8 fps, 99.5 % at
   60 at load 3). The rest is the game's own reload work in lifted code.
@@ -1378,7 +1378,7 @@ PC panel's "Picture fit" now. Checked at 21:9: a 2100x900 window (2625x1125 pixe
 start"). Wider than 16:9 shows more at the sides (Hor+), narrower more above and below (Vert+); the interface stays
 a 16:9 block in the middle (it is drawn with the same cameras). Checked on the title screen at 9:10, 1.85, 2.0, 21:9
 (2100x900) and 32:9 (3200x900), resolution_scale 1.0 and 1.2; `aspect = keep` puts the result in the window.
-**In game** (the save, `SSBU_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
+**In game** (the save, `WT_PRESS=Z,25,3`, 240 s: title, Shibuya free roam, a radio-call subtitle, a cutscene, a summon,
 the fight with the HUD; 16:9, 21:9, 32:9, 9:10; muted, frames every 600 saved): no crash, 10,177-10,282 frames presented
 in each (the same as 16:9); the 3D view is Hor+ (32:9: much more of the street at the sides) or Vert+ (9:10: more sky
 and street); the cutscene fills the screen (no bars); subtitles, "Break Free" prompts and the boss's bar stay centred.
@@ -1404,7 +1404,7 @@ settings panel. It writes `hud_area` and applies at once (`game_hud_centre`, exp
 without the screen scale; every other scale or ratio uses one other set (the factors are push constants), which the first
 such run translated behind held loading screens. Measured on the 4-minute route (title, Shibuya, a fight; empty cache):
 16:9 20.9 / 22.7 s of holds; 21:9 after that 29.5 s more (3,755 fragment stages; the driver's pipelines are a few ms of
-it). Now (`nvn_vk_m4.c` `rs_pre_*`, `SSBU_VK_RS_PREP=0` off) each fragment stage of an unscaled run is copied and its scaled
+it). Now (`nvn_vk_m4.c` `rs_pre_*`, `WT_VK_RS_PREP=0` off) each fragment stage of an unscaled run is copied and its scaled
 translation written to the cache by one thread at the lowest priority, which waits while the workers have jobs or a fight
 is near (without that wait it added 3-5 s to the 16:9 first run: 25.9 s twice). Measured: 16:9 first run 21.4 s of holds
 (2,623 of the 3,755 made ahead in its 4 minutes; the exit line says how many); 21:9 after it 7.0 s (the 1,132 not
@@ -1415,7 +1415,7 @@ frame's Y plane (R8, 1600x900) and UV plane (RG8, 800x450); the game's draw call
 width and height to `0x7100cbbe50/60/70`) goes to empty functions. At 21:9 the picture was stretched (the moon an oval).
 Now (`nvn_vk_draw.c` `g_movie_draw`) a draw that samples an R8 texture of the game's 16:9 screen size into a window texture
 of another shape keeps a centred 16:9 box and the rest is cleared to black. Checked on the opening movie (a new game,
-`SSBU_USERDATA` empty): 21:9 pillarboxed, the moon round, subtitles inside the picture; 9:10 letterboxed, the subtitles in
+`WT_USERDATA` empty): 21:9 pillarboxed, the moon round, subtitles inside the picture; 9:10 letterboxed, the subtitles in
 the black band below (they are placed by the screen's height, not by the interface's 16:9 area).
 
 **Witch Time** (the full-screen effect): `RECOMPS_TEST_WITCHTIME=<s>[,<s>...]` (test only, `game_shim_eh.c`) starts it
@@ -1501,7 +1501,7 @@ From `graphics.ini`: 21:9 at scale 2.0 (dialog, the ride's filter), 16:10 at sca
 the second start translated no fragment stage. The ride's prompts and HUD were seen at 21:9; the band of noise as its fight starts
 is the game's own wipe, 16:9 has it too. Game Over at 21:9, 32:9 and 9:10: no step at the old edges beyond the picture's own (1.3
 levels at most); the Practice loading screen at 21:9, also at scale 2.0: 0.7 / 255 at most; the rule at 21:9, 32:9, unmoved at 9:10.
-UK English (`SSBU_LANGUAGE=en-GB`, a language with 144 layouts of its own) at 21:9: Main Menu, Practice, the ride; its Game Over not seen.
+UK English (`WT_LANGUAGE=en-GB`, a language with 144 layouts of its own) at 21:9: Main Menu, Practice, the ride; its Game Over not seen.
 Not seen since: the verse result, the cutscene
 bars on the ride (not in its first 110 s), the stick-aim cursor, Windows.
 
@@ -1560,7 +1560,7 @@ Next: a run on a 21:9 monitor.
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
 
 1. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
-   Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
+   Select → Prologue, Chapter Select → chapter 1). An `WT_SEQ` with `@draws` anchors would make it reproducible.
 2. **Long frames left in Tokyo** (section "Performance report"): trains of 45-50 ms in a tree walk of lifted code, one
    80-86 ms frame at the game-over retry reload. Fights and Tokyo otherwise hold 60 (98 % of frames); the 4K cutscene at
    60 is partly GPU-bound (57 fps).
@@ -1569,7 +1569,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
 6. **First-run warm-up**: minutes of held loading screens after a translator change.
-7. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
+7. The static scene after `WT_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
    `nn::audio` Resampler imports (not reached), about 170 other imports without a handler (none reached).
 
 ## Known shortcuts (marked `shortcut:` in the code)

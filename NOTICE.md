@@ -22,10 +22,9 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 |---|---|---|---|
 | `runtime/` | [ssbu-recomp](https://github.com/Denkishi/ssbu-recomp) `runtime/`, commit `3a96916` (2026-10-16), by Denkishi | GPL-3.0-or-later | Marked `[Recomps#1]` in the code; listed with dates in `runtime/UPSTREAM.md`; Smash-only files removed (same file) |
 | `tools/wtbuild/src/lifter/mod.rs`, `tools/wtbuild/src/lifter/eh.rs` | A Rust port of ssbu-recomp `tools/lifter/recomp.py` and `recomp_eh.py`, same commit (copied as `lifter/recomp.py`, `lifter/recomp_eh.py`, removed 2026-11-02) | GPL-3.0-or-later | Marked `[Recomps#1]` / `[witchtime]`; listed in `lifter/README.md` |
-| `runtime/gen_static/quad_tests.h` | Output of ssbu-recomp `tools/lifter/gen_quad_tests.py`, same commit (binary128 test vectors, game-independent, seed 20261008); the generator was copied as `lifter/gen_quad_tests.py`, removed 2026-11-02 | GPL-3.0-or-later | None |
 | `tools/wtbuild/src/nso.rs` | A Rust port of ssbu-recomp `tools/extract/nso2elf.py`, same commit (NSO to ELF, LZ4 only, no keys; copied as `tools/extract/nso2elf.py`, removed 2026-11-02) | GPL-3.0-or-later | None (writes the same ELF) |
 | `runtime/mx_ops.h` (via ssbu-recomp) | Generated from suyu `src/video_core/.../maxwell.inc` (Maxwell opcode table) | GPL-3.0-or-later (suyu) | None by us |
-| `runtime/mx_translate.c`, `runtime/nnalbum.c`, `runtime/nnapplet.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
+| `runtime/mx_translate.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
 | `runtime/tex_decode.c` (via ssbu-recomp) | Tables from the Khronos Data Format Specification (BCn / ASTC) | Specification | — |
 | `runtime/third_party/stb_truetype.h` | [stb](https://github.com/nothings/stb) `stb_truetype.h` v1.26, by Sean Barrett | Public domain or MIT (the file's own text) | None |
 | `runtime/third_party/NotoSerif-pcmenu.ttf` | Noto Serif Regular 2.015 (The Noto Project Authors), the PC menu's font | SIL Open Font License 1.1 (`runtime/third_party/OFL-NotoSerif.txt`) | Subset to Latin-1 and a few punctuation marks (`pyftsubset`, kerning kept, hinting removed) |
@@ -59,14 +58,14 @@ No code is copied from these; they are named in comments as the source of number
 | llvm-mingw (LLVM / clang 23.1.2, lld, mingw-w64 headers and runtime), the default toolchain | 20260922 | LLVM: Apache-2.0 with LLVM exception; mingw-w64: ZPL 2.1, public domain and others (`COPYING.MinGW-w64-runtime.txt`) |
 | SDL3 | 3.4.18 | zlib |
 | Vulkan-Headers | vulkan-sdk-1.4.341.0 | Apache-2.0 / MIT |
-| glslang (built into `ssbu_glslang.dll`) | 16.6.0 | BSD-3-Clause, Apache-2.0 and others (see its LICENSE.txt) |
+| glslang (built into `wt_glslang.dll`) | 16.6.0 | BSD-3-Clause, Apache-2.0 and others (see its LICENSE.txt) |
 | LLVM / clang (optional MSVC build, `--toolchain msvc`) | 9.0.0 | Apache-2.0 with LLVM exception |
 | unicorn-engine (Rust crate, only in `tools/lifter-check`, a developer's check never built for or shipped to players) | 2.1.5 | GPL-2.0 |
 
 The game is never distributed in any form: every player builds it locally with `wtbuild setup` (`tools/wtbuild`; the launcher runs it). The **builder
 package** (`scripts/make_package.py`) contains this source plus the tools above in `deps\` (llvm-mingw trimmed to x86_64,
-Python with lz4 and Pillow, SDL3, Vulkan-Headers, `ssbu_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
-needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `ssbu_glslang.dll` is the one program of ours
+Python with lz4 and Pillow, SDL3, Vulkan-Headers, `wt_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
+needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `wt_glslang.dll` is the one program of ours
 in it in compiled form (`runtime/vk_glslang_shim.c` linked with glslang and SPIRV-Tools); its corresponding source is
 in the package itself (GPL-3.0 section 6), plus glslang 16.6.0's public source. A build with
 llvm-mingw links parts of the MinGW-w64 runtime into `witch-time-game.exe` and `launcher.exe`; the build copies the

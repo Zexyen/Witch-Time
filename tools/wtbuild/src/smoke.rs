@@ -213,11 +213,11 @@ fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[Path
         }
         None => Command::new(&game),
     };
-    // not setup::child_env: it would remove SSBU_ROMFS
+    // not setup::child_env: it would remove WT_ROMFS
     cmd.arg(&main_elf).current_dir(&run_dir);
     cmd.env("SDL_VIDEO_DRIVER", "offscreen")
         .env("SDL_AUDIO_DRIVER", "dummy")
-        .env("SSBU_ROMFS", tmp.join("romfs"));
+        .env("WT_ROMFS", tmp.join("romfs"));
     let (_, text, _) = compile::run(&mut cmd, Some(60));
     let mapped: Vec<&str> = text
         .lines()

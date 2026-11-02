@@ -1,23 +1,23 @@
 /* Round 17 (track V session 17), TEST ONLY: the inputs of every draw of ONE tagged game frame, printed the same way by both
  * back ends, so that a draw that paints wrongly in Vulkan can be compared with the same draw in OpenGL.
- *   SSBU_DRAWTAG=1 with SSBU_SHOT_FIGHT=<n>[,..]: the submissions of the game frame whose present is saved as fight_<n>.bmp
+ *   WT_DRAWTAG=1 with WT_SHOT_FIGHT=<n>[,..]: the submissions of the game frame whose present is saved as fight_<n>.bmp
  *   are tagged (nvn_gl.c queue_submit, on the game's thread); every draw command of them prints one "DT" line:
  *   command data, hashes of the bytes in GUEST memory at the moment the back end prepares the draw (index range, every
  *   vertex stream an attribute names, every uniform / storage range), the program codes' hashes, the vertex layout.
- *   SSBU_DRAWTAG_DUMP=<i>[,<i>..]: the raw bytes of those draw numbers go to files dt_<back end>_<fight>_<draw>_*.bin in
- *   SSBU_SHOT_DIR. Nothing here runs unless SSBU_DRAWTAG is set. No game content. */
+ *   WT_DRAWTAG_DUMP=<i>[,<i>..]: the raw bytes of those draw numbers go to files dt_<back end>_<fight>_<draw>_*.bin in
+ *   WT_SHOT_DIR. Nothing here runs unless WT_DRAWTAG is set. No game content. */
 #ifndef NVN_DT_H
 #define NVN_DT_H
 static uint64_t dt_fnv(const void *p, size_t n) { const uint8_t *b = p; uint64_t h = 0xcbf29ce484222325ULL; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001B3ULL; return h; }
 static int dt_dump_wanted(int idx) {
     static int list[64], n = -1;
-    if (n < 0) { const char *e = getenv("SSBU_DRAWTAG_DUMP"); n = 0; while (e && *e && n < 64) { list[n++] = atoi(e); e = strchr(e, ','); if (e) e++; } }
+    if (n < 0) { const char *e = getenv("WT_DRAWTAG_DUMP"); n = 0; while (e && *e && n < 64) { list[n++] = atoi(e); e = strchr(e, ','); if (e) e++; } }
     for (int i = 0; i < n; i++) if (list[i] == idx) return 1;
     return 0;
 }
 static void dt_dump(const char *be, int fight, int idx, const char *what, int a, int b, const void *p, size_t n) {
     char path[400];
-    const char *dir = getenv("SSBU_SHOT_DIR");
+    const char *dir = getenv("WT_SHOT_DIR");
     snprintf(path, sizeof path, "%s%sdt_%s_%05d_%04d_%s%d_%d.bin", dir ? dir : "", dir ? "/" : "", be, fight, idx, what, a, b);
     FILE *fp = fopen(path, "wb");
     if (fp) { fwrite(p, 1, n, fp); fclose(fp); }

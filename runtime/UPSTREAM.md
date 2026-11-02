@@ -6,16 +6,16 @@ Every edit in a copied file is marked `[Recomps#1]`.
 ## Removed (Smash-only)
 | File | What it was | Replaced by |
 |---|---|---|
-| `nnro.c` (+ `fighter_sdk/*_host.c`, generated `nro_registry.c`) | `nn::ro` lua2cpp script modules | stand-ins in `r0_removed.c` (our main imports no `nn::ro`) |
+| `nnro.c` (+ `fighter_sdk/*_host.c`, generated `nro_registry.c`) | `nn::ro` lua2cpp script modules | — (our main imports no `nn::ro`) |
 | `nro_shim.c`, `nro_shim_r1.c`, `game_shim_r1.c` | module / rollback DLL shims | — |
-| `r1_state.c`, `r1src/` | Smash simulation save/restore (run-ahead, rollback) | stand-ins in `r0_removed.c` |
+| `r1_state.c`, `r1src/` | Smash simulation save/restore (run-ahead, rollback) | — |
 | `loose_files.c`, `loose_host.c` | fighter-mod loose files | — |
-| `debug_mode.c` | Smash battle test mode | stand-ins in `r0_removed.c` |
+| `debug_mode.c` | Smash battle test mode | — |
 | `nnmii.c` | `nn::mii` | — (our main imports none of it; 2 calls in `nnsdk2.c` commented out) |
 | `host.c` | early feasibility demo, not part of their build | — |
 
 Kept although test/diagnostic only: `hitch.c` (frame-timing log, woven into renderer/fs/threads), `prof15.c`
-(`#include`d by `boot.c`; its Smash `FighterManager` lookup goes through `hook_address`, which returns 0 here).
+(`#include`d by `boot.c`; wall-time window only, since upstream's fight trigger read Smash's `FighterManager`).
 
 ## Changed
 - `runtime.h`: `Ctx` gains `uint64_t ex_val2` (128-bit exclusives, `rt_ext.h`). Must stay identical to what the lifted DLL was compiled with.
@@ -31,20 +31,37 @@ Kept although test/diagnostic only: `hitch.c` (frame-timing log, woven into rend
 - `nnsdk2.c`: `nn::mii` registration and self-test commented out.
 
 ## Generated (`gen/`, by the tables step, `wtbuild tables`)
-`image_layout.h`, `imports_all.txt`, `sdkdata.c` (8 `nn::util` constants from our sdk), `quad_tests.h`, `eh_tests.h` (empty:
-no exception tables in our main), `sdktest_data.h` (deflate + JPEG only), empty audit lists, and `sdklift_gen.c` /
+`image_layout.h`, `imports_all.txt`, `sdkdata.c` (8 `nn::util` constants from our sdk), empty audit lists, and `sdklift_gen.c` /
 `sdklift_install.h` / `sdklift_report.txt`: the SDK functions lifted from our sdk (`tools/wtbuild/src/sdklift.rs`; roots in
 `lifter/sdklift_roots.txt`, installed over the imports in `lifter/sdklift_install.txt`; on 2026-10-16 61 functions,
-4,662 instructions, about 385 KB of C). `targets/exefs/sdk.elf` is written too. `quad_tests.h`, `eh_tests.h`,
-`sdktest_data.h` and the audit lists do not depend on the dump: they are copies of `gen_static/` (its README). The rest
+4,662 instructions, about 385 KB of C). `targets/exefs/sdk.elf` is written too. The audit lists do not depend on the
+dump: they are copies of `gen_static/` (its README). The rest
 of `gen/` is made from the player's own dump and is never committed or published. The tables step was
 `gen/make_gen.py` (with `lifter/sdklift.py`) until 2026-11-02, the name the dated entries below use; it is now
 `tools/wtbuild/src/tables.rs` and `sdklift.rs`.
 
 ## Known Smash leftovers, not yet dealt with
-- `cxxrt_selftest.h`: exception self-test checks Smash addresses (only runs with `SSBU_SDK_SELFTEST`).
-- Environment variables keep their `SSBU_*` names.
-- Handlers written against Smash's SDK: checked one by one in R2 (see `notes/step3-plan.md`).
+- `[sdk 0x...]` citations: offsets in upstream's (Smash 13.0.4) sdk.elf, except where re-derived for ours (`nvn_sdk.c`).
+- `WT_SDK_SELFTEST`: `__errno_location` is one global (`nnsdk.c`), not the thread block's +0x1d8 the test expects.
+
+## Smash leftovers removed (2026-11-02)
+Handlers for imports our main does not have: every import-table entry whose name main.elf does not import (737
+entries), then every function, variable and macro that left unused, and the self-test cases that called them (about
+8,200 lines with the generated test vectors). Gone whole: `nnalbum.c` (album, movie maker) with the renderers' movie-maker present job,
+`nnapplet.c` (web, software keyboard, shop, amiibo), `nnlibc2_c5b.inc` (musl stdio lifted from Smash's SDK; ours is
+not lifted), the binary128 soft-float arithmetic, `gen_static/quad_tests.h`, `sdktest_data.h` and
+`lifter/gen_quad_tests.py`. Both self-tests now run to the end on our main (`WT_CXXRT_SELFTEST` 79 checks, none
+failed).
+`r0_removed.c` and every call of its stand-ins (rollback / run-ahead R1 with the `runahead` option, `nn::ro` modules,
+fighter hooks, battle debug mode); the self-tests on Smash addresses (`nnmisc.c` Lua, `nnsdk2.c` EH main test, the
+exception-table, module, unwinder and ostringstream tests of `cxxrt_selftest.h`, `gen/eh_tests.h`); `WT_FIXED_SEED`'s
+clock reads at Smash return addresses (its random-bytes half stays); `WT_MOVIE_TEST_RESYNC`; the movie pre-roll log at
+a Smash address; `nvn_vk_m4.c` game tables; `nvn_vk_store.c`'s data.arc + zstd store (the root_000.pkz store stays);
+`boot.c`'s map dump; the program hook at Smash's FUN_71000382a0 in `nvn_gl.c`. `R1M` (dirty-page marks) in `runtime.h`, `neon.h`,
+`rt_ext.h` (the lifted game recompiles once: same code, new header hash). Comments citing Smash's main (`[game 0x71...]`). Retargeted to our main:
+`cxxrt_selftest.h` mode 2 boot and RTTI range, `nnmisc.c` close5 image-protection check. Renamed: `ssbu_glslang` ->
+`wt_glslang` (exports `wt_glsl_to_spirv` / `wt_spirv_free`), Vulkan application name `witch-time`, save mutex,
+self-test temp folders; the `ssbu_native.exe` / `ssbu_user.exe` window and sound rules dropped.
 
 ## Build
 `wtbuild setup --dump <dump>` (`tools/wtbuild/README.md`): its compile step builds the lifted main into `build/obj`, its
@@ -53,16 +70,14 @@ link step links `build/game.so` (`game.dll` on Windows) and builds the runtime, 
 The Python build this replaced (`scripts/setup.py`, `compile_main.py`, `build_runtime.py`, `toolchain.py`, removed
 2026-11-02; the dated entries below name it): `python scripts/compile_main.py 16` (lifted main → `build/obj`), then
 `python scripts/build_runtime.py` → `build/game.dll`, `build/witch-time-game.exe`, `build/SDL3.dll`,
-`build/ssbu_glslang.dll`.
-Dependencies (2026-10-16: found through an environment variable or `deps/<name>`, `scripts/toolchain.py`; no fixed paths): SDL3 3.4.18 VC, Vulkan-Headers vulkan-sdk-1.4.341.0, glslang 16.6.0 (+ MSVC for `ssbu_glslang.dll`), llvm-mingw 20260922 (default) or clang 9 + MSVC 14.51. One entry point: `python scripts/setup.py --dump <dump>`.
+`build/wt_glslang.dll`.
+Dependencies (2026-10-16: found through an environment variable or `deps/<name>`, `scripts/toolchain.py`; no fixed paths): SDL3 3.4.18 VC, Vulkan-Headers vulkan-sdk-1.4.341.0, glslang 16.6.0 (+ MSVC for `wt_glslang.dll`), llvm-mingw 20260922 (default) or clang 9 + MSVC 14.51. One entry point: `python scripts/setup.py --dump <dump>`.
 
 ## R1 changes (2026-10-16)
 - `boot.c`: `NNINIT_STARTUP` / `NN_MAIN` from our main's exports (`image_layout.h`), not Smash's 0x2c55e0 / 0x2c5620.
 - `libcxx.c`, `nncxxlib.c`, `nnmovie_mf.c`: the game allocator is our main's exported `aligned_alloc` / `free`
   (Smash: 0x710392dce0 / 0x710392e590).
-- Still pointing into Smash's image (only reached by tests or later features): `nnmisc.c` Lua self-test,
-  `nnmovie_mf.c` resync test (0x7107446040), `nvn_vk_m4.c` game tables, `nvn_vk_store.c` zstd (data.arc store),
-  `nnsdk2.c` EH main test, compare-only return addresses in `nnsdk.c`, `os_threads.c`, `nvn_gl.c`.
+- What still pointed into Smash's image (test-only paths) was removed on 2026-11-02 (section above).
 
 ## R2 changes (2026-10-16)
 - `r2_imports.c` (new): nn::os heap (QueryMemoryInfo, SetMemoryHeapSize, AllocateMemoryBlock, SetMemoryAllocatorForThreadLocal),
@@ -77,7 +92,7 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
   format table 0x923078). Raw storage class functions trap (not in 3.6.0). Lifted code from lifter/sdklift.py (roots in
   lifter/sdklift_roots.txt) via `runtime/gen/make_gen.py`.
 - `nvn_sdk.h`: format-table comment.
-- `nnsdk2.c`: `RECOMPS_NVN_SELFTEST=1` (with SSBU_SDK_SELFTEST=1) runs only the nvn_sdk checks.
+- `nnsdk2.c`: `RECOMPS_NVN_SELFTEST=1` (with WT_SDK_SELFTEST=1) runs only the nvn_sdk checks.
 - `nvn_vk_m4.c`: `g_game_tables` defaults to 0 (Smash 13.0.4 offset tables outside our image).
 - `r2_imports.c`: nn::vi::SetLayerScalingMode.
 - `gen/make_gen.py`: `sdklift_install.h` from `lifter/sdklift_install.txt` (imports whose host handler is replaced by lifted
@@ -102,24 +117,24 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
   reset / report) replayed when the fence has signalled (slot_wait in submission order, oq_poll at batch start and when
   idle), so a report never stalls the CPU and lands before any later sync is seen as signalled. vk_sync_wait now lands
   through slot_wait. Other counter types still stop the game (named).
-- `display.c`: window title "Bayonetta 2 (Study Build)" (SSBU_TITLE still overrides), class `bayonetta2_study_window`;
-  `witch-time-game.exe` gets an on-screen window with a taskbar button by default (SSBU_SHOW=0 hides it, as for test copies).
+- `display.c`: window title "Bayonetta 2 (Study Build)" (WT_TITLE still overrides), class `bayonetta2_study_window`;
+  `witch-time-game.exe` gets an on-screen window with a taskbar button by default (WT_SHOW=0 hides it, as for test copies).
 - `nnapplet.c`: software keyboard dialog title "Software keyboard (Bayonetta 2 Study Build)".
 - `nvn_gl.c`: nvnWindowSetPresentInterval changes are logged.
-- `os_threads.c`: sleep_ns yields until the deadline for sleeps ≤ 200 µs (SSBU_SHORT_SLEEP_US; 0 = timer always): the
+- `os_threads.c`: sleep_ns yields until the deadline for sleeps ≤ 200 µs (WT_SHORT_SLEEP_US; 0 = timer always): the
   game's job join sleeps 1 ns per check, which took 2–3.5 ms on the waitable timer.
 - `nnaudio.c`: witch-time-game.exe is audible by default (test copies under other names stay silent).
 - `nvn_vk_draw.c`: read-back buffers (usage TRANSFER_DST only) prefer HOST_CACHED memory; the first 4 large read-backs
   are timed in the log; save_bmp_vk writes the BMP on a worker thread (the screenshot no longer costs the frame ~19 ms).
 - `nvn_vk_draw.c`: resolution scale: the screen-class size comes from the game's window texture (nvn_vk_rs_base,
-  called by nvn_gl.c win_initialize; default 1280x720) instead of a fixed 1920x1080; SSBU_VK_PASSLOG=1 prints every
+  called by nvn_gl.c win_initialize; default 1280x720) instead of a fixed 1920x1080; WT_VK_PASSLOG=1 prints every
   distinct pass layout once. Scaling Bayonetta 2 lost the 3D scene (finding 82; fixed, finding 83).
 - `config/graphics.ini`: resolution_scale text for Bayonetta 2 (1280x720; finding 83: works, measured).
 - `nvn_vk_draw.c`: resolution scale above 1.0 (finding 83): `rs_rect` (scissor / clear rectangles on scaled images)
   computes in double and clamps before the conversion to int; the game's "unbounded" scissor 0,0,2147483647,2147483647
   times 1.5 overflowed to an empty rectangle, so its depth clears did nothing and the whole 3D scene failed the depth
   test. `rs_edge` clamps before the conversion too.
-- `nvn_vk_draw.c`: TEST ONLY `SSBU_VK_DUMPTEX=<frame>,<w>x<h>,<fmt hex>[,<max>]` (+ `SSBU_VK_DUMPDIR`): in one presented
+- `nvn_vk_draw.c`: TEST ONLY `WT_VK_DUMPTEX=<frame>,<w>x<h>,<fmt hex>[,<max>]` (+ `WT_VK_DUMPDIR`): in one presented
   frame, copies every image of that game size / format out after each pass that targeted it and after each copy /
   downsample / ClearTexture into it, written at that frame's present with an index of every pass (targets, sizes,
   scissor, viewport). Off unless set (one flag test per pass end). `scripts/dumptex_compare.py` compares two dumps.
@@ -130,7 +145,7 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
 - `nnfs.c`: read_at touches one byte per page read (write-watch sees pages filled by ReadFile).
 - `display.c`: the window class takes icon resource 1 of the exe (big and title-bar size; the game's own icon, linked by
   scripts/build_runtime.py from build/bayonetta2.ico = scripts/make_icon.py); without the resource the window has none, as before.
-- `display.c`, `nnapplet.c`: project name **B2recomp** (2026-10-16): window title "B2recomp" (SSBU_TITLE still overrides), class
+- `display.c`, `nnapplet.c`: project name **B2recomp** (2026-10-16): window title "B2recomp" (WT_TITLE still overrides), class
   `b2recomp_window`, software keyboard dialog "Software keyboard (B2recomp)" (replace "Bayonetta 2 (Study Build)",
   `bayonetta2_study_window`, "Software keyboard (Bayonetta 2 Study Build)"; notes/release-audit.md, "Project name").
 - Keyboard and mouse (finding 106, 2026-10-17): `nnpad_sdl.c` [keyboard] takes two keys per button ("E, MOUSE3";
@@ -146,8 +161,8 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
   back from the game: display_mouse_hold, read by nnhid.c kb_down); Esc lets it go; borderless / fullscreen capture at once.
 - Render thread cost per draw (finding 93): `nvn_vk_draw.c` keeps a shadow of the dynamic state recorded into the
   current command buffer and records only values that changed (forgotten at cmd_begin and after the internal stencil
-  clear; `SSBU_VK_DYNSHADOW=0` = old behaviour); the set-0 descriptor writes are filled whole instead of a 12 KB memset
-  per draw; TEST ONLY `SSBU_VK_PREPTIME=1` prints draw preparation per step. `nvn_vk_m4.c` pipe_get returns the
+  clear; `WT_VK_DYNSHADOW=0` = old behaviour); the set-0 descriptor writes are filled whole instead of a 12 KB memset
+  per draw; TEST ONLY `WT_VK_PREPTIME=1` prints draw preparation per step. `nvn_vk_m4.c` pipe_get returns the
   pipeline of the draw before when the key is the same (no hash, no lock). `nvn_gl.c` ww_newest offers GetWriteWatch a
   list as long as the range has pages (the call's time follows the list length: 4.9 -> 1.2 us per texture question).
 
@@ -169,7 +184,7 @@ disassembly of all 44 host objects is identical before and after):
   the stack pointer is in committed, readable memory with 512 bytes above it before each unwind step.
 - `nnmovie_mf.c`: under `__MINGW32__` the SDK's prototype of `MFCreateMFByteStreamOnStream` (missing from mingw-w64's
   `mfidl.h`; `libmfplat.a` exports it), and `__atomic_fetch_or` instead of `InterlockedOr8` in the TEST-only
-  `SSBU_MOVIE_TEST_RESYNC` (no `_InterlockedOr8` intrinsic in mingw).
+  `WT_MOVIE_TEST_RESYNC` (no `_InterlockedOr8` intrinsic in mingw).
 - Build side (scripts/toolchain.py, `TOOLCHAIN=mingw`): `-D_WIN32_WINNT=0x0A00`, `-lopengl32 -lws2_32 -ladvapi32 -luuid`
   (what `#pragma comment(lib)` and MSVC's default `uuid.lib` give the MSVC build), mingw link options.
 
@@ -223,7 +238,7 @@ list), `gen/make_gen.py` (layout from DYNAMIC, DT_INIT, NVN 13.3.2 device answer
 ## Witch Time
 - `boot.c`, `display.c`, `nnapplet.c`, `nnnet_c4a.inc`: name **Witch Time** (B3 Recomp from 2026-10-23, renamed 2026-10-27), so it does not clash with B2recomp's:
   process name (`prctl(PR_SET_NAME)`, Linux; threads inherit it), SDL app metadata (name "Witch Time", app id `witchtime`),
-  window title "Witch Time" (SSBU_TITLE still overrides), class `witchtime_window`, software keyboard dialog
+  window title "Witch Time" (WT_TITLE still overrides), class `witchtime_window`, software keyboard dialog
   "Software keyboard (Witch Time)", the online-mode message box.
 - 2026-10-28, aspect ratios (`[witchtime]`, docs/STATUS.md "Aspect ratios"): `gfx_options.c|h` `aspect_ratio` (handed on as
   RECOMPS_ASPECT); `r2_imports.c` more application memory for the wider render-target heap; `nvn_vk_draw.c` 16:9 targets in a

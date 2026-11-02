@@ -1,4 +1,4 @@
-//! `wtbuild lprof`: the report of an SSBU_LPROF sample file (runtime/lprof.c, Linux).
+//! `wtbuild lprof`: the report of an WT_LPROF sample file (runtime/lprof.c, Linux).
 //! Per thread, the functions most often innermost ("self") and anywhere in the sampled chain ("incl", once per sample).
 //! PCs are named from the mapped files' own symbol tables, the ones `nm` lists (lifted functions are f_<guest address>).
 

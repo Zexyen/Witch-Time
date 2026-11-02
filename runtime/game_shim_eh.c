@@ -58,10 +58,10 @@ void h_rebind_pads(Ctx *c) {
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     const uint8_t *r = rebind_cur(c);
     if (!r) return;
-    {   /* test aid: SSBU_REBIND_LOG=1, player 1's buttons at every change, as the pad has them and as gameplay gets them */
+    {   /* test aid: WT_REBIND_LOG=1, player 1's buttons at every change, as the pad has them and as gameplay gets them */
         static int on = -1; static uint32_t last;
         uint32_t w = *(uint32_t *)(uintptr_t)copies[0].at;
-        if (on < 0) on = getenv("SSBU_REBIND_LOG") != NULL;
+        if (on < 0) on = getenv("WT_REBIND_LOG") != NULL;
         if (on && w != last) { last = w; printf("rebind: pad %05x -> game %05x\n", w, rb_to_game(r, w)); fflush(stdout); }
     }
     for (int i = 0; i < 3; i++) for (int p = 0; p < copies[i].n; p++) {
@@ -129,7 +129,7 @@ void h_text_symbol(Ctx *c) {
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
  * instructions). Outputs that overlap go to the lifted original (its order of stores decides there).
- * SSBU_HOSTFN_CHECK=1 (test): on the first call, 200,000 values through both, outputs and x0 compared. */
+ * WT_HOSTFN_CHECK=1 (test): on the first call, 200,000 values through both, outputs and x0 compared. */
 void f_7100b382c0(Ctx *c);
 static uint32_t even_bits16(uint32_t v) {
     v &= 0x55555555u; v = (v | v >> 1) & 0x33333333u; v = (v | v >> 2) & 0x0F0F0F0Fu; v = (v | v >> 4) & 0x00FF00FFu;
@@ -171,19 +171,19 @@ static void morton_check(Ctx *c) {
 }
 void h_morton_split32(Ctx *c) {
     static int chk = -1;
-    if (chk < 0) { chk = 0; if (getenv("SSBU_HOSTFN_CHECK")) morton_check(c); }
+    if (chk < 0) { chk = 0; if (getenv("WT_HOSTFN_CHECK")) morton_check(c); }
     uint64_t a = c->x[1], b = c->x[2];
     if (a < b + 4 && b < a + 4) { f_7100b382c0(c); return; }
     morton_split32(c);
 }
 
 /* f_71007e1fe4: see quad_walk.h. w1 width, w2 height, w7 levels below this node; on the stack the node's Morton index and the
- * two maps. SSBU_QUADWALK=0 off; SSBU_QUADWALK_CHECK=1 (test): the lifted walk runs too and must return the same. */
+ * two maps. WT_QUADWALK=0 off; WT_QUADWALK_CHECK=1 (test): the lifted walk runs too and must return the same. */
 void f_71007e1fe4(Ctx *c);
 void h_quad_walk(Ctx *c) {
     static int on = -1, chk;
     static int lifted;                             /* the check's walk: every node lifted (the game DLL has no thread-local storage; one thread walks) */
-    if (on < 0) { const char *e = getenv("SSBU_QUADWALK"); chk = getenv("SSBU_QUADWALK_CHECK") != NULL; on = !(e && !atoi(e)); }
+    if (on < 0) { const char *e = getenv("WT_QUADWALK"); chk = getenv("WT_QUADWALK_CHECK") != NULL; on = !(e && !atoi(e)); }
     int d = (int)(uint32_t)c->x[7];
     if (on && !lifted && d >= 2 && d < 16) {
         uint64_t sp = c->x[31], pa, pb;
@@ -202,7 +202,7 @@ void h_quad_walk(Ctx *c) {
 /* f_7100d02de0(mode w0): the game's main loop (0x7100670b80) asks for its frame-rate mode each frame from its own state
  * flags (1 = 30 fps on the title, in menus and cutscenes; 0 = 60; 2 = 15); the mode is applied at 0x7100cfd9b8 (present
  * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). With
- * cutscene_fps = 60 (graphics.ini, SSBU_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
+ * cutscene_fps = 60 (graphics.ini, WT_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
  * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
 void f_7100d02de0(Ctx *c);
 /* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
@@ -214,12 +214,12 @@ static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *
 __declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
     static int last = -1;
-    if (!game_cutscene_fps) { const char *e = getenv("SSBU_CUTSCENE_FPS"); game_cutscene_fps = e && atoi(e) == 60 ? 60 : 30; }
+    if (!game_cutscene_fps) { const char *e = getenv("WT_CUTSCENE_FPS"); game_cutscene_fps = e && atoi(e) == 60 ? 60 : 30; }
     int sixty = game_cutscene_fps == 60;
     int want = (int)(uint32_t)c->x[0];
     if (want != last) {
         struct timespec ts; timespec_get(&ts, TIME_UTC);
-        printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; SSBU_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
+        printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; WT_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
                (double)ts.tv_sec + ts.tv_nsec / 1e9, sixty && want == 1 ? ": runs at 60 (cutscene_fps = 60)" : "");
         fflush(stdout);
         last = want;
@@ -261,9 +261,9 @@ void h_step_kind(Ctx *c) {
     if (scene_second(&g_half, g_one_pass)) { uint32_t f = state_flags() & ~0x8000000u; memcpy((void *)(uintptr_t)c->x[19], &f, 4); }
     f_710067037c(c);
 }
-/* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WT_FPS_CENSUS=1 calls
+/* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WTBUILD_FPS_CENSUS=1 calls
  * fps_census before the store of every counter site (tools/wtbuild/src/lifter/fps.rs, the list in gen_eh/fps_sites.txt).
- * SSBU_FPS_CENSUS=<file>: per (site, field) the visits are counted against the game clock's updates (h_frame_clock):
+ * WT_FPS_CENSUS=<file>: per (site, field) the visits are counted against the game clock's updates (h_frame_clock):
  * a visit in the update after the last one of the same field (consec: a frame counter, whatever the frame rate), in the
  * same update (a loop), or later; and visits from another guest thread than the clock's. Every 1,200 updates the file
  * gets one line per site (rewritten whole): site visits fields consec same later offthread updates_with_a_visit, then
@@ -293,7 +293,7 @@ static void fc_dump(void) {
 void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
     if (fc_on <= 0) {
         if (fc_on == 0) return;
-        fc_path = getenv("SSBU_FPS_CENSUS");
+        fc_path = getenv("WT_FPS_CENSUS");
         if (fc_path && *fc_path) { fc_rec = calloc(FC_RECS, sizeof *fc_rec); fc_site = calloc(FC_SITES, sizeof *fc_site); }
         fc_on = fc_rec && fc_site;
         if (!fc_on) return;
@@ -338,9 +338,9 @@ void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
  * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 with no frame due (a
  * test of the result for 0 fires as made); an up-counter moves at most 1 a visit (a test for an exact value is not
  * passed over); what a limit holds back is owed to the next visits (at most 8). Off (the stock 1) unless frame_rate is
- * above 60; SSBU_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
+ * above 60; WT_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
  * fps_patch.py (finding 134), written again for B3. */
-static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("SSBU_FPS_COUNTERS"); v = uncap_on() && !(e && !atoi(e)); } return v; }
+static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_FPS_COUNTERS"); v = uncap_on() && !(e && !atoi(e)); } return v; }
 static float fc_stab[256];                  /* the step of update n at [n & 255] (fps_fs) */
 static uint64_t fc_gtab[256];               /* G of update n at [n & 255], stored before n is published: other threads read n, then its G */
 typedef struct { uint64_t key, field, S, U; int64_t now, carry; float f; } FcCnt;
@@ -444,7 +444,7 @@ void h_model_lod(Ctx *c) {
     memcpy(&last, (void *)(uintptr_t)(c->x[0] + 0x14), 4);
     int levels = (int32_t)c->x[2] < last ? (int32_t)c->x[2] : last;      /* the last level this call may pick */
     f_7100bd563c(c);
-    if (!game_model_lod) { const char *e = getenv("SSBU_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
+    if (!game_model_lod) { const char *e = getenv("WT_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
     if (game_model_lod == 2 && (*out > 0 || (*out == -1 && levels > 0))) *out = 0;
 }
 /* TEST ONLY: RECOMPS_TEST_WITCHTIME=<s>[,<s>...]: Witch Time starts at those seconds after the first frame, as a dodge at the

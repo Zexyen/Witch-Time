@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 /// copied from runtime/gen_static/ into runtime/gen/
-const STATIC: [&str; 5] = ["quad_tests.h", "eh_tests.h", "sdktest_data.h", "fake_whitelist.h", "fake_openlist.h"];
+const STATIC: [&str; 2] = ["fake_whitelist.h", "fake_openlist.h"];
 
 struct Elf {
     b: Vec<u8>,

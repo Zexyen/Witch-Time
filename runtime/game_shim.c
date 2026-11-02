@@ -1,4 +1,4 @@
-/* Linked into ssbu_game.dll together with the lifted game code (obj\*.obj).
+/* Linked into game.dll together with the lifted game code (obj\*.obj).
  *
  * The lifted code is 700+ MB of objects that change only when the lifter changes; keeping it in a
  * DLL means the host runtime (the part edited all day) links in a second or two. The DLL cannot

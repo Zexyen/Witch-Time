@@ -62,7 +62,7 @@ are described in `tools/wtbuild/README.md`, "Steps". The `verify` step accepts o
 
 Windows 10 or 11, 64-bit. A release (`WitchTime-<version>-windows-x86_64.zip`) needs nothing installed but a Vulkan driver: it
 brings LLVM's own clang + lld (`deps\llvm`), the runtime already built (`prebuilt\`: `witch-time-game.exe`,
-`SDL3.dll`, `ssbu_glslang.dll`, FFmpeg's DLLs) and `build\wtbuild.exe`. Unzip it, run `witch-time.exe` and pick your dump folder, or:
+`SDL3.dll`, `wt_glslang.dll`, FFmpeg's DLLs) and `build\wtbuild.exe`. Unzip it, run `witch-time.exe` and pick your dump folder, or:
 
 ```
 build\wtbuild.exe setup --dump <your dump folder>

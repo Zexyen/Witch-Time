@@ -168,7 +168,7 @@ int nvn_c4_selftest(void) {
     return bad;
 }
 
-/* OpenGL self-test (SSBU_NVN_GLTEST=1, run by the render thread once the context exists): draws a 4x2 texture with
+/* OpenGL self-test (WT_NVN_GLTEST=1, run by the render thread once the context exists): draws a 4x2 texture with
  * nvn_c4_draw_texture_gl into a 16x16 target and reads the pixels back. */
 static void (APIENTRY *p_GenFramebuffers)(GLsizei, GLuint *);
 static void (APIENTRY *p_BindFramebuffer)(GLenum, GLuint);
@@ -202,7 +202,7 @@ static int gltest_case(const char *name, GLuint tex, GLuint smp, const float dst
     return bad != 0;
 }
 void nvn_c4_gl_selftest_hook(void) {
-    if (!getenv("SSBU_NVN_GLTEST")) return;
+    if (!getenv("WT_NVN_GLTEST")) return;
     static const uint8_t texels[2][4][4] = {{{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}, {255, 255, 0, 255}}, {{0, 255, 255, 255}, {255, 0, 255, 255}, {64, 128, 192, 255}, {255, 255, 255, 255}}};
     static const float dst[4] = {4, 2, 12, 6}, src[4] = {0, 0, 4, 2}, src_fx[4] = {4, 0, 0, 2}, src_fy[4] = {0, 2, 4, 0};
     GLuint tex, target, depth, fbo, smp;

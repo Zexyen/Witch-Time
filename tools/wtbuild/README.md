@@ -75,7 +75,7 @@ Mostly for developers; `--repo <folder>` names the checkout (default: the curren
 - `pkz list <file.pkz>`, `dat list <file.dat>`, `dat extract <file.dat> <folder>` (refuses member names that would leave
   the folder); the formats are in `docs/RE_NOTES.md` section 4.
 - `fps-census <census at 60> <census above 60> [<fps_sites.txt>] [--all]` (`docs/STATUS.md`, "Frame rates above 60").
-- `lprof <lprof.txt> [threads (6)] [functions per list (25)]`: an `SSBU_LPROF` sample file (Linux).
+- `lprof <lprof.txt> [threads (6)] [functions per list (25)]`: an `WT_LPROF` sample file (Linux).
 - `perf-bench run <scene> <scale> [--tag T] [--save DIR] [--desktop-scale F] [--secs N] [--env K=V]...` and
   `perf-bench report <run dir>...` (Linux only: repeatable performance runs of the built game and their table,
   `docs/STATUS.md`, "Performance report").
@@ -117,7 +117,7 @@ release.yml builds, it needs the archives under other names (the wtbuild step th
 ## Prebuilt runtime
 
 The runtime (`libwitchtime.so`, which the launcher loads, `witch-time-game`, which runs it as a program of its own,
-and `libssbu_glslang.so`) holds nothing from the dump: the numbers it needs from the player's `main.elf` and `sdk.elf`
+and `libwt_glslang.so`) holds nothing from the dump: the numbers it needs from the player's `main.elf` and `sdk.elf`
 are `extern const` variables there (`runtime/split`), defined in `game.so` by `runtime/wt_tables.c` together with the
 dump's sdk tables (`runtime/gen/sdkdata.c`, `sdklift_gen.c`). So the release workflow builds it once
 (`wtbuild runtime --out prebuilt`, against its own SDL3, FFmpeg 7.1 and a static glslang) and ships it in `prebuilt/`

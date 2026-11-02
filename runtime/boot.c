@@ -28,17 +28,7 @@
 
 /* ---- C heap */
 static void i_malloc(Ctx *c) { RET(_aligned_malloc(A0 ? (size_t)A0 : 1, 16)); }
-static void i_free(Ctx *c) { _aligned_free(P(0)); }
-static void i_calloc(Ctx *c) { size_t n = (size_t)(A0 * A1); void *p = _aligned_malloc(n ? n : 1, 16); if (p) memset(p, 0, n); RET(p); }
-static void i_realloc(Ctx *c) { RET(_aligned_realloc(P(0), A1 ? (size_t)A1 : 1, 16)); }
 static void i_aligned_alloc(Ctx *c) { RET(_aligned_malloc(A1 ? (size_t)A1 : 1, A0 < 16 ? 16 : (size_t)A0)); }
-static void i_new_aligned(Ctx *c) { RET(_aligned_malloc(A0 ? (size_t)A0 : 1, A1 < 16 ? 16 : (size_t)A1)); }
-static void i_posix_memalign(Ctx *c) {
-    void *p = _aligned_malloc(A2 ? (size_t)A2 : 1, A1 < 16 ? 16 : (size_t)A1);
-    wr64(A0, (uint64_t)p);
-    RET(p ? 0 : 12);
-}
-static void i_usable_size(Ctx *c) { RET(A0 ? _aligned_msize(P(0), 16, 0) : 0); }
 
 /* ---- C strings and memory */
 static void i_memcpy(Ctx *c) { memcpy(P(0), P(1), (size_t)A2); }
@@ -70,35 +60,25 @@ static void i_abort(Ctx *c) { guest_trap("guest called abort()", c->x[30] - 4); 
 #define M2D(n, fn) static void n(Ctx *c) { double r = fn(c->v[0].df[0], c->v[1].df[0]); vzero(&c->v[0]); c->v[0].df[0] = r; }
 M1F(m_sinf, sinf) M1F(m_cosf, cosf) M1F(m_tanf, tanf) M1F(m_asinf, asinf) M1F(m_acosf, acosf) M1F(m_atanf, atanf)
 M1F(m_expf, expf) M1F(m_exp2f, exp2f) M1F(m_logf, logf) M1F(m_log2f, log2f) M1F(m_log10f, log10f) M1F(m_sqrtf, sqrtf)
-M1F(m_floorf, floorf) M1F(m_ceilf, ceilf) M1F(m_roundf, roundf) M1F(m_truncf, truncf) M1F(m_fabsf, fabsf)
 M2F(m_atan2f, atan2f) M2F(m_powf, powf) M2F(m_fmodf, fmodf)
-M1D(m_sin, sin) M1D(m_cos, cos) M1D(m_tan, tan) M1D(m_asin, asin) M1D(m_acos, acos) M1D(m_atan, atan)
-M1D(m_exp, exp) M1D(m_log, log) M1D(m_log2, log2) M1D(m_log10, log10) M1D(m_sqrt, sqrt)
-M1D(m_floor, floor) M1D(m_ceil, ceil) M1D(m_round, round) M1D(m_trunc, trunc) M1D(m_fabs, fabs)
-M2D(m_atan2, atan2) M2D(m_pow, pow) M2D(m_fmod, fmod)
+M1D(m_sin, sin) M1D(m_cos, cos) M1D(m_tan, tan)
+M1D(m_exp, exp) M1D(m_log, log) M1D(m_log2, log2) M1D(m_log10, log10)
+M2D(m_pow, pow) M2D(m_fmod, fmod)
 
 static const ImportDef base_imports[] = {
-    {"malloc", i_malloc}, {"free", i_free}, {"calloc", i_calloc}, {"realloc", i_realloc},
-    {"aligned_alloc", i_aligned_alloc}, {"memalign", i_aligned_alloc}, {"posix_memalign", i_posix_memalign},
-    {"malloc_usable_size", i_usable_size},
-    {"_Znwm", i_malloc}, {"_Znam", i_malloc}, {"_ZdlPv", i_free}, {"_ZdaPv", i_free},
-    {"_ZnwmRKSt9nothrow_t", i_malloc}, {"_ZnamRKSt9nothrow_t", i_malloc},
-    {"_ZdlPvm", i_free}, {"_ZdaPvm", i_free}, {"_ZdlPvRKSt9nothrow_t", i_free}, {"_ZdaPvRKSt9nothrow_t", i_free},
-    {"_ZnwmSt11align_val_t", i_new_aligned}, {"_ZnamSt11align_val_t", i_new_aligned},
-    {"_ZdlPvSt11align_val_t", i_free}, {"_ZdaPvSt11align_val_t", i_free},
+    {"memalign", i_aligned_alloc},
+    {"_ZnwmRKSt9nothrow_t", i_malloc},
     {"memcpy", i_memcpy}, {"memmove", i_memmove}, {"memset", i_memset}, {"memcmp", i_memcmp}, {"memchr", i_memchr},
     {"strlen", i_strlen}, {"strnlen", i_strnlen}, {"strcmp", i_strcmp}, {"strncmp", i_strncmp}, {"strcpy", i_strcpy},
     {"strncpy", i_strncpy}, {"strcat", i_strcat}, {"strchr", i_strchr}, {"strrchr", i_strrchr}, {"strstr", i_strstr},
     {"__cxa_guard_acquire", i_guard_acquire}, {"__cxa_guard_release", i_guard_release}, {"__cxa_guard_abort", i_ret0},
-    {"__cxa_atexit", i_ret0}, {"abort", i_abort},
+    {"abort", i_abort},
     {"sinf", m_sinf}, {"cosf", m_cosf}, {"tanf", m_tanf}, {"asinf", m_asinf}, {"acosf", m_acosf}, {"atanf", m_atanf},
     {"expf", m_expf}, {"exp2f", m_exp2f}, {"logf", m_logf}, {"log2f", m_log2f}, {"log10f", m_log10f}, {"sqrtf", m_sqrtf},
-    {"floorf", m_floorf}, {"ceilf", m_ceilf}, {"roundf", m_roundf}, {"truncf", m_truncf}, {"fabsf", m_fabsf},
     {"atan2f", m_atan2f}, {"powf", m_powf}, {"fmodf", m_fmodf},
-    {"sin", m_sin}, {"cos", m_cos}, {"tan", m_tan}, {"asin", m_asin}, {"acos", m_acos}, {"atan", m_atan},
-    {"exp", m_exp}, {"log", m_log}, {"log2", m_log2}, {"log10", m_log10}, {"sqrt", m_sqrt},
-    {"floor", m_floor}, {"ceil", m_ceil}, {"round", m_round}, {"trunc", m_trunc}, {"fabs", m_fabs},
-    {"atan2", m_atan2}, {"pow", m_pow}, {"fmod", m_fmod},
+    {"sin", m_sin}, {"cos", m_cos}, {"tan", m_tan},
+    {"exp", m_exp}, {"log", m_log}, {"log2", m_log2}, {"log10", m_log10},
+    {"pow", m_pow}, {"fmod", m_fmod},
 };
 
 void register_sdk_imports(void);         /* nnsdk.c */
@@ -116,8 +96,7 @@ void register_fontll_imports(void);      /* nnfontll.c */
 void register_movie_imports(void);       /* nnmovie.c */
 void register_misc_imports(void);        /* nnmisc.c */
 void register_audio_imports(void);       /* nnaudio.c */
-void register_ro_imports(void);          /* nnro.c */
-void register_sdk2_imports(void);        /* nnsdk2.c: sdklift_*.c, nnmii.c, nnapplet.c, nnalbum.c, nnnet.c, nnfsdir.c */
+void register_sdk2_imports(void);        /* nnsdk2.c: sdklift_*.c, nnnet.c, nnfsdir.c */
 void register_movie_mf_imports(void);    /* nnmovie_mf.c */
 void cxxrt_install_data(void);           /* nncxxrt.c: vtables / typeinfo objects of the C++ runtime (before runtime_init) */
 void register_unwind_imports(void);      /* nnunwind.c: C++ exception unwinding through lifted module code */
@@ -127,13 +106,13 @@ int guest_thread_count(void);
 extern uint64_t g_main_stack_base, g_main_stack_size;
 
 void dump_guest_threads(FILE *out);      /* os_threads.c */
-void icall_dump(FILE *out, uint64_t main_ctx);   /* hostrt.c, SSBU_ICALLS */
+void icall_dump(FILE *out, uint64_t main_ctx);   /* hostrt.c, WT_ICALLS */
 uint64_t icall_first_x0(uint64_t target);
 static Ctx *g_main_ctx;
 
 static const char *g_elf;
 
-/* Debug aid: SSBU_PROF=<start s>,<duration s> samples the main guest thread's host stack every ~2 ms in that
+/* Debug aid: WT_PROF=<start s>,<duration s> samples the main guest thread's host stack every ~2 ms in that
  * window, unwinds it to guest functions and prints every (caller -> callee) pair seen with its sample count. */
 #define PROF_MAX 8192
 static struct { uint64_t callee, caller; unsigned n; } g_prof[PROF_MAX];
@@ -143,11 +122,11 @@ static DWORD WINAPI profiler(LPVOID arg) {
     int start = 0, dur = 0;
     (void)arg;
     char mode = 's';
-    if (sscanf(getenv("SSBU_PROF"), "%d,%d,%c", &start, &dur, &mode) < 2 || dur <= 0) return 0;
+    if (sscanf(getenv("WT_PROF"), "%d,%d,%c", &start, &dur, &mode) < 2 || dur <= 0) return 0;
     Sleep((DWORD)start * 1000);
     ULONGLONG end = GetTickCount64() + (ULONGLONG)dur * 1000;
     unsigned samples = 0;
-    if (mode == 'f') {        /* SSBU_PROF=<start>,<dur>,f : spin reading c->fn / x30: every function the main thread enters */
+    if (mode == 'f') {        /* WT_PROF=<start>,<dur>,f : spin reading c->fn / x30: every function the main thread enters */
         while (GetTickCount64() < end) {
             for (int r = 0; r < 4096; r++) {
                 uint64_t callee = g_main_ctx->fn, caller = g_main_ctx->x[30];
@@ -200,13 +179,13 @@ static DWORD WINAPI profiler(LPVOID arg) {
 }
 
 #ifndef _WIN32
-#include "lprof.c"        /* [witchtime] SSBU_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
+#include "lprof.c"        /* [witchtime] WT_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
 #endif
-#include "prof15.c"       /* SSBU_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
+#include "prof15.c"       /* WT_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
                            * every link that has boot.c has it (build.py's source list is not changed): do NOT name prof15.c as a source of its own. */
 
 static size_t main_stack_size_from_npdm(void) {
-    const char *ov = getenv("SSBU_MAIN_STACK");
+    const char *ov = getenv("WT_MAIN_STACK");
     if (ov && strtoull(ov, NULL, 0) >= 0x10000) return (size_t)(strtoull(ov, NULL, 0) + 0xfff) & ~(size_t)0xfff;
     char path[1024];
     snprintf(path, sizeof path, "%s", g_elf);
@@ -246,7 +225,7 @@ static DWORD WINAPI guest_main(LPVOID arg) {
      * 0x100000 for this game; read from the file next to the ELF), with no-access pages below and above it, so that an
      * overflow faults as it does on the console instead of running on. Guest frames are the original's (the lifted code
      * moves the guest SP exactly as the ARM code does); the host's own frames live on the host stack and are not
-     * guest-visible. SSBU_MAIN_STACK=<bytes> overrides (diagnosis only). */
+     * guest-visible. WT_MAIN_STACK=<bytes> overrides (diagnosis only). */
     size_t stack_size = main_stack_size_from_npdm();
     uint8_t *stack_res = plat_reserve(stack_size + 0x20000);
     uint8_t *stack = stack_res && plat_commit(stack_res + 0x10000, stack_size) ? stack_res + 0x10000 : NULL;
@@ -256,9 +235,8 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     c.tpidr = (uint64_t)tls;
     { uint64_t os_main_thread_type(void); memcpy(tls + 0x1f8, &(uint64_t){os_main_thread_type()}, 8); }   /* [sdk 0x3349dc..e0] nn::os::detail::ThreadManager(): the main thread's ThreadType pointer */
     g_main_ctx = &c;
-    { void module_coverage_start(Ctx *main_ctx); module_coverage_start(&c); }   /* nnro.c: SSBU_MODCOV=1 */
-    { void os_apply_main_sched(void); os_apply_main_sched(); }                  /* os_threads.c: SSBU_OS_CONSOLE_CORES=1 */
-    { void hitch_set_main(Ctx *c); hitch_set_main(&c); }      /* hitch.c: SSBU_HITCH */
+    { void os_apply_main_sched(void); os_apply_main_sched(); }                  /* os_threads.c: WT_OS_CONSOLE_CORES=1 */
+    { void hitch_set_main(Ctx *c); hitch_set_main(&c); }      /* hitch.c: WT_HITCH */
     g_main_stack_base = (uint64_t)stack;
     g_main_stack_size = stack_size;
 
@@ -280,7 +258,6 @@ static DWORD WINAPI guest_main(LPVOID arg) {
         call_guest(&c, fn);
     }
 
-    { void debug_mode_init(void); debug_mode_init(); }       /* debug_mode.c: test-only fast mode, nothing without SSBU_* variables */
     printf("[phase 3] nnMain\n");
     trace_printf("=== phase 3: nnMain\n");
     call_guest(&c, NN_MAIN);
@@ -299,7 +276,7 @@ static int b3_main(int argc, char **argv) {
         if (!f) {
             fprintf(stderr, "witch-time-game: no main.elf given. Start the game with the launcher (witch-time, its Play button): it passes\n"
                             "the path of targets/exefs/main.elf and the game's folders and settings. By hand, as the launcher does, from build/run:\n"
-                            "  SSBU_ROMFS=<Witch Time folder>/targets/romfs ../witch-time-game ../../targets/exefs/main.elf\n");
+                            "  WT_ROMFS=<Witch Time folder>/targets/romfs ../witch-time-game ../../targets/exefs/main.elf\n");
             return 1;
         }
         fclose(f);
@@ -311,7 +288,7 @@ static int b3_main(int argc, char **argv) {
     {   /* pad tools and their self-test (nnpad_sdl.c): no game is started */
         int nnhid_pad_selftest(void), nnpad_tool(int, char **);
         int tool;
-        if (getenv("SSBU_PAD_SELFTEST")) return nnhid_pad_selftest() != 0;
+        if (getenv("WT_PAD_SELFTEST")) return nnhid_pad_selftest() != 0;
         if ((tool = nnpad_tool(argc, argv)) >= 0) return tool;
     }
     /* track V: `--prepare-shaders [folder]` translates every stage of the shader containers in the folder (default
@@ -325,7 +302,7 @@ static int b3_main(int argc, char **argv) {
         import_set_address(sdk_data[i].name, copy);
     }
     cxxrt_install_data();
-    runtime_init(g_elf, getenv("SSBU_TRACE") ? getenv("SSBU_TRACE") : "boot_trace.txt");
+    runtime_init(g_elf, getenv("WT_TRACE") ? getenv("WT_TRACE") : "boot_trace.txt");
     register_imports(base_imports, (int)(sizeof base_imports / sizeof base_imports[0]));
     register_sdk_imports();
     register_cxx_imports();
@@ -341,8 +318,7 @@ static int b3_main(int argc, char **argv) {
     register_movie_imports();
     register_misc_imports();                 /* only fills names nobody else implements */
     register_audio_imports();
-    register_ro_imports();
-    register_movie_mf_imports();             /* replaces nnmovie.c's failing placeholder unless SSBU_MOVIE=0 */
+    register_movie_mf_imports();             /* replaces nnmovie.c's failing placeholder unless WT_MOVIE=0 */
     register_iostream_imports();             /* libc++ stream base classes */
     register_cxxrt_imports();                /* C / C++ runtime: everything still without a handler (keep last) */
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
@@ -350,7 +326,7 @@ static int b3_main(int argc, char **argv) {
     { void register_b3_imports(void); register_b3_imports(); }   /* [witchtime] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
     { void options_row_install(void); options_row_install(); }   /* [witchtime] the PC Settings row of the game's Options screen */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
-    { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / SSBU_STRICT (plan\FAKE_AUDIT.md) */
+    { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / WT_STRICT (plan\FAKE_AUDIT.md) */
     /* [witchtime] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
     if (argc > 3 && !strcmp(argv[2], "--pkz-dump")) { int pkz_dump(const char *, char **, int); return pkz_dump(argv[3], argv + 4, argc - 4); }
     display_init();
@@ -358,11 +334,11 @@ static int b3_main(int argc, char **argv) {
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
-    if (getenv("SSBU_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
+    if (getenv("WT_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
     { void prof15_start(void); prof15_start(); }
 #ifndef _WIN32
     lprof_start();
-#endif         /* prof15.c: SSBU_PROF15, every busy thread (test only; nothing without the variable) */
+#endif         /* prof15.c: WT_PROF15, every busy thread (test only; nothing without the variable) */
     DWORD wr = WaitForSingleObject(t, seconds > 0 ? (DWORD)seconds * 1000 : INFINITE);
     {   unsigned nvn_gl_held_ms(void);                   /* nvn_gl.c: time the presents were held for shader preparation is not run time */
         for (unsigned done = 0, h; wr == WAIT_TIMEOUT && (h = nvn_gl_held_ms()) > done + 50; done = h) wr = WaitForSingleObject(t, h - done);
@@ -377,18 +353,6 @@ static int b3_main(int argc, char **argv) {
                    g_main_ctx->in_import ? g_main_ctx->in_import : "guest code", (unsigned long long)g_main_ctx->import_from);
             for (int i = 19; i < 29; i++) printf("  x%d %016llx%s", i, (unsigned long long)g_main_ctx->x[i], i % 3 == 0 ? "\n" : "");
             printf("\n");
-            if (0) {   /* [Recomps#1] off: a Smash-specific std::map at 0x710593c3c0 (meaningless in our image) */
-                uint64_t m = 0x710593c3c0ULL;
-                printf("map header: [+0]=%llx [+8]=%llx [+10]=%llx  size=%llx\n", (unsigned long long)rd64(m),
-                       (unsigned long long)rd64(m + 8), (unsigned long long)rd64(m + 16), (unsigned long long)rd64(m + 24));
-                uint64_t n = rd64(m + 8);
-                for (int k = 0; k < 6 && n > 0x1000 && n != m; k++) {
-                    printf("  node %llx: left=%llx right=%llx parent=%llx color=%llx key=%llx\n", (unsigned long long)n,
-                           (unsigned long long)rd64(n), (unsigned long long)rd64(n + 8), (unsigned long long)rd64(n + 16),
-                           (unsigned long long)rd64(n + 24), (unsigned long long)rd64(n + 32));
-                    n = rd64(n);
-                }
-            }
             /* where is the main host thread really? sample its instruction pointer and unwind */
             for (int s = 0; s < 3; s++) {
                 Sleep(50);
@@ -423,11 +387,11 @@ static int b3_main(int argc, char **argv) {
         }
         dump_guest_threads(stdout);
         icall_dump(stdout, (uint64_t)(uintptr_t)g_main_ctx);
-        if (getenv("SSBU_CHAIN")) {
-            /* SSBU_CHAIN=<fn>:<off>,<off>,...[;<fn>:...] (hex): start from x0 of the first recorded indirect call to fn
-             * (needs SSBU_ICALLS), follow pointers at the given offsets, print 0x40 bytes at every step */
+        if (getenv("WT_CHAIN")) {
+            /* WT_CHAIN=<fn>:<off>,<off>,...[;<fn>:...] (hex): start from x0 of the first recorded indirect call to fn
+             * (needs WT_ICALLS), follow pointers at the given offsets, print 0x40 bytes at every step */
             char buf[1024];
-            snprintf(buf, sizeof buf, "%s", getenv("SSBU_CHAIN"));
+            snprintf(buf, sizeof buf, "%s", getenv("WT_CHAIN"));
             for (char *spec = strtok(buf, ";"); spec; spec = strtok(NULL, ";")) {
                 char *colon = strchr(spec, ':');
                 uint64_t p = icall_first_x0(strtoull(spec, NULL, 16));

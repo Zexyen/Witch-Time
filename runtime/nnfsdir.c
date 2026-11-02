@@ -5,11 +5,11 @@
  * does not have the other four. A directory that is never found is wrong for save data the game has
  * written itself, so OpenDirectory is REPLACED here (this file registers after nnfs.c) and the rest added.
  * The mount-name mapping is the one documented at the top of nnfs.c and must stay identical to it:
- *   rom   -> %SSBU_ROMFS% or ..\romfs,   any other mount -> ..\userdata\<mount name>
+ *   rom   -> %WT_ROMFS% or ..\romfs,   any other mount -> ..\userdata\<mount name>
  *
- * [game] 0x71037c4360: OpenDirectory(&handle, path, 3); GetDirectoryEntryCount(&count, handle);
- * allocates count * 0x310 bytes; ReadDirectory(&read, entries, handle, count); so DirectoryHandle is one
- * 8-byte value passed in a register and sizeof(DirectoryEntry) = 0x310.
+ * OpenDirectory(&handle, path, 3); GetDirectoryEntryCount(&count, handle); count * 0x310 bytes;
+ * ReadDirectory(&read, entries, handle, count): DirectoryHandle is one 8-byte value passed in a register and
+ * sizeof(DirectoryEntry) = 0x310.
  * [doc] nnheaders nn/fs: DirectoryEntry { char name[0x301]; char pad[3]; s8 type @0x304 (0 directory,
  * 1 file); s64 fileSize @0x308 }; OpenDirectoryMode 1 = directories, 2 = files, 3 = all.
  * Results (module 2): [doc] switchbrew: PathNotFound 2002-0001 (0x202), DirectoryNotEmpty... the SDK code
@@ -41,7 +41,7 @@ int fs_dir_roots(const char *guest, char roots[][MAX_PATH], uint32_t *result);  
 int fs_dir_hidden(const char *guest_dir, const char *name);
 uint32_t fs_delete_directory(const char *guest);
 static int dir_host_path(const char *guest, char *out) {  /* superseded by fs_dir_roots (kept for the self-test's scratch folder) */
-    const char *env = getenv("SSBU_ROMFS");
+    const char *env = getenv("WT_ROMFS");
     const char *colon = guest ? strchr(guest, ':') : NULL;
     if (!colon) return 0;
     size_t n = (size_t)(colon - guest);
@@ -148,10 +148,8 @@ static void fs_DeleteDirectory(Ctx *c) {                  /* (const char *path) 
 #define FS(n) "_ZN2nn2fs" n
 static const ImportDef fsdir_imports[] = {
     {FS("13OpenDirectoryEPNS0_15DirectoryHandleEPKci"), fs_OpenDirectory},
-    {FS("22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE"), fs_GetDirectoryEntryCount},
     {FS("13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl"), fs_ReadDirectory},
     {FS("14CloseDirectoryENS0_15DirectoryHandleE"), fs_CloseDirectory},
-    {FS("15DeleteDirectoryEPKc"), fs_DeleteDirectory},
 };
 void register_nnfsdir_imports(void) {
     int n = (int)(sizeof fsdir_imports / sizeof fsdir_imports[0]);
@@ -166,7 +164,7 @@ int nnfsdir_selftest(Ctx *c) {
     char base[MAX_PATH], p[MAX_PATH];
     uint32_t fs_mount_plain(const char *name, const char *host_dir);
     GetTempPathA(MAX_PATH - 64, base);
-    snprintf(base + strlen(base), 64, "ssbu_fsdir_selftest_%lu", (unsigned long)GetCurrentProcessId());
+    snprintf(base + strlen(base), 64, "wt_fsdir_selftest_%lu", (unsigned long)GetCurrentProcessId());
     CreateDirectoryA(base, NULL);
     snprintf(p, sizeof p, "%s\\d", base); CreateDirectoryA(p, NULL);
     snprintf(p, sizeof p, "%s\\d\\sub", base); CreateDirectoryA(p, NULL);

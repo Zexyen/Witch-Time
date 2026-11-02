@@ -190,7 +190,7 @@ static const char *const g_default_ini =
 "[keyboard]\r\n"
 "; auto = player 1, together with player 1's pad (Bayonetta 3 is a one-player game: it reads only player 1); 1..8 = that\r\n"
 "; player (merged with the pad of that player); none = no keyboard.\r\n"
-"; The environment variable SSBU_KEYBOARD_PLAYER (0 = none, 1..8) overrides this line. The keyboard counts only while the game window has the focus.\r\n"
+"; The environment variable WT_KEYBOARD_PLAYER (0 = none, 1..8) overrides this line. The keyboard counts only while the game window has the focus.\r\n"
 "player = auto\r\n"
 "; Keys: a letter or digit, LEFT UP RIGHT DOWN ENTER BACKSPACE SPACE TAB ESC SHIFT CTRL ALT LSHIFT RSHIFT LCTRL RCTRL LALT RALT F1..F12,\r\n"
 "; NUM0..NUM9, MOUSE1..MOUSE5 (left, right, middle, back, forward), or 0x<virtual key code>; none = unbound. Two keys for one\r\n"
@@ -411,7 +411,7 @@ static ULONGLONG file_mtime(const char *path) {
     return ((ULONGLONG)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime;
 }
 static void cfg_path(char *out) {
-    const char *e = getenv("SSBU_CONFIG");
+    const char *e = getenv("WT_CONFIG");
     if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
     char exe[MAX_PATH], tmp[MAX_PATH];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
@@ -446,7 +446,7 @@ static void cfg_load(int first) {                 /* lock held */
         int x = n.kb_vk[i] >> (k & 1) * 8 & 0xff;
         if (x && x == (n.kb_vk[j] >> (k >> 1) * 8 & 0xff)) say("nn::pad: [keyboard] key 0x%02x is bound to both %s and %s\n", x, g_kbn[i], g_kbn[j]);
     }
-    {   const char *l = getenv("SSBU_PAD_LAYOUT");
+    {   const char *l = getenv("WT_PAD_LAYOUT");
         if (l && l[0]) n.def.layout = !_stricmp(l, "label") || !_stricmp(l, "labels") ? 1 : 0; }
     g_cfg = n;
 }
@@ -744,15 +744,6 @@ void nnpad_disconnect(int player) {
     if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; }
     unlock();
 }
-void nnpad_swap(int a, int b) {
-    lock();
-    Dev *x = dev_of(a), *y = dev_of(b);
-    if (x) x->slot = b;
-    if (y) y->slot = a;
-    if (x) apply_player_index(x);
-    if (y) apply_player_index(y);
-    unlock();
-}
 void nnpad_rumble(int player, float low, float high) {
     Dev *d;
     if (!g_sdl_ok || player < 0 || player > 7) return;
@@ -771,7 +762,7 @@ void nnpad_rumble(int player, float low, float high) {
 }
 
 /* ================================================================ keyboard */
-static int env_kb(void) { const char *k = getenv("SSBU_KEYBOARD_PLAYER"); return k && k[0] ? atoi(k) : -1; }   /* -1 unset; 0 none; 1..8 */
+static int env_kb(void) { const char *k = getenv("WT_KEYBOARD_PLAYER"); return k && k[0] ? atoi(k) : -1; }   /* -1 unset; 0 none; 1..8 */
 int nnpad_keyboard_player(void) {
     int r;
     lock();
@@ -801,7 +792,7 @@ int nnpad_mouse_cfg(float *sens, int *invert) {      /* [Recomps#1] mouse_camera
 }
 /* [Recomps#1] button_prompts of [general] -> 1 switch, 2 playstation, 3 xbox, 4 keyboard. auto: the keyboard when it was used
  * last, else the SDL gamepad type of player 1's pad (else of the first pad) at the moment of the call, the keyboard without
- * one. prompts.c asks all the time; nnfs.c once, when it sets up the RomFS mods at the first file access. Scripted runs (SSBU_SEQ) and the XInput backend never read pads, so auto means switch there. */
+ * one. prompts.c asks all the time; nnfs.c once, when it sets up the RomFS mods at the first file access. Scripted runs (WT_SEQ) and the XInput backend never read pads, so auto means switch there. */
 /* [witchtime] the PC settings panel (pcmenu.c): [general] button_prompts, as written in the file; a set keeps every other line
  * and counts at once. 0 = not written. */
 const char *nnpad_prompts_setting(void) {
@@ -892,7 +883,7 @@ int nnpad_button_prompts(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); int p = g_cfg.prompts, kb_only = g_cfg.input == 1; unlock();
     if (p) return p;
     if (kb_only || g_prompts_kb) return 4;
-    const char *seq = getenv("SSBU_SEQ"), *backend = getenv("SSBU_PAD_BACKEND");
+    const char *seq = getenv("WT_SEQ"), *backend = getenv("WT_PAD_BACKEND");
     if ((seq && seq[0]) || (backend && !_stricmp(backend, "xinput")) || !nnpad_init()) return 1;
     lock();
     const Dev *best = NULL;
@@ -917,7 +908,7 @@ int nnpad_button_prompts(void) {
  * layout. At the moment of the call (nnfs.c, the first file access). */
 int nnpad_prompts_by_letter(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); int def = g_cfg.def.layout == 1; unlock();
-    const char *seq = getenv("SSBU_SEQ"), *backend = getenv("SSBU_PAD_BACKEND");
+    const char *seq = getenv("WT_SEQ"), *backend = getenv("WT_PAD_BACKEND");
     if ((seq && seq[0]) || (backend && !_stricmp(backend, "xinput")) || !nnpad_init()) return def;
     lock();
     const Dev *best = NULL;
@@ -1110,11 +1101,11 @@ int nnpad_tool(int argc, char **argv) {
     int secs = 0;
     for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--seconds") && i + 1 < argc) secs = atoi(argv[i + 1]);
     for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--pad-map")) return pad_map(i + 1 < argc ? atoi(argv[i + 1]) : 1);
-    if ((argc > 1 && !strcmp(argv[1], "--pad-test")) || getenv("SSBU_PAD_TEST")) return pad_test(secs);
+    if ((argc > 1 && !strcmp(argv[1], "--pad-test")) || getenv("WT_PAD_TEST")) return pad_test(secs);
     return -1;
 }
 
-/* ================================================================ self-test (SSBU_PAD_SELFTEST=1): SDL virtual joysticks, no physical pad */
+/* ================================================================ self-test (WT_PAD_SELFTEST=1): SDL virtual joysticks, no physical pad */
 static struct { Uint16 lo, hi; int calls, led_r, led_g, led_b, pidx; } g_vj[16];
 static bool SDLCALL vj_rumble(void *u, Uint16 lo, Uint16 hi) { int i = (int)(intptr_t)u; g_vj[i].lo = lo; g_vj[i].hi = hi; g_vj[i].calls++; return true; }
 static bool SDLCALL vj_led(void *u, Uint8 r, Uint8 g, Uint8 b) { int i = (int)(intptr_t)u; g_vj[i].led_r = r; g_vj[i].led_g = g; g_vj[i].led_b = b; return true; }
@@ -1145,12 +1136,12 @@ int nnpad_selftest(const NnHidHooks *h) {
     SDL_JoystickID id[10];
     SDL_Joystick *js[10];
     uint64_t btn; int32_t st[4]; uint32_t attr;
-    GetTempPathA(MAX_PATH, path); strcat(path, "ssbu_pad_selftest\\controllers.ini");
+    GetTempPathA(MAX_PATH, path); strcat(path, "wt_pad_selftest\\controllers.ini");
     make_dirs(path);
     DeleteFileA(path);
-    _putenv_s("SSBU_CONFIG", path);
-    _putenv_s("SSBU_KEYBOARD_PLAYER", "0");
-    _putenv_s("SSBU_PAD_LAYOUT", "");
+    _putenv_s("WT_CONFIG", path);
+    _putenv_s("WT_KEYBOARD_PLAYER", "0");
+    _putenv_s("WT_PAD_LAYOUT", "");
     g_only_virtual = 1;
     h->test_mode(1);
     printf("pad self-test (SDL virtual joysticks, no physical pad):\n");

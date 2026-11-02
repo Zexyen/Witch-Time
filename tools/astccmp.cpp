@@ -10,7 +10,7 @@
  *   g++ -O2 -std=c++17 -DASTCENC_SSE=0 -DASTCENC_AVX=0 -DASTCENC_NEON=0 -DASTCENC_POPCNT=0 -DASTCENC_F16C=0 -DASTCENC_SVE=0 \
  *       -DASTCENC_DECOMPRESS_ONLY -I$S -I runtime tools/astccmp.cpp $(ls $S/astcenc_*.cpp | grep -v cli) -x c runtime/tex_decode.c -o build/astccmp
  *   build/astccmp [blocks per footprint, default 20000]
- *   build/astccmp --file <dump>.astc ...   the blocks of a game image dumped with SSBU_ASTC_DUMP=<dir> (every block compared)
+ *   build/astccmp --file <dump>.astc ...   the blocks of a game image dumped with WT_ASTC_DUMP=<dir> (every block compared)
  * Every run first checks tex_layout's mip offsets for a block-width layout against the game's (layout_check).
  */
 #include <cstdio>
@@ -27,7 +27,7 @@ static const int k_fp[14][2] = {{4, 4}, {5, 4}, {5, 5}, {6, 5}, {6, 6}, {8, 5}, 
 static uint64_t g_s = 88172645463325252ull;
 static uint64_t rnd() { g_s ^= g_s << 13; g_s ^= g_s >> 7; g_s ^= g_s << 17; return g_s; }
 
-/* --file <dir>/<format>_<w>x<h>_<hash>.astc (SSBU_ASTC_DUMP): the game's own blocks, every block of the image */
+/* --file <dir>/<format>_<w>x<h>_<hash>.astc (WT_ASTC_DUMP): the game's own blocks, every block of the image */
 static int file_mode(const char *path) {
     unsigned nf; int w, h;
     const char *base = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;

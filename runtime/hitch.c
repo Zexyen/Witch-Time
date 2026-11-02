@@ -1,4 +1,4 @@
-/* Hitch log (plan\phases\P3_performance.md, section 11): SSBU_HITCH=<ms> names, for every presented frame that took
+/* Hitch log (plan\phases\P3_performance.md, section 11): WT_HITCH=<ms> names, for every presented frame that took
  * longer than <ms>, which thread was late and inside what.
  *
  * How: a watchdog thread (time-critical priority) wakes about once per millisecond and looks at the main guest thread:
@@ -237,7 +237,7 @@ void cxxrt_readable_report(FILE *out);             /* nncxxrt.c */
 void hitch_report(FILE *out) {
     if (!g_hitch_ms) return;
     cxxrt_readable_report(out);
-    fprintf(out, "\nhitch log (SSBU_HITCH=%d): %lld of %.0f frames took more than %d ms, %.0f ms in all; longest gap between two samples of the watchdog %.1f ms\n", g_hitch_ms,
+    fprintf(out, "\nhitch log (WT_HITCH=%d): %lld of %.0f frames took more than %d ms, %.0f ms in all; longest gap between two samples of the watchdog %.1f ms\n", g_hitch_ms,
             (long long)g_hitch_frames, g_frames_seen, g_hitch_ms, g_hitch_total_ms, g_sample_gap_max);
     fprintf(out, "hitch table by cause (scene | cause -> frames where it was the largest part / frames where it appears -> total ms, worst single frame):\n");
     qsort(g_cat, (size_t)g_ncat, sizeof g_cat[0], cmp_sum);
@@ -248,11 +248,11 @@ void hitch_report(FILE *out) {
 }
 
 void hitch_init(void) {
-    const char *e = getenv("SSBU_HITCH");
+    const char *e = getenv("WT_HITCH");
     QueryPerformanceFrequency(&g_freq);
     if (!e || atoi(e) <= 0) return;
     g_hitch_ms = atoi(e);
     InitializeSRWLock(&g_lock);
     CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
-    printf("hitch: frames over %d ms are attributed (SSBU_HITCH)\n", g_hitch_ms);
+    printf("hitch: frames over %d ms are attributed (WT_HITCH)\n", g_hitch_ms);
 }

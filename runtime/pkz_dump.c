@@ -1,5 +1,5 @@
 /* [witchtime] `witch-time-game <main.elf> --pkz-dump <out folder | -> [filter...]`: every entry of the RomFS .pkz archives
- * (%SSBU_ROMFS%, else ../romfs) written to <out folder>/<entry name> (entry names are unique across the 72 archives),
+ * (%WT_ROMFS%, else ../romfs) written to <out folder>/<entry name> (entry names are unique across the 72 archives),
  * Kraken entries decompressed by the game's own Oodle decoder (lifted main), stored ones copied. "-" decodes and checks
  * without writing. A filter keeps entries whose archive file name or entry name contains it. No window, no game loop:
  * only the image, its relocations and the import handlers (the decoder calls memcpy / memset through them).
@@ -11,7 +11,7 @@
  *                comp, compAvail; on the stack fuzzSafe 0, checkCRC 0, verbosity 0, threadPhase 3) -> bool; one quantum
  *                (<= 256 KB) a call, called until the whole entry is out
  *   0x71012ff2d0 OodleLZDecoder_Destroy(dec)  (frees only memory it allocated itself)
- * SSBU_PKZ_JOBS = threads (default 8). */
+ * WT_PKZ_JOBS = threads (default 8). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -172,7 +172,7 @@ int pkz_dump(const char *out, char **filters, int nfilters) {
         printf("pkz-dump: main's Oodle decoder is not at the expected address (another build of the game?)\n");
         return 1;
     }
-    const char *env = getenv("SSBU_ROMFS");
+    const char *env = getenv("WT_ROMFS");
     snprintf(g_romfs, sizeof g_romfs, "%s", env && env[0] ? env : "../romfs");
     snprintf(g_out, sizeof g_out, "%s", out);
     if (strcmp(out, "-")) CreateDirectoryA(out, NULL);
@@ -185,12 +185,12 @@ int pkz_dump(const char *out, char **filters, int nfilters) {
         do { g_arcs = realloc(g_arcs, sizeof *g_arcs * (narcs + 1)); g_arcs[narcs++] = strdup(fd.cFileName); } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
-    if (!narcs) { printf("pkz-dump: no .pkz archives in %s (set SSBU_ROMFS)\n", g_romfs); return 1; }
+    if (!narcs) { printf("pkz-dump: no .pkz archives in %s (set WT_ROMFS)\n", g_romfs); return 1; }
     for (int a = 0; a < narcs; a++) if (read_archive(a, filters, nfilters)) g_fail++;
     qsort(g_ent, (size_t)g_count, sizeof *g_ent, by_size);
     long nk = 0;
     for (int i = 0; i < g_count; i++) nk += g_ent[i].kraken;
-    const char *j = getenv("SSBU_PKZ_JOBS");
+    const char *j = getenv("WT_PKZ_JOBS");
     int jobs = j && atoi(j) > 0 ? atoi(j) : 8;
     printf("pkz-dump: %d archives, %d entries (%ld Kraken, %ld stored) -> %s, %d threads\n", narcs, g_count, nk, g_count - nk,
            strcmp(out, "-") ? out : "(decode only)", jobs);

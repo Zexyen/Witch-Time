@@ -1,6 +1,6 @@
 /* nn::pl: the system's shared fonts.
  *
- * Each font is looked up in %SSBU_FONTS% or ..\sysdata\fonts, first as a plain TrueType file (<name>.ttf), then
+ * Each font is looked up in %WT_FONTS% or ..\sysdata\fonts, first as a plain TrueType file (<name>.ttf), then
  * in the form the console stores it (<name>.bfttf, decoded here). The files come from the player's own console.
  * When neither is there, a font of this PC stands in for it (k_standin, from the Windows fonts folder): the game
  * runs and draws its system text in another typeface; characters only the console's fonts have (Nintendo's
@@ -70,7 +70,7 @@ static void load_font(unsigned type) {
     EnterCriticalSection(&g_lock);
     if (!g_fonts[type].tried) {
         g_fonts[type].tried = 1;
-        const char *dir = getenv("SSBU_FONTS");
+        const char *dir = getenv("WT_FONTS");
         if (!dir) dir = "..\\sysdata\\fonts";
         char *path = g_fonts[type].path;
         size_t size = 0;
@@ -117,7 +117,7 @@ static void load_font(unsigned type) {
         g_fonts[type].size = size;
         if (!data) {
             printf("nn::pl: shared font %u (%s.ttf or .bfttf) not in %s and no stand-in in the Windows fonts folder: put your "
-                   "console's shared fonts into targets\\sysdata\\fonts (or SSBU_FONTS=<folder>): stopping\n", type, font_files[type], dir);
+                   "console's shared fonts into targets\\sysdata\\fonts (or WT_FONTS=<folder>): stopping\n", type, font_files[type], dir);
             fflush(stdout);
             report_and_exit(7);
         }
@@ -125,19 +125,12 @@ static void load_font(unsigned type) {
     LeaveCriticalSection(&g_lock);
 }
 
-static void pl_RequestSharedFontLoad(Ctx *c) { load_font((unsigned)A0); }
-static void pl_GetSharedFontLoadState(Ctx *c) { load_font((unsigned)A0); RET(1); }
 static void pl_GetSharedFontAddress(Ctx *c) { unsigned t = (unsigned)A0; load_font(t); RET(t < FONT_TYPES ? (uint64_t)(uintptr_t)g_fonts[t].data : 0); }
 static void pl_GetSharedFontSize(Ctx *c) { unsigned t = (unsigned)A0; load_font(t); RET(t < FONT_TYPES ? g_fonts[t].size : 0); }
-static void pl_IsVrMode(Ctx *c) { RET(0); }
-static void nothing(Ctx *c) { (void)c; }
 
 static const ImportDef pl_imports[] = {
-    {"_ZN2nn2pl21RequestSharedFontLoadENS0_14SharedFontTypeE", pl_RequestSharedFontLoad},
-    {"_ZN2nn2pl22GetSharedFontLoadStateENS0_14SharedFontTypeE", pl_GetSharedFontLoadState},
     {"_ZN2nn2pl20GetSharedFontAddressENS0_14SharedFontTypeE", pl_GetSharedFontAddress},
     {"_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", pl_GetSharedFontSize},
-    {"_ZN2nn2pl8IsVrModeEv", pl_IsVrMode}, {"_ZN2nn2pl11BeginVrModeEv", nothing}, {"_ZN2nn2pl9EndVrModeEv", nothing},
 };
 
 void register_pl_imports(void) {

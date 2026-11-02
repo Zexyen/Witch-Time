@@ -1186,8 +1186,8 @@ int tex_decode_rgba8(int nf, const void *src, int w, int h, uint8_t *dst) {
     uint8_t tmp[12 * 12 * 4];
     if (!f || !f->codec) return -1;
     wb = (w + f->bw - 1) / f->bw; hb = (h + f->bh - 1) / f->bh;
-    static int alog = -1, nalog;                          /* TEST ONLY: SSBU_ASTC_LOG=1: each image with blocks the decoder rejects (format, size, count, the first block) */
-    if (alog < 0) alog = getenv("SSBU_ASTC_LOG") != NULL;
+    static int alog = -1, nalog;                          /* TEST ONLY: WT_ASTC_LOG=1: each image with blocks the decoder rejects (format, size, count, the first block) */
+    if (alog < 0) alog = getenv("WT_ASTC_LOG") != NULL;
     unsigned bad0 = tex_astc_bad_blocks;
     const uint8_t *first_bad = NULL;
     const uint8_t *first_nonzero = NULL;
@@ -1215,12 +1215,12 @@ int tex_decode_rgba8(int nf, const void *src, int w, int h, uint8_t *dst) {
                 for (y = 0; y < ch; y++) memcpy(dst + (size_t)(y0 + y) * pitch + x0 * 4, tmp + y * f->bw * 4, (size_t)cw * 4);
             }
         }
-    {   /* TEST ONLY: SSBU_ASTC_DUMP=<dir>: every ASTC image of 256 texels or more decoded here, once per content: <dir>/<format>_<w>x<h>_<hash>.astc
+    {   /* TEST ONLY: WT_ASTC_DUMP=<dir>: every ASTC image of 256 texels or more decoded here, once per content: <dir>/<format>_<w>x<h>_<hash>.astc
          * (the blocks, rows of blocks, 16 bytes each) and .pam (what this decoder made, RGBA 8-bit) for tools/astccmp.cpp --file */
         static const char *ddir = (const char *)1;
-        if (ddir == (const char *)1) ddir = getenv("SSBU_ASTC_DUMP");
+        if (ddir == (const char *)1) ddir = getenv("WT_ASTC_DUMP");
         static int donly = -2;
-        if (donly == -2) donly = getenv("SSBU_ASTC_DUMP_ONLY") ? (int)strtol(getenv("SSBU_ASTC_DUMP_ONLY"), NULL, 16) : -1;      /* one NVN format (hex) */
+        if (donly == -2) donly = getenv("WT_ASTC_DUMP_ONLY") ? (int)strtol(getenv("WT_ASTC_DUMP_ONLY"), NULL, 16) : -1;      /* one NVN format (hex) */
         if (ddir && f->codec == TEX_CODEC_ASTC && (w >= 256 || h >= 256) && (donly < 0 || donly == nf)) {
             uint64_t hsh = 1469598103934665603ull;
             size_t nb = (size_t)wb * hb * 16;

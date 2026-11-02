@@ -26,13 +26,13 @@ enum { BTN_A = 0, BTN_B, BTN_X, BTN_Y, BTN_STICK_L, BTN_STICK_R, BTN_L, BTN_R, B
 #define STICK_MAX 32767
 
 static volatile LONG64 g_sampling;
-/* Test aid: SSBU_PRESS=<key>,<first second>,<period seconds> holds that key for 0.15 s at each period,
- * whether or not the game window has the focus (e.g. SSBU_PRESS=Z,40,3 presses A every 3 s from second 40). */
+/* Test aid: WT_PRESS=<key>,<first second>,<period seconds> holds that key for 0.15 s at each period,
+ * whether or not the game window has the focus (e.g. WT_PRESS=Z,40,3 presses A every 3 s from second 40). */
 static int scripted(int vk) {
     static int parsed, want, first, period;
     static ULONGLONG start;
     if (!parsed) {
-        const char *s = getenv("SSBU_PRESS");
+        const char *s = getenv("WT_PRESS");
         char k = 0;
         parsed = 1;
         start = GetTickCount64();
@@ -43,7 +43,7 @@ static int scripted(int vk) {
     return ms >= 0 && ms % (period * 1000LL) < 150;
 }
 
-/* Test aid: SSBU_SCRIPT is a timed input sequence, independent of window focus. Space-separated steps
+/* Test aid: WT_SCRIPT is a timed input sequence, independent of window focus. Space-separated steps
  * "<second>[+<duration>]:<keys>", duration 0.15 s by default, keys held together. Key characters are the
  * keyboard keys of the mapping above (Z X C V Q E A S I J K L), '!' = Enter (Plus), '-' = Backspace (Minus),
  * and lower-case u d l r = the arrow keys (left stick). Example: "38:Z 41:Z 60+0.6:r 62:Z 70:!".
@@ -67,7 +67,7 @@ static int script_vk(char k) {
 
 static int script_key(int vk) {
     if (g_script_count < 0) {
-        const char *s = getenv("SSBU_SCRIPT");
+        const char *s = getenv("WT_SCRIPT");
         g_script_count = 0;
         g_script_start = GetTickCount64();
         while (s && *s && g_script_count < SCRIPT_MAX) {
@@ -90,7 +90,7 @@ static int script_key(int vk) {
     }
     return 0;
 }
-/* Test aid: SSBU_SEQ is an input sequence counted in pad polls (the game polls player 1 once per frame),
+/* Test aid: WT_SEQ is an input sequence counted in pad polls (the game polls player 1 once per frame),
  * so it does not depend on how long this run took to start. Space-separated steps, executed in order:
  *   @movie            wait until the opening movie is created (input_mark("movie") from nnmovie_mf.c)
  *   @module:<name>    wait until nn::ro has loaded that script module (input_mark("module:lua2cpp_mario") from nnro.c)
@@ -101,7 +101,7 @@ static int script_key(int vk) {
  *                     been in lo..hi for n polls in a row (default 20), e.g. to skip the opening movie, which
  *                     ignores A for a while; period must exceed the transition time plus n
  *   <n>               wait n polls
- *   <n>:<keys>[/<h>]  wait n polls, then hold the keys for h polls (default 8); keys as in SSBU_SCRIPT
+ *   <n>:<keys>[/<h>]  wait n polls, then hold the keys for h polls (default 8); keys as in WT_SCRIPT
  * Example: "@movie 90:Z 120:Z @draws:150-200 300:u/40 10:Z". Each step is announced with the poll number and the
  * draw count of the last frame. tests\seq_battle.txt is the sequence from boot to a battle (tests\run_battle.sh). */
 #define SEQ_MAX 256
@@ -134,7 +134,7 @@ static void seq_begin(int i) {
 
 static void seq_tick(void) {                              /* once per poll of player 1 */
     if (g_seq_count < 0) {
-        const char *s = getenv("SSBU_SEQ");
+        const char *s = getenv("WT_SEQ");
         g_seq_count = 0;
         while (s && *s && g_seq_count < SEQ_MAX) {
             char tok[60];
@@ -163,11 +163,11 @@ static void seq_tick(void) {                              /* once per poll of pl
         if (g_seq_count) printf("input sequence: %d steps\n", g_seq_count);
         seq_begin(0);
     }
-    {   /* SSBU_SEQ_HZ=<n>: the sequence advances at most n polls per second of real time, so a run whose frame rate
+    {   /* WT_SEQ_HZ=<n>: the sequence advances at most n polls per second of real time, so a run whose frame rate
            changes (the fps census alternating 60 / 120, notes/fps-research.md) gets its inputs at the same real-time
            rhythm throughout; keys held stay held in between. Unset: one step per poll, as always. */
         static int hz = -1; static LONG64 t0, done; static LARGE_INTEGER f;
-        if (hz < 0) { const char *e = getenv("SSBU_SEQ_HZ"); hz = e ? atoi(e) : 0; QueryPerformanceFrequency(&f); }
+        if (hz < 0) { const char *e = getenv("WT_SEQ_HZ"); hz = e ? atoi(e) : 0; QueryPerformanceFrequency(&f); }
         if (hz > 0) {
             LARGE_INTEGER t; QueryPerformanceCounter(&t);
             if (!t0) t0 = t.QuadPart;
@@ -176,9 +176,9 @@ static void seq_tick(void) {                              /* once per poll of pl
         }
     }
     g_seq_polls++;
-    {   /* SSBU_SEQ_LOG=<n>: the draw count every n polls, to find the ranges for @draws */
+    {   /* WT_SEQ_LOG=<n>: the draw count every n polls, to find the ranges for @draws */
         static int every = -1;
-        if (every < 0) every = getenv("SSBU_SEQ_LOG") ? atoi(getenv("SSBU_SEQ_LOG")) : 0;
+        if (every < 0) every = getenv("WT_SEQ_LOG") ? atoi(getenv("WT_SEQ_LOG")) : 0;
         if (every > 0 && g_seq_polls % every == 0) printf("input sequence: poll %lld: %ld draws\n", (long long)g_seq_polls, g_frame_draws_seen);
     }
     if (g_seq_index >= g_seq_count) return;
@@ -220,7 +220,7 @@ static void seq_tick(void) {                              /* once per poll of pl
         g_seq_holding = 1;
         g_seq_left = g_seq[g_seq_index].hold;
         printf("input sequence: poll %lld step %d keys %s for %d (%ld draws)\n", (long long)g_seq_polls, g_seq_index, g_seq[g_seq_index].keys, g_seq[g_seq_index].hold, g_frame_draws_seen);
-        { void nvn_front_shot_step(int step); nvn_front_shot_step(g_seq_index); }      /* track V: SSBU_SHOT_STEPS=1 saves the frame of every key step (renderer comparison) */
+        { void nvn_front_shot_step(int step); nvn_front_shot_step(g_seq_index); }      /* track V: WT_SHOT_STEPS=1 saves the frame of every key step (renderer comparison) */
         return;
     }
     seq_begin(g_seq_index + 1);                           /* the hold just ended */
@@ -233,7 +233,7 @@ static int seq_key(int vk) {
 }
 /* The real keyboard counts only while a window of THIS process is the foreground window: GetAsyncKeyState reads the
  * whole desktop, so without this check anything typed in another program (or another running copy of the game, or a
- * test that injects keys) steered the game. With SSBU_SEQ the keyboard is ignored altogether, unless SSBU_SEQ_KEYBOARD
+ * test that injects keys) steered the game. With WT_SEQ the keyboard is ignored altogether, unless WT_SEQ_KEYBOARD
  * is set, so a scripted run is not disturbed by a person at the machine. */
 static unsigned char g_kb_test[256];                     /* [witchtime] self-test: keys held (by virtual key), instead of the real keyboard */
 static int g_kb_test_on, g_mouse_test_dx, g_mouse_test_dy;
@@ -242,7 +242,7 @@ static int keyboard_ours(void) {
     if (g_kb_test_on) return 1;
     static LONG64 checked_at = -1;
     static int ours;
-    if (mode < 0) mode = (getenv("SSBU_SEQ") || getenv("SSBU_PLAY")) && !getenv("SSBU_SEQ_KEYBOARD") ? 0 : 1;
+    if (mode < 0) mode = (getenv("WT_SEQ") || getenv("WT_PLAY")) && !getenv("WT_SEQ_KEYBOARD") ? 0 : 1;
     if (!mode) return 0;
     if (checked_at != g_sampling) {                       /* once per poll */
         DWORD pid = 0;
@@ -255,9 +255,9 @@ static int keyboard_ours(void) {
 static int key(int vk) { return scripted(vk) || script_key(vk) || seq_key(vk) || (keyboard_ours() && (GetAsyncKeyState(vk) & 0x8000) != 0); }
 
 /* Every session's pad input is recorded, so a path played by hand can be replayed exactly as a test.
- * Recording: always, to the file named by SSBU_REC or input_last.rec; one line per change of the pad:
+ * Recording: always, to the file named by WT_REC or input_last.rec; one line per change of the pad:
  *     a <anchor> <polls since that anchor> <buttons hex> <lx> <ly>
- * Replay: SSBU_PLAY=<file> feeds a recording back instead of the keyboard.
+ * Replay: WT_PLAY=<file> feeds a recording back instead of the keyboard.
  *
  * Anchors make the clock independent of loading times. Poll counts alone are not: the time between two screens
  * depends on how long this run took to load them. The run is divided by SCREEN CHANGES, recognised from the number
@@ -298,7 +298,7 @@ static void anchor_tick(void) {                           /* once per poll */
 
 static void record_or_replay(uint64_t *buttons, int *lx, int *ly) {
     if (g_play_count < 0) {
-        const char *play = getenv("SSBU_PLAY"), *rec = getenv("SSBU_REC");
+        const char *play = getenv("WT_PLAY"), *rec = getenv("WT_REC");
         g_play_count = 0;
         FILE *f = play ? fopen(play, "r") : NULL;
         if (f) {
@@ -316,7 +316,7 @@ static void record_or_replay(uint64_t *buttons, int *lx, int *ly) {
         } else if (play) printf("input replay: cannot open %s\n", play);
         if (!g_play_count) {
             g_rec = fopen(rec ? rec : "input_last.rec", "w");
-            if (g_rec) fprintf(g_rec, "# a <anchor> <polls since the anchor> <buttons hex> <lx> <ly>   (see nnhid.c; replay with SSBU_PLAY=<this file>)\n");
+            if (g_rec) fprintf(g_rec, "# a <anchor> <polls since the anchor> <buttons hex> <lx> <ly>   (see nnhid.c; replay with WT_PLAY=<this file>)\n");
         }
     }
     g_rec_poll++;
@@ -347,13 +347,13 @@ static void record_or_replay(uint64_t *buttons, int *lx, int *ly) {
 /* ================================================================ controllers
  * Players 1..4 are the XInput controllers 0..3 (Xbox pads and everything that presents itself as one), each
  * reported to the game as a Pro Controller (style NpadStyleFullKey). The keyboard is one more source: it belongs to
- * the player named by SSBU_KEYBOARD_PLAYER (1..8, default 1, 0 = nobody) and is merged with that player's pad, so a
- * machine without a pad still has player 1 and a machine with one pad can have two players (SSBU_KEYBOARD_PLAYER=2).
+ * the player named by WT_KEYBOARD_PLAYER (1..8, default 1, 0 = nobody) and is merged with that player's pad, so a
+ * machine without a pad still has player 1 and a machine with one pad can have two players (WT_KEYBOARD_PLAYER=2).
  * Not supported: more than four pads (XInput's limit; other HID pads would need Raw Input), a GameCube adapter,
  * motion sensors (XInput pads have none), touch (the console is docked: no touch input).
  *
  * Buttons: by POSITION by default (the game's prompts are for a Nintendo pad: its A is the right-hand face button,
- * which is B on an Xbox pad); SSBU_PAD_LAYOUT=label maps by the printed letter instead. Triggers are ZL/ZR from a
+ * which is B on an Xbox pad); WT_PAD_LAYOUT=label maps by the printed letter instead. Triggers are ZL/ZR from a
  * third of their travel. Start = Plus, Back = Minus. Sticks: -32767..32767, no dead zone added (the game has its
  * own). The "stick as buttons" bits (16..23) are set beyond half deflection (NOT VERIFIED on a console: the value
  * the system uses; 0.5 is what the suyu emulator uses).
@@ -364,7 +364,7 @@ static void record_or_replay(uint64_t *buttons, int *lx, int *ly) {
  * larger high-band amplitude.
  *
  * Real pads and the keyboard count only while a window of this process has the focus, and never in scripted runs
- * (SSBU_SEQ / SSBU_PLAY without SSBU_SEQ_KEYBOARD), so tests are not disturbed by a pad lying on the desk.
+ * (WT_SEQ / WT_PLAY without WT_SEQ_KEYBOARD), so tests are not disturbed by a pad lying on the desk.
  *
  * What the SDK itself does was read in sdk.elf: GetNpadControllerColor accepts only success, hid 603 and hid 604
  * from the service (anything else aborts) and 604 = 0x4b8ca is "no controller of that kind"; handles are
@@ -384,7 +384,7 @@ static uint32_t g_supported_styles = 0xffffffffu;            /* until SetSupport
 static uint32_t g_supported_ids[16];
 static int g_supported_id_count = -1;                        /* -1 = SetSupportedNpadIdType not called yet: all */
 static int g_hid_ready, g_touch_ready, g_label_layout;
-static int g_sdl_pad, g_pad_test;                            /* SDL backend (nnpad_sdl.c; SSBU_PAD_BACKEND=xinput switches it off); self-test of it running */
+static int g_sdl_pad, g_pad_test;                            /* SDL backend (nnpad_sdl.c; WT_PAD_BACKEND=xinput switches it off); self-test of it running */
 static struct { float v[4]; int set; } g_vib[8][2];
 static const float g_vib_default[4] = {0.0f, 160.0f, 0.0f, 320.0f};
 
@@ -392,14 +392,14 @@ static const float g_vib_default[4] = {0.0f, 160.0f, 0.0f, 320.0f};
  * The three XInput entry points are replaced AT THE BOUNDARY: the function pointers that hid_setup otherwise takes from
  * xinput1_4.dll. Everything above them (x_present, fill_pad, vib_apply, connection state, the handlers the game calls)
  * is the code a real pad runs.
- *   SSBU_XINPUT_SYNTH=1  slot 0 holds a wired pad whose state is built from the keys of the input sequence (SSBU_SEQ):
+ *   WT_XINPUT_SYNTH=1  slot 0 holds a wired pad whose state is built from the keys of the input sequence (WT_SEQ):
  *                        Z X C V = the face buttons at the POSITION of the console's A B X Y (XInput B A Y X),
  *                        Q E = shoulders, A S = triggers at full travel, arrows = left stick at full deflection,
  *                        I J K L = d-pad, ! and - = Start and Back. The sequence's own path into player 1 (and the
  *                        keyboard) is switched off, so every input of the run reaches the game through the XInput mapping.
  *   hid_report (end of run): GetState / SetState call counts and the largest motor values the game's vibration produced.
  * The self-test (nnhid_selftest_xinput) uses the same boundary with a state it sets itself, on slot 1. */
-static int g_x_synth;                                         /* 1 = SSBU_XINPUT_SYNTH run, 2 = self-test */
+static int g_x_synth;                                         /* 1 = WT_XINPUT_SYNTH run, 2 = self-test */
 static int sdl_on(void) { return g_sdl_pad && !g_x_synth; }
 static struct { XState st; int connected, wireless; long long gets, sets; XVibration last, max; } g_xs[4];
 static DWORD WINAPI synth_get_state(DWORD slot, XState *out) {
@@ -442,7 +442,7 @@ static DWORD WINAPI synth_get_caps(DWORD slot, DWORD flags, XCaps *out) {
 }
 void hid_report(FILE *out) {
     if (g_x_synth != 1) return;
-    fprintf(out, "nn::hid: synthetic XInput pad on slot 0 (SSBU_XINPUT_SYNTH): %lld XInputGetState calls, %lld state changes, %lld XInputSetState calls "
+    fprintf(out, "nn::hid: synthetic XInput pad on slot 0 (WT_XINPUT_SYNTH): %lld XInputGetState calls, %lld state changes, %lld XInputSetState calls "
                  "(vibration), largest motor values left %u right %u of 65535, last left %u right %u\n",
             g_xs[0].gets, (long long)g_xs[0].st.packet, g_xs[0].sets, g_xs[0].max.left, g_xs[0].max.right, g_xs[0].last.left, g_xs[0].last.right);
 }
@@ -450,8 +450,7 @@ void hid_report(FILE *out) {
 static void hid_setup(void) {
     if (g_hid_ready) return;
     g_hid_ready = 1;
-    { void r1_init(void); r1_init(); }                       /* R1 (r1_state.c): nothing without SSBU_R1 */
-    if (getenv("SSBU_XINPUT_SYNTH")) {
+    if (getenv("WT_XINPUT_SYNTH")) {
         g_x_synth = 1;
         x_get_state = synth_get_state; x_set_state = synth_set_state; x_get_caps = synth_get_caps;
         printf("nn::hid: SYNTHETIC XInput pad on slot 0, driven by the input sequence (test aid; the sequence's keyboard path is off)\n");
@@ -464,11 +463,11 @@ static void hid_setup(void) {
         x_set_state = (void *)GetProcAddress(m, "XInputSetState");
         x_get_caps = (void *)GetProcAddress(m, "XInputGetCapabilities");
     }
-    const char *kb = getenv("SSBU_KEYBOARD_PLAYER"), *layout = getenv("SSBU_PAD_LAYOUT"), *backend = getenv("SSBU_PAD_BACKEND");
+    const char *kb = getenv("WT_KEYBOARD_PLAYER"), *layout = getenv("WT_PAD_LAYOUT"), *backend = getenv("WT_PAD_BACKEND");
     int k = kb && kb[0] ? atoi(kb) : 1;
     g_keyboard_player = k >= 1 && k <= 8 ? k - 1 : -1;
     g_label_layout = layout && !strcmp(layout, "label");
-    /* default backend = SDL3 (nnpad_sdl.c, controllers.ini); SSBU_PAD_BACKEND=xinput keeps the older XInput path below, and is the fallback if SDL cannot start */
+    /* default backend = SDL3 (nnpad_sdl.c, controllers.ini); WT_PAD_BACKEND=xinput keeps the older XInput path below, and is the fallback if SDL cannot start */
     if (!g_x_synth && !(backend && !_stricmp(backend, "xinput"))) {
         g_sdl_pad = nnpad_init();
         if (g_sdl_pad) { g_keyboard_player = nnpad_keyboard_player(); printf("nn::hid: pads through SDL3; keyboard = player %d\n", g_keyboard_player + 1); return; }
@@ -505,7 +504,7 @@ static int x_present(int slot) {
     return g_x[slot].present;
 }
 
-static int scripted_run(void) { static int m = -1; if (m < 0) m = (getenv("SSBU_SEQ") || getenv("SSBU_PLAY") || getenv("SSBU_PRESS") || getenv("SSBU_SCRIPT")) != 0; return m; }
+static int scripted_run(void) { static int m = -1; if (m < 0) m = (getenv("WT_SEQ") || getenv("WT_PLAY") || getenv("WT_PRESS") || getenv("WT_SCRIPT")) != 0; return m; }
 static int id_supported(uint32_t id) {
     if (g_supported_id_count < 0) return 1;
     for (int i = 0; i < g_supported_id_count; i++) if (g_supported_ids[i] == id) return 1;
@@ -531,7 +530,7 @@ static int kb_down(int vk) {
     if ((vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2) && display_mouse_hold()) return 0;
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
-/* Player 1 gets the test scripts (SSBU_PRESS / SSBU_SCRIPT / SSBU_SEQ); the keyboard's player gets the real keys. */
+/* Player 1 gets the test scripts (WT_PRESS / WT_SCRIPT / WT_SEQ); the keyboard's player gets the real keys. */
 static int key_for(uint32_t id, int vk, int kbidx) {         /* vk = the fixed key of the test scripts; kbidx = which configurable binding (controllers.ini) the real keyboard uses */
     int down = 0;
     if (id == 0) down = scripted(vk) || script_key(vk) || seq_key(vk);
@@ -542,15 +541,15 @@ static int key_for(uint32_t id, int vk, int kbidx) {         /* vk = the fixed k
     return down;
 }
 
-/* Track V session 13, TEST ONLY: SSBU_SHOT_FIGHT=<n>[,<n>...] (ascending): a picture of fight frame n. The fight frames
- * are counted here, at player 1's pad poll, from the input mark "fight" on (with SSBU_DETERMINISTIC the number of the
+/* Track V session 13, TEST ONLY: WT_SHOT_FIGHT=<n>[,<n>...] (ascending): a picture of fight frame n. The fight frames
+ * are counted here, at player 1's pad poll, from the input mark "fight" on (with WT_DETERMINISTIC the number of the
  * first fighter's frame-line calls: fight_seq_ticks; without it one per poll). When the count reaches n the front end is
  * told (nvn_front_shot_fight); the next present the game queues is saved as fight_<n>.bmp by the renderer in use. */
 static void fight_shot_poll(int ticks) {
     static int list[16], n = -1, next;
     static long long ff;
     void nvn_front_shot_fight(int frame);
-    if (n < 0) { const char *e = getenv("SSBU_SHOT_FIGHT"); n = 0; while (e && *e && n < 16) { list[n++] = atoi(e); e = strchr(e, ','); if (e) e++; } }
+    if (n < 0) { const char *e = getenv("WT_SHOT_FIGHT"); n = 0; while (e && *e && n < 16) { list[n++] = atoi(e); e = strchr(e, ','); if (e) e++; } }
     if (next >= n || !mark_seen("fight")) return;
     ff += ticks;
     if (ff >= list[next]) { printf("shot: fight frame %lld reached at poll %lld (wanted %d): the next queued present is saved\n", ff, (long long)g_seq_polls, list[next]); fflush(stdout); nvn_front_shot_fight(list[next]); next++; }
@@ -586,16 +585,13 @@ static int mouse_stick(int *ox, int *oy) {
     return 1;
 }
 static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
-    { void r1_wrote(uint64_t, uint64_t); r1_wrote(out, 0x28); }   /* R1: marked (nothing without SSBU_R1_MARK) */
     memset((void *)(uintptr_t)out, 0, 0x28);
     wr64(out, (uint64_t)InterlockedIncrement64(&g_sampling));
     if (id > 7 || !style_is_fullkey) return;                  /* every controller here is a full-key (Pro) controller */
-    static long long l1_ticks;                               /* L1: fight-frame ticks seen at player 1's polls (SSBU_L1 report) */
-    int r1_on(void), r1_poll(int ticks); void r1_pad(uint64_t *b, int *lx, int *ly, int *rx, int *ry);    /* R1 (r1_state.c, SSBU_R1 only) */
-    if (id == 0) { int fight_seq_ticks(void); int nt = fight_seq_ticks();
-                   if (r1_on() && r1_poll(mark_seen("fight") ? nt : 0)) nt = 0;                  /* R1 re-run: the sequence waits, the recorded values are given (R1 run-ahead: the speculative poll) */
+    static long long l1_ticks;                               /* L1: fight-frame ticks seen at player 1's polls (WT_L1 report) */
+    if (id == 0) { int nt = 1;
                    fight_shot_poll(nt); if (mark_seen("fight")) l1_ticks += nt;
-                   for (int n = nt; n > 0; n--) seq_tick(); }     /* S11: 1 per poll; SSBU_DETERMINISTIC in a fight: per fight frame (fighter_sdk\fighter_host.c) */
+                   for (int n = nt; n > 0; n--) seq_tick(); }     /* S11: 1 per poll; WT_DETERMINISTIC in a fight: per fight frame (fighter_sdk\fighter_host.c) */
     if (!player_connected(id)) return;
     static const struct { int vk, bit; } map[] = {
         {'Z', BTN_A}, {'X', BTN_B}, {'C', BTN_X}, {'V', BTN_Y}, {'Q', BTN_L}, {'E', BTN_R}, {'A', BTN_ZL}, {'S', BTN_ZR},
@@ -659,7 +655,6 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         if (changed || !(++polls & 15)) { prompts_tick(); menu_swap_tick(); }
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
-    if (id == 0 && r1_on()) r1_pad(&buttons, &lx, &ly, &rx, &ry);
     if (lx < -STICK_MAX / 2) buttons |= 1ull << BTN_SL_LEFT;
     if (lx > STICK_MAX / 2) buttons |= 1ull << BTN_SL_RIGHT;
     if (ly > STICK_MAX / 2) buttons |= 1ull << BTN_SL_UP;
@@ -669,15 +664,15 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
     if (rx > STICK_MAX / 2) buttons |= 1ull << (BTN_SL_RIGHT + 4);
     if (ry < -STICK_MAX / 2) buttons |= 1ull << (BTN_SL_DOWN + 4);
     wr64(out + 8, buttons);
-    {   /* [witchtime] test aid: with SSBU_KBM_SCRIPT the keyboard player's state is logged at every change */
+    {   /* [witchtime] test aid: with WT_KBM_SCRIPT the keyboard player's state is logged at every change */
         static int on = -1; static uint64_t lb = ~0ull; static int ls[4];
-        if (on < 0) on = getenv("SSBU_KBM_SCRIPT") != NULL;
+        if (on < 0) on = getenv("WT_KBM_SCRIPT") != NULL;
         if (on && (int)id == g_keyboard_player && (buttons != lb || lx != ls[0] || ly != ls[1] || rx != ls[2] || ry != ls[3])) {
             lb = buttons; ls[0] = lx; ls[1] = ly; ls[2] = rx; ls[3] = ry;
             printf("kbm: player %u buttons %llx left %d %d right %d %d\n", id + 1, (unsigned long long)buttons, lx, ly, rx, ry);
         }
     }
-    if (id == 0) { void display_l1_poll(uint64_t buttons, long long fight_ticks, long long poll); int r1_ra_phase(void); if (r1_ra_phase() != 1) display_l1_poll(buttons, l1_ticks, (long long)g_seq_polls); }      /* (R1 run-ahead: the speculative pass's poll is not a poll of the real timeline) */      /* L1 (input latency): the time of player 1's poll, the press it saw */
+    if (id == 0) { void display_l1_poll(uint64_t buttons, long long fight_ticks, long long poll); display_l1_poll(buttons, l1_ticks, (long long)g_seq_polls); }      /* L1 (input latency): the time of player 1's poll, the press it saw */
     wr32(out + 0x10, (uint32_t)lx);
     wr32(out + 0x14, (uint32_t)ly);
     wr32(out + 0x18, (uint32_t)rx);
@@ -695,9 +690,9 @@ static void hid_SetSupportedNpadIdType(Ctx *c) {            /* (const NpadIdType
 static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
     uint32_t id = rd32(A0);
     int r = player_connected(id);
-    {   /* D2 debug (SSBU_HIDLOG): each distinct (id, caller, answer) once */
+    {   /* D2 debug (WT_HIDLOG): each distinct (id, caller, answer) once */
         static int on = -1, n; static uint64_t seen[64];
-        if (on < 0) on = getenv("SSBU_HIDLOG") != NULL;
+        if (on < 0) on = getenv("WT_HIDLOG") != NULL;
         if (on) { uint64_t k = ((uint64_t)id << 40) ^ (c->x[30] << 1) ^ (uint64_t)r; int i; for (i = 0; i < n; i++) if (seen[i] == k) break;
             if (i == n && n < 64) { seen[n++] = k; printf("hidlog: GetNpadStyleSet(id %x) from %llx -> %d\n", id, (unsigned long long)c->x[30] - 4, r); } }
     }
@@ -733,32 +728,14 @@ static void hid_GetPlayerLedPattern(Ctx *c) {               /* the console's pat
 }
 /* [sdk] 0x2398a0: per npad the service publishes a colour attribute (0 ok, 1 read error -> hid 603, 2 no such
  * controller -> hid 604) and two RGBA colours. A Pro Controller's own colours are body 2D2D2D, buttons E6E6E6. */
-#define HID_COLOR_NO_CONTROLLER 0x4b8caull
-static void hid_ControllerColor1(Ctx *c) {                  /* (NpadControllerColor *out, const NpadIdType &) */
-    if (!player_connected(rd32(A1))) { RET(HID_COLOR_NO_CONTROLLER); return; }
-    wr32(A0, 0xff2d2d2du);
-    wr32(A0 + 4, 0xffe6e6e6u);
-    RET(0);
-}
-static void hid_ControllerColor2(Ctx *c) { RET(HID_COLOR_NO_CONTROLLER); }   /* (left, right, id): Joy-Con colours; no Joy-Con is ever attached */
 static void hid_InitializeTouchScreen(Ctx *c) { (void)c; g_touch_ready = 1; }
 static void hid_GetTouchScreenState(Ctx *c) {               /* docked console: the screen is in the dock, no touch can arrive */
     memset((void *)(uintptr_t)A0, 0, 0x290);
     wr64(A0, (uint64_t)InterlockedIncrement64(&g_sampling));
 }
-/* [Recomps#1] SDK 3.6.0 forms our game uses.
- * GetTouchScreenStates<1>(TouchScreenState<1> *states, int count) -> int written. [sdk 0x20b4dc]: 0x38-byte states
- * (+0 sampling number, +8 touch count clamped to 1, +0x10 one 0x28-byte TouchState), newest first. Docked: no touch, so one
- * state with count 0 (the hid service keeps sampling the touch screen even when nothing touches it). */
-static void hid_GetTouchScreenStates1(Ctx *c) {
-    if ((int)A1 <= 0) { RET(0); return; }
-    memset((void *)(uintptr_t)A0, 0, 0x38);
-    wr64(A0, (uint64_t)InterlockedIncrement64(&g_sampling));
-    RET(1);
-}
 /* InitializeKeyboard() / GetKeyboardState(KeyboardState *). [sdk 0x202060]: the state is 0x30 bytes copied from the shared
  * memory ring (+0 sampling number, then modifiers and the 256-bit key set [doc]). The PC keyboard already drives the
- * controller (SSBU_KEYBOARD_PLAYER, nnpad_sdl.c), so the Switch keyboard reports no keys held. */
+ * controller (WT_KEYBOARD_PLAYER, nnpad_sdl.c), so the Switch keyboard reports no keys held. */
 static void hid_InitializeKeyboard(Ctx *c) { (void)c; }
 static void hid_GetKeyboardState(Ctx *c) {
     memset((void *)(uintptr_t)A0, 0, 0x30);
@@ -796,7 +773,6 @@ static void hid_GetSixAxisSensorState(Ctx *c) {             /* (SixAxisSensorSta
         g_six[id].ever = 1;
     } else g_six[id].connected = 0;
     if (!g_six[id].ever) return;                             /* empty ring: nothing is copied */
-    { void r1_wrote(uint64_t, uint64_t); r1_wrote(o, 0x60); }   /* R1 (r1_state.c): the page is marked (nothing without SSBU_R1_MARK) */
     memset((void *)(uintptr_t)o, 0, 0x60);
     wr64(o, 5000000);                                        /* delta time, ns */
     wr64(o + 8, (uint64_t)g_six[id].last);                   /* sampling number */
@@ -867,7 +843,6 @@ static void hid_IsSevenSixAxisSensorAtRest(Ctx *c) {
         guest_trap("nn::hid::IsSevenSixAxisSensorAtRest before InitializeSevenSixAxisSensor (the SDK aborts with 0x872ca, sdk 0x232be4 / 0x24a398)", c->x[30] - 4);
     RET(1);
 }
-static void hid_GetSevenSixAxisSensorStates(Ctx *c) { RET(0); }                           /* (states, count) -> number written: the console's own sensor is not sampled while docked */
 
 /* ---- vibration. Handle = style index (3 = full key) | npad id << 8 | device index << 16. */
 static int vib_slot(uint32_t handle, uint32_t *id, uint32_t *dev) {
@@ -899,15 +874,8 @@ static void hid_InitializeVibrationDevice(Ctx *c) {         /* (const VibrationD
     hid_setup();
     if (vib_slot(rd32(A0), &id, &dev)) { memcpy(g_vib[id][dev].v, g_vib_default, sizeof g_vib_default); g_vib[id][dev].set = 1; }
 }
-static void hid_GetVibrationDeviceInfo(Ctx *c) {            /* (VibrationDeviceInfo *out, handle): { type, position } */
-    uint32_t id, dev;
-    if (!vib_slot(rd32(A1), &id, &dev)) { wr32(A0, 0); wr32(A0 + 4, 0); return; }
-    wr32(A0, 1);                                            /* VibrationDeviceType_LinearResonantActuator */
-    wr32(A0 + 4, dev == 0 ? 1 : 2);                         /* VibrationDevicePosition_Left / _Right */
-}
 static void hid_SendVibrationValue(Ctx *c) {                /* (handle, const VibrationValue &{ampLow, freqLow, ampHigh, freqHigh}) */
     uint32_t id, dev;
-    { int r1_ra_phase(void); if (r1_ra_phase() == 1) return; }      /* R1 round 5, run-ahead: a speculative pass's rumble is not felt (the real pass sends it) */
     if (!vib_slot(rd32(A0), &id, &dev)) return;
     memcpy(g_vib[id][dev].v, (void *)(uintptr_t)A1, 16);
     g_vib[id][dev].set = 1;
@@ -919,8 +887,7 @@ static void hid_GetActualVibrationValue(Ctx *c) {           /* (VibrationValue *
     if (vib_slot(rd32(A1), &id, &dev) && g_vib[id][dev].set && player_connected(id)) v = g_vib[id][dev].v;
     memcpy((void *)(uintptr_t)A0, v, 16);
 }
-/* GameCube controllers: an eccentric motor with the commands 0 Stop, 1 Start, 2 StopHard (u64; [game] 0x710366a4f0 reads
- * 8 bytes and compares with 1).
+/* GameCube controllers: an eccentric motor with the commands 0 Stop, 1 Start, 2 StopHard (u64).
  * SendVibrationGcErmCommand(handle, command) [sdk 0x2537c0 -> 0x248ca0]: one request (IHidServer slot +0x258 = command 207)
  * with the u32 handle and the u64 command; a failure aborts.  GetActualVibrationGcErmCommand(out, handle) [sdk 0x253810 ->
  * 0x248d30]: slot +0x260 = command 208, the module writes the u64; a failure aborts.
@@ -942,7 +909,6 @@ static int gc_handle_check(Ctx *c, uint32_t handle, const char *what) {      /* 
 static void hid_SendVibrationGcErmCommand(Ctx *c) {         /* (const VibrationDeviceHandle &, const VibrationGcErmCommand &) */
     uint32_t handle = rd32(A0), id = (handle >> 8) & 0xff;
     uint64_t command = rd64(A1);
-    { int r1_ra_phase(void); if (r1_ra_phase() == 1) return; }      /* R1 round 5, run-ahead: not in a speculative pass */
     hid_setup();
     if (!gc_handle_check(c, handle, "nn::hid::SendVibrationGcErmCommand with an invalid handle (the hid module refuses it and the SDK aborts, sdk 0x2537d4)")) return;
     if (command > 2) return;
@@ -1006,16 +972,6 @@ int nnhid_selftest_close4(Ctx *c) {
 /* ---- Joy-Con management: there are no Joy-Con here, every controller is a Pro Controller, for which the console
  * itself does nothing in these calls (they regroup or split Joy-Con pairs). */
 static void hid_joycon_only(Ctx *c) { hid_setup(); (void)c; }
-static void hid_GetNpadJoyAssignment(Ctx *c) { RET(0); }    /* NpadJoyAssignmentMode_Dual, the value of every non-Joy-Con npad */
-static void hid_MergeSingleJoyAsDualJoy(Ctx *c) { RET(0x4b2caull); }   /* hid 601..602 family: the two npads are not single Joy-Con (NOT VERIFIED: the exact code for "not a Joy-Con") */
-static void hid_SwapNpadAssignment(Ctx *c) {                /* (const NpadIdType &a, const NpadIdType &b): the two players exchange controllers */
-    uint32_t a = rd32(A0), b = rd32(A1);
-    if (a > 7 || b > 7) return;
-    int t = g_source[a]; g_source[a] = g_source[b]; g_source[b] = t;
-    if (sdl_on()) nnpad_swap((int)a, (int)b);
-    if (g_keyboard_player == (int)a) g_keyboard_player = (int)b; else if (g_keyboard_player == (int)b) g_keyboard_player = (int)a;
-    for (int d = 0; d < 2; d++) { float tmp[4]; int ts = g_vib[a][d].set; memcpy(tmp, g_vib[a][d].v, 16); g_vib[a][d] = g_vib[b][d]; memcpy(g_vib[b][d].v, tmp, 16); g_vib[b][d].set = ts; }
-}
 static void hid_DisconnectNpad(Ctx *c) {                    /* drops the wireless link; the pad returns when a button is pressed */
     uint32_t id = rd32(A0);
     if (id > 7) return;
@@ -1029,7 +985,6 @@ static void hid_DisconnectNpad(Ctx *c) {                    /* drops the wireles
     }
 }
 static void hid_InitializeSevenSixAxisSensor(Ctx *c) { (void)c; hid_setup(); g_seven_ready = 1; }       /* (void *work, size_t) [sdk 0x232540] */
-static void hid_seven_start_stop(Ctx *c) { (void)c; hid_setup(); }
 
 /* Self-test of the XInput pad path with a synthetic pad on slot 1 = player 2 (see "synthetic XInput pad" above): the
  * state is set here, the three XInput entry points are the synthetic ones, and the handlers the game calls
@@ -1156,7 +1111,7 @@ int nnhid_selftest_xinput(Ctx *c) {
     return bad;
 }
 
-/* ---- self-test of the SDL pad backend (SSBU_PAD_SELFTEST=1, run from boot.c main before anything else): nnpad_sdl.c drives SDL virtual
+/* ---- self-test of the SDL pad backend (WT_PAD_SELFTEST=1, run from boot.c main before anything else): nnpad_sdl.c drives SDL virtual
  * joysticks and reads the result through these hooks, which call the handlers exactly as the game does. */
 static uint32_t th_style(uint32_t id) { Ctx c; memset(&c, 0, sizeof c); c.x[0] = (uint64_t)(uintptr_t)&id; hid_GetNpadStyleSet(&c); return (uint32_t)c.x[0]; }
 static void th_state(uint32_t id, uint64_t *b, int32_t st[4], uint32_t *attr) {
@@ -1189,7 +1144,7 @@ static int th_six(uint32_t id, float accel[3], float gyro[3], int *rest) {
     *rest = (int)c.x[0];
     return rd32((uint64_t)(uintptr_t)buf + 0x58) == 1;
 }
-static void th_test_mode(int on) { g_pad_test = on; if (on) { _putenv("SSBU_REC=NUL"); hid_setup(); } }
+static void th_test_mode(int on) { g_pad_test = on; if (on) { _putenv("WT_REC=NUL"); hid_setup(); } }
 static void th_kb(int on) {                                 /* [witchtime] keyboard + mouse on player 1 from the test's keys, or back to none */
     static int saved = -2;
     if (on && saved == -2) saved = g_keyboard_player;
@@ -1207,39 +1162,22 @@ int nnhid_pad_selftest(void) {
 
 #define H(n) "_ZN2nn3hid" n
 static const ImportDef hid_imports[] = {
-    {H("20GetTouchScreenStatesILm1EEEiPNS0_16TouchScreenStateIXT_EEEi"), hid_GetTouchScreenStates1},     /* [Recomps#1] */
     {H("18InitializeKeyboardEv"), hid_InitializeKeyboard}, {H("16GetKeyboardStateEPNS0_13KeyboardStateE"), hid_GetKeyboardState},  /* [Recomps#1] */
     {H("14InitializeNpadEv"), hid_InitializeNpad}, {H("24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE"), hid_SetSupportedNpadStyleSet},
     {H("22SetSupportedNpadIdTypeEPKjm"), hid_SetSupportedNpadIdType}, {H("18SetNpadJoyHoldTypeENS0_15NpadJoyHoldTypeE"), hid_joycon_only},
-    {H("20GetNpadJoyAssignmentERKj"), hid_GetNpadJoyAssignment}, {H("30SetNpadJoyAssignmentModeSingleERKjNS0_17NpadJoyDeviceTypeE"), hid_joycon_only},
-    {H("30SetNpadJoyAssignmentModeSingleERKj"), hid_joycon_only}, {H("28SetNpadJoyAssignmentModeDualERKj"), hid_joycon_only},
-    {H("23MergeSingleJoyAsDualJoyERKjS2_"), hid_MergeSingleJoyAsDualJoy}, {H("18SwapNpadAssignmentERKjS2_"), hid_SwapNpadAssignment}, {H("14DisconnectNpadERKj"), hid_DisconnectNpad},
-    {H("19GetPlayerLedPatternERKj"), hid_GetPlayerLedPattern}, {H("15GetNpadStyleSetERKj"), hid_GetNpadStyleSet},
+    {H("15GetNpadStyleSetERKj"), hid_GetNpadStyleSet},
     {H("12GetNpadStateEPNS0_16NpadFullKeyStateERKj"), hid_GetNpadState_FullKey},
     {H("12GetNpadStateEPNS0_16NpadJoyDualStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_16NpadJoyLeftStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_17NpadJoyRightStateERKj"), hid_GetNpadState_Other},
-    {H("12GetNpadStateEPNS0_11NpadGcStateERKj"), hid_GetNpadState_Other},
     {H("12GetNpadStateEPNS0_17NpadHandheldStateERKj"), hid_GetNpadState_Other},
-    {H("22GetNpadControllerColorEPNS0_19NpadControllerColorERKj"), hid_ControllerColor1},
-    {H("22GetNpadControllerColorEPNS0_19NpadControllerColorES2_RKj"), hid_ControllerColor2},
     {H("21InitializeTouchScreenEv"), hid_InitializeTouchScreen}, {H("19GetTouchScreenStateILm16EEEvPNS0_16TouchScreenStateIXT_EEE"), hid_GetTouchScreenState},
-    {H("21StartLrAssignmentModeEv"), hid_joycon_only}, {H("20StopLrAssignmentModeEv"), hid_joycon_only},
     {H("21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE"), hid_GetSixAxisSensorState},
-    {H("21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE"), hid_IsSixAxisSensorAtRest},
     {H("18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE"), hid_StartSixAxisSensor},
-    {H("22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE"), hid_GetVibrationDeviceInfo},
     {H("18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE"), hid_SendVibrationValue},
-    {H("25SendVibrationGcErmCommandERKNS0_21VibrationDeviceHandleERKNS0_21VibrationGcErmCommandE"), hid_SendVibrationGcErmCommand},
-    {H("23GetActualVibrationValueEPNS0_14VibrationValueERKNS0_21VibrationDeviceHandleE"), hid_GetActualVibrationValue},
-    {H("30GetActualVibrationGcErmCommandEPNS0_21VibrationGcErmCommandERKNS0_21VibrationDeviceHandleE"), hid_GetActualVibrationGcErmCommand},
     {H("25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE"), hid_InitializeVibrationDevice},
-    {H("23StartSevenSixAxisSensorEv"), hid_seven_start_stop}, {H("22StopSevenSixAxisSensorEv"), hid_seven_start_stop},
-    {H("27GetSevenSixAxisSensorStatesEPNS0_23SevenSixAxisSensorStateEi"), hid_GetSevenSixAxisSensorStates},
-    {H("26IsSevenSixAxisSensorAtRestEv"), hid_IsSevenSixAxisSensorAtRest}, {H("28InitializeSevenSixAxisSensorEPvm"), hid_InitializeSevenSixAxisSensor},
 };
 
 void register_hid_imports(void) {
     register_imports(hid_imports, (int)(sizeof hid_imports / sizeof hid_imports[0]));
-    { void r1_register_heap(void); r1_register_heap(); }     /* R1 (r1_state.c): the guest C heap in snapshotted memory, SSBU_R1 only */
 }

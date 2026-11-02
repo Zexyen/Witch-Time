@@ -1,7 +1,6 @@
 /* Track P round "four players" (2026-10-13): a sampling profiler of EVERY busy thread of the process. TEST ONLY.
- *   SSBU_PROF15=<seconds after the fight began>,<seconds sampled>[,<output file>]
- * Nothing runs without the variable. The fight is recognised by the game's own ready-go flag (FighterManager + 0xd2,
- * the flag debug_mode.c uses); `SSBU_PROF15=w<seconds from process start>,<seconds>` = wall time instead (menus).
+ *   WT_PROF15=[w]<seconds from process start>,<seconds sampled>[,<output file>]
+ * Nothing runs without the variable. (Upstream's fight-start trigger read Smash's FighterManager: removed.)
  * One second before the window the CPU time of every thread is read; the 14 busiest are sampled round robin (suspend,
  * context, unwind, resume). Per thread and per FUNCTION (key = the guest address for lifted code, else the start of the
  * host function from the unwind tables, as module + offset) the number of samples in which the function was the
@@ -20,7 +19,6 @@
 
 uint64_t guest_function_of(uint64_t rip);            /* hostrt.c */
 const char *guest_thread_name_of(DWORD tid);         /* os_threads.c */
-uint64_t hook_address(const char *name);             /* fighter_sdk\hook_host.c (included by nnro.c) */
 
 extern volatile LONG64 g_prof15_frame;               /* defined and written by display.c at every presented frame */
 #define P15_THREADS 14
@@ -38,14 +36,6 @@ static int g_p15_nmod;
 static int p15_read(uint64_t addr, void *buf, size_t n) {
     SIZE_T got = 0;
     return ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)addr, buf, n, &got) && got == n;
-}
-static int p15_fight_on(void) {
-    static uint64_t inst;
-    uint64_t mgr = 0, impl = 0;
-    unsigned char go = 0;
-    if (!inst) { inst = hook_address("_ZN3lib9SingletonIN3app14FighterManagerEE9instance_E"); if (!inst) return 0; }
-    if (!p15_read(inst, &mgr, 8) || !mgr || !p15_read(mgr, &impl, 8) || !impl || !p15_read(impl + 0xd2, &go, 1)) return 0;
-    return go != 0;
 }
 static ULONGLONG p15_cpu(HANDLE h) {
     FILETIME c, e, k, u;
@@ -163,11 +153,7 @@ static DWORD WINAPI p15_thread(LPVOID arg) {
     int wall = spec[0] == 'w', start = 0, dur = 0;
     char out[512] = "";
     if (sscanf(spec + wall, "%d,%d,%511s", &start, &dur, out) < 2 || dur <= 0) return 0;
-    if (wall) Sleep((DWORD)start * 1000);
-    else {
-        int on = 0;
-        while (on < start * 20) { Sleep(50); on = p15_fight_on() ? on + 1 : 0; }
-    }
+    Sleep((DWORD)start * 1000);
     g_p15_fn = VirtualAlloc(NULL, sizeof(P15Fn) * P15_TAB, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     g_p15_pair = VirtualAlloc(NULL, sizeof(P15Pair) * P15_PAIRS, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!g_p15_fn || !g_p15_pair) return 0;
@@ -191,7 +177,7 @@ static DWORD WINAPI p15_thread(LPVOID arg) {
     double secs = (double)(t.QuadPart - t0.QuadPart) / (double)f.QuadPart;
     FILE *fo = out[0] ? fopen(out, "w") : stdout;
     if (!fo) fo = stdout;
-    fprintf(fo, "[p15] window %.2f s, %u rounds, %d threads, fight flag at the end: %d, frames %lld\n", secs, rounds, g_p15_nthr, p15_fight_on(), (long long)(g_prof15_frame - frame0));
+    fprintf(fo, "[p15] window %.2f s, %u rounds, %d threads, frames %lld\n", secs, rounds, g_p15_nthr, (long long)(g_prof15_frame - frame0));
     for (int i = 0; i < g_p15_nthr; i++) {
         const char *name = guest_thread_name_of(g_p15_thr[i].tid);
         fprintf(fo, "[p15] T %d tid %lu cpu_ms %.1f samples %u name %s\n", i, (unsigned long)g_p15_thr[i].tid,
@@ -220,6 +206,6 @@ static DWORD WINAPI p15_thread(LPVOID arg) {
     return 0;
 }
 void prof15_start(void) {
-    const char *spec = getenv("SSBU_PROF15");
+    const char *spec = getenv("WT_PROF15");
     if (spec && *spec) CloseHandle(CreateThread(NULL, 0, p15_thread, (LPVOID)spec, 0, NULL));
 }

@@ -96,7 +96,6 @@ typedef struct RBackend {
     void (*submit)(void *);                 /* SubmitJob: replay the command lists */
     void (*submit_async)(void *);           /* SubmitJob followed by its handles (posted, nobody waits) */
     void (*present)(void *);                /* PresentJob */
-    void (*present_movie)(void *);          /* PresentJob to the movie maker's window */
     void (*fence)(void *);                  /* SyncJob */
     void (*sync_wait)(void *);              /* SyncJob: result 0 already signaled, 1 satisfied, 2 timeout, 3 failed */
     void (*server_wait)(void *);            /* SyncJob */
@@ -145,7 +144,7 @@ int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v
  * collects old command lists. Returns the number of the frame just presented. */
 long long nvn_front_frame_end(long long draws, long long skipped, long long clears);
 long long nvn_front_frame_next(void);                                       /* number the frame being presented will get */
-/* SSBU_COMPUTE_CMP=<folder> (V1 session 5): a dispatch named by the hash of its inputs; its written ranges saved once landed. */
+/* WT_COMPUTE_CMP=<folder> (V1 session 5): a dispatch named by the hash of its inputs; its written ranges saved once landed. */
 void nvn_front_ccmp_dispatch(const Range *ubo, const Range *ssbo, uint32_t written, const uint8_t *code, int code_len, unsigned gx, unsigned gy, unsigned gz);
 void nvn_front_ccmp_landed(void);
 void nvn_front_take_dead(void (*drop)(int kind, void *host));               /* deferred deletion list: drop(K_TEX | K_PROG, host struct) */
@@ -153,6 +152,6 @@ void nvn_front_count(int what, long long n);                                /* 0
 int nvn_front_clip_modes(void);                                             /* origin mode | depth mode << 8 (1 | 1 << 8 = upper left, 0..1) */
 const char *nvn_front_op_name(unsigned op);
 void *nvn_front_hwnd(void);
-void nvn_front_shot_step(int step);                                         /* scripted input: a key step begins (SSBU_SHOT_STEPS) */
+void nvn_front_shot_step(int step);                                         /* scripted input: a key step begins (WT_SHOT_STEPS) */
 int nvn_front_take_step_shot(void);                                         /* present: step + 1 when a step screenshot is due, else 0 */
 #endif

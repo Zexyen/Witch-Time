@@ -1,5 +1,5 @@
 //! The `link` step: build/game.so (Windows: game.dll) from the lifted objects and the player's own tables, beside the
-//! runtime (libwitchtime.so, witch-time-game, libssbu_glslang.so; Windows: witch-time-game.exe, ssbu_glslang.dll).
+//! runtime (libwitchtime.so, witch-time-game, libwt_glslang.so; Windows: witch-time-game.exe, wt_glslang.dll).
 //!
 //! The runtime holds nothing from the dump: the few values it needs from it (runtime/split) are data in game.so
 //! (runtime/wt_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
@@ -56,8 +56,6 @@ const HOST_SOURCES: &[&str] = &[
     "nnlibc2.c",
     "sdklift_rt.c",
     "nnsdk2.c",
-    "nnapplet.c",
-    "nnalbum.c",
     "nnnet.c",
     "nnfsdir.c",
     "nnunwind.c",
@@ -66,7 +64,6 @@ const HOST_SOURCES: &[&str] = &[
     "nvn_c5.c",
     "gfx_options.c",
     "hitch.c",
-    "r0_removed.c",
     "r2_imports.c",
     "b3_imports.c",
     "watch.c",
@@ -116,7 +113,7 @@ const WIN_LIBS: &[&str] = &[
     "-ladvapi32",
     "-luuid",
 ];
-/// the shader compiler shim's glslang: the system's shared libraries; WT_GLSLANG_LIBS replaces it (CI: a static glslang)
+/// the shader compiler shim's glslang: the system's shared libraries; WTBUILD_GLSLANG_LIBS replaces it (CI: a static glslang)
 const GLSLANG_LIBS: &str = "-lglslang -lglslang-default-resource-limits";
 /// what game.dll exports to witch-time-game.exe (runtime/split, gen/sdkdata.c, gen/sdklift_gen.c, game_shim_eh.c): the
 /// functions, then the data. A name the runtime uses and this list lacks fails the runtime's link (CI), not the player's.
@@ -179,8 +176,8 @@ const UCRT_IMPLIB: &str = "libucrtbase.a";
 /// files are inputs of the player's link, not copied into build/
 fn runtime_files(t: Target) -> &'static [&'static str] {
     match t {
-        Target::Linux => &["libwitchtime.so", "witch-time-game", "libssbu_glslang.so", "game_shim_eh.o"],
-        Target::Windows => &["witch-time-game.exe", "ssbu_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
+        Target::Linux => &["libwitchtime.so", "witch-time-game", "libwt_glslang.so", "game_shim_eh.o"],
+        Target::Windows => &["witch-time-game.exe", "wt_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
     }
 }
 pub const PREBUILT: &str = "prebuilt";
@@ -292,8 +289,8 @@ impl Clang<'_> {
 }
 
 /// Builds the runtime into `out` (objects in `objdir`): libwitchtime.so (the whole host runtime, needing game.so),
-/// witch-time-game (a program that runs it), libssbu_glslang.so and game_shim_eh.o (linked into game.so later).
-/// Windows: witch-time-game.exe (the whole host runtime, importing game.dll's tables), ssbu_glslang.dll, game_shim_eh.o
+/// witch-time-game (a program that runs it), libwt_glslang.so and game_shim_eh.o (linked into game.so later).
+/// Windows: witch-time-game.exe (the whole host runtime, importing game.dll's tables), wt_glslang.dll, game_shim_eh.o
 /// and the UCRT import library game.dll links against. `install_inc` holds sdklift_install.h.
 pub fn build_runtime(
     repo: &Path,
@@ -425,18 +422,18 @@ pub fn build_runtime(
         return Err("witch-time-game did not link".into());
     }
 
-    // 5. the shader compiler shim; LoadLibraryA("ssbu_glslang.dll") opens it beside the program
-    let so = out.join("libssbu_glslang.so");
-    let glslang = std::env::var("WT_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
+    // 5. the shader compiler shim; LoadLibraryA("wt_glslang.dll") opens it beside the program
+    let so = out.join("libwt_glslang.so");
+    let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-fPIC", "-O2", "-w", "-D_GNU_SOURCE", "-D__declspec(x)=", "-I"]);
     a.extend([s(&rt.join("posix")), "-I".into(), s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
     a.extend(["-o".into(), s(&so)]);
     let (code, o, _) = cl.run(&a);
-    log(format!("libssbu_glslang.so: exit {}", code.unwrap_or(-1)));
+    log(format!("libwt_glslang.so: exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
-        return Err("libssbu_glslang.so did not build".into());
+        return Err("libwt_glslang.so did not build".into());
     }
     Ok(())
 }
@@ -497,18 +494,18 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
         return Err("witch-time-game.exe did not link".into());
     }
 
-    // 5. the shader compiler shim, which the program loads beside it; WT_GLSLANG_LIBS: a static glslang (CI)
-    let dll = out.join("ssbu_glslang.dll");
-    let glslang = std::env::var("WT_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
+    // 5. the shader compiler shim, which the program loads beside it; WTBUILD_GLSLANG_LIBS: a static glslang (CI)
+    let dll = out.join("wt_glslang.dll");
+    let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-O2", "-w", "-I"]);
     a.extend([s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
     a.extend(["-o".into(), s(&dll)]);
     let (code, o, _) = cl.run(&a);
-    log(format!("ssbu_glslang.dll: exit {}", code.unwrap_or(-1)));
+    log(format!("wt_glslang.dll: exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
-        return Err("ssbu_glslang.dll did not build".into());
+        return Err("wt_glslang.dll did not build".into());
     }
 
     // 6. the UCRT's import library, as this compiler's mingw-w64 has it, for game.dll

@@ -6,7 +6,7 @@
 # The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
 #   build/witch-time, libSDL3.so.0   the launcher and the SDL3 it was built with
 #   build/wtbuild                    the build tool (tools/wtbuild: no Python needed to build the game)
-#   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libssbu_glslang.so with a
+#   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libwt_glslang.so with a
 #                                    static glslang, game_shim_eh.o) and the FFmpeg it uses; nothing in it comes from a
 #                                    dump (runtime/split), so the player's PC only builds game.so
 #   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which wtbuild uses:
@@ -18,7 +18,7 @@
 #   witch-time.exe                   starts build/witch-time.exe
 #   build/witch-time.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
 #   build/wtbuild.exe                the build tool
-#   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), ssbu_glslang.dll (static glslang),
+#   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), wt_glslang.dll (static glslang),
 #                                    game_shim_eh.o, libucrtbase.a (game.dll's C functions come from the UCRT, part of
 #                                    Windows 10 and 11) and the FFmpeg DLLs: movies must not depend on the PC's codecs (#68)
 #   deps/llvm/                       clang.exe and ld.lld.exe (LLVM_VERSION, trimmed from LLVM's release), clang's headers
@@ -126,7 +126,7 @@ jobs:
           # each library finds the others beside it
           for f in "$RUNNER_TEMP"/ffmpeg/lib/lib*.so.*.*; do patchelf --set-rpath '$ORIGIN' "$f"; done
 
-      # glslang for the shader compiler shim, static (no SPIRV-Tools optimizer), linked into libssbu_glslang.so
+      # glslang for the shader compiler shim, static (no SPIRV-Tools optimizer), linked into libwt_glslang.so
       - name: glslang cache
         id: glslang
         uses: actions/cache@v4
@@ -172,9 +172,9 @@ jobs:
           export LLVM_ROOT="$PWD/deps/llvm"
           export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
           export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
-          export WT_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
+          export WTBUILD_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
           tools/wtbuild/target/release/wtbuild runtime --out prebuilt
-          strip prebuilt/libssbu_glslang.so
+          strip prebuilt/libwt_glslang.so
           readelf -d prebuilt/libwitchtime.so | grep -E 'NEEDED|RUNPATH'
           ls -la prebuilt
 
@@ -303,7 +303,7 @@ jobs:
       - name: Vulkan headers
         run: git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
 
-      # glslang for ssbu_glslang.dll, static (no SPIRV-Tools optimizer), with libc++ linked in
+      # glslang for wt_glslang.dll, static (no SPIRV-Tools optimizer), with libc++ linked in
       - name: glslang cache
         id: glslang
         uses: actions/cache@v4
@@ -395,9 +395,9 @@ jobs:
           export LLVM_ROOT="$RUNNER_TEMP/llvm-mingw"
           export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
           export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
-          export WT_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
+          export WTBUILD_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
           tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
-          llvm-strip prebuilt/ssbu_glslang.dll
+          llvm-strip prebuilt/wt_glslang.dll
           llvm-readobj --coff-imports prebuilt/witch-time-game.exe | grep 'Name:' | sort -u
           ls -la prebuilt
 

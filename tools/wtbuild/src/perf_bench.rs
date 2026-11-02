@@ -16,8 +16,8 @@
 //! A run takes /tmp/b3_bench.lock (another session sharing the PC starts no game run while it is there) and waits while
 //! someone else's lock is there or any "Witch Time" process runs (it never stops one). It records the load average, the
 //! GPU's busy % and the other processes that have the GPU open, before and after. Results in
-//! build/perf/<scene>_<scale>[_<tag>]/: log.txt, frametimes.txt (SSBU_FRAMETIMES), gputimes.txt (SSBU_VK_GPUTIME +
-//! SSBU_GPUTIMES), meta.json.
+//! build/perf/<scene>_<scale>[_<tag>]/: log.txt, frametimes.txt (WT_FRAMETIMES), gputimes.txt (WT_VK_GPUTIME +
+//! WT_GPUTIMES), meta.json.
 
 use crate::die;
 use serde_json::{json, Value};
@@ -81,7 +81,7 @@ static SCENES: [Scene; 3] = [
         secs: 300,
         fight_from: None,
         first: None,
-        env: &[("SSBU_CUTSCENE_FPS", "60")],
+        env: &[("WT_CUTSCENE_FPS", "60")],
     },
 ];
 
@@ -165,7 +165,7 @@ fn parse(args: &[String]) -> Result<Run, String> {
     })
 }
 
-/// SSBU_WINDOW: the output size in the desktop's scaled pixels; Python's round() takes a half to the even side
+/// WT_WINDOW: the output size in the desktop's scaled pixels; Python's round() takes a half to the even side
 fn window(scale: f64, dscale: f64) -> (i64, i64) {
     (
         (1600.0 * scale / dscale).round_ties_even() as i64,
@@ -173,7 +173,7 @@ fn window(scale: f64, dscale: f64) -> (i64, i64) {
     )
 }
 
-/// SSBU_SCRIPT: the fight pattern from start to end s
+/// WT_SCRIPT: the fight pattern from start to end s
 fn fight_script(start: i64, end: i64) -> String {
     let mut out = Vec::new();
     let mut t0 = start as f64;
@@ -205,18 +205,18 @@ impl Run {
         let p = |f: &str| out.join(f).to_string_lossy().into_owned();
         let mut env = Vec::new();
         for (k, v) in [
-            ("SSBU_AUDIO_MUTE", "1".to_string()),
-            ("SSBU_PRESS", "Z,25,3".into()),
-            ("SSBU_SHOW", "0".into()),
-            ("SSBU_FOCUS_NOTIFY", "0".into()),
-            ("SSBU_GRAPHICS_CONFIG", p("graphics.ini")),
-            ("SSBU_VK_SCALE", self.scale.clone()),
-            ("SSBU_WINDOW", format!("{}x{}", self.size.0, self.size.1)),
-            ("SSBU_FRAMETIMES", p("frametimes.txt")),
-            ("SSBU_VK_GPUTIME", "1".into()),
-            ("SSBU_GPUTIMES", p("gputimes.txt")),
-            ("SSBU_ROMFS", self.repo.join("targets").join("romfs").to_string_lossy().into_owned()),
-            ("SSBU_USERDATA", self.userdata().to_string_lossy().into_owned()),
+            ("WT_AUDIO_MUTE", "1".to_string()),
+            ("WT_PRESS", "Z,25,3".into()),
+            ("WT_SHOW", "0".into()),
+            ("WT_FOCUS_NOTIFY", "0".into()),
+            ("WT_GRAPHICS_CONFIG", p("graphics.ini")),
+            ("WT_VK_SCALE", self.scale.clone()),
+            ("WT_WINDOW", format!("{}x{}", self.size.0, self.size.1)),
+            ("WT_FRAMETIMES", p("frametimes.txt")),
+            ("WT_VK_GPUTIME", "1".into()),
+            ("WT_GPUTIMES", p("gputimes.txt")),
+            ("WT_ROMFS", self.repo.join("targets").join("romfs").to_string_lossy().into_owned()),
+            ("WT_USERDATA", self.userdata().to_string_lossy().into_owned()),
         ] {
             put(&mut env, k, &v);
         }
@@ -224,7 +224,7 @@ impl Run {
             put(&mut env, k, v);
         }
         if let Some(from) = self.scene.fight_from {
-            put(&mut env, "SSBU_SCRIPT", &fight_script(from, self.secs));
+            put(&mut env, "WT_SCRIPT", &fight_script(from, self.secs));
         }
         for (k, v) in &self.extra {
             put(&mut env, k, v);
@@ -763,18 +763,18 @@ mod tests {
             let out = r.repo.join("build").join("perf").join(name);
             let p = |f: &str| out.join(f).to_string_lossy().into_owned();
             let mut want: Vec<(String, String)> = [
-                ("SSBU_AUDIO_MUTE", "1".to_string()),
-                ("SSBU_PRESS", "Z,25,3".into()),
-                ("SSBU_SHOW", "0".into()),
-                ("SSBU_FOCUS_NOTIFY", "0".into()),
-                ("SSBU_GRAPHICS_CONFIG", p("graphics.ini")),
-                ("SSBU_VK_SCALE", a.split(' ').nth(1).unwrap().into()),
-                ("SSBU_WINDOW", win.into()),
-                ("SSBU_FRAMETIMES", p("frametimes.txt")),
-                ("SSBU_VK_GPUTIME", "1".into()),
-                ("SSBU_GPUTIMES", p("gputimes.txt")),
-                ("SSBU_ROMFS", r.repo.join("targets").join("romfs").to_string_lossy().into_owned()),
-                ("SSBU_USERDATA", format!("/tmp/b3_perf_userdata_{}", name)),
+                ("WT_AUDIO_MUTE", "1".to_string()),
+                ("WT_PRESS", "Z,25,3".into()),
+                ("WT_SHOW", "0".into()),
+                ("WT_FOCUS_NOTIFY", "0".into()),
+                ("WT_GRAPHICS_CONFIG", p("graphics.ini")),
+                ("WT_VK_SCALE", a.split(' ').nth(1).unwrap().into()),
+                ("WT_WINDOW", win.into()),
+                ("WT_FRAMETIMES", p("frametimes.txt")),
+                ("WT_VK_GPUTIME", "1".into()),
+                ("WT_GPUTIMES", p("gputimes.txt")),
+                ("WT_ROMFS", r.repo.join("targets").join("romfs").to_string_lossy().into_owned()),
+                ("WT_USERDATA", format!("/tmp/b3_perf_userdata_{}", name)),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -785,19 +785,19 @@ mod tests {
             let got: Vec<(String, String)> = r
                 .env()
                 .into_iter()
-                .map(|(k, v)| if k == "SSBU_SCRIPT" { (k, sha(&v)) } else { (k, v) })
+                .map(|(k, v)| if k == "WT_SCRIPT" { (k, sha(&v)) } else { (k, v) })
                 .collect();
             assert_eq!(got, want);
             r.secs
         };
-        let shibuya = "shibuya 1.6 --tag t1 --env SSBU_SHOW=1 --env NEW=a=b --env NEW=c --env SSBU_A=1 --repo /r";
-        let script = ("SSBU_SCRIPT", "31a1639e6aa669a9d0d1776a99e4937132aeb6823ac7d367a45781436c169cc4");
+        let shibuya = "shibuya 1.6 --tag t1 --env WT_SHOW=1 --env NEW=a=b --env NEW=c --env WT_A=1 --repo /r";
+        let script = ("WT_SCRIPT", "31a1639e6aa669a9d0d1776a99e4937132aeb6823ac7d367a45781436c169cc4");
         assert_eq!(
             env(
                 shibuya,
                 "shibuya_1.6_t1",
                 "2048x1152",
-                &[("SSBU_SHOW", "1"), script, ("NEW", "c"), ("SSBU_A", "1")]
+                &[("WT_SHOW", "1"), script, ("NEW", "c"), ("WT_A", "1")]
             ),
             330
         );
@@ -806,11 +806,11 @@ mod tests {
                 "cutscene 2.4 --desktop-scale 1.0 --repo /r",
                 "cutscene_2.4",
                 "3840x2160",
-                &[("SSBU_CUTSCENE_FPS", "60")]
+                &[("WT_CUTSCENE_FPS", "60")]
             ),
             300
         );
-        let script = ("SSBU_SCRIPT", "fd36b38e37105545eed0c9aab3c716601c648e21385499dc0ef3ab6cbf23214d");
+        let script = ("WT_SCRIPT", "fd36b38e37105545eed0c9aab3c716601c648e21385499dc0ef3ab6cbf23214d");
         assert_eq!(
             env("tokyo 1.0 --secs 600 --desktop-scale 8 --tag  --repo /r", "tokyo_1.0", "200x112", &[script]),
             600
@@ -902,7 +902,7 @@ mod tests {
             + &mode("1", " (30 fps) at 1150 never");
         let b = write(
             "b_cutscene",
-            r#"{"scene": "cutscene", "scale": "2.4", "tag": null, "extra": {"SSBU_X": "1"}, "gpu_busy_before": null}"#,
+            r#"{"scene": "cutscene", "scale": "2.4", "tag": null, "extra": {"WT_X": "1"}, "gpu_busy_before": null}"#,
             &frames(0..4100, &|_| 16.6, 1090.0),
             None,
             &log,
