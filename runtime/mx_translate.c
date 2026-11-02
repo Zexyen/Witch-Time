@@ -40,7 +40,7 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
-    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a vertex stage with none (see the blocks in mx_translate) */
+    int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
     int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
     uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
     uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
@@ -1827,14 +1827,34 @@ int mx_translate(const MxIn *in, MxOut *out) {
     /* [issue 92] A vertex stage with no step back runs its blocks once, in order: a jump leaves its block (continue ends the do) and
      * the blocks up to the target skip themselves. In the dispatcher every jump is a new trip through all the cases, per lane: the
      * goo's skinning stage (98 cases, about 120 jumps a vertex) took 5.7 ms of an RX 9070 XT's frame that way, 0.13 ms like this.
-     * Fragment stages stay: their quad reads depend on how the lanes of a quad move through the blocks. */
-    e->seq = e->any_jump && !e->has_back && in->stage == MX_VERTEX;
+     * Fragment stages stay: their quad reads depend on how the lanes of a quad move through the blocks.
+     * [issue 107] Except a long chain with shuffles: the clouds of erasure (#5318 .. #5438, 26 to 49 blocks cut at their quad SHFLs)
+     * cost an RX 9070 XT 5.6 ns a fragment in the wave-uniform dispatcher, 0.14 ns in order. There the snapshot of a shuffle's block is taken just
+     * before it, between two blocks, where every lane of every quad is (a lane that left waits there with its registers frozen, as in
+     * the dispatcher; one that jumped ahead waits too, as at a Maxwell reconvergence point, where the dispatcher let it run on: the
+     * clouds' jumps are uniform for the draw and land on the next block). Shorter shuffle stages keep the dispatcher. */
+    int chain = 0, quad = 0;
+    for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) { chain += e->leader[pc]; quad |= e->qlead[pc]; }
+    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && quad && chain >= 16));
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
-            if (e->qlead[pc] && pc != 1) emit(e, "{ pc = %uu; continue; }\n", pc);      /* [issue 66] through the header: the snapshot first */
+            if (e->qlead[pc] && pc != 1 && !e->seq) emit(e, "{ pc = %uu; continue; }\n", pc);      /* [issue 66] through the header: the snapshot first */
             if (!e->seq) emit(e, "case %uu:\n", pc);
-            else { if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc); emit(e, " do { if (pc != %uu) continue;\n", pc); }
+            else {
+                if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc);
+                if (e->qlead[pc]) {                 /* [issue 107] the sources of the block's leading SHFLs (analyze: no SHFL there reads another's result) */
+                    uint8_t done[256] = {0};
+                    for (unsigned q = pc; q < e->words; q++) {
+                        if ((q & 3) == 0 || !e->reach[q]) continue;
+                        if ((q != pc && e->leader[q]) || decode(MXW(q)) != MXOP_SHFL) break;
+                        if (MXB(MXW(q), 16, 3) == 7 && MXB(MXW(q), 19, 1)) continue;      /* @!PT: insn emits nothing */
+                        unsigned ra = MXB(MXW(q), 8, 8);
+                        if (ra != 255 && !done[ra]) { done[ra] = 1; emit(e, " mq_r%u = mx_quad3(r%u);\n", ra, ra); }
+                    }
+                }
+                emit(e, " do { if (pc != %uu) continue;\n", pc);
+            }
             e->blocks++; e->cur_case = pc;
         }
         insn(e, pc, MXW(pc));
@@ -1992,7 +2012,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
         /* [issue 66] with a fragment SHFL the loop is wave-uniform: a pixel that reached EXIT, or was killed, stays in it with its registers
          * frozen while a quad mate still runs, as a Maxwell thread's registers stay readable; the header takes the snapshot of every
          * shuffled register's three neighbours when any lane of the wave is about to shuffle, with all four lanes of each quad present. */
-        if (e->any_jump && e->uses_quad) {
+        if (e->seq && e->uses_quad) {             /* [issue 107] blocks in order: the snapshots are taken between them */
+            emit(&h, " uint pc = 1u;\n");
+            for (unsigned r = 0; r < 256; r++) if (e->qidx[r]) emit(&h, " uvec3 mq_r%u = uvec3(0u);\n", r);
+        }
+        else if (e->any_jump && e->uses_quad) {
             emit(&h, " uint pc = 1u;\n while (subgroupAny(pc != 0u)) {\n  uint mq_need = subgroupOr(mx_qneed(pc));\n");
             for (unsigned r = 0; r < 256; r++) if (e->qidx[r]) {
                 if (e->qidx[r] <= 32) emit(&h, "  uvec3 mq_r%u = uvec3(0u); if ((mq_need & 0x%xu) != 0u) mq_r%u = mx_quad3(r%u);\n", r, 1u << (e->qidx[r] - 1), r, r);
@@ -2022,7 +2046,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
     out->insns = e->insns; out->blocks = e->blocks; out->uses_alpha = e->uses_alpha;
     out->nsmp = e->nsmp; memcpy(out->smp, e->smp, sizeof out->smp);
 done:
-    free(e->s); free(e->reach); free(e->leader); free(e->jt); free(e->stk_of); free(e->stks);
+    free(e->s); free(e->reach); free(e->leader); free(e->qlead); free(e->jt); free(e->stk_of); free(e->stks);
     free(e);
     return res != NULL;
 }
