@@ -96,7 +96,6 @@ typedef struct RBackend {
     void (*submit)(void *);                 /* SubmitJob: replay the command lists */
     void (*submit_async)(void *);           /* SubmitJob followed by its handles (posted, nobody waits) */
     void (*present)(void *);                /* PresentJob */
-    void (*present_movie)(void *);          /* PresentJob to the movie maker's window */
     void (*fence)(void *);                  /* SyncJob */
     void (*sync_wait)(void *);              /* SyncJob: result 0 already signaled, 1 satisfied, 2 timeout, 3 failed */
     void (*server_wait)(void *);            /* SyncJob */

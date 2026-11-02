@@ -56,8 +56,6 @@ const HOST_SOURCES: &[&str] = &[
     "nnlibc2.c",
     "sdklift_rt.c",
     "nnsdk2.c",
-    "nnapplet.c",
-    "nnalbum.c",
     "nnnet.c",
     "nnfsdir.c",
     "nnunwind.c",

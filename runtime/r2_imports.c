@@ -387,57 +387,13 @@ static void sa_Reallocate(Ctx *c) {                      /* (this, void *p, size
     if (q) { memcpy((void *)(uintptr_t)q, (void *)(uintptr_t)p, (size_t)(old < size ? old : size)); sa_free(c, h, p); }
     RET(q);
 }
-static void sa_GetSizeOf(Ctx *c) { SaHeap *h = sa_need(c, A0, "GetSizeOf"); AcquireSRWLockShared(&h->lock); RET(sa_hdr(c, h, A1, "GetSizeOf")->req); ReleaseSRWLockShared(&h->lock); }
-static void sa_GetTotalFreeSize(Ctx *c) { SaHeap *h = sa_need(c, A0, "GetTotalFreeSize"); RET(h->size - h->used); }
-static void sa_GetAllocatableSize(Ctx *c) {             /* the largest single request that would succeed now */
-    SaHeap *h = sa_need(c, A0, "GetAllocatableSize");
-    AcquireSRWLockShared(&h->lock);
-    uint64_t best = sa_largest_free(h);
-    ReleaseSRWLockShared(&h->lock);
-    RET(best > SA_HDR + SA_TAIL ? best - SA_HDR - SA_TAIL : 0);
-}
-static void sa_Dump(Ctx *c) {
-    SaHeap *h = sa_need(c, A0, "Dump");
-    printf("StandardAllocator 0x%llx: buffer 0x%llx size 0x%llx, used 0x%llx (peak 0x%llx)\n", (unsigned long long)h->self,
-           (unsigned long long)h->base, (unsigned long long)h->size, (unsigned long long)h->used, (unsigned long long)h->peak);
-}
 
-/* ---------------------------------------------------------------- nn::err::ErrorCode
- * [sdk 0x10eee4] GetInvalidErrorCode(): returns 0 in x0 (category 0, number 0).
- * [sdk 0x10eed4] IsValid() const: the 32-bit category at +0 is not 0. */
-static void err_GetInvalidErrorCode(Ctx *c) { RET(0); }
-static void err_ErrorCode_IsValid(Ctx *c) { RET(rd32(A0) != 0); }
 
-/* ---------------------------------------------------------------- nn::settings::operator==(LanguageCode, LanguageCode)
- * [sdk 0x15bb08]: equal when the two 8-byte codes agree up to and including the first NUL (at most 8 bytes). */
-static void settings_LanguageCode_eq(Ctx *c) {
-    const uint8_t *a = (const uint8_t *)(uintptr_t)A0, *b = (const uint8_t *)(uintptr_t)A1;
-    int eq = 1;
-    for (int i = 0; i < 8; i++) {
-        if (a[i] != b[i]) { eq = 0; break; }
-        if (!a[i]) break;
-    }
-    RET(eq);
-}
 
 /* nn::account OpenPreselectedUser / OpenUser / CloseUser: registered in nnfs.c, in its one-user model. */
 
-/* ---------------------------------------------------------------- nn::vi::SetLayerScalingMode(Layer *, ScalingMode) -> Result
- * [sdk 0x1be2a8]: forwards to the display service (IApplicationDisplayService method, IPC id 0x835 [0x1b8f84]) and returns
- * its Result. The host window does the scaling (display.c, graphics.ini), so there is nothing to change: success. */
-static void vi_SetLayerScalingMode(Ctx *c) { RET(0); }
 
-/* ---------------------------------------------------------------- nn::os::IsVirtualAddressMemoryEnabled() -> bool
- * [sdk] asks the kernel (svc GetInfo). Our game uses it once [game 0x7100da80bc]: a "free memory" helper that answers 0
- * when it is true and the heap allocator's free size otherwise. A 3.6.0-era title does not use the virtual address
- * memory manager (and imports none of its functions): false (inferred). */
-static void os_IsVirtualAddressMemoryEnabled(Ctx *c) { RET(0); }
 
-/* ---------------------------------------------------------------- nn::friends::UserPresence::Commit() -> Result
- * [sdk] sends the presence to the friends service (IPC). Offline console: the service keeps the local presence, nothing
- * goes out; success (inferred; the same policy as the other offline answers in nnmisc.c). Initialize / SetDescription are
- * the SDK's own code (lifted). */
-static void friends_UserPresence_Commit(Ctx *c) { RET(0); }
 
 /* ---------------------------------------------------------------- nn::oe::EnableRecording()
  * Allows the console's gameplay video capture. Not lifted: its code fetches the applet manager's service object
@@ -447,9 +403,6 @@ static void oe_EnableRecording(Ctx *c) { (void)c; }
 
 static const ImportDef r2_imports[] = {
     {"_ZN2nn2oe15EnableRecordingEv", oe_EnableRecording},
-    {"_ZN2nn2os29IsVirtualAddressMemoryEnabledEv", os_IsVirtualAddressMemoryEnabled},
-    {"_ZN2nn7friends12UserPresence6CommitEv", friends_UserPresence_Commit},
-    {"_ZN2nn2vi19SetLayerScalingModeEPNS0_5LayerENS0_11ScalingModeE", vi_SetLayerScalingMode},
     {"_ZN2nn2os15QueryMemoryInfoEPNS0_10MemoryInfoE", os_QueryMemoryInfo},
     {"_ZN2nn2os17SetMemoryHeapSizeEm", os_SetMemoryHeapSize},
     {"_ZN2nn2os19AllocateMemoryBlockEPmm", os_AllocateMemoryBlock},
@@ -458,12 +411,6 @@ static const ImportDef r2_imports[] = {
     {SA("10InitializeEPvm"), sa_Initialize}, {SA("10InitializeEPvmb"), sa_Initialize}, {SA("8FinalizeEv"), sa_Finalize},
     {SA("8AllocateEm"), sa_Allocate}, {SA("8AllocateEmm"), sa_AllocateAligned}, {SA("4FreeEPv"), sa_Free},
     {SA("10ReallocateEPvm"), sa_Reallocate},
-#define SAK(n) "_ZNK2nn3mem17StandardAllocator" n                /* const member functions */
-    {SAK("9GetSizeOfEPKv"), sa_GetSizeOf}, {SAK("18GetAllocatableSizeEv"), sa_GetAllocatableSize}, {SAK("4DumpEv"), sa_Dump},
-    {SAK("16GetTotalFreeSizeEv"), sa_GetTotalFreeSize},         /* not imported by our main today; kept for completeness */
-    {"_ZN2nn3err9ErrorCode19GetInvalidErrorCodeEv", err_GetInvalidErrorCode},
-    {"_ZNK2nn3err9ErrorCode7IsValidEv", err_ErrorCode_IsValid},
-    {"_ZN2nn8settingseqERKNS0_12LanguageCodeES3_", settings_LanguageCode_eq},
 };
 
 void acc_ListOpenUsers(Ctx *c);                          /* nnfs.c: the host account model */

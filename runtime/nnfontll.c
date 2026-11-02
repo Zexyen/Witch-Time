@@ -73,13 +73,11 @@
 #define MAX_FONTDATA 64
 #define METRICS_SIZE 0x93c
 #define GLYPH_HEADER 0x28
-#define BFTTF_KEY 0x49621806u                     /* big-endian words of a .bfttf are XORed with this */
 #define ENGINE_MAGIC 0x6c6c746e6f666e6eULL        /* stored in the guest object so the engine is found without a search */
 
 #define ERR_NO_FONT 0x131                         /* iType's codes where known */
 #define ERR_FONT_NOT_FOUND 0x12e
 #define ERR_BAD_OUTLINE_WIDTH 0x266
-#define ERR_BAD_BOLD 0x265
 #define ERR_BAD_FLAG 0x264
 
 #define FLAG_OUTLINED_FILLED 0x40u
@@ -595,172 +593,6 @@ static int fill_metrics(Engine *e, uint8_t *m) {
     return 0;
 }
 
-/* FSS_get_kerning: the TrueType kern table (format 0, horizontal), in 16.16 pixels. */
-static int32_t kern_fixed(const Engine *e, const FontData *f, uint32_t code1, uint32_t code2) {
-    if (!f->kern || f->kern_len < 4 || be16(f->kern)) return 0;
-    uint32_t g1 = map_char(f, code1), g2 = map_char(f, code2), key = g1 << 16 | g2, tables = be16(f->kern + 2);
-    const uint8_t *t = f->kern + 4;
-    int units = 0;
-    if (!g1 || !g2) return 0;
-    for (uint32_t i = 0; i < tables && t + 14 <= f->kern + f->kern_len; i++, t += be16(t + 2)) {
-        if ((be16(t + 4) & 0xff07) != 1) continue;               /* format 0, horizontal, not cross-stream */
-        uint32_t lo = 0, hi = be16(t + 6);
-        while (lo < hi) {
-            uint32_t mid = (lo + hi) / 2, k = be32(t + 14 + mid * 6);
-            if (k < key) lo = mid + 1; else if (k > key) hi = mid; else { units += s16(t + 14 + mid * 6 + 4); break; }
-        }
-    }
-    return (int32_t)((int64_t)units * e->scale[0] / f->upem);
-}
-
-/* ---------------------------------------------------------------- GPOS kerning (OtfKerningTable) */
-typedef struct { uint16_t g1, g2; int16_t adv, plc; } KernPair;
-typedef struct { KernPair *v; int n, cap; } KernList;
-
-static void kern_add(KernList *l, unsigned g1, unsigned g2, int adv, int plc) {
-    if (!(adv & 0xffff) && !(plc & 0xffff)) return;
-    if (l->n == l->cap) { l->cap = l->cap ? l->cap * 2 : 1024; l->v = realloc(l->v, (size_t)l->cap * sizeof(KernPair)); }
-    l->v[l->n].g1 = (uint16_t)g1;
-    l->v[l->n].g2 = (uint16_t)g2;
-    l->v[l->n].adv = (int16_t)adv;
-    l->v[l->n++].plc = (int16_t)plc;
-}
-static int kern_compare(const void *a, const void *b) {
-    const KernPair *p = a, *q = b;
-    return p->g1 != q->g1 ? (int)p->g1 - (int)q->g1 : (int)p->g2 - (int)q->g2;
-}
-static int value_size(unsigned fmt) { int n = 0; for (; fmt; fmt >>= 1) n += (int)(fmt & 1) * 2; return n; }
-static void value_read(const uint8_t *p, unsigned fmt, int *adv, int *plc) {     /* xAdvance and xPlacement of a ValueRecord */
-    *adv = *plc = 0;
-    if (fmt & 1) { *plc = s16(p); p += 2; }
-    if (fmt & 2) p += 2;
-    if (fmt & 4) *adv = s16(p);
-}
-/* Calls fn(glyph, coverage index) for every glyph of a Coverage table. */
-typedef void (*CoverFn)(void *ctx, unsigned glyph, unsigned index);
-static void coverage_each(const uint8_t *cov, CoverFn fn, void *ctx) {
-    unsigned n = be16(cov + 2);
-    if (be16(cov) == 1) for (unsigned i = 0; i < n; i++) fn(ctx, be16(cov + 4 + i * 2), i);
-    else if (be16(cov) == 2)
-        for (unsigned i = 0; i < n; i++) {
-            const uint8_t *r = cov + 4 + i * 6;
-            for (unsigned g = be16(r); g <= be16(r + 2) && g <= 0xffff; g++) fn(ctx, g, be16(r + 4) + (g - be16(r)));
-        }
-}
-static unsigned class_of(const uint8_t *def, unsigned glyph) {
-    if (be16(def) == 1) { unsigned first = be16(def + 2), n = be16(def + 4); return glyph >= first && glyph < first + n ? be16(def + 6 + (glyph - first) * 2) : 0; }
-    if (be16(def) == 2) for (unsigned i = 0, n = be16(def + 2); i < n; i++) { const uint8_t *r = def + 4 + i * 6; if (glyph >= be16(r) && glyph <= be16(r + 2)) return be16(r + 4); }
-    return 0;
-}
-typedef struct { KernList *list; const uint8_t *sub; uint16_t *second; int nsecond; } PairCtx;
-static void pair_glyphs(void *ctx, unsigned glyph, unsigned index) {             /* PairPos format 1 */
-    PairCtx *x = ctx;
-    const uint8_t *s = x->sub;
-    unsigned f1 = be16(s + 4), f2 = be16(s + 6);
-    if (index >= be16(s + 8)) return;
-    const uint8_t *set = s + be16(s + 10 + index * 2);
-    int rec = 2 + value_size(f1) + value_size(f2), adv, plc;
-    for (unsigned i = 0, n = be16(set); i < n; i++) {
-        const uint8_t *r = set + 2 + i * (unsigned)rec;
-        value_read(r + 2, f1, &adv, &plc);
-        kern_add(x->list, glyph, be16(r), adv, plc);
-    }
-}
-static void pair_classes(void *ctx, unsigned glyph, unsigned index) {            /* PairPos format 2 */
-    PairCtx *x = ctx;
-    const uint8_t *s = x->sub;
-    unsigned f1 = be16(s + 4), f2 = be16(s + 6), c1 = class_of(s + be16(s + 8), glyph), n1 = be16(s + 12), n2 = be16(s + 14);
-    int rec = value_size(f1) + value_size(f2), adv, plc;
-    (void)index;
-    if (c1 >= n1) return;
-    for (int i = 0; i < x->nsecond; i++) {
-        unsigned g2 = x->second[i * 2], c2 = x->second[i * 2 + 1];
-        if (c2 >= n2) continue;
-        value_read(s + 16 + (c1 * n2 + c2) * (unsigned)rec, f1, &adv, &plc);
-        kern_add(x->list, glyph, g2, adv, plc);
-    }
-}
-typedef struct { KernList *list; const uint8_t *sub; } SingleCtx;
-static void single_values(void *ctx, unsigned glyph, unsigned index) {           /* SinglePos formats 1 and 2 */
-    SingleCtx *x = ctx;
-    const uint8_t *s = x->sub;
-    unsigned fmt = be16(s + 4);
-    int adv, plc;
-    if (be16(s) == 1) value_read(s + 6, fmt, &adv, &plc);
-    else if (be16(s) == 2 && index < be16(s + 6)) value_read(s + 8 + index * (unsigned)value_size(fmt), fmt, &adv, &plc);
-    else return;
-    kern_add(x->list, glyph, 0xffff, adv, plc);
-}
-/* Offset of a feature table (from the feature list), found through script latn / kana / DFLT as the SDK does. */
-static const uint8_t *gpos_feature(const uint8_t *gpos, const char *tag) {
-    const uint8_t *scripts = gpos + be16(gpos + 4), *features = gpos + be16(gpos + 6);
-    for (unsigned i = 0, n = be16(scripts); i < n; i++) {
-        const uint8_t *rec = scripts + 2 + i * 6;
-        if (memcmp(rec, "latn", 4) && memcmp(rec, "kana", 4) && memcmp(rec, "DFLT", 4)) continue;
-        const uint8_t *script = scripts + be16(rec + 4);
-        unsigned off = be16(script);
-        if (!off) { if (!be16(script + 2)) continue; off = be16(script + 8); }
-        const uint8_t *lang = script + off;
-        for (unsigned k = 0, count = be16(lang + 4); k < count; k++) {
-            unsigned index = be16(lang + 6 + k * 2);
-            if (index < be16(features) && !memcmp(features + 2 + index * 6, tag, 4)) return features + be16(features + 2 + index * 6 + 4);
-        }
-        return NULL;
-    }
-    return NULL;
-}
-static void gpos_collect(const FontData *f, KernList *list, int kern_only) {
-    const uint8_t *gpos = f->gpos;
-    if (!gpos || f->gpos_len < 10) return;
-    const uint8_t *lookups = gpos + be16(gpos + 8);
-    for (int pass = 0; pass < (kern_only ? 1 : 2); pass++) {
-        const uint8_t *feature = gpos_feature(gpos, pass ? "palt" : "kern");
-        if (!feature) continue;
-        for (unsigned i = 0, n = be16(feature + 2); i < n; i++) {
-            unsigned index = be16(feature + 4 + i * 2);
-            if (index >= be16(lookups)) continue;
-            const uint8_t *lookup = lookups + be16(lookups + 2 + index * 2);
-            if (be16(lookup) != (pass ? 1u : 2u)) continue;      /* pair adjustment for kern, single adjustment for palt */
-            for (unsigned k = 0, subs = be16(lookup + 4); k < subs; k++) {
-                const uint8_t *sub = lookup + be16(lookup + 6 + k * 2);
-                unsigned fmt = be16(sub);
-                if (pass) { SingleCtx ctx = {list, sub}; coverage_each(sub + be16(sub + 2), single_values, &ctx); continue; }
-                PairCtx ctx = {list, sub, NULL, 0};
-                if (fmt == 1) coverage_each(sub + be16(sub + 2), pair_glyphs, &ctx);
-                else if (fmt == 2) {                              /* second glyphs: the ones the class definition names */
-                    const uint8_t *def = sub + be16(sub + 10);
-                    int cap = 0;
-                    if (be16(def) == 1) cap = (int)be16(def + 4);
-                    else if (be16(def) == 2) for (unsigned r = 0; r < be16(def + 2); r++) cap += (int)(be16(def + 4 + r * 6 + 2) - be16(def + 4 + r * 6)) + 1;
-                    if (cap <= 0) continue;
-                    ctx.second = malloc((size_t)cap * 2 * sizeof(uint16_t));
-                    if (be16(def) == 1) for (unsigned g = 0; g < be16(def + 4); g++) { ctx.second[ctx.nsecond * 2] = (uint16_t)(be16(def + 2) + g); ctx.second[ctx.nsecond++ * 2 + 1] = (uint16_t)be16(def + 6 + g * 2); }
-                    else for (unsigned r = 0; r < be16(def + 2); r++)
-                        for (unsigned g = be16(def + 4 + r * 6); g <= be16(def + 4 + r * 6 + 2) && ctx.nsecond < cap; g++) { ctx.second[ctx.nsecond * 2] = (uint16_t)g; ctx.second[ctx.nsecond++ * 2 + 1] = (uint16_t)be16(def + 4 + r * 6 + 4); }
-                    coverage_each(sub + be16(sub + 2), pair_classes, &ctx);
-                    free(ctx.second);
-                }
-            }
-        }
-    }
-    if (list->n) qsort(list->v, (size_t)list->n, sizeof(KernPair), kern_compare);
-}
-/* Entry with these two glyph indices, or NULL. */
-static const KernPair *kern_find(const KernPair *v, int n, unsigned g1, unsigned g2) {
-    int lo = 0, hi = n;
-    while (lo < hi) {
-        int mid = (lo + hi) / 2;
-        if (v[mid].g1 < g1 || (v[mid].g1 == g1 && v[mid].g2 < g2)) lo = mid + 1; else hi = mid;
-    }
-    return lo < n && v[lo].g1 == g1 && v[lo].g2 == g2 ? &v[lo] : NULL;
-}
-static int otf_raw(const FontData *f, const KernPair *v, int n, uint32_t code1, uint32_t code2) {
-    unsigned g1 = map_char(f, code1) & 0xffff, g2 = map_char(f, code2) & 0xffff;
-    const KernPair *a = kern_find(v, n, g1, 0xffff), *b = kern_find(v, n, g2, 0xffff), *p = kern_find(v, n, g1, g2);
-    return (int16_t)((a ? a->adv - a->plc : 0) + (b ? b->plc : 0) + (p ? p->adv : 0));
-}
-static int otf_scale(int units, float per_unit, uint32_t size) { return (int)floorf((float)units * per_unit * (float)size + 0.5f); }
-
 #ifndef FONTLL_TEST
 /* ---------------------------------------------------------------- the imported functions */
 #define A0 (c->x[0])
@@ -809,8 +641,6 @@ static void fe_ctor(Ctx *c) {
 }
 static void fe_Initialize(Ctx *c) { Engine *e = engine(A0); e->work = A1; e->error = 0; memcpy(HOST(A0) + 0xb0, &e->work, 8); RET(0); }
 static void fe_Finalize(Ctx *c) { Engine *e = engine(A0); uint64_t self = A0; EnterCriticalSection(&g_lock); e->key = 0; LeaveCriticalSection(&g_lock); memset(HOST(self), 0, 16); RET(0); }
-static void fe_GetPointerToWorkBuffer(Ctx *c) { RET(engine(A0)->work); }
-static void fe_GetError(Ctx *c) { RET((uint32_t)engine(A0)->error); }
 
 /* (char *nameOut, const void *data, uint faceIndex, uint nameBufferLength) -> error */
 static void fe_LoadFont(Ctx *c) {
@@ -858,16 +688,6 @@ static void fe_SetScale(Ctx *c) {
     RET(e->error);
 }
 
-static void fe_SetBoldWeight(Ctx *c) {
-    Engine *e = engine(A0);
-    static volatile LONG warned;
-    if (flog(L_BOLD)) printf("fontll: SetBoldWeight engine %llx %x\n", (unsigned long long)A0, (unsigned)A1);
-    if ((uint32_t)A1 > 0x10000) { e->error = ERR_BAD_BOLD; RET(e->error); return; }
-    if ((uint32_t)A1 && !InterlockedExchange(&warned, 1)) printf("nn::fontll: SetBoldWeight(%#x): emboldening is not implemented, glyphs stay regular\n", (unsigned)A1);
-    e->bold = (int)A1;
-    e->error = 0;
-    RET(0);
-}
 
 static void fe_SetOutlineWidth(Ctx *c) {
     Engine *e = engine(A0);
@@ -890,7 +710,6 @@ static void fe_SetFlags(Ctx *c) {                 /* Flags: 0 no effect, 1 outli
     else e->error = ERR_BAD_FLAG;
     RET(e->error);
 }
-static void fe_SetAutoHint(Ctx *c) { engine(A0)->error = 0; RET(0); }
 
 static void fe_GetFontMetrics(Ctx *c) {
     Engine *e = engine(A0);
@@ -914,19 +733,6 @@ static void fe_CheckGlyphExist(Ctx *c) {
     RET(yes);
 }
 
-/* (short *idx, short *idy, int *dx, int *dy, uint code, ushort type) -> error */
-static void fe_GetAdvance(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    int32_t dx = f ? advance_fixed(e, f, map_char(f, (uint32_t)A5)) : 0;
-    e->error = f ? 0 : ERR_NO_FONT;
-    if (A1) put16(HOST(A1), (dx + 0x8000) >> 16);
-    if (A2) put16(HOST(A2), 0);
-    if (A3) put32(HOST(A3), dx);
-    if (A4) put32(HOST(A4), 0);
-    if (flog(L_ADVANCE)) printf("fontll: GetAdvance engine %llx font %d code %x type %x -> %.3f\n", (unsigned long long)A0, e->current, (unsigned)A5, (unsigned)A6, dx / 65536.0);
-    RET(e->error);
-}
 
 /* (uint code, ushort type) -> GlyphMap *, released with ReleasesGlyph */
 static void fe_AcquireGlyphmap(Ctx *c) {
@@ -943,121 +749,17 @@ static void fe_AcquireGlyphmap(Ctx *c) {
 }
 static void fe_ReleasesGlyph(Ctx *c) { free(HOST(A1)); engine(A0)->error = 0; RET(0); }
 
-/* (int *dx, int *dy, uint code1, uint code2) -> error; 16.16 pixels */
-static void fe_GetKerning(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    int32_t dx = f ? kern_fixed(e, f, (uint32_t)A3, (uint32_t)A4) : 0;
-    if (A1) put32(HOST(A1), dx);
-    if (A2) put32(HOST(A2), 0);
-    e->error = f ? 0 : ERR_NO_FONT;
-    if (flog(L_KERN)) printf("fontll: GetKerning engine %llx font %d codes %x %x -> %.3f\n", (unsigned long long)A0, e->current, (unsigned)A3, (unsigned)A4, dx / 65536.0);
-    RET(e->error);
-}
 
-/* (void *(*alloc)(size_t size, size_t align, void *user), void *user, bool kernOnly) -> OtfKerningTable * or NULL */
-static void fe_InitializeOtfKerningTable(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    uint64_t alloc = A1, user = A2;
-    int kern_only = (int)(A3 & 1);
-    KernList list = {NULL, 0, 0};
-    if (!f || !f->gpos) { RET(0); return; }
-    gpos_collect(f, &list, kern_only);
-    c->x[0] = 0x18; c->x[1] = 4; c->x[2] = user;
-    call_guest(c, alloc);
-    uint64_t tab = c->x[0], entries = 0;
-    if (tab) {
-        c->x[0] = (uint64_t)list.n * 8; c->x[1] = 4; c->x[2] = user;
-        call_guest(c, alloc);
-        entries = c->x[0];
-        float per_unit = 1.0f / (float)f->upem;
-        int32_t count = entries ? list.n : 0;
-        memset(HOST(tab), 0, 0x18);
-        memcpy(HOST(tab), &count, 4);
-        memcpy(HOST(tab) + 8, &entries, 8);
-        memcpy(HOST(tab) + 0x10, &per_unit, 4);
-        if (entries && list.n) memcpy(HOST(entries), list.v, (size_t)list.n * 8);
-    }
-    printf("nn::fontll: OTF kerning table of \"%s\": %d entries%s\n", f->name, list.n, kern_only ? " (kern only)" : "");
-    free(list.v);
-    RET(tab);
-}
-/* (OtfKerningTable *, void (*free)(void *, void *user), void *user) */
-static void fe_FinalizeOtfKerningTable(Ctx *c) {
-    uint64_t tab = A1, fn = A2, user = A3, entries;
-    if (!tab) return;
-    memcpy(&entries, HOST(tab) + 8, 8);
-    if (entries) { c->x[0] = entries; c->x[1] = user; call_guest(c, fn); }
-    c->x[0] = tab; c->x[1] = user;
-    call_guest(c, fn);
-}
-static int otf_table(uint64_t tab, const KernPair **v, float *per_unit) {
-    int32_t n;
-    uint64_t entries;
-    if (!tab) return -1;
-    memcpy(&n, HOST(tab), 4);
-    memcpy(&entries, HOST(tab) + 8, 8);
-    memcpy(per_unit, HOST(tab) + 0x10, 4);
-    *v = (const KernPair *)HOST(entries);
-    return n;
-}
-/* (table, code1, code2, size) -> pixels */
-static void fe_AcquireOtfKerning(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    const KernPair *v;
-    float per_unit;
-    int n = otf_table(A1, &v, &per_unit), r = 0;
-    if (f && n >= 0) r = otf_scale(otf_raw(f, v, n, (uint32_t)A2, (uint32_t)A3), per_unit, (uint32_t)A4);
-    if (flog(L_OTF)) printf("fontll: AcquireOtfKerning font %d codes %x %x size %u -> %d\n", e->current, (unsigned)A2, (unsigned)A3, (unsigned)A4, r);
-    RET((uint32_t)r);
-}
-/* (table, code, size): placement of the first glyph of a line */
-static void fe_AcquireOtfKerningFirst(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    const KernPair *v, *p;
-    float per_unit;
-    int n = otf_table(A1, &v, &per_unit), r = 0;
-    if (n >= 0) { p = f ? kern_find(v, n, map_char(f, (uint32_t)A2) & 0xffff, 0xffff) : NULL; r = otf_scale(p ? p->plc : 0, per_unit, (uint32_t)A3); }
-    RET((uint32_t)r);
-}
-/* (table, code, size): what remains after the last glyph of a line */
-static void fe_AcquireOtfKerningLast(Ctx *c) {
-    Engine *e = engine(A0);
-    FontData *f = current(e);
-    const KernPair *v, *p;
-    float per_unit;
-    int n = otf_table(A1, &v, &per_unit), r = 0;
-    if (n >= 0) { p = f ? kern_find(v, n, map_char(f, (uint32_t)A2) & 0xffff, 0xffff) : NULL; r = otf_scale(p ? (int16_t)(p->adv - p->plc) : 0, per_unit, (uint32_t)A3); }
-    RET((uint32_t)r);
-}
 
-/* ScalableFontEngineHelper::Decode(const void *bfttf, uint size): decodes in place, returns the TrueType data. */
-static void fe_Decode(Ctx *c) {
-    uint8_t *p = HOST(A0);
-    uint32_t size = (uint32_t)A1 & ~3u;
-    static const uint8_t key[4] = {BFTTF_KEY >> 24, (BFTTF_KEY >> 16) & 0xff, (BFTTF_KEY >> 8) & 0xff, BFTTF_KEY & 0xff};
-    if (!p || size < 12) { RET(0); return; }
-    for (uint32_t i = 0; i < size; i++) p[i] ^= key[i & 3];
-    RET((uint64_t)(uintptr_t)(p + 8));
-}
 
 #define F(n) "_ZN2nn6fontll18ScalableFontEngine" n
 static const ImportDef fontll_imports[] = {
-    {F("C1Ev"), fe_ctor}, {F("C2Ev"), fe_ctor}, {F("10InitializeEPvj"), fe_Initialize}, {F("8FinalizeEv"), fe_Finalize}, {F("8GetErrorEv"), fe_GetError},
-    {F("22GetPointerToWorkBufferEv"), fe_GetPointerToWorkBuffer}, {F("8LoadFontEPcPKvjj"), fe_LoadFont}, {F("7SetFontEPc"), fe_SetFont},
-    {F("8SetScaleEiiii"), fe_SetScale}, {F("13SetBoldWeightEi"), fe_SetBoldWeight}, {F("15SetOutlineWidthEt"), fe_SetOutlineWidth},
-    {F("8SetFlagsENS1_5FlagsE"), fe_SetFlags}, {F("11SetAutoHintEb"), fe_SetAutoHint}, {F("14GetFontMetricsEPNS0_7MetricsE"), fe_GetFontMetrics},
-    {F("15CheckGlyphExistEj"), fe_CheckGlyphExist}, {F("10GetAdvanceEPsS2_PiS3_jt"), fe_GetAdvance}, {F("15AcquireGlyphmapEjt"), fe_AcquireGlyphmap},
-    {F("13ReleasesGlyphEPv"), fe_ReleasesGlyph}, {F("10GetKerningEPiS2_jj"), fe_GetKerning},
-    {F("25InitializeOtfKerningTableEPFPvmmS2_ES2_b"), fe_InitializeOtfKerningTable},
-    {F("23FinalizeOtfKerningTableEPNS0_15OtfKerningTableEPFvPvS4_ES4_"), fe_FinalizeOtfKerningTable},
-    {F("17AcquireOtfKerningEPKNS0_15OtfKerningTableEjjj"), fe_AcquireOtfKerning},
-    {F("21AcquireOtfKerningLastEPKNS0_15OtfKerningTableEjj"), fe_AcquireOtfKerningLast},
-    {F("22AcquireOtfKerningFirstEPKNS0_15OtfKerningTableEjj"), fe_AcquireOtfKerningFirst},
-    {"_ZN2nn6fontll24ScalableFontEngineHelper6DecodeEPKvj", fe_Decode},
+    {F("C1Ev"), fe_ctor},  {F("10InitializeEPvj"), fe_Initialize}, {F("8FinalizeEv"), fe_Finalize},
+    {F("8LoadFontEPcPKvjj"), fe_LoadFont}, {F("7SetFontEPc"), fe_SetFont},
+    {F("8SetScaleEiiii"), fe_SetScale},  {F("15SetOutlineWidthEt"), fe_SetOutlineWidth},
+    {F("8SetFlagsENS1_5FlagsE"), fe_SetFlags},  {F("14GetFontMetricsEPNS0_7MetricsE"), fe_GetFontMetrics},
+    {F("15CheckGlyphExistEj"), fe_CheckGlyphExist},  {F("15AcquireGlyphmapEjt"), fe_AcquireGlyphmap},
+    {F("13ReleasesGlyphEPv"), fe_ReleasesGlyph},
 };
 
 void register_fontll_imports(void) {
@@ -1095,11 +797,6 @@ int main(int argc, char **argv) {
     memcpy(v, m, 32);
     printf("metrics: upem %u macStyle %x win %d %d typo %d %d %d hhea %d %d %d bbox %d %d %d %d family \"%s\" name \"%s\"\n", (uint16_t)v[0], (uint16_t)v[1], v[2], v[3], v[4], v[5],
            v[7], v[8], v[9], v[10], v[12], v[13], v[14], v[15], (char *)m + 0xcc, (char *)m + 0xfe);
-    KernList list = {NULL, 0, 0};
-    gpos_collect(f, &list, 0);
-    int singles = 0;
-    for (int i = 0; i < list.n; i++) singles += list.v[i].g2 == 0xffff;
-    printf("GPOS: %d entries (%d single adjustments)\n", list.n, singles);
     uint32_t codes[256];
     int n = 0;
     if (!strncmp(argv[3], "U+", 2)) codes[n++] = (uint32_t)strtoul(argv[3] + 2, NULL, 16);
@@ -1116,8 +813,6 @@ int main(int argc, char **argv) {
         GetGlyphIndicesW(g_dc, &ch, 1, &gi, GGI_MARK_NONEXISTING_GLYPHS);
         printf("U+%04X glyph %u (GDI says %u)  hmtx advance %d units (GDI at em size: %d) = %.4f px -> i_dx %d", codes[i], glyph, gi, advance_units(f, glyph), gm.gmCellIncX,
                advance_fixed(&e, f, glyph) / 65536.0, (advance_fixed(&e, f, glyph) + 0x8000) >> 16);
-        if (i + 1 < n) printf("  kern with next: table %.3f px, GPOS raw %d units -> %d px", kern_fixed(&e, f, codes[i], codes[i + 1]) / 65536.0, otf_raw(f, list.v, list.n, codes[i], codes[i + 1]),
-                              otf_scale(otf_raw(f, list.v, list.n, codes[i], codes[i + 1]), 1.0f / (float)f->upem, (uint32_t)atoi(argv[2])));
         printf("\n");
         for (int pass = 0; pass < (e.outline ? 3 : 1); pass++) {
             e.flags = pass == 1 ? FLAG_OUTLINED_FILLED : pass == 2 ? FLAG_OUTLINED_UNFILLED : 0;

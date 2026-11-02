@@ -58,7 +58,6 @@ void os_signal_event(uint64_t key);
 #define BUF_CAPACITY 0x10
 #define BUF_SIZE 0x18
 #define BUF_OFFSET 0x20
-#define SAMPLE_FORMAT_PCM16 2                         /* nn::audio::SampleFormat_PcmInt16 */
 #define SLOTS 64                                      /* more than the game's maximum of 16 buffers */
 #define WAV_SECONDS 30
 
@@ -296,8 +295,6 @@ static uint8_t g_own_event[0x40];
 static void audio_OpenDefaultAudioOut13(Ctx *c) { c->x[2] = c->x[1]; c->x[1] = (uint64_t)(uintptr_t)g_own_event; audio_OpenDefaultAudioOut(c); }
 static void audio_GetAudioOutState(Ctx *c) { RET(g_started ? 0 : 1); }        /* AudioOutState: 0 started, 1 stopped */
 static void audio_GetAudioOutChannelCount(Ctx *c) { RET(g_channels); }
-static void audio_GetAudioOutSampleRate(Ctx *c) { RET(g_rate); }
-static void audio_GetAudioOutSampleFormat(Ctx *c) { RET(SAMPLE_FORMAT_PCM16); }
 
 static void audio_SetAudioOutBufferInfo(Ctx *c) {     /* (AudioOutBuffer *, void *data, size_t capacity, size_t dataSize) */
     wr64(A0 + BUF_NEXT, 0);
@@ -521,12 +518,6 @@ static void audio_ListAudioDeviceName(Ctx *c) {
     }
     RET(n < 0 ? 0 : n);
 }
-/* GetAudioOutName(const AudioOut *) -> const char *: [sdk 0x185920] returns AudioOut + 0x10 (the name the service gave at
- * open). This runtime's AudioOut is host state, so the default output's name [doc: libnx audout "DeviceOut"] is returned. */
-static void audio_GetAudioOutName(Ctx *c) { static const char name[] = "DeviceOut"; RET((uint64_t)(uintptr_t)name); }
-/* GetAudioOutBufferDataSize(const AudioOutBuffer *) -> size_t: [sdk 0x173978] ldr [x0, #0x18], the dataSize that
- * SetAudioOutBufferInfo stored (BUF_SIZE above). */
-static void audio_GetAudioOutBufferDataSize(Ctx *c) { RET(rd64(A0 + BUF_SIZE)); }
 
 static void audio_GetActiveAudioDeviceName(Ctx *c) {  /* (AudioDeviceName *): char[0x100] */
     memset((void *)(uintptr_t)A0, 0, 0x100);
@@ -703,12 +694,9 @@ static void opus_constructor(Ctx *c) {                /* HardwareOpusDecoder(int
 #define AU(n) "_ZN2nn5audio" n
 static const ImportDef audio_imports[] = {
     {AU("27InitializeAudioOutParameterEPNS0_17AudioOutParameterE"), audio_InitializeAudioOutParameter},
-    {AU("19OpenDefaultAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut},
     {AU("19OpenDefaultAudioOutEPNS0_8AudioOutERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut13},      /* [witchtime] */
     {AU("16GetAudioOutStateEPKNS0_8AudioOutE"), audio_GetAudioOutState},                                         /* [witchtime] */
     {AU("23GetAudioOutChannelCountEPKNS0_8AudioOutE"), audio_GetAudioOutChannelCount},
-    {AU("21GetAudioOutSampleRateEPKNS0_8AudioOutE"), audio_GetAudioOutSampleRate},
-    {AU("23GetAudioOutSampleFormatEPKNS0_8AudioOutE"), audio_GetAudioOutSampleFormat},
     {AU("21SetAudioOutBufferInfoEPNS0_14AudioOutBufferEPvmm"), audio_SetAudioOutBufferInfo},
     {AU("28GetAudioOutBufferDataPointerEPKNS0_14AudioOutBufferE"), audio_GetAudioOutBufferDataPointer},
     {AU("20AppendAudioOutBufferEPNS0_8AudioOutEPNS0_14AudioOutBufferE"), audio_AppendAudioOutBuffer},
@@ -718,8 +706,7 @@ static const ImportDef audio_imports[] = {
     {AU("13CloseAudioOutEPNS0_8AudioOutE"), audio_CloseAudioOut},
     {AU("39AcquireAudioDeviceNotificationForOutputEPNS_2os11SystemEventE"), audio_AcquireAudioDeviceNotificationForOutput},
     {AU("24GetActiveAudioDeviceNameEPNS0_15AudioDeviceNameE"), audio_GetActiveAudioDeviceName},
-    {AU("19ListAudioDeviceNameEPNS0_15AudioDeviceNameEi"), audio_ListAudioDeviceName}, {AU("15GetAudioOutNameEPKNS0_8AudioOutE"), audio_GetAudioOutName},   /* [Recomps#1] */
-    {AU("25GetAudioOutBufferDataSizeEPKNS0_14AudioOutBufferE"), audio_GetAudioOutBufferDataSize},                                                          /* [Recomps#1] */
+    {AU("19ListAudioDeviceNameEPNS0_15AudioDeviceNameEi"), audio_ListAudioDeviceName},    /* [Recomps#1] */
     {AU("26SetAudioDeviceOutputVolumeEPKNS0_15AudioDeviceNameEf"), audio_SetAudioDeviceOutputVolume},
     {"_ZN2nn5codec19HardwareOpusDecoderC1Ei", opus_constructor},
 };

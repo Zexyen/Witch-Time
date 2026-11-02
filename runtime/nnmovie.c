@@ -63,7 +63,6 @@ static void nothing(Ctx *c) { (void)c; }
 static void ret0(Ctx *c) { RET(0); }
 
 static const ImportDef movie_imports[] = {
-    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", extractor_ctor},
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [witchtime] SDK 13's form (x2 = cache size) */
     {"_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", nothing}, {"_ZN5movie11SetCoreMaskEm", nothing},

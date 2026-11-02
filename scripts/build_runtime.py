@@ -47,8 +47,8 @@ MSVC_CRT = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')   # what a
 HOST_SOURCES = ['hostrt.c', 'boot.c', 'nnsdk.c', 'libcxx.c', 'os_threads.c', 'nvn_stub.c', 'nvn_gl.c', 'nvn_vk.c',
                 'mx_translate.c', 'tex_decode.c', 'tex_pack.c', 'nnfs.c', 'clib.c', 'nntime.c', 'nnhid.c', 'nnpad_sdl.c', 'gen/sdkdata.c',
                 'display.c', 'nnpl.c', 'nnfontll.c', 'nnmovie.c', 'nnmisc.c', 'nnaudio.c', 'nnmovie_mf.c', 'nniostream.c',
-                'nncxxrt.c', 'nncxxlib.c', 'nnlibc2.c', 'gen/sdklift_gen.c', 'sdklift_rt.c', 'nnsdk2.c', 'nnapplet.c',
-                'nnalbum.c', 'nnnet.c', 'nnfsdir.c', 'nnunwind.c', 'nvn_sdk.c', 'nvn_c4.c', 'nvn_c5.c', 'gfx_options.c',
+                'nncxxrt.c', 'nncxxlib.c', 'nnlibc2.c', 'gen/sdklift_gen.c', 'sdklift_rt.c', 'nnsdk2.c',
+                'nnnet.c', 'nnfsdir.c', 'nnunwind.c', 'nvn_sdk.c', 'nvn_c4.c', 'nvn_c5.c', 'gfx_options.c',
                 'hitch.c', 'r2_imports.c', 'b3_imports.c', 'watch.c', 'pkz_dump.c', 'gamedll.c', 'pcmenu.c',
                 'options_row.c', 'prompts.c', 'presence.c']
 HOST_FLAGS = ['-O1', '-g', '-gcodeview', '-w', '-fno-strict-aliasing', '-mcx16', '-I', RT, '-I', GENRT,   # debug info: crash addresses -> source (llvm-symbolizer)

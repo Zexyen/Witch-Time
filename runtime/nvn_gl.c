@@ -3769,7 +3769,7 @@ static void pf_frame_mark(LONG64 frame) {
             void (*fn)(void *) = g_jw_fn[k];
             const char *name = k < 5 ? sw[k] : fn == g_rb->finish ? "Finish" : fn == g_rb->read_texels ? "ReadTexels" : fn == g_rb->write_texels ? "WriteTexels" : fn == job_nop ? "barrier (queue empty)" :
                                fn == g_rb->housekeeping ? "housekeeping (ApplyDeferredFinalizes)" : fn == g_rb->sync_drop ? "Sync finalize" : fn == g_rb->reset_status ? "QueueGetError" : fn == g_rb->server_wait ? "QueueWaitSync" :
-                               fn == g_rb->submit ? "SubmitCommands (waited)" : fn == g_rb->present ? "PresentTexture (waited)" : fn == g_rb->present_movie ? "present to the movie maker" : fn == g_rb->sample_grid ? "sample locations grid" : "other";
+                               fn == g_rb->submit ? "SubmitCommands (waited)" : fn == g_rb->present ? "PresentTexture (waited)" : fn == g_rb->sample_grid ? "sample locations grid" : "other";
             printf(" | %s%s %.2f calls %.2f ms = %.2f + %.2f + %.2f; posted during a replay %.2f, submissions queued ahead %.2f, presents ahead %.2f", name, k == JW_N - 1 ? " (and more)" : "", (double)d[0] / 300.0,
                    (double)(d[1] + d[2] + d[3]) * ms, (double)d[1] * ms, (double)d[2] * ms, (double)d[3] * ms, (double)d[4] / 300.0, (double)d[5] / 300.0, (double)d[6] / 300.0);
             if (!strcmp(name, "other")) printf(" (job %p)", (void *)(uintptr_t)fn);
@@ -4086,7 +4086,6 @@ static DWORD WINAPI render_thread(LPVOID arg) {
     glGenFramebuffers(2, g_fbo_tmp);
     glGenProgramPipelines(1, &g_pipeline);
     static const uint8_t black[4] = {0, 0, 0, 255};
-    { void album_movie_frame_source_attach(void); album_movie_frame_source_attach(); }   /* close4: queue_present feeds the movie maker (job_present_movie) */
     glGenTextures(1, &g_dummy_tex);
     glBindTexture(GL_TEXTURE_2D, g_dummy_tex);
     glTexStorage2D(GL_TEXTURE_2D, 1, 0x8058, 1, 1);
@@ -4969,27 +4968,6 @@ static void win_acquire(Ctx *c) {                       /* (window, sync, int *t
 }
 static void queue_acquire(Ctx *c) { c->x[0] = c->x[1]; c->x[1] = 0; win_acquire(c); }      /* nvnQueueAcquireTexture(queue, window, int *textureIndex) */
 static void win_set_crop(Ctx *c) { Window *w = hobj(A0, K_WIN); if (w) { w->crop[0] = (int)A1; w->crop[1] = (int)A2; w->crop[2] = (int)A3; w->crop[3] = (int)A4; } }
-/* close4: a window built on the movie maker's native window (nn::album::GetMovieMakerNativeWindow, nnalbum.c) is not the screen:
- * what the game presents to it is one picture of the video being recorded. The picture is read back and handed to the encoder;
- * nothing is shown and the display is not paced by it. */
-uint64_t album_movie_native_window(void);
-int album_movie_push_frame(const uint8_t *rgba, int w, int h, int stride, int bottom_up);
-void album_movie_frame_source_attach(void);
-static void job_present_movie(void *arg) {
-    PresentJob *j = arg;
-    Tex *t = j->win && j->index >= 0 && j->index < j->win->count ? j->win->tex[j->index] : NULL;
-    if (!t || t->dead || !t->o.gl || t->b.width <= 0 || t->b.height <= 0) return;
-    int w = t->b.width, h = t->b.height;
-    uint8_t *px = malloc((size_t)w * h * 4);
-    if (!px) return;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER_, g_fbo_read);
-    glFramebufferTexture(GL_READ_FRAMEBUFFER_, GL_COLOR_ATTACHMENT0_, t->o.gl, 0);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);                /* GL row 0 is the top row of an NVN texture (see save_bmp) */
-    album_movie_push_frame(px, w, h, w * 4, 0);
-    free(px);
-    glBindFramebuffer(GL_FRAMEBUFFER_, S.have_fbo ? S.fbo : 0);
-}
 /* Session 13, TEST ONLY: WT_SHOT_FIGHT=<n>[,<n>...] (nnhid.c counts the fight frames at the pad poll): the present the game
  * queues next after the poll that reached fight frame n is saved as fight_<n>.bmp in WT_SHOT_DIR by whichever back end runs. */
 static volatile LONG g_fight_shot;
@@ -5019,7 +4997,7 @@ static void l1_early_present(void) {
     int display_l1_early(void);
     if (!g_vk || !display_l1_early() || !InterlockedExchange(&g_l1_acq_new, 0)) return;
     Window *w = g_l1_acq_win;
-    if (!w || (w->native && w->native == album_movie_native_window())) return;
+    if (!w) return;
     if (g_l1_early_win) { g_l1_early_win = NULL; g_l1_early_miss++; }
     PresentJob j = {w, (int)g_l1_acq_idx};
     /* the picture of THIS acquire is the one rendered since the last present: the index the game acquired at the end of its
@@ -5051,7 +5029,7 @@ static void l1_pipe_after_submit(void) {
     { static int sh = -1; if (sh < 0) sh = getenv("WT_L1_SUBMIT_HOLD") && atoi(getenv("WT_L1_SUBMIT_HOLD")); if (sh && !g_l1_pipe && InterlockedExchange(&g_l1_sh_pending, 0)) gl_run(l1_nop_job, NULL); }      /* TEST: old path, but the game waits until the render thread has replayed this submission (is the old picture a race with the game's next frame?) */
     if (!InterlockedExchange(&g_l1_pipe_pending, 0)) return;
     Window *w = g_l1_acq_win;
-    if (!w || (w->native && w->native == album_movie_native_window())) { display_wait_refresh(); return; }
+    if (!w) { display_wait_refresh(); return; }
     if (g_l1_early_win) { g_l1_early_win = NULL; g_l1_early_miss++; }
     PresentJob j = {w, (int)g_l1_acq_idx};
     g_l1_early_win = w; g_l1_early_idx = j.index;
@@ -5064,7 +5042,6 @@ void nvn_l1_report(FILE *out) { if (g_l1_early_n || g_l1_early_miss) fprintf(out
 static void queue_present(Ctx *c) {                     /* (queue, window, textureIndex) */
     PresentJob j = {hobj(A1, K_WIN), (int)A2};
     L1T("PRESENT texture %d", (int)A2);
-    if (j.win && j.win->native && j.win->native == album_movie_native_window()) { gl_run(g_rb->present_movie, &j); return; }
     g_pf_main_tid = GetCurrentThreadId();
     if (g_l1_early_win && g_l1_early_win == j.win && g_l1_early_idx == j.index) {      /* L1: this picture was presented at the game's wait already: only the pacing bookkeeping */
         g_l1_early_win = NULL;
@@ -5722,7 +5699,7 @@ static void dev_finalize_command_handle(Ctx *c) {       /* (device, handle): the
 void nvn_render_run(void (*fn)(void *), void *arg) { gl_run(fn, arg); }
 /* Seam step S2: the OpenGL back end as an RBackend (nvn_front.h); rb_vk is in nvn_vk_draw.c. */
 static void rb_gl_idle(void) { gl_housekeeping(); }
-const RBackend rb_gl = {"gl", job_submit, job_submit_async, job_present, job_present_movie, job_fence, job_sync_wait, job_server_wait, job_sync_drop, job_flush, job_finish,
+const RBackend rb_gl = {"gl", job_submit, job_submit_async, job_present, job_fence, job_sync_wait, job_server_wait, job_sync_drop, job_flush, job_finish,
                         job_write_texels, job_read_texels, job_housekeeping, job_reset_status, job_grid, rb_gl_idle};
 
 /* ---- front-end services for the Vulkan back end (nvn_front.h). Until step S3 splits this file they are thin doors to

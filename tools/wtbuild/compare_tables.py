@@ -59,7 +59,7 @@ def main():
             copy('targets/exefs/sdk', side, sdk_nso)
             copy('lifter/sdklift_install.txt', side)
             copy('lifter/sdklift_roots.txt', side, roots)
-        for rel in ('runtime/gen/make_gen.py', 'tools/extract/nso2elf.py', 'lifter/gen_quad_tests.py', 'lifter/recomp.py',
+        for rel in ('runtime/gen/make_gen.py', 'tools/extract/nso2elf.py', 'lifter/recomp.py',
                     'lifter/regcache.py', 'lifter/sdklift.py', 'scripts/nvn_procs.py'):
             copy(rel, py)
         for n in os.listdir(os.path.join(ROOT, 'runtime', 'gen_static')):

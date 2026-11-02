@@ -332,40 +332,11 @@ static void os_SetThreadName(Ctx *c) {               /* the guest string may be 
     obj(A0)->name = (uint64_t)(uintptr_t)copy;
     wr64(A0 + 0x1a8, (uint64_t)(uintptr_t)copy);   /* [Recomps#1] the name pointer GetThreadNamePointer reads [sdk 0x89174] */
 }
-/* [Recomps#1] R2: GetThreadNamePointer(const ThreadType *). [sdk 0x89174] returns the name pointer the ThreadType
- * keeps at +0x1a8; this runtime keeps thread state in its side table, so the copy SetThreadName made is returned.
- * A thread that was never named gets a default made once and kept: "MainThread" for the main thread, else
- * "Thread_0x<ThreadType address>" (inferred from the SDK's naming habit, NOT VERIFIED against the 3.6.0 code). */
-static void os_GetThreadNamePointer(Ctx *c) {
-    Obj *o = obj(A0);
-    if (!o->name) {
-        char buf[40];
-        if (A0 == (uint64_t)(uintptr_t)g_main_thread) snprintf(buf, sizeof buf, "MainThread");
-        else snprintf(buf, sizeof buf, "Thread_0x%016llx", (unsigned long long)A0);
-        o->name = (uint64_t)(uintptr_t)_strdup(buf);
-    }
-    RET(o->name);
-}
 static void os_GetCurrentThread(Ctx *c) { RET(t_thread ? t_thread : (uint64_t)g_main_thread); }
 static Obj *thread_obj(uint64_t key);
-static void os_GetThreadPriority(Ctx *c) { RET((int64_t)thread_obj(A0 == (uint64_t)(uintptr_t)g_main_thread ? 0 : A0)->priority); }
-static void os_ChangeThreadPriority(Ctx *c) {
-    Obj *o = obj(A0);
-    int old = o->priority;
-    oslog("  change priority of %s: %d -> %d (called from %llx)\n", A0 == (uint64_t)(uintptr_t)g_main_thread ? "the main thread" : o->name ? (const char *)(uintptr_t)o->name : "?", old, (int)A1, (unsigned long long)c->x[30]);
-    o->priority = (int)A1;
-    if (o->thread) SetThreadPriority(o->thread, host_priority(o->priority));
-    else if (A0 == (uint64_t)(uintptr_t)g_main_thread || A0 == t_thread) SetThreadPriority(GetCurrentThread(), host_priority(o->priority));
-    RET((int64_t)old);
-}
 static void os_GetThreadId(Ctx *c) { Obj *o = obj(A0); RET(o->thread ? GetThreadId(o->thread) : GetCurrentThreadId()); }
 static void os_YieldThread(Ctx *c) { (void)c; SwitchToThread(); }
 static void os_SleepThread(Ctx *c) { sleep_ns((int64_t)A0); }
-static void os_GetCurrentStackInfo(Ctx *c) {
-    Obj *o = t_thread ? obj(t_thread) : NULL;
-    if (A0) wr64(A0, o ? o->stack : g_main_stack_base);
-    if (A1) wr64(A1, o ? o->stack_size : g_main_stack_size);
-}
 /* Core numbers and affinity masks. The console runs the application on cores 0..2 (GetThreadAvailableCoreMask = 7);
  * a thread is created on one core (the NPDM default core 0, or the one given to CreateThread) and stays there until
  * SetThreadCoreMask widens its mask. The values are kept per thread and returned as set; the Windows scheduler is
@@ -389,11 +360,6 @@ static void os_SetThreadCoreMask(Ctx *c) {            /* (ThreadType*, int ideal
     if (ideal == -1) { if (!(mask >> (o->ideal_core & 63) & 1)) o->ideal_core = mask ? (int)__builtin_ctzll(mask) : OS_DEFAULT_CORE; }   /* IdealCoreDontCare */
     else o->ideal_core = ideal;
     apply_sched(h, o->core_mask);
-}
-static void os_GetThreadCoreMask(Ctx *c) {            /* (int *outIdealCore, Bit64 *outMask, const ThreadType*) */
-    Obj *o = thread_obj(A2);
-    if (A0) wr32(A0, (uint32_t)o->ideal_core);
-    if (A1) wr64(A1, o->core_mask);
 }
 static void os_GetCurrentCoreNumber(Ctx *c) {
     if (console_cores()) {                                /* the core the thread is on now, as the console answers */
@@ -474,7 +440,6 @@ static void mtx_trylock(Ctx *c) { RET(TryEnterCriticalSection(&obj(A0)->cs) ? 1 
 DWORD os_mutex_owner(uint64_t key) { return key ? (DWORD)(uintptr_t)obj(key)->cs.OwningThread : 0; }
 static void pmtx_lock(Ctx *c) { EnterCriticalSection(&obj(A0)->cs); RET(0); }
 static void pmtx_unlock(Ctx *c) { LeaveCriticalSection(&obj(A0)->cs); RET(0); }
-static void pmtx_trylock(Ctx *c) { RET(TryEnterCriticalSection(&obj(A0)->cs) ? 0 : 16); }   /* EBUSY */
 
 /* ---------------------------------------------------------------- events (Event, LightEvent, SystemEvent) */
 /* nn::os::EventClearMode: 0 = ManualClear, 1 = AutoClear */
@@ -513,19 +478,8 @@ static void ev_timedwait(Ctx *c) { uint64_t k_ = A0; L1O("event timedwait >", k_
 
 /* ---------------------------------------------------------------- condition variables */
 static void cv_wait(Ctx *c) { uint64_t k_ = A0; L1O("cv wait >", k_); SleepConditionVariableCS(&obj(A0)->cv, &obj(A1)->cs, INFINITE); L1O("cv wait <", k_); }
-static void cv_timedwait(Ctx *c) {                    /* returns ConditionVariableStatus: 0 timeout, 1 signalled */
-    RET(SleepConditionVariableCS(&obj(A0)->cv, &obj(A1)->cs, ns_to_ms((int64_t)A2)) ? 1 : 0);
-}
 static void cv_signal(Ctx *c) { L1O("cv SIGNAL", A0); WakeConditionVariable(&obj(A0)->cv); }
 static void cv_broadcast(Ctx *c) { L1O("cv BROADCAST", A0); WakeAllConditionVariable(&obj(A0)->cv); }
-/* std::condition_variable: the argument is a unique_lock<mutex> whose first word is the mutex pointer */
-static void std_cv_wait(Ctx *c) { uint64_t k_ = A0; L1O("std cv wait >", k_); SleepConditionVariableCS(&obj(A0)->cv, &obj(rd64(A1))->cs, INFINITE); L1O("std cv wait <", k_); }
-static void std_cv_timedwait(Ctx *c) {                /* deadline: system_clock nanoseconds since 1970 */
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    int64_t now = (int64_t)(((((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) - 116444736000000000ULL) * 100);
-    SleepConditionVariableCS(&obj(A0)->cv, &obj(rd64(A1))->cs, ns_to_ms((int64_t)A2 - now));
-}
 
 /* ---------------------------------------------------------------- semaphores */
 static void sem_init(Ctx *c) { obj_reset(A0); Obj *o = obj(A0); o->count = (int)A1; o->max = (int)A2; }
@@ -558,51 +512,6 @@ static void sem_release_n(Ctx *c) {
     LeaveCriticalSection(&o->cs);
 }
 
-/* ---------------------------------------------------------------- message queues (of 64-bit values) */
-static void mq_init(Ctx *c) {                         /* (queue, buffer, count): host-side storage is used */
-    obj_reset(A0);
-    Obj *o = obj(A0);
-    free(o->buf);
-    o->cap = A2 ? A2 : 1;
-    o->buf = calloc((size_t)o->cap, 8);
-}
-static int mq_put(Obj *o, uint64_t v, int front, DWORD ms) {
-    int ok = 1;
-    EnterCriticalSection(&o->cs);
-    while (o->len == o->cap) {
-        if (!SleepConditionVariableCS(&o->cv, &o->cs, ms)) { ok = o->len < o->cap; break; }
-    }
-    if (ok) {
-        if (front) { o->head = (o->head + o->cap - 1) % o->cap; o->buf[o->head] = v; }
-        else o->buf[(o->head + o->len) % o->cap] = v;
-        o->len++;
-        WakeAllConditionVariable(&o->cv);
-    }
-    LeaveCriticalSection(&o->cs);
-    return ok;
-}
-static int mq_get(Obj *o, uint64_t out, DWORD ms) {
-    int ok = 1;
-    EnterCriticalSection(&o->cs);
-    while (o->len == 0) {
-        if (!SleepConditionVariableCS(&o->cv, &o->cs, ms)) { ok = o->len > 0; break; }
-    }
-    if (ok) {
-        wr64(out, o->buf[o->head]);
-        o->head = (o->head + 1) % o->cap;
-        o->len--;
-        WakeAllConditionVariable(&o->cv);
-    }
-    LeaveCriticalSection(&o->cs);
-    return ok;
-}
-static void mq_send(Ctx *c) { L1O("queue SEND", A0); mq_put(obj(A0), A1, 0, INFINITE); }
-static void mq_trysend(Ctx *c) { RET(mq_put(obj(A0), A1, 0, 0)); }
-static void mq_jam(Ctx *c) { mq_put(obj(A0), A1, 1, INFINITE); }
-static void mq_tryjam(Ctx *c) { RET(mq_put(obj(A0), A1, 1, 0)); }
-static void mq_receive(Ctx *c) { uint64_t k_ = A1; L1O("queue receive >", k_); mq_get(obj(A1), A0, INFINITE); L1O("queue receive <", k_); }
-static void mq_tryreceive(Ctx *c) { RET(mq_get(obj(A1), A0, 0)); }
-static void mq_timedreceive(Ctx *c) { RET(mq_get(obj(A1), A0, ns_to_ms((int64_t)A2))); }
 
 /* ---------------------------------------------------------------- multi-wait (polling implementation) */
 static void mw_init(Ctx *c) { obj_reset(A0); }
@@ -671,7 +580,6 @@ static void fib_current(Ctx *c) { RET(t_fiber); }
 static void fib_finalize(Ctx *c) { Obj *o = obj(A0); if (o->fiber) { DeleteFiber(o->fiber); o->fiber = NULL; } }
 
 /* ---------------------------------------------------------------- misc */
-static void os_ConvertToTick(Ctx *c) { RET((uint64_t)((double)(int64_t)A0 * (double)TICK_HZ / 1e9)); }
 static void os_ConvertToTimeSpan(Ctx *c) { RET((uint64_t)((double)(int64_t)A0 * 1e9 / (double)TICK_HZ)); }
 /* The console fills the buffer from a generator seeded with kernel entropy: unpredictable bytes. Same here, from the
  * system generator (RtlGenRandom). */
@@ -709,26 +617,20 @@ static void os_GenerateRandomBytes(Ctx *c) {
 static const ImportDef thread_imports[] = {
     {OS("12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mi"), os_CreateThread},
     {OS("12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mii"), os_CreateThreadOnCore},
-    {OS("25GetCurrentProcessorNumberEv"), os_GetCurrentCoreNumber}, {OS("20GetCurrentCoreNumberEv"), os_GetCurrentCoreNumber},
+    {OS("20GetCurrentCoreNumberEv"), os_GetCurrentCoreNumber},
     {OS("11StartThreadEPNS0_10ThreadTypeE"), os_StartThread}, {OS("10WaitThreadEPNS0_10ThreadTypeE"), os_WaitThread},
     {OS("13DestroyThreadEPNS0_10ThreadTypeE"), os_DestroyThread}, {OS("13SetThreadNameEPNS0_10ThreadTypeEPKc"), os_SetThreadName},
-    {OS("20GetThreadNamePointerEPKNS0_10ThreadTypeE"), os_GetThreadNamePointer},       /* [Recomps#1] R2 */
-    {OS("17SetThreadCoreMaskEPNS0_10ThreadTypeEim"), os_SetThreadCoreMask}, {OS("17GetThreadCoreMaskEPiPmPKNS0_10ThreadTypeE"), os_GetThreadCoreMask},
+    {OS("17SetThreadCoreMaskEPNS0_10ThreadTypeEim"), os_SetThreadCoreMask},
     {OS("26GetThreadAvailableCoreMaskEv"), os_AvailableCoreMask},
-    {OS("16GetCurrentThreadEv"), os_GetCurrentThread}, {OS("17GetThreadPriorityEPKNS0_10ThreadTypeE"), os_GetThreadPriority},
-    {OS("24GetThreadCurrentPriorityEPKNS0_10ThreadTypeE"), os_GetThreadPriority},
-    {OS("20ChangeThreadPriorityEPNS0_10ThreadTypeEi"), os_ChangeThreadPriority}, {OS("11GetThreadIdEPKNS0_10ThreadTypeE"), os_GetThreadId},
+    {OS("16GetCurrentThreadEv"), os_GetCurrentThread},
+    {OS("11GetThreadIdEPKNS0_10ThreadTypeE"), os_GetThreadId},
     {OS("11YieldThreadEv"), os_YieldThread}, {OS("11SleepThreadENS_8TimeSpanE"), os_SleepThread},
-    {OS("19GetCurrentStackInfoEPmS1_"), os_GetCurrentStackInfo},
     {OS("15AllocateTlsSlotEPNS0_7TlsSlotEPFvmE"), os_AllocateTlsSlot}, {OS("18SdkAllocateTlsSlotEPNS0_7TlsSlotEPFvmE"), os_AllocateTlsSlot},
     {OS("11FreeTlsSlotENS0_7TlsSlotE"), os_FreeTlsSlot}, {OS("11GetTlsValueENS0_7TlsSlotE"), os_GetTlsValue}, {OS("11SetTlsValueENS0_7TlsSlotEm"), os_SetTlsValue},
     {OS("15InitializeMutexEPNS0_9MutexTypeEbi"), mtx_init}, {OS("13FinalizeMutexEPNS0_9MutexTypeE"), nothing},
     {OS("9LockMutexEPNS0_9MutexTypeE"), mtx_lock}, {OS("11UnlockMutexEPNS0_9MutexTypeE"), mtx_unlock}, {OS("12TryLockMutexEPNS0_9MutexTypeE"), mtx_trylock},
     {"pthread_mutex_init", ret0}, {"pthread_mutex_destroy", ret0}, {"pthread_mutex_lock", pmtx_lock}, {"pthread_mutex_unlock", pmtx_unlock},
-    {"pthread_mutex_trylock", pmtx_trylock},
-    {"_ZNSt3__15mutex4lockEv", mtx_lock}, {"_ZNSt3__15mutex6unlockEv", mtx_unlock}, {"_ZNSt3__15mutex8try_lockEv", mtx_trylock},
-    {"_ZNSt3__115recursive_mutex4lockEv", mtx_lock}, {"_ZNSt3__115recursive_mutex6unlockEv", mtx_unlock},
-    {"_ZNSt3__115recursive_mutex8try_lockEv", mtx_trylock},
+    {"_ZNSt3__15mutex4lockEv", mtx_lock}, {"_ZNSt3__15mutex6unlockEv", mtx_unlock},
     {OS("15InitializeEventEPNS0_9EventTypeEbNS0_14EventClearModeE"), ev_init}, {OS("13FinalizeEventEPNS0_9EventTypeE"), nothing},
     {OS("11SignalEventEPNS0_9EventTypeE"), ev_signal}, {OS("10ClearEventEPNS0_9EventTypeE"), ev_clear}, {OS("9WaitEventEPNS0_9EventTypeE"), ev_wait},
     {OS("14TimedWaitEventEPNS0_9EventTypeENS_8TimeSpanE"), ev_timedwait},
@@ -736,27 +638,16 @@ static const ImportDef thread_imports[] = {
     {OS("20InitializeLightEventEPNS0_14LightEventTypeEbNS0_14EventClearModeE"), ev_init}, {OS("18FinalizeLightEventEPNS0_14LightEventTypeE"), nothing},
     {OS("16SignalLightEventEPNS0_14LightEventTypeE"), ev_signal}, {OS("15ClearLightEventEPNS0_14LightEventTypeE"), ev_clear},
     {OS("14WaitLightEventEPNS0_14LightEventTypeE"), ev_wait},
-    {OS("18DestroySystemEventEPNS0_15SystemEventTypeE"), nothing}, {OS("16ClearSystemEventEPNS0_15SystemEventTypeE"), ev_clear},
+    {OS("18DestroySystemEventEPNS0_15SystemEventTypeE"), nothing},
     {OS("18TryWaitSystemEventEPNS0_15SystemEventTypeE"), ev_trywait}, {OS("15WaitSystemEventEPNS0_15SystemEventTypeE"), ev_wait},
-    {OS("20TimedWaitSystemEventEPNS0_15SystemEventTypeENS_8TimeSpanE"), ev_timedwait},
     {OS("27InitializeConditionVariableEPNS0_21ConditionVariableTypeE"), mtx_init}, {OS("25FinalizeConditionVariableEPNS0_21ConditionVariableTypeE"), nothing},
     {OS("21WaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeE"), cv_wait},
-    {OS("26TimedWaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeENS_8TimeSpanE"), cv_timedwait},
     {OS("23SignalConditionVariableEPNS0_21ConditionVariableTypeE"), cv_signal}, {OS("26BroadcastConditionVariableEPNS0_21ConditionVariableTypeE"), cv_broadcast},
-    {"_ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE", std_cv_wait},
-    {"_ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE", std_cv_timedwait},
-    {"_ZNSt3__118condition_variable10notify_oneEv", cv_signal}, {"_ZNSt3__118condition_variable10notify_allEv", cv_broadcast},
     {"pthread_cond_broadcast", cv_broadcast}, {"pthread_cond_destroy", ret0},
     {OS("19InitializeSemaphoreEPNS0_13SemaphoreTypeEii"), sem_init}, {OS("17FinalizeSemaphoreEPNS0_13SemaphoreTypeE"), nothing},
     {OS("16AcquireSemaphoreEPNS0_13SemaphoreTypeE"), sem_acquire}, {OS("16ReleaseSemaphoreEPNS0_13SemaphoreTypeE"), sem_release},
     {OS("16ReleaseSemaphoreEPNS0_13SemaphoreTypeEi"), sem_release_n},          /* [Recomps#1] */
-    {OS("22InitializeMessageQueueEPNS0_16MessageQueueTypeEPmm"), mq_init}, {OS("20FinalizeMessageQueueEPNS0_16MessageQueueTypeE"), nothing},
-    {OS("16SendMessageQueueEPNS0_16MessageQueueTypeEm"), mq_send}, {OS("19TrySendMessageQueueEPNS0_16MessageQueueTypeEm"), mq_trysend},
-    {OS("15JamMessageQueueEPNS0_16MessageQueueTypeEm"), mq_jam}, {OS("18TryJamMessageQueueEPNS0_16MessageQueueTypeEm"), mq_tryjam},
-    {OS("19ReceiveMessageQueueEPmPNS0_16MessageQueueTypeE"), mq_receive}, {OS("22TryReceiveMessageQueueEPmPNS0_16MessageQueueTypeE"), mq_tryreceive},
-    {OS("24TimedReceiveMessageQueueEPmPNS0_16MessageQueueTypeENS_8TimeSpanE"), mq_timedreceive},
     {OS("19InitializeMultiWaitEPNS0_13MultiWaitTypeE"), mw_init}, {OS("17FinalizeMultiWaitEPNS0_13MultiWaitTypeE"), nothing},
-    {OS("25InitializeMultiWaitHolderEPNS0_19MultiWaitHolderTypeEPNS0_10ThreadTypeE"), mw_holder_init},
     {OS("25InitializeMultiWaitHolderEPNS0_19MultiWaitHolderTypeEPNS0_9EventTypeE"), mw_holder_init},
     {OS("23FinalizeMultiWaitHolderEPNS0_19MultiWaitHolderTypeE"), nothing},
     {OS("19LinkMultiWaitHolderEPNS0_13MultiWaitTypeEPNS0_19MultiWaitHolderTypeE"), mw_link},
@@ -766,7 +657,7 @@ static const ImportDef thread_imports[] = {
     {OS("7WaitAnyEPNS0_13MultiWaitTypeE"), mw_waitany}, {OS("10TryWaitAnyEPNS0_13MultiWaitTypeE"), mw_trywaitany},
     {OS("15InitializeFiberEPNS0_9FiberTypeEPFS2_PvES3_S3_mi"), fib_init}, {OS("13FinalizeFiberEPNS0_9FiberTypeE"), fib_finalize},
     {OS("13SwitchToFiberEPNS0_9FiberTypeE"), fib_switch}, {OS("15GetCurrentFiberEv"), fib_current},
-    {OS("13ConvertToTickENS_8TimeSpanE"), os_ConvertToTick}, {OS("17ConvertToTimeSpanENS0_4TickE"), os_ConvertToTimeSpan},
+    {OS("17ConvertToTimeSpanENS0_4TickE"), os_ConvertToTimeSpan},
     {OS("19GenerateRandomBytesEPvm"), os_GenerateRandomBytes},
 };
 

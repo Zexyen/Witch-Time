@@ -36,13 +36,17 @@ Kept although test/diagnostic only: `hitch.c` (frame-timing log, woven into rend
 from the player's own dump and is never committed or published.
 
 ## Known Smash leftovers, not yet dealt with
-- Handlers for imports our main does not have (292 are reported at start as "is not an import of the game", in
-  `nnnet`, `nnmisc`, `nnapplet`, `nnsvc_c5a`, `nnalbum`, `nnfsdir`; more are registered without that check), and the
-  self-test cases that call them (`WT_SDK_SELFTEST` stops at `floorf`; `WT_CXXRT_SELFTEST` fails its import checks and
-  crashes in `st_exceptions`).
 - `[sdk 0x...]` citations: offsets in upstream's (Smash 13.0.4) sdk.elf, except where re-derived for ours (`nvn_sdk.c`).
+- `WT_SDK_SELFTEST`: `__errno_location` is one global (`nnsdk.c`), not the thread block's +0x1d8 the test expects.
 
 ## Smash leftovers removed (2026-11-02)
+Handlers for imports our main does not have: every import-table entry whose name main.elf does not import (737
+entries), then every function, variable and macro that left unused, and the self-test cases (about 8,200 lines with the generated test vectors)
+that called them. Gone whole: `nnalbum.c` (album, movie maker) with the renderers' movie-maker present job,
+`nnapplet.c` (web, software keyboard, shop, amiibo), `nnlibc2_c5b.inc` (musl stdio lifted from Smash's SDK; ours is
+not lifted), the binary128 soft-float arithmetic, `gen_static/quad_tests.h`, `sdktest_data.h` and
+`lifter/gen_quad_tests.py`. Both self-tests now run to the end on our main (`WT_CXXRT_SELFTEST` 79 checks, none
+failed).
 `r0_removed.c` and every call of its stand-ins (rollback / run-ahead R1 with the `runahead` option, `nn::ro` modules,
 fighter hooks, battle debug mode); the self-tests on Smash addresses (`nnmisc.c` Lua, `nnsdk2.c` EH main test, the
 exception-table, module, unwinder and ostringstream tests of `cxxrt_selftest.h`, `gen/eh_tests.h`); `WT_FIXED_SEED`'s

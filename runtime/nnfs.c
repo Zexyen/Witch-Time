@@ -94,7 +94,6 @@ static void fs_roots(void) {
     CreateDirectoryA(g_user_root, NULL);
     rom_mods_init();
 }
-const char *fs_user_root(void) { fs_roots(); return g_user_root; }
 
 static int is_dir(const char *p) { DWORD a = GetFileAttributesA(p); return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY); }
 static int exists(const char *p) { return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES; }
@@ -624,15 +623,6 @@ static void fs_MountSaveData(Ctx *c) {                   /* (const char *name, c
     trace_printf("     fs mount save data \"%s\" -> %s, journal working folder %s.work.%lu (%x)\n", STR(0), dir, dir, (unsigned long)GetCurrentProcessId(), r);
     RET(r);
 }
-static void fs_MountCacheStorage(Ctx *c) {               /* (const char *name): the application's cache storage, created on first use */
-    char dir[MAX_PATH];
-    save_dir(dir, "cache");
-    CreateDirectoryA(dir, NULL);
-    journal_recover(dir);
-    uint32_t r = mount_add(STR(0), MK_CACHE, dir);
-    trace_printf("     fs mount cache storage \"%s\" -> %s (%x)\n", STR(0), dir, r);
-    RET(r);
-}
 static void fs_Unmount(Ctx *c) {                         /* (const char *name): uncommitted changes are dropped */
     const char *name = STR(0);
     fs_lock();
@@ -1122,7 +1112,6 @@ int nnfs_selftest(Ctx *c) {
 }
 
 /* ---- nn::account: one local user with a fixed id */
-static void acc_ListAllUsers(Ctx *c) { wr32(A0, 1); if ((int)A2 > 0) { wr64(A1, 1); wr64(A1 + 8, 0); } RET(0); }
 static volatile LONG g_acc_user_open;                    /* the one local user {1, 0} has been opened (there is no CloseUser import) */
 int account_user_is_open(uint64_t lo, uint64_t hi) { return g_acc_user_open && lo == 1 && hi == 0; }
 /* [Recomps#1] ListOpenUsers(int *count, Uid *out, int max): not an import of our main, but lifted SDK code (friends::
@@ -1133,13 +1122,6 @@ void acc_ListOpenUsers(Ctx *c) {
 }
 static void acc_TryOpenPreselectedUser(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); wr64(A0 + 16, 0); InterlockedExchange(&g_acc_user_open, 1); RET(1); }
 static void acc_GetUserId(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); RET(0); }
-/* [Recomps#1] R2, our SDK 3.6.0 game: OpenPreselectedUser(UserHandle *) -> Result, OpenUser(UserHandle *, const Uid &) ->
- * Result, CloseUser(const UserHandle &) (void) [doc]. Same model: the one local user {1, 0}, handle {1, 0, 0}. */
-static void acc_OpenPreselectedUser(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); wr64(A0 + 16, 0); InterlockedExchange(&g_acc_user_open, 1); RET(0); }
-static void acc_OpenUser(Ctx *c) {
-    if (rd64(A1) != 1 || rd64(A1 + 8) != 0) { RET(0x1007cull); return; }   /* 124-0128 user not found [doc], NOT VERIFIED */
-    acc_OpenPreselectedUser(c);
-}
 static void acc_CloseUser(Ctx *c) { (void)c; }          /* the user stays open for the save-data checks (one user, one session) */
 /* The nickname of the console user is the name of the Windows user (WT_NICKNAME overrides): UTF-8, at most 32
  * bytes, NUL-terminated, in the 33-byte Nickname. */
@@ -1167,8 +1149,6 @@ static void acc_GetNickname(Ctx *c) {
     strcpy((char *)(uintptr_t)A0, name);
     RET(0);
 }
-static void acc_out_true(Ctx *c) { wr8(A0, 1); RET(0); }
-static void acc_out_false(Ctx *c) { wr8(A0, 0); RET(0); }
 /* [sdk] 0x4b3a8 (EnsureNetworkServiceAccountAvailable): the SDK treats the account results 124-0200 .. 124-0269 from
  * the service as "no usable network service account" (it then offers the account-linking applet and returns the
  * result). An offline machine has no linked account: 124-0200 = 0x1907c, the first code of that range, is returned
@@ -1184,9 +1164,8 @@ static void nifm_false(Ctx *c) { RET(0); }
 #define AC(n) "_ZN2nn7account" n
 #define NI(n) "_ZN2nn4nifm" n
 static const ImportDef fs_imports[] = {
-    {FS("8MountRomEPKcPvm"), fs_MountRom}, {FS("13MountSaveDataEPKcRKNS_7account3UidE"), fs_MountSaveData}, {FS("17MountCacheStorageEPKc"), fs_MountCacheStorage},
-    {FS("7UnmountEPKc"), fs_Unmount}, {FS("22QueryMountRomCacheSizeEPm"), fs_QueryMountRomCacheSize}, {FS("6CommitEPKc"), fs_Commit}, {FS("14EnsureSaveDataERKNS_7account3UidE"), fs_EnsureSaveData},
-    {FS("18IsSaveDataExistingERKNS_7account3UidE"), fs_IsSaveDataExisting},
+    {FS("8MountRomEPKcPvm"), fs_MountRom}, {FS("13MountSaveDataEPKcRKNS_7account3UidE"), fs_MountSaveData},
+    {FS("7UnmountEPKc"), fs_Unmount}, {FS("22QueryMountRomCacheSizeEPm"), fs_QueryMountRomCacheSize},  {FS("14EnsureSaveDataERKNS_7account3UidE"), fs_EnsureSaveData},
     /* [witchtime] SDK 13: MountRom(name) without a cache buffer, IsSaveDataExisting(ApplicationId, Uid) of this program,
      * FlushFile, SetFileSize */
     {FS("8MountRomEPKc"), fs_MountRom}, {FS("18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE"), fs_IsSaveDataExisting},
@@ -1195,20 +1174,17 @@ static const ImportDef fs_imports[] = {
     {FS("8OpenFileEPNS0_10FileHandleEPKci"), fs_OpenFile}, {FS("9CloseFileENS0_10FileHandleE"), fs_CloseFile},
     {FS("8ReadFileENS0_10FileHandleElPvm"), fs_ReadFile}, {FS("8ReadFileEPmNS0_10FileHandleElPvm"), fs_ReadFileCount},
     {FS("9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE"), fs_WriteFile}, {FS("11GetFileSizeEPlNS0_10FileHandleE"), fs_GetFileSize},
-    {FS("10CreateFileEPKcl"), fs_CreateFile}, {FS("10DeleteFileEPKc"), fs_DeleteFile}, {FS("15CreateDirectoryEPKc"), fs_CreateDirectory},
+    {FS("10CreateFileEPKcl"), fs_CreateFile}, {FS("10DeleteFileEPKc"), fs_DeleteFile},
     {FS("12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc"), fs_GetEntryType}, {FS("13OpenDirectoryEPNS0_15DirectoryHandleEPKci"), fs_OpenDirectory},
-    {AC("10InitializeEv"), fs_ok}, {AC("12ListAllUsersEPiPNS0_3UidEi"), acc_ListAllUsers}, {AC("13ListOpenUsersEPiPNS0_3UidEi"), acc_ListOpenUsers},
+    {AC("10InitializeEv"), fs_ok},
     {AC("22TryOpenPreselectedUserEPNS0_10UserHandleE"), acc_TryOpenPreselectedUser},
-    {AC("19OpenPreselectedUserEPNS0_10UserHandleE"), acc_OpenPreselectedUser}, {AC("8OpenUserEPNS0_10UserHandleERKNS0_3UidE"), acc_OpenUser},   /* [Recomps#1] */
     {AC("9CloseUserERKNS0_10UserHandleE"), acc_CloseUser},                                                                               /* [Recomps#1] */
     {AC("9GetUserIdEPNS0_3UidERKNS0_10UserHandleE"), acc_GetUserId}, {AC("11GetNicknameEPNS0_8NicknameERKNS0_3UidE"), acc_GetNickname},
-    {AC("16GetUserExistenceEPbRKNS0_3UidE"), acc_out_true},
-    {AC("32IsNetworkServiceAccountAvailableEPbRKNS0_10UserHandleE"), acc_out_false},
     {AC("36EnsureNetworkServiceAccountAvailableERKNS0_10UserHandleE"), acc_unavailable},
-    {AC("25CachedNintendoAccountInfoC1Ev"), keep}, {AC("12AsyncContextC1Ev"), keep}, {AC("12AsyncContextD1Ev"), keep},
-    {AC("12AsyncContext7HasDoneEPb"), acc_out_true}, {AC("12AsyncContext9GetResultEv"), acc_unavailable},
-    {NI("10InitializeEv"), fs_ok}, {NI("18IsNetworkAvailableEv"), nifm_false}, {NI("22IsNetworkRequestOnHoldEv"), nifm_false},
-    {NI("20SubmitNetworkRequestEv"), keep}, {NI("27SubmitNetworkRequestAndWaitEv"), keep}, {NI("20CancelNetworkRequestEv"), keep},
+    {AC("12AsyncContextC1Ev"), keep}, {AC("12AsyncContextD1Ev"), keep},
+    {AC("12AsyncContext9GetResultEv"), acc_unavailable},
+    {NI("10InitializeEv"), fs_ok}, {NI("18IsNetworkAvailableEv"), nifm_false},
+    {NI("27SubmitNetworkRequestAndWaitEv"), keep}, {NI("20CancelNetworkRequestEv"), keep},
 };
 
 void register_fs_imports(void) {

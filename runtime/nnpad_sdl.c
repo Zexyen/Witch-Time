@@ -744,15 +744,6 @@ void nnpad_disconnect(int player) {
     if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; }
     unlock();
 }
-void nnpad_swap(int a, int b) {
-    lock();
-    Dev *x = dev_of(a), *y = dev_of(b);
-    if (x) x->slot = b;
-    if (y) y->slot = a;
-    if (x) apply_player_index(x);
-    if (y) apply_player_index(y);
-    unlock();
-}
 void nnpad_rumble(int player, float low, float high) {
     Dev *d;
     if (!g_sdl_ok || player < 0 || player > 7) return;
