@@ -189,7 +189,7 @@ bool App::create_window()
 bool App::create_ui()
 {
 	render = std::make_unique<UiRender>(gpu, window);
-	system = std::make_unique<SystemInterface_SDL>(window);
+	system = std::make_unique<SlowSystem>(window);
 	Rml::SetSystemInterface(system.get());
 	Rml::SetRenderInterface(render.get());
 	Rml::SetTextInputHandler(&ime);
@@ -269,6 +269,7 @@ void App::bind_model()
 		h.RegisterMember("note", &SettingRow::note);
 		h.RegisterMember("value", &SettingRow::value);
 		h.RegisterMember("index", &SettingRow::index);
+		h.RegisterMember("bump", &SettingRow::bump);
 	}
 	c.RegisterArray<std::vector<CheckRow>>();
 	c.RegisterArray<std::vector<StepRow>>();
@@ -311,6 +312,7 @@ void App::bind_model()
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
 	c.Bind("tab", &tab);
+	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_remove", &tex_remove);
@@ -624,6 +626,18 @@ void App::back()
 // ---------------------------------------------------------------------------------------------------- screens
 void App::go(const Rml::String& to)
 {
+	if (to != screen && !screen.empty() && !std::getenv("WITCHTIME_SCREEN"))
+	{                                      // the screen on show leaves first (its animations); tick() opens the next one
+		next_screen = to;
+		if (!leaving) { leaving = true; leave_at = system->GetElapsedTime(); model.DirtyVariable("leaving"); }
+		return;
+	}
+	go_now(to);
+}
+void App::go_now(const Rml::String& to)
+{
+	leaving = false;
+	model.DirtyVariable("leaving");
 	screen = to;
 	if (to == "title")
 		refresh_title();
@@ -880,7 +894,9 @@ void App::refresh_settings()
 			continue;
 		std::string v = ini_get(paths.config + d.file, d.section, d.key, default_value(d));
 		int i = option_index(d, v);
-		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n)});
+		const int b = n < 64 ? bump_count[n] : 0;   // the value nudges the way it went; two names a direction, so a second change the same way starts it again
+		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
+			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
 	model.DirtyVariable("settings");
 	model.DirtyVariable("tab");
@@ -926,6 +942,8 @@ void App::step_setting(int index, int dir)
 	int n = int(d.options.size());
 	i = i < 0 ? 0 : (i + dir + n) % n;
 	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
+	if (index < 64)                        // the value nudges the way it went (the row's animation name changes with each count)
+		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
 	refresh_settings();
 	prompts_read();
 }
@@ -1034,6 +1052,8 @@ void App::tick_clock()
 void App::tick()
 {
 	tick_clock();
+	if (leaving && system->GetElapsedTime() - leave_at >= 0.22)
+		go_now(next_screen);
 	{
 		std::lock_guard<std::mutex> lock(picked_mutex);
 		if (picked)

@@ -6,7 +6,7 @@
 <body data-model="wt">
 
 <!-- ======================================================================= title menu -->
-<div class="screen title" data-if="screen == 'title'">
+<div class="screen title" data-if="screen == 'title'" data-class-leaving="leaving">
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wheel">
@@ -24,7 +24,7 @@
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
 	<img class="logo" src="img/logo.bmp"/>
-	<div data-for="m, i : menu" class="mi autofocus" data-class-dim="m.dim" data-style-left="(70 + 26 * i) + 'dp'" data-style-top="(330 + 50 * i) + 'dp'" data-event-click="menu(i)">
+	<div data-for="m, i : menu" class="mi autofocus" data-class-dim="m.dim" data-style-left="(70 + 26 * i) + 'dp'" data-style-top="(330 + 50 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" data-event-click="menu(i)">
 		<div class="halo"></div><div class="fill"></div><div class="chev">»</div>
 		<span>{{ m.label }}</span><span class="tag" data-if="m.tag != ''">{{ m.tag }}</span>
 	</div>
@@ -38,7 +38,7 @@
 </div>
 
 <!-- ======================================================================= first run: the dump -->
-<div class="screen wide" data-if="screen == 'setup'">
+<div class="screen wide" data-if="screen == 'setup'" data-class-leaving="leaving">
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wedge"></div>
@@ -98,7 +98,7 @@
 </div>
 
 <!-- ======================================================================= building -->
-<div class="screen build" data-if="screen == 'build'">
+<div class="screen build" data-if="screen == 'build'" data-class-leaving="leaving">
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wheel">
@@ -116,7 +116,7 @@
 	<div class="stripe" style="left: 340dp;"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1" style="left: 390dp;"></div><div class="rule r2" style="left: 395dp;"></div>
 	<div class="plate"><span class="crumb" data-event-click="go('title')">Witch Time</span><span class="sep"></span><span>Building</span></div>
-	<div data-for="s, i : steps" class="mi" data-class-on="s.state == 'run'" data-class-run="s.state == 'run'" data-class-dim="s.state == 'wait'" data-class-fail="s.state == 'fail'" data-style-left="(60 + 36 * i) + 'dp'" data-style-top="(170 + 70 * i) + 'dp'" style="width: 300dp;">
+	<div data-for="s, i : steps" class="mi" data-class-on="s.state == 'run'" data-class-run="s.state == 'run'" data-class-dim="s.state == 'wait'" data-class-fail="s.state == 'fail'" data-style-left="(60 + 36 * i) + 'dp'" data-style-top="(170 + 70 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" style="width: 300dp;">
 		<div class="halo"></div><div class="fill"></div><div class="chev">»</div>
 		<span class="num">{{ s.num }}</span><div class="lbl"><div>{{ s.name }}</div></div>
 		<span class="dia" data-if="s.state == 'done'"></span>
@@ -144,7 +144,7 @@
 </div>
 
 <!-- ======================================================================= mods -->
-<div class="screen wide" data-if="screen == 'mods'">
+<div class="screen wide" data-if="screen == 'mods'" data-class-leaving="leaving">
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wedge"></div>
@@ -192,7 +192,7 @@
 </div>
 
 <!-- ======================================================================= settings -->
-<div class="screen wide" data-if="screen == 'settings'">
+<div class="screen wide" data-if="screen == 'settings'" data-class-leaving="leaving">
 	<div class="ground"></div>
 	<div class="glow"></div>
 	<div class="wedge"></div>
@@ -226,12 +226,12 @@
 		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
 		<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
 	</div>
-	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(620 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'">
+	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-left="(620 + 26 * i) + 'dp'" data-style-top="(110 + 56 * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * i) + 's cubic-out stair-in-r' + tab">
 		<div class="fill"></div><div class="chev">»</div>
 		<div class="k"><div>{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
-		<span class="v"><span class="arrow" data-event-click="setting(s.index, -1)">‹</span><span class="value">{{ s.value }}</span><span class="arrow" data-event-click="setting(s.index, 1)">›</span></span>
+		<span class="v"><span class="arrow" data-event-click="setting(s.index, -1)">‹</span><span class="value" data-style-animation="s.bump">{{ s.value }}</span><span class="arrow" data-event-click="setting(s.index, 1)">›</span></span>
 	</div>
-	<div class="srow" data-if="tab == 1" data-style-left="(620 + 26 * settings.size) + 'dp'" data-style-top="(110 + 56 * settings.size) + 'dp'">
+	<div class="srow" data-if="tab == 1" data-style-left="(620 + 26 * settings.size) + 'dp'" data-style-top="(110 + 56 * settings.size) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * settings.size) + 's cubic-out stair-in-r' + tab">
 		<div class="fill"></div>
 		<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_remove ? 'In use' : 'Not available' }}</div></div>
 		<span class="v">

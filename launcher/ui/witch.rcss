@@ -33,6 +33,31 @@ body {
 .wheel { animation: 0.8s cubic-out wheel-in; }
 .plate, .logo, .lead-block, .col { animation: 0.45s 0.1s cubic-out rise-in; }
 .band, .foot { animation: 0.45s 0.15s cubic-out fade-in; }
+/* The staircase rows step in one after another (quick start, gradual finish, as the game's menus): each row's animation
+ * holds its first 40 % and the rows' durations grow down the stair (data-style-animation in launcher.rml), so a lower row
+ * starts and ends later. (A delay would show the row in place until it starts: RmlUi animates from its start time.) */
+@keyframes stair-in { 0% { opacity: 0; transform: translateX(-48dp); } 40% { opacity: 0; transform: translateX(-48dp); } 100% { opacity: 1; transform: translateX(0); } }
+/* (one name a section: a section change renames the rows' animation, which starts it again on rows kept in place) */
+@keyframes stair-in-r0 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes stair-in-r1 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes stair-in-r2 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
+/* the chosen bar's glow sweeps in from its left end */
+@keyframes sweep-in { from { transform: skewX(22deg) scaleX(0.55); } to { transform: skewX(22deg) scaleX(1); } }
+/* (opacity is inherited in RmlUi, not composited: a child with an opacity of its own would show through its row's fade, so the
+ * halo, the chevron and the settings rows' glow hide by scale instead) */
+/* a value that changed nudges the way it went (two names a direction: a second change the same way starts it again) */
+@keyframes bump-l-a { 0% { transform: translateX(0); } 35% { transform: translateX(-10dp); } 100% { transform: translateX(0); } }
+@keyframes bump-l-b { 0% { transform: translateX(0); } 35% { transform: translateX(-10dp); } 100% { transform: translateX(0); } }
+@keyframes bump-r-a { 0% { transform: translateX(0); } 35% { transform: translateX(10dp); } 100% { transform: translateX(0); } }
+@keyframes bump-r-b { 0% { transform: translateX(0); } 35% { transform: translateX(10dp); } 100% { transform: translateX(0); } }
+/* leaving a screen (App::go waits 0.22 s with the screen marked leaving): the panel draws back, the rest fades; the rows' inline animation (launcher.rml) becomes stair-out */
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes panel-out { from { opacity: 1; transform: skewX(22deg) translateX(0); } to { opacity: 0; transform: skewX(22deg) translateX(-60dp); } }
+@keyframes stair-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-40dp); } }
+@keyframes stair-out-r { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40dp); } }
+.screen.leaving .wedge, .screen.leaving .stripe, .screen.leaving .rule { animation: 0.25s cubic-in panel-out; }
+.screen.leaving .plate, .screen.leaving .logo, .screen.leaving .lead-block, .screen.leaving .col, .screen.leaving .wheel, .screen.leaving .track, .screen.leaving progress,
+.screen.leaving .readout, .screen.leaving .actions, .screen.leaving .logbox, .screen.leaving .tabs, .screen.leaving .glow, .screen.leaving .band, .screen.leaving .foot { animation: 0.22s cubic-in fade-out; }
 
 /* ---- the stage: ground, the diagonal panel and its stripe ---- */
 .ground { left: 0; top: 0; width: 1280dp; height: 800dp; decorator: image(gen:grad?d=v&c0=e9e8ee&c1=d3d1da fill); }
@@ -91,9 +116,9 @@ body {
 	font-size: 22dp; letter-spacing: 2dp; white-space: nowrap; tab-index: auto; nav: vertical; }
 .mi .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom;
 	decorator: image(gen:grad?c0=141020&c1=1c162c&a1=235&p1=0.55&c2=1c162c&a2=0 fill); }
-.mi .halo { position: absolute; left: -40dp; top: -24dp; width: 110%; height: 88dp; opacity: 0;
-	decorator: image(gen:glow?x=0.35&y=0.5&rx=0.55&ry=0.7&c1=8f75e6&a1=120&c0=8f75e6&a0=0&stop=1&edge=0.3 fill); transition: opacity 0.2s cubic-out; }
-.mi .chev { position: absolute; left: -16dp; top: 0; height: 40dp; line-height: 38dp; font-size: 30dp; color: #ffffff; opacity: 0; transition: opacity 0.15s cubic-out; }
+.mi .halo { position: absolute; left: -40dp; top: -24dp; width: 110%; height: 88dp; transform: scale(0.001);
+	decorator: image(gen:glow?x=0.35&y=0.5&rx=0.55&ry=0.7&c1=8f75e6&a1=120&c0=8f75e6&a0=0&stop=1&edge=0.3 fill); transition: transform 0.2s cubic-out; }
+.mi .chev { position: absolute; left: -16dp; top: 0; height: 40dp; line-height: 38dp; font-size: 30dp; color: #ffffff; transform: translateX(-10dp) scale(0.001); transition: transform 0.15s cubic-out; }
 .mi span { position: relative; }
 .mi .lbl { position: relative; display: flex; flex-direction: column; }
 .mi .sub { font-size: 13dp; letter-spacing: 1dp; color: #ffffffd1; line-height: 14dp; }
@@ -101,9 +126,9 @@ body {
 .mi .tag { font-size: 13dp; letter-spacing: 1dp; font-weight: 600; padding: 1dp 8dp; background-color: #e5334b; color: #ffffff; margin-left: 4dp; }
 .mi .dia { position: absolute; left: -38dp; top: 15dp; width: 9dp; height: 9dp; background-color: #a690ec; transform: rotate(45deg); }      /* a stage done: before the bar, clear of the name */
 .mi:hover, .mi:focus-visible, .mi.on { color: #ffffff; font-weight: 600; }
-.mi:hover .fill, .mi:focus-visible .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); }
-.mi:hover .halo, .mi:focus-visible .halo, .mi.on .halo { opacity: 1; }
-.mi:hover .chev, .mi:focus-visible .chev, .mi.on .chev { opacity: 1; }
+.mi:hover .fill, .mi:focus-visible .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); animation: 0.3s cubic-out sweep-in; }
+.mi:hover .halo, .mi:focus-visible .halo, .mi.on .halo { transform: scale(1); }
+.mi:hover .chev, .mi:focus-visible .chev, .mi.on .chev { transform: translateX(0) scale(1); }
 .mi:hover .num, .mi:focus-visible .num, .mi.on .num { color: #ffffff; }
 .mi.dim { color: #f1eefa9e; }
 .mi.dim .num { color: #d7ccf799; }
@@ -130,6 +155,7 @@ body {
 	decorator: image(gen:grad?c0=2b2148&c1=3a2d62 fill); }
 .btn span { position: relative; }
 .btn:hover, .btn:focus-visible { color: #ffffff; font-weight: 600; }
+.btn:hover .fill, .btn:focus-visible .fill { animation: 0.3s cubic-out sweep-in; }
 .btn:hover .fill, .btn:focus-visible .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
 .btn.primary .fill { decorator: image(gen:grad?c0=6a49d0&c1=8f75e6 fill); }
 .btn.primary:hover .fill, .btn.primary:focus-visible .fill { decorator: image(gen:grad?c0=8f75e6&c1=a690ec fill); }
@@ -202,9 +228,9 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .tab:focus-visible { color: #6a49d0; border-bottom-color: #6a49d0; }
 .srow { height: 50dp; width: 500dp; display: flex; flex-direction: row; align-items: center; padding: 0 16dp 0 30dp; font-size: 19dp; letter-spacing: 0.5dp; color: #24202e;
 	tab-index: auto; nav: vertical; border-bottom: 1dp #24202e40; }
-.srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom; opacity: 0;
-	decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.55&c2=a690ec&a2=140 fill); transition: opacity 0.15s cubic-out; }
-.srow .chev { position: absolute; left: 4dp; top: 0; height: 50dp; line-height: 48dp; font-size: 30dp; color: #ffffff; opacity: 0; }
+.srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg) scaleX(0.001); transform-origin: left bottom;
+	decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.55&c2=a690ec&a2=140 fill); transition: transform 0.25s cubic-out; }
+.srow .chev { position: absolute; left: 4dp; top: 0; height: 50dp; line-height: 48dp; font-size: 30dp; color: #ffffff; transform: scale(0.001); transition: transform 0.15s cubic-out; }
 .srow .k { position: relative; flex: 1; display: flex; flex-direction: column; }
 .srow .k div { position: relative; }
 .srow .k .note { font-size: 13dp; color: #5d5868; line-height: 14dp; white-space: nowrap; }
@@ -213,8 +239,8 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .srow .v .arrow:hover { color: #6a49d0; }
 .srow .v .value { flex: 1; text-align: center; }
 .srow:hover, .srow:focus-visible { color: #ffffff; border-bottom-color: transparent; }
-.srow:hover .fill, .srow:focus-visible .fill { opacity: 1; }
-.srow:hover .chev, .srow:focus-visible .chev { opacity: 1; }
+.srow:hover .fill, .srow:focus-visible .fill { transform: skewX(22deg) scaleX(1); }
+.srow:hover .chev, .srow:focus-visible .chev { transform: scale(1); }
 .srow:hover .k .note, .srow:focus-visible .k .note { color: #ffffffd1; }
 .srow:hover .v, .srow:focus-visible .v, .srow:hover .v .arrow, .srow:focus-visible .v .arrow { color: #ffffff; }
 .srow .btn { height: 32dp; line-height: 32dp; font-size: 14dp; padding: 0 16dp; }
