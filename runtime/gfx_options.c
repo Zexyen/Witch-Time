@@ -174,7 +174,11 @@ static const char *const k_default_ini =
 "; hdr_gamma = 2.2 | srgb\r\n"
 ";   How the game's colours are read with HDR on. 2.2: as an SDR monitor shows them (deep blacks). srgb: as Windows\r\n"
 ";   shows SDR programs in HDR (lighter dark parts).\r\n"
-"hdr_gamma = 2.2\r\n";
+"hdr_gamma = 2.2\r\n"
+"\r\n"
+"; discord_presence = on | off\r\n"
+";   on: a running Discord client shows your friends the chapter, verse, difficulty, area and time in the chapter.\r\n"
+"discord_presence = on\r\n";
 
 #define GFX_LOW_SCALE 0.5f
 #define GFX_LOW_SCALE_TEXT "0.50"
@@ -255,6 +259,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
+        else if (!_stricmp(key, "discord_presence")) {}      /* [witchtime] read by presence.c */
         else unknown++;
     }
     if (f) fclose(f);

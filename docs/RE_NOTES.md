@@ -391,3 +391,34 @@ paused.
 
 The one reader of a logical mask on the menus' copy is 0x71009bfd70 (action 34), so `h_action_mask` turns that mask back into
 the pad's bits. The other readers of the menus' copy there test the confirm variable.
+
+## 10. What the player is doing (2026-11-01; Discord Rich Presence)
+
+`runtime/presence.c` shows these; `game_shim_eh.c` `presence_tick` reads them on the game's thread once every 64 frames, in the empty
+function 0x7100983610 (`h_rebind_pads`: nothing is live across that call at 0x710095f40c). The message names below are as they are in
+`messcore.mcd`, `messhud.mcd` and `messmenu.mcd`, found through their hashes as immediates (section 8).
+
+**Phase**: the struct at 0x7104d72f0c, u32 phase number (p120 = 0x120, what `ph%x/p%03x.dat` is built from), then the sub-phase's hash and
+name. **Chapter**: 0x71007bcc50 (x0 = the flow object 0x7104379ca8) -> the chapter, -1 outside one, through the phase and sub-phase
+(0x71007ce9b4). Then 0x7100983d50 -> the heading (CHAPTER, PROLOGUE, SIDE CHAPTER, LOST CHAPTER, EXTRA), 0x7100983e20 -> the number on
+screen, 0x7100983ec0 -> CORE_CHAPTER_NAME_*. So chapter 0 is Phenomenal Affirmation, 1 the prologue, 2 chapter 1, 5, 9, 13 and 17 the side
+chapters; 0x100 .. 0x10d Phenomenal Remnant 1 .. 14; 0x100000 .. 2 the Witch Trials; 0x1000000 The Artifact Unleashed; 0x10000000 Devil's Duel.
+
+**Difficulty**: 0x7100b286c0 -> 0 .. 3, CORE_DIFFICULTY_01 .. 04 (0x7100984200): the save's value at 0x7104e565d0, or another slot in the
+side modes, which is why the getter is called rather than the word read.
+
+**Verse**: the manager at 0x710269f998 holds, at +0x2ba58, a vector of 2320-byte records (+0x2ba68 the count) and at +0x2ba78 the index of
+the last verse started in this phase, -1 for none. A record: +0 the name, +68 the number, 0-based (0x71007c7284 adds 1 and hands it to the
+HUD, 0x710098afa0), +2248 the state. Measured through the prologue: 1 running, also through a story scene in the middle of the fight; 10
+the end of the fight; 12 the results (VERSE 1, Verse Time, the medal); then the next phase sets the index to -1. 15 is "over" for
+0x71007cb7a0, read there and not seen in a run.
+
+**Area**: 0x710098e840 (number, flag) raises the location banner: its object is at 0x7104dbb098, the number at +144. It keeps its value
+after the banner has gone, until the next phase makes it 0. 0x71009c3ddc turns number and flag into HUD_LOCNAME_MAIN_* and
+HUD_LOCNAME_SUB_*; the flag picks the second set, which names the same places. 3 and 8 name messages `messhud.mcd` does not have.
+
+**Pictures**: the result screen's 1280x720 picture of a chapter is `ui/ui_stageresult_<name>.dat/.dtt`: one 2048x1024 ASTC 4x4 sRGB texture, drawn
+blurred and darkened at the edges. 0x7100b22610 (chapter) -> the name: `p`, `c01` .. `c13`, `cmax` (chapter 14), `u01` .. `u13`, `umax`
+(Phenomenal Remnant), `witch01` .. `03`, `golem`, `rodin`; the side chapters and chapter 0 get `all`, an empty purple background.
+
+A local build's `build/gen_eh` older than PR 94 has no call to `h_rebind_pads`: it links, and `game_presence` never moves. Lift again.

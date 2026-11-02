@@ -354,6 +354,7 @@ static int b3_main(int argc, char **argv) {
     /* [witchtime] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
     if (argc > 3 && !strcmp(argv[2], "--pkz-dump")) { int pkz_dump(const char *, char **, int); return pkz_dump(argv[3], argv + 4, argc - 4); }
     display_init();
+    { void presence_start(void); presence_start(); }      /* [witchtime] Discord Rich Presence */
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
