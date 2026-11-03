@@ -106,12 +106,15 @@ static PFN_vkCmdSetSampleMaskEXT vkCmdSetSampleMaskEXT;
 /* [witchtime] issue 86: the fragment stages the option film_grain acts on, by the hash of their machine code
  * (found by translating every pixel shader of the game's archives: 4 of 5,485 have the grain, none shares these hashes).
  * The four tonemap stages draw the grain as colour * (1 + (0.5 - noise) * c4[13]), so 0 there removes it and keeps the
- * vignette; the jitter (c4[12]) then moves nothing. A mod's own shader is not recognised. */
-enum { FX_GRAIN = 1 };
+ * vignette; the jitter (c4[12]) then moves nothing. A mod's own shader is not recognised.
+ * Issue 118: FX_DOWN, filterdownsample.pso and filterbloomwithdownsample.pso (shader.dat): the bloom's first step reads the
+ * finished scene, where FSR runs (nvn_vk_fsr.c); the tonemaps are its fallback. */
+enum { FX_GRAIN = 1, FX_DOWN };
 static int stage_fx(Stage *st) {
     if (st->fx_code != st->code) {
         uint64_t h = fnv(0xcbf29ce484222325ULL ^ 1u, st->code, (size_t)st->code_len);
-        st->fx = h == 0x44931dbda608639dULL || h == 0x48c1d6be354413c1ULL || h == 0xe84083dddb26435cULL || h == 0xe3b5d8050915b977ULL ? FX_GRAIN : 0;
+        st->fx = h == 0x44931dbda608639dULL || h == 0x48c1d6be354413c1ULL || h == 0xe84083dddb26435cULL || h == 0xe3b5d8050915b977ULL ? FX_GRAIN
+               : h == 0x1a41284bacd70a1cULL || h == 0xa6fbe1d9cb8d40e5ULL ? FX_DOWN : 0;
         st->fx_code = st->code;
     }
     return st->fx;

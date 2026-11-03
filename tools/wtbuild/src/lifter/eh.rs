@@ -51,6 +51,7 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100bfcf80, "ui_h"),
     (0x7100d02db0, "target_h"),
     (0x7100bd563c, "model_lod"),
+    (0x7100cb9440, "cam_upload"),
 ];
 
 /// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as

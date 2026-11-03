@@ -127,6 +127,8 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
         "game_rebind_live",
         "game_presence",
         "game_hud_centre",
+        "game_fsr_w",
+        "game_fsr_h",
         "sdk_data",
         "sdk_data_count",
         "sdk_fns",

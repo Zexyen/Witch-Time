@@ -737,6 +737,43 @@ void h_camera_fov(Ctx *c) {
     if (a > 0.0f && a < 16.0f / 9.0f && ca == ca && ca - a < 0.001f && a - ca < 0.001f) c->v[0].f[0] = vert_plus(c->v[0].f[0], a);
     f_7100cba97c(c);
 }
+/* [witchtime] issue 118: FSR's jitter. f_7100cb9440(record x0) uploads one camera's 0x330-byte constant buffer (c3: view +0x00,
+ * projection +0x40, view-projection +0x80, inverse view +0xc0, column major, uploaded as rows) while +0x3f0 says it changed; with
+ * +0x400 set it also writes the last upload's copies and then refreshes them from those fields (+0x170 ..). Its one caller,
+ * 0x7100cbb4d4, walks the pool *(0x71024ac350) (records of 0x410) every frame. The scene's passes bind the record
+ * *(*(0x710249d0d8) + 0x16d0) (0x71006888dc). While the runtime runs FSR it sets game_fsr_w / _h to the scene image's size
+ * (nvn_vk_fsr.c); that record is then uploaded every frame with its projection and view-projection shifted by a Halton(2,3)
+ * step of up to half a pixel (FSR's sequence: 8 steps at 1:1), and both, with the copies made from them (+0x1b0), are put back
+ * after: the CPU (culling, the aim, the next frame's previous matrix at +0x2e0) never sees the jitter. Shadows (c8), the
+ * full-screen filters (c4) and the HUD (its own cameras) do not read this buffer. */
+__declspec(dllexport) volatile int game_fsr_w, game_fsr_h;
+B3_FN void f_7100cb9440(Ctx *c);
+static float halton(int i, int b) { float f = 1.0f, r = 0.0f; for (; i > 0; i /= b) { f /= (float)b; r += f * (float)(i % b); } return r; }
+void h_cam_upload(Ctx *c) {
+    int w = game_fsr_w, h = game_fsr_h;
+    uint64_t rec = c->x[0], pool = 0, recs = 0, mgr = 0;
+    uint32_t idx = 0, one = 1, ext;
+    if (w > 0 && h > 0) { memcpy(&pool, (void *)(uintptr_t)0x71024ac350ull, 8); memcpy(&mgr, (void *)(uintptr_t)0x710249d0d8ull, 8); }
+    if (pool && mgr) { memcpy(&recs, (void *)(uintptr_t)pool, 8); memcpy(&idx, (void *)(uintptr_t)(mgr + 0x16d0), 4); }
+    static uint64_t jrec;                                   /* the record last jittered: uploaded once more without jitter when FSR stops or the scene takes another */
+    if (!recs || rec != recs + (uint64_t)idx * 0x410) {
+        if (rec == jrec) { memcpy((void *)(uintptr_t)(rec + 0x3f0), &one, 4); jrec = 0; }
+        f_7100cb9440(c); return;
+    }
+    jrec = rec;
+    static uint32_t n;
+    int k = (int)(n++ % 8) + 1;
+    float jx = 2.0f * (halton(k, 2) - 0.5f) / (float)w, jy = -2.0f * (halton(k, 3) - 0.5f) / (float)h;      /* NDC, y up: AMD's projection offset */
+    float m[32], j[32];
+    memcpy(m, (void *)(uintptr_t)(rec + 0x40), sizeof m); memcpy(j, m, sizeof j);
+    for (int a = 0; a < 32; a += 4) { j[a] += jx * j[a + 3]; j[a + 1] += jy * j[a + 3]; }      /* each column: row 0 += jx * row 3, row 1 += jy * row 3 */
+    memcpy(&ext, (void *)(uintptr_t)(rec + 0x400), 4);
+    memcpy((void *)(uintptr_t)(rec + 0x40), j, sizeof j);
+    memcpy((void *)(uintptr_t)(rec + 0x3f0), &one, 4);      /* uploaded every frame: the jitter moves even when the camera does not */
+    f_7100cb9440(c);
+    memcpy((void *)(uintptr_t)(rec + 0x40), m, sizeof m);
+    if (ext) memcpy((void *)(uintptr_t)(rec + 0x1b0), m, sizeof m);
+}
 /* f_7100c0ef04(layout x0, state out x1, element w2, time s0): one element of a UI layout (a .uid of ui/*.dat: elements of 0x1b4
  * bytes from layout + [layout + 0xc]) at this frame: its base position (+0, +4), turn, scale and colours into out + 0x10 ..,
  * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the

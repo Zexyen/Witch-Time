@@ -61,6 +61,8 @@ jobs:
           "$RUNNER_TEMP/quad_walk_test"
           clang -O2 -Wall -I runtime tests/rs_pyramid_test.c -o "$RUNNER_TEMP/rs_pyramid_test"
           "$RUNNER_TEMP/rs_pyramid_test"
+          clang -O2 -Wall -I runtime tests/fsr_dither_test.c -o "$RUNNER_TEMP/fsr_dither_test"
+          "$RUNNER_TEMP/fsr_dither_test"
 
       - name: Discord Rich Presence (runtime/presence.c)
         run: |
