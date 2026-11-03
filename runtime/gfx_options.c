@@ -161,11 +161,14 @@ static const char *const k_default_ini =
 ";   on: the game's moving noise over the picture. off: a clean picture; the vignette stays. Applies while the game runs.\r\n"
 "film_grain = on\r\n"
 "\r\n"
-"; upscaler = off | fsr3      (Vulkan; experimental)\r\n"
+"; upscaler = off | fsr3 | fsr3_quality | fsr3_balanced | fsr3_performance | fsr3_ultra_performance      (Vulkan; experimental)\r\n"
 ";   fsr3: AMD FSR 3.1 as anti-aliasing at the internal resolution: jagged edges, shimmer and the screen-door of fading\r\n"
 ";   objects are smoothed over frames.\r\n"
 ";   Characters and effects that move on their own can leave faint trails. About 0.5 to 2 ms of\r\n"
-";   GPU time a frame, more at higher internal resolutions. Applies while the game runs.\r\n"
+";   GPU time a frame, more at higher internal resolutions.\r\n"
+";   fsr3_quality .. fsr3_ultra_performance: the scene is drawn smaller (1/1.5, 1/1.7, 1/2, 1/3 of the internal resolution\r\n"
+";   across, never below 900p) and FSR 3.1 upscales it to the internal resolution: faster, a little softer. Above 900p only.\r\n"
+";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
 "\r\n"
 "; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
@@ -229,6 +232,11 @@ static void opt_path(char *out) {
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
+static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
+    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"};
+    for (int i = 1; i < 6; i++) if (!_stricmp(v, k[i])) return i;
+    return 0;
+}
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     (void)once; (void)ctx;
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
@@ -268,7 +276,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "latency")) g_gfx_latency = !_stricmp(val, "lowest") ? 2 : !_stricmp(val, "low") ? 1 : 0;      /* track L1 (display.c latency_mode) */
         else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
-        else if (!_stricmp(key, "upscaler")) o->upscaler = !_stricmp(val, "fsr3");      /* [witchtime] issue 118 */
+        else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
         else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
@@ -287,7 +295,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
-    if (getenv("WT_UPSCALER")) o->upscaler = !_stricmp(getenv("WT_UPSCALER"), "fsr3");      /* [witchtime] issue 118 */
+    if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
     {   /* [witchtime] texture_lod_bias: WT_TEXTURE_LOD_BIAS wins; -3 .. 3 */
         const char *e = getenv("WT_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);

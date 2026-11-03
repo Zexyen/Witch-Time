@@ -746,7 +746,7 @@ void h_camera_fov(Ctx *c) {
  * step of up to half a pixel (FSR's sequence: 8 steps at 1:1), and both, with the copies made from them (+0x1b0), are put back
  * after: the CPU (culling, the aim, the next frame's previous matrix at +0x2e0) never sees the jitter. Shadows (c8), the
  * full-screen filters (c4) and the HUD (its own cameras) do not read this buffer. */
-__declspec(dllexport) volatile int game_fsr_w, game_fsr_h;
+__declspec(dllexport) volatile int game_fsr_w, game_fsr_h, game_fsr_phases;      /* phases: AMD's count for the upscale ratio (8 at 1:1) */
 B3_FN void f_7100cb9440(Ctx *c);
 static float halton(int i, int b) { float f = 1.0f, r = 0.0f; for (; i > 0; i /= b) { f /= (float)b; r += f * (float)(i % b); } return r; }
 void h_cam_upload(Ctx *c) {
@@ -762,7 +762,7 @@ void h_cam_upload(Ctx *c) {
     }
     jrec = rec;
     static uint32_t n;
-    int k = (int)(n++ % 8) + 1;
+    int k = (int)(n++ % (uint32_t)(game_fsr_phases > 0 ? game_fsr_phases : 8)) + 1;      /* ffxFsr3UpscalerGetJitterOffset's index */
     float jx = 2.0f * (halton(k, 2) - 0.5f) / (float)w, jy = -2.0f * (halton(k, 3) - 0.5f) / (float)h;      /* NDC, y up: AMD's projection offset */
     float m[32], j[32];
     memcpy(m, (void *)(uintptr_t)(rec + 0x40), sizeof m); memcpy(j, m, sizeof j);

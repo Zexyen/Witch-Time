@@ -748,6 +748,7 @@ struct VTex {
     int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
+    int post;                                      /* [witchtime] issue 118: of the picture's scale (after FSR), not the scene's (rs_size) */
     VView *views; VTex *next, *prev;
 };
 /* ---- Track O: internal resolution scale (graphics.ini resolution_scale; WT_VK_SCALE wins; plan\phases\O1_options.md, session 7).
@@ -764,6 +765,13 @@ static LONG64 g_rs_bytes;                          /* PR #8 review: device memor
 #define RS_MAX 3.0f                                /* PR #8 (stephenjayakar): the upper limit of resolution_scale / WT_VK_SCALE (was 1.0; the PR's 4.0 capped at 2.0).
                                                       [Recomps#1] 3.0: Bayonetta 2 renders at 1280x720, so 3.0 = 3840x2160 (4K), the same pixel count as
                                                       Smash's 2.0 (1920x1080 base) that the cap of 2.0 was measured for */
+/* [witchtime] issue 118, FSR quality modes: the scene is drawn at a scale of its own (render) and FSR brings it to the picture's
+ * (rs_scale, resolution_scale). The images after FSR (the window's, the tonemap's target: VTex.post) keep the picture's scale.
+ * The upscaler mode is latched here with both scales, so a change applies with rs_apply (the PC panel's A_SCALE rows). */
+static float g_rs_r = -1.0f;                        /* render scale: rs_scale() / FSR's ratio, never below 1.0 (fs5548 and fs1693 store kept
+                                                       images at the game's pixels: a raster smaller than the game's leaves texels out) */
+static int g_rs_mode;                               /* gfx_options()->upscaler as latched: 0 off, 1 FSR native, 2 .. 5 quality .. ultra performance */
+static float fsr_ratio(int mode);                   /* nvn_vk_fsr.c */
 static float rs_scale(void) {
     if (g_rs < 0) {
         const char *e = getenv("WT_VK_SCALE");
@@ -773,10 +781,15 @@ static float rs_scale(void) {
          * allowed up to 4.0; capped at 2.0 here (review 2026-10-16): 2.0 is the 4K case that was measured, the screen-class
          * targets' memory grows with the square of the scale and a failed vkAllocateMemory is fatal (vmem_alloc -> vkd_fail) */
         if (v > RS_MAX) v = RS_MAX;
+        g_rs_mode = gfx_options()->upscaler;
+        float r = v / fsr_ratio(g_rs_mode);
+        g_rs_r = r >= 1.0f ? r : v < 1.0f ? v : 1.0f;
+        MemoryBarrier();                            /* the workers read RS_ON: both scales before g_rs says they are made */
         g_rs = v;
     }
     return g_rs;
 }
+static float rs_render_scale(void) { rs_scale(); return g_rs_r; }
 /* [witchtime] aspect ratios (RECOMPS_ASPECT, game_shim_eh.c; docs/STATUS.md "Aspect ratios"): wider than 16:9 the game's
  * window is wider, but its scene targets keep 16:9 sizes (1600x896 ...) and are stretched into it: such a target (of
  * the 16:9 class, not of the window's) is made this much wider again, so the scene has the window's pixels across */
@@ -785,7 +798,7 @@ static float rs_xstretch(void) {
     if (v < 0) { const char *e = getenv("RECOMPS_ASPECT"); float a = e ? (float)atof(e) : 0.0f; v = a > 16.0f / 9.0f && a <= 8.0f ? a * 9.0f / 16.0f : 1.0f; }
     return v;
 }
-#define RS_ON (rs_scale() != 1.0f || rs_xstretch() != 1.0f)
+#define RS_ON (rs_scale() != 1.0f || rs_render_scale() != 1.0f || rs_xstretch() != 1.0f)
 #include "rs_pyramid.h"
 /* [Recomps#1] the screen size the classes derive from is the game's window texture (Bayonetta 2: 1280x720, the size it
  * renders at; Smash: 1920x1080): nvn_gl.c win_initialize tells it (nvn_vk_rs_base); 1280x720 before that. With Smash's
@@ -803,11 +816,11 @@ void nvn_vk_rs_base(int w, int h) {
  * of erasure (tessellated patches into two RGBA16F targets + D16, a 3-layer RGBA16F array; sampled by a full-screen pass):
  * at 4K it stayed 520x360. Arrays of these sizes are scaled too (all the attachments of their passes together). */
 static int rs_extra_class(int w, int h) { return w == 520 && h == 360; }
-static float rs_extra_scale(void) {                 /* WT_VK_CLOUD_SCALE=<cap>: at most that for these (a weak GPU; the pass is tessellated): 4K A/B at equal load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60 */
+static float rs_extra_scale(float base) {           /* WT_VK_CLOUD_SCALE=<cap>: at most that for these (a weak GPU; the pass is tessellated): 4K A/B at equal load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60 */
     static float cap = -1;
     if (cap < 0) { const char *e = getenv("WT_VK_CLOUD_SCALE"); cap = e ? (float)atof(e) : RS_MAX; }
-    float v = rs_scale() < cap ? rs_scale() : cap;
-    return v < 1.0f && rs_scale() >= 1.0f ? 1.0f : v;
+    float v = base < cap ? base : cap;
+    return v < 1.0f && base >= 1.0f ? 1.0f : v;
 }
 static int rs_window_class(int w, int h) {
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
@@ -820,6 +833,13 @@ static int rs_169_class(int w, int h) {                  /* [witchtime] a scene 
     return !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
 }
 static int rs_screen_class(int w, int h) { return rs_extra_class(w, h) || rs_window_class(w, h) || rs_169_class(w, h); }
+/* [witchtime] issue 118: the image size of a screen-class texture of game size gw x gh, of the picture's scale (post) or the scene's */
+static void rs_size(int gw, int gh, int post, int *w, int *h) {
+    float base = post ? rs_scale() : rs_render_scale();
+    float sc = rs_extra_class(gw, gh) ? rs_extra_scale(base) : base, xs = rs_169_class(gw, gh) ? rs_xstretch() : 1.0f;
+    *w = (int)((float)gw * sc * xs + 0.5f); *h = (int)((float)gh * sc + 0.5f);
+    if (*w < 1) *w = 1; if (*h < 1) *h = 1;
+}
 /* A coordinate of the game's grid on a scaled image (nearest image texel edge, inside 0..max). */
 static int rs_edge(int v, float s, int max) { double r = floor((double)v * s + 0.5); return r < 0 ? 0 : r > max ? max : (int)r; }      /* [Recomps#1] clamped before the conversion (finding 83: rs_rect) */
 /* Session 9: the textures of the game's window (nvn_gl.c win_initialize keeps the list; also noted here at every present).
@@ -827,7 +847,7 @@ static int rs_edge(int v, float s, int max) { double r = floor((double)v * s + 0
  * (its last full-screen pass and the 2D interface after it) is drawn at the game's 1920x1080. */
 int nvn_front_tex_is_window(const Tex *t);
 static Tex *g_wintex[8];
-static LONG64 g_rs_mixed;
+static LONG64 g_rs_mixed, g_rs_twoscale;           /* g_rs_twoscale: [witchtime] issue 118, passes with attachments of both scales (pass_begin) */
 static int wintex_is(const Tex *t) { if (nvn_front_tex_is_window(t)) return 1; for (int i = 0; i < 8; i++) if (g_wintex[i] == t) return 1; return 0; }
 static void wintex_note(Tex *t) { if (!t || wintex_is(t)) return; for (int i = 0; i < 8; i++) if (!g_wintex[i]) { g_wintex[i] = t; return; } }
 /* [witchtime] Textures that stay at the game's size: a scaled image the game binds as a storage image (B3: fragment programs
@@ -838,6 +858,10 @@ static Tex *g_rs_keep[256];
 static int g_rs_nkeep;
 static LONG64 g_rs_demoted;
 static int g_rs_demoting;                          /* vk_drop called by the demotion below (not a finalize) */
+static Tex *g_rs_post[64];                         /* [witchtime] issue 118: tonemap targets made at the picture's scale (rs_promote) */
+static int g_rs_npost;
+static int rs_post_has(const Tex *t) { for (int i = 0; i < g_rs_npost; i++) if (g_rs_post[i] == t) return 1; return 0; }
+static void rs_post_forget(const Tex *t) { for (int i = 0; i < g_rs_npost; i++) if (g_rs_post[i] == t) { g_rs_post[i] = g_rs_post[--g_rs_npost]; return; } }
 static int rs_keep_has(const Tex *t) { for (int i = 0; i < g_rs_nkeep; i++) if (g_rs_keep[i] == t) return 1; return 0; }
 static void rs_keep_forget(const Tex *t) { for (int i = 0; i < g_rs_nkeep; i++) if (g_rs_keep[i] == t) { g_rs_keep[i] = g_rs_keep[--g_rs_nkeep]; return; } }
 static int rs_ui_native(void) { static int on = -1; if (on < 0) on = getenv("WT_VK_UI_NATIVE") && atoi(getenv("WT_VK_UI_NATIVE")); return on; }
@@ -899,6 +923,7 @@ static void vk_drop(int kind, void *host) {
     Tex *t = host;
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
     if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [witchtime] finalized: a later texture at this address starts over */
+    if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
     VTex *vt = t->vk;
     if (!vt) return;
     t->vk = NULL;
@@ -1078,9 +1103,8 @@ static VTex *vt_get2(Tex *t, int sync) {
         else ci.imageType = vt->is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
         if (rs_wants(t, vt, vt->w, vt->h, f.kind)) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
-            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale(), xs = rs_169_class(gw, gh) ? rs_xstretch() : 1.0f;
-            vt->w = (int)((float)gw * sc * xs + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
-            if (vt->w < 1) vt->w = 1; if (vt->h < 1) vt->h = 1;
+            vt->post = (gw == g_rs_bw && gh == g_rs_bh) || rs_post_has(t);      /* [witchtime] issue 118: the window's size (window textures, UI captures, a movie's Y plane) and the tonemap's targets */
+            rs_size(gw, gh, vt->post, &vt->w, &vt->h);
             vt->rs = 1; vt->sx = (float)vt->w / (float)gw; vt->sy = (float)vt->h / (float)gh;
             while ((vt->w >> lv) || (vt->h >> lv)) lv++;
             if (vt->levels > lv) vt->levels = lv;
@@ -1167,13 +1191,13 @@ static VTex *vt_get(Tex *t) { return vt_get2(t, 1); }
  * the new images. When the scale leaves or reaches 1.0 the fragment stages change translation (g_rs_flips): each is looked up
  * again at its next draw, held like the first run at a scale when it was never made. */
 static void rs_apply(void) {
-    float was = rs_scale();
-    int n = 0;
+    float was = rs_scale(), was_r = rs_render_scale();
+    int n = 0, was_on = RS_ON;
     LONG64 t0 = tk();
     LARGE_INTEGER fq;
     g_rs = -1;
-    if (rs_scale() == was) return;
-    if ((was != 1.0f || rs_xstretch() != 1.0f) != RS_ON) g_rs_flips++;
+    if (rs_scale() == was && rs_render_scale() == was_r) return;      /* (the upscaler mode is latched again either way) */
+    if (was_on != RS_ON) g_rs_flips++;
     for (VTex *vt = g_vtex_all, *next; vt; vt = next) {      /* a new image goes to the head of the list: not met here */
         Tex *t = vt->t;
         Fmt f;
@@ -1198,7 +1222,7 @@ static void rs_apply(void) {
     cmd_wait_all();
     garbage_collect();
     QueryPerformanceFrequency(&fq);
-    printf("nvn_vk_scale: internal resolution scale %.3f -> %.3f while the game runs: %d images made again in %.1f ms\n", (double)was, (double)rs_scale(), n, (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
+    printf("nvn_vk_scale: internal resolution scale %.3f -> %.3f (the scene's %.3f -> %.3f) while the game runs: %d images made again in %.1f ms\n", (double)was, (double)rs_scale(), (double)was_r, (double)rs_render_scale(), n, (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
 }
 /* Session 8, render thread, after every present. A texture used to get its image, and its texels read out of the game's
  * memory (hash, de-swizzle, copy into the stream ring), at the first draw that sampled it: the first frame of a fight paid
@@ -1734,7 +1758,7 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
 static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
-static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view);
+static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
@@ -1769,6 +1793,22 @@ static int pass_begin(void) {
             if (vt->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ri.pDepthAttachment = &da;
             if (vt->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) ri.pStencilAttachment = &da;
             if (!w) { w = lvl_(vt->w, target_level(&R.depth)); h = lvl_(vt->h, target_level(&R.depth)); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
+        }
+    }
+    if (w && rs_render_scale() != rs_scale()) {      /* [witchtime] issue 118: attachments of the two scales in one pass (none known): the area all of them hold, counted */
+        int mw = w, mh = h, cls = -1, mixed = 0;
+        for (int i = 0; i <= R.ncol; i++) {
+            TargetRef *r = i < R.ncol ? &R.col[i] : &R.depth;
+            if (i < R.ncol ? !ca[i].imageView : !(ri.pDepthAttachment || ri.pStencilAttachment)) continue;
+            VTex *v = r->tex->vk;
+            int lw = lvl_(v->w, target_level(r)), lh = lvl_(v->h, target_level(r));
+            if (lw < mw) mw = lw; if (lh < mh) mh = lh;
+            if (v->rs) { if (cls < 0) cls = v->post; else if (cls != v->post) mixed = 1; }      /* by class: the smaller one may come first */
+        }
+        if (mixed) {
+            if (g_rs_twoscale++ == 0) printf("nvn_vk_scale: a pass has attachments of both scales (colour %dx%d format 0x%x, depth %dx%d): drawn in %dx%d\n", R.ncol && R.col[0].tex ? R.col[0].tex->b.width : 0,
+                                             R.ncol && R.col[0].tex ? R.col[0].tex->b.height : 0, R.ncol && R.col[0].tex ? (int)R.col[0].tex->b.format : 0, R.depth.tex ? R.depth.tex->b.width : 0, R.depth.tex ? R.depth.tex->b.height : 0, mw, mh);
+            w = mw; h = mh;
         }
     }
     if (!w && !R.have_targets && R.null_w > 0 && R.null_h > 0) { w = R.null_w; h = R.null_h; }      /* [witchtime] no attachments (draw_prepare) */
@@ -1902,6 +1942,17 @@ static int framelog_on(void) {                     /* [witchtime] TEST ONLY: WT_
 }
 /* The colour target of a draw from a kept image is the next level of the depth pyramid (rs_pyramid.h): dropped before the draw
  * fills it. vk_drop lets go of the target, and the next pass makes it again. */
+/* [witchtime] issue 118: the target of a tonemap that reads FSR's output (nvn_vk_fsr.c fsr_draw), made again at the picture's scale
+ * before the draw fills it; kept there (vt_get2, rs_apply). Shortcut: a read-back of it pending in this frame is dropped with the
+ * old image (vk_drop), none is known; the list holds 64 (one target per dynamic-resolution set). */
+static void rs_promote(Tex *c) {
+    if (c->dead || rs_post_has(c) || !c->vk || !((VTex *)c->vk)->rs) return;
+    if (g_rs_npost == 64) { static int said; if (!said++) printf("nvn_vk_scale: a 65th tonemap target stays at the scene's scale\n"); return; }
+    g_rs_post[g_rs_npost++] = c;
+    g_rs_demoting = 1; vk_drop(K_TEX, c); g_rs_demoting = 0;
+    R.col[0].tex = c; R.dyn_dirty = 1;
+    printf("nvn_vk_scale: tonemap target %dx%d at the picture's scale (%d listed)\n", c->b.width, c->b.height, g_rs_npost);
+}
 static void rs_keep_level(Tex *c) {
     if (c->dead || !vt_get(c)->rs || g_rs_nkeep >= 256) return;
     rs_demote(c);
@@ -1955,7 +2006,8 @@ static void resolve_sampler(int s, VStage *v, int i) {
         Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
         if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
         VTex *vt = vt_get(t);
-        VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's shifted dither while FSR runs (may end the pass) */
+        VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's phase of the dither while FSR runs (may end the pass) */
+        if (!dither) dither = fsr_up_view(s, t, vt, &view);           /* [witchtime] issue 118: FSR's output for a tonemap at the picture's scale (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
         if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
         EView e;
@@ -5433,6 +5485,7 @@ static void vkd_shutdown(void) {
                (long long)g_ta_n, (double)g_ta_bytes / 1048576.0, (double)g_ta_tk * k, (double)g_ta_max_tk * k, (long long)g_late_n, (double)g_late_tk * k, (long long)g_late_fight_n, (double)g_late_fight_tk * k);
     }
     frstat_report();
+    if (g_rs_twoscale) printf("nvn_vk_scale: %lld passes had attachments of both scales (the scene's %.3f, the picture's %.3f): each drawn in the area all of them hold\n", (long long)g_rs_twoscale, (double)rs_render_scale(), (double)rs_scale());
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: WT_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
     if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",

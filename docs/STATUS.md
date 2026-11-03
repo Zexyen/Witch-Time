@@ -841,12 +841,61 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
   Each change of the game's dynamic-resolution level (8 sets, 1600x896 .. 640x360;
   10 in 3.5 minutes of the route, mostly around the cutscene) makes the resources again and resets the history; making every
   report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was taken
-  out. No real upscaling yet (quality modes need a second scale for the images after FSR). Not run on Windows, the Deck,
+  out. Upscaling: the next section. Not run on Windows, the Deck,
   Android, NVIDIA or Intel.
 - **FSR 4 and frame generation**: FSR 4.1.2 on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000
   and newer); Adrenalin does not upgrade a Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping
   them: at most a DLL the player adds. AMD's frame-generation swapchain wants four queues and its own present thread, against
   display.c's pacing (issue 119 waits on this).
+
+## FSR 3.1 quality modes (issue 118, step 3; 2026-11-03; experimental)
+
+`upscaler = fsr3_quality | fsr3_balanced | fsr3_performance | fsr3_ultra_performance` (graphics.ini; PC settings row "FSR
+3.1": Off, Native AA, Quality, Balanced, Performance, Ultra Performance; the launcher; `WT_UPSCALER` wins): the scene is
+drawn at the internal resolution divided by AMD's ratio (1.5, 1.7, 2.0, 3.0) and FSR 3.1 upscales it to the internal
+resolution. `fsr3` stays native AA.
+- **Two scales** (`runtime/nvn_vk_draw.c`): `rs_scale()` is the picture's (resolution_scale), `rs_render_scale()` the scene's,
+  latched together with the mode, so a change applies through `rs_apply` (the row is A_SCALE: when the panel closes). The
+  scene's scale never goes below 1.0: fs5548 and fs1693 store kept images at the game's pixels, and a raster smaller than the
+  game's would leave texels out. So the modes do something only above 900p, and at 2.4 Ultra Performance (0.8) draws at 1.0.
+  Below 1.0 the scene keeps the picture's scale. Images of the picture's scale (`VTex.post`): the window's size (window
+  textures, UI captures, the movie's Y plane) and the tonemap's targets. All the others, the scene and its bloom chain, are at
+  the scene's scale. `rs_size` gives both sizes. A pass with attachments of both classes is drawn in the area all of them hold
+  and counted (`g_rs_twoscale`, printed at exit): none on the route.
+- **FSR** (`runtime/nvn_vk_fsr.c`): render size = the scene colour's image, output size = that colour's game size at the
+  picture's scale. The locks and the two histories are at the output's size (AMD's maxUpscaleSize). The accumulate pass is
+  dispatched over the output, `downscaleFactor` = render / output, and the jitter has AMD's phase count, 8 * (output / render)^2
+  rounded: 18 at Quality, 32 at Performance, 46 at Ultra Performance on its floor at 2.4 (`game_fsr_phases`, read by
+  `h_cam_upload`). Jitter and motion vectors stay in render pixels.
+- **The picture after FSR**: the first tonemap (FX_GRAIN) draw that samples the scene colour after FSR has its target made
+  again at the picture's scale (`rs_promote`, before its pass; one per dynamic-resolution set, a list of 64). That draw reads
+  FSR's output in place of the scene colour (`fsr_up_view`, next to the dither's view in `resolve_sampler`). In a frame
+  without FSR it reads a linear enlargement of the scene colour (counted: "tonemaps without FSR"; 0 on the route). Bloom reads
+  the scene colour at its own size with a 2 x 2 gather, so FSR's output is also blitted back into it, reduced linearly (one
+  step, also above 2:1). The grain, FXAA, the HUD and the present run as before at the picture's scale.
+- **Measured** (Linux, RX 9070 XT, RADV, the issue-72 route, resolution_scale 2.4, picture 3840x2150; GPU time per fight frame
+  in marked segments, `WT_VK_PASSTIME`; about 8,100 fight frames each):
+
+  | upscaler | scene (1600x896 level) | GPU ms per fight frame | FSR and its copy |
+  | --- | --- | --- | --- |
+  | off | 3840x2150 | 4.79 | |
+  | fsr3 (native AA) | 3840x2150 | 6.70 | 1.64 |
+  | fsr3_quality | 2560x1434 | 4.43 | 1.20 |
+  | fsr3_performance | 1920x1075 | 3.66 | 1.07 |
+  | fsr3_ultra_performance | 1600x896 (the floor) | 3.31 | 1.02 |
+
+  At 1.0 with FSR off: 1.75. Frame times were the same in every mode (21.8 ms mean over the route: it waits on the CPU), so
+  the gain is GPU headroom. Quality looks close to native AA on the route (`~/.cache/wt-118/impl/runs/s3f_*`); Performance and
+  Ultra Performance soften the signs' small text. Validation layer: only the warning every run already had (a fragment output
+  with no colour attachment). Changed in the panel while playing: Quality to Balanced (the scene's 1.600 to 1.412, 124 images
+  made again in 10.2 ms; FSR made its resources again, the output kept its size), Quality to
+  Native AA (1.600 to 2.400, 124 images in 7.7 ms) and Native AA to off (the scales unchanged: FSR stopped, no image made
+  again).
+- **Not done**: no negative mip bias for the smaller scene (AMD suggests log2(render / output) - 1; texture_lod_bias exists),
+  no RCAS sharpening, no reactive mask. A device without what FSR needs (`fsr_unable`) keeps the picture's scale; a pipeline
+  that fails at the first run applies the scales again (`rs_apply`; tried once with a forced failure: 30 images made again
+  in 2.2 ms, the picture at its full size). Not run on Windows, the Deck, Android, NVIDIA
+  or Intel.
 
 ## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
 
