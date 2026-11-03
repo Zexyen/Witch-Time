@@ -17,7 +17,7 @@ double now_seconds() { return double(SDL_GetTicksNS()) * 1e-9; }
 
 const std::vector<std::string>& BuildRunner::steps()
 {
-	static const std::vector<std::string> s = {"deps", "verify", "convert", "mods", "tables", "lift", "compile", "link", "text", "check"};
+	static const std::vector<std::string> s = {"deps", "verify", "convert", "mods", "tables", "lift", "compile", "link", "book", "text", "check"};
 	return s;
 }
 

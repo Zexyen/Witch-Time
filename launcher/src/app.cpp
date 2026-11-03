@@ -28,14 +28,14 @@ const std::vector<Group>& groups()
 		{"II", "Unpack and apply mods", "Code files and your code mods", {"convert", "mods"}},
 		{"III", "Translate the code", "Switch code to portable C", {"tables", "lift"}},
 		{"IV", "Compile", "The longest step", {"compile"}},
-		{"V", "Link and finish", "Menu text from your copy, self-test", {"link", "text", "check"}},
+		{"V", "Link and finish", "The picture book, menu text, self-test", {"link", "book", "text", "check"}},
 	};
 	return g;
 }
 float weight(const std::string& step)
 {
 	static const std::vector<std::pair<std::string, float>> w = {{"deps", 1}, {"verify", 6}, {"convert", 1}, {"mods", 1}, {"tables", 4},
-		{"lift", 22}, {"compile", 55}, {"link", 6}, {"text", 2}, {"check", 2}};
+		{"lift", 20}, {"compile", 47}, {"link", 6}, {"book", 10}, {"text", 2}, {"check", 2}};
 	for (auto& [s, v] : w)
 		if (s == step)
 			return v / 100.f;
@@ -51,7 +51,7 @@ const char* phase_of(const std::string& step)
 {
 	static const std::vector<std::pair<std::string, const char*>> p = {{"deps", "checking tools"}, {"verify", "checking your dump"},
 		{"convert", "unpacking"}, {"mods", "applying mods"}, {"tables", "reading the SDK"}, {"lift", "translating"},
-		{"compile", "compiling"}, {"link", "linking"}, {"text", "making menu text"}, {"check", "self-testing"}};
+		{"compile", "compiling"}, {"link", "linking"}, {"book", "building the picture book"}, {"text", "making menu text"}, {"check", "self-testing"}};
 	for (auto& [s, v] : p)
 		if (s == step)
 			return v;
