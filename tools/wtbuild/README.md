@@ -49,6 +49,7 @@ and `romfs/` (the `.pkz` archives and `movie/`). Every step derives its files fr
 | lift | your main.elf -> `build/gen_eh` (C) |
 | compile | `build/gen_eh` -> `build/obj` (clang -O2; the longest step) |
 | link | `build/game.so` with the runtime (prebuilt, or built here); `game.dll` and `witch-time-game.exe` on Windows |
+| book | the Old Picture Book's program (program 1, README "The picture book"), when the dump has a `program1/` folder: checked by size and SHA-256, then convert, tables, lift, compile and link on `targets/program1` and `build/program1` (`src/layout.rs`; `--program 1` runs the developer commands on them); skipped without it |
 | text | the labels and values of the PC settings rows in the game's own text, as `mods/witchtime-pc-settings/` (from your dump's `ui_000.pkz`) |
 | check | skipped: the lifter's check against Unicorn is `tools/lifter-check` ("Regression tests" below) |
 
