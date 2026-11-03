@@ -949,14 +949,16 @@ const PROGRAM1_EXEFS: [(&str, u64, &str); 3] = [
 
 fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
     let repo = cx.root().to_path_buf();
-    let targets1 = crate::layout::folders(&repo, 1).0;
-    // the dump's program1/, else the copy an earlier book step left in targets/program1: an update redoes this step,
-    // and the dump may be gone or moved by then (no other step an update redoes needs it)
-    let in_dump = cx.dump.as_deref().map(|d| Path::new(d).join("program1")).filter(|p| p.join("exefs").join("main").is_file());
-    let src = match in_dump {
-        Some(p) => p,
-        None if targets1.join("exefs").join("main").is_file() => targets1.clone(),
-        None => {
+    let (targets1, build1, _) = crate::layout::folders(&repo, 1);
+    // the dump's program1/; when the dump folder itself is gone (moved, deleted, its drive unplugged), the copy a
+    // finished book step left in targets/program1: an update redoes this step, and no other step it redoes needs the
+    // dump. A dump without program1/ skips it, so taking the folder out gets past a book that fails
+    let dump = cx.dump.as_deref().map(Path::new).filter(|d| d.is_dir());
+    let built = link_outputs(Target::host()).iter().all(|f| build1.join(f).is_file());
+    let src = match dump {
+        Some(d) if d.join("program1").join("exefs").join("main").is_file() => d.join("program1"),
+        None if built && targets1.join("exefs").join("main").is_file() => targets1.clone(),
+        _ => {
             say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
             return Ok(());
         }
@@ -998,7 +1000,7 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
         }
         say(format!("  targets/program1/romfs: {}", place_folder(&targets.join("romfs"), &src.join("romfs"), cx.a.move_dump)?));
     } else {
-        say("  targets/program1: from an earlier build (the dump has no program1 folder now)");
+        say("  targets/program1: from the last build (the dump folder is gone)");
     }
     for name in ["main", "sdk"] {
         convert_nso(&exefs.join(name), &exefs.join(format!("{}.elf", name))).map_err(|e| Fail(format!("program1 {}: {}", name, e)))?;
