@@ -404,7 +404,10 @@ pub fn lifted_flags(t: Target) -> Vec<String> {
 pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
     let root = format!("{}/scripts/..", repo); // the spelling every player's stamps hold: another compiles everything again
     fs::create_dir_all(Path::new(repo).join("scripts")).map_err(|e| format!("scripts: {}", e))?; // so the spelling resolves
-    let gen = format!("{}/build/gen_eh", root);
+    let gen = match crate::layout::sub().as_str() {
+        "" => format!("{}/build/gen_eh", root),
+        p => format!("{}/build/{}/gen_eh", root, p), // [witchtime] program N (crate::layout)
+    };
     let inc = format!("{}/runtime", root);
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
@@ -414,7 +417,7 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
         target: t,
         clang: clang.to_string(),
         gen: gen.clone(),
-        obj: Path::new(repo).join("build").join("obj"),
+        obj: crate::layout::build(Path::new(repo)).join("obj"),
         flags,
         inc,
     };

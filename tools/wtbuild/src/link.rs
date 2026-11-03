@@ -1,4 +1,4 @@
-//! The `link` step: build/game.so (Windows: game.dll) from the lifted objects and the player's own tables, beside the
+//! The `li        .map(|n| (n.strip_prefix("gen/").map_or_else(|| rt.join(n), |g| crate::layout::gen(repo).join(g)), objt.joink` step: build/game.so (Windows: game.dll) from the lifted objects and the player's own tables, beside the
 //! runtime (libwitchtime.so, witch-time-game, libwt_glslang.so; Windows: witch-time-game.exe, wt_glslang.dll).
 //!
 //! The runtime holds nothing from the dump: the few values it needs from it (runtime/split) are data in game.so
@@ -543,16 +543,19 @@ fn link_game(
 ) -> Result<(), String> {
     let cl = Clang { path: clang, t, env };
     let rt = repo.join("runtime");
-    let build = repo.join("build");
+    let build = crate::layout::build(repo);
     let (obj, objt) = (build.join("obj"), build.join("obj_tables"));
     fs::create_dir_all(&objt).map_err(|e| e.to_string())?;
 
     let mut flags = table_flags(t);
     flags.extend(freestanding(repo));
-    flags.extend(["-I".into(), s(&rt), "-I".into(), s(&rt.join("gen"))]);
+    flags.extend(["-I".into(), s(&rt), "-I".into(), s(&crate::layout::gen(repo))]);
     let jobs: Vec<(PathBuf, PathBuf)> = TABLE_SOURCES
         .iter()
-        .map(|n| (rt.join(n), objt.join(format!("{}.obj", Path::new(n).file_stem().unwrap().to_string_lossy()))))
+        .map(|n| {
+            let src = n.strip_prefix("gen/").map_or_else(|| rt.join(n), |g| crate::layout::gen(repo).join(g)); // the program's tables
+            (src, objt.join(format!("{}.obj", Path::new(n).file_stem().unwrap().to_string_lossy())))
+        })
         .collect();
     let t0 = Instant::now();
     let failed = cl.compile_all(&jobs, &flags);
@@ -685,7 +688,7 @@ fn link_input(f: &str) -> bool {
 }
 
 pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
-    let build = repo.join("build");
+    let build = crate::layout::build(repo);
     let (shim, implibs) = match prebuilt(repo, t, log) {
         Some((dir, files)) => {
             for f in files.iter().filter(|f| !link_input(f)) {
@@ -695,7 +698,7 @@ pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command)
             (dir.join("game_shim_eh.o"), vec![dir.join(UCRT_IMPLIB)])
         }
         None => {
-            let gen = repo.join("runtime").join("gen");
+            let gen = crate::layout::gen(repo);
             build_runtime(repo, clang, t, env, &build, &build.join("obj_host"), &gen, log)?;
             (build.join("game_shim_eh.o"), vec![build.join(UCRT_IMPLIB)])
         }

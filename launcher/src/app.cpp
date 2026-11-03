@@ -189,6 +189,12 @@ bool App::init(int argc, char** argv)
 			returned_code = std::atoi(argv[i + 1]);
 		else if (!std::strcmp(argv[i], "--play"))
 			want_play = play_only = true;
+	if (returned_code == PROGRAM_SWITCH_EXIT)
+	{                                            // the game ended with nn::oe::ExecuteProgram: the program it asked for, now
+		const int p = program_switch_target(paths);
+		if (p >= 0)
+			program = p, after_switch = want_play = true;
+	}
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -1320,7 +1326,12 @@ void App::play()
 		model.DirtyVariable("build_error");
 		return;
 	}
-	GameStart g = prepare_game(paths);
+	GameStart g = prepare_game(paths, program, after_switch);
+	if (!g.error.empty() && program)
+	{                                            // the picture book's program is missing: the next Play is the game again
+		program_switch_drop(paths);
+		program = 0;
+	}
 	if (!g.error.empty())
 	{
 		play_only = false;                       // nothing to play: the launcher stays, and says why
@@ -1337,7 +1348,14 @@ void App::play()
 		release_window();
 		run_in_process(g, paths, window, !play_only);    // does not come back
 	}
-	returned_code = run_child(paths, window);
+	returned_code = run_child(paths, window, program);
+	program = 0, after_switch = false;
+	if (returned_code == PROGRAM_SWITCH_EXIT && (program = program_switch_target(paths)) >= 0)
+	{                                            // ExecuteProgram: the program it asked for, at once (tick() plays it)
+		after_switch = want_play = true;
+		return;
+	}
+	program = 0;
 	if (play_only)
 		running = false;
 	refresh_title();
