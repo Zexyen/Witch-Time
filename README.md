@@ -87,7 +87,7 @@ program 1 of its update (title ID 01004A4010FEA001, update 1.2.0), the Bayonetta
 a `program1/` folder beside `exefs/` and `romfs/`: `program1/exefs/` (`main`, `sdk`, `main.npdm`) and
 `program1/romfs/` (36 files, 361 MB), extracted with your own tools from that program of your own update, as you did
 for the game. The `book` step checks and builds it into `build/program1` (about 3 minutes); without the folder it is
-skipped and opening the book says so. In the game, yes on "Open the book?" ends Bayonetta 3 and starts the prologue;
+skipped and opening the book says so. A folder added after a build is built at the next REBUILD. In the game, yes on "Open the book?" ends Bayonetta 3 and starts the prologue;
 its end starts Bayonetta 3 again, back in the chapter-select room. Both use the same save folder and settings.
 
 ## Credits

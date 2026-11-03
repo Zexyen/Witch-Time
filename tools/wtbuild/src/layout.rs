@@ -32,7 +32,8 @@ fn sub_of(p: u32) -> String {
     }
 }
 
-fn folders(repo: &Path, p: u32) -> (PathBuf, PathBuf, PathBuf) {
+/// (targets, build, gen) of program p
+pub fn folders(repo: &Path, p: u32) -> (PathBuf, PathBuf, PathBuf) {
     if p == 0 {
         return (repo.join("targets"), repo.join("build"), repo.join("runtime").join("gen"));
     }
