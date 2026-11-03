@@ -5,6 +5,11 @@
 #include "game_shim.c"
 #include "scene_step.h"
 
+/* [witchtime] Bayonetta 3's lifted functions the overrides below call: weak, so the game library of another program of the
+ * application (the picture book's, issue 115), which defines none of them and never calls an override, still links
+ * (lld-link: a weak external; ELF: game.so loads with RTLD_NOW) */
+#define B3_FN __attribute__((weak))
+
 typedef struct { uint64_t lp; void (*fn)(Ctx *, uint64_t); } NroResume;
 extern const NroResume resume_table_main[];
 extern const int resume_count_main;
@@ -27,7 +32,7 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 __declspec(dllexport) uint8_t game_rebind[2][16];      /* by character, 0 Bayonetta, 1 Viola: the layout, rebind.h */
 __declspec(dllexport) uint8_t game_rebind_on[2];       /* the character has a layout of its own, not the game's control type */
 __declspec(dllexport) volatile int game_rebind_live;   /* a pad is in use: the keyboard has its own bindings on top of Type A */
-void f_7100987cb0(Ctx *c);                             /* -> the current character */
+B3_FN void f_7100987cb0(Ctx *c);                             /* -> the current character */
 static int rebind_of(int ch) { return game_rebind_live && game_rebind_on[ch != 0]; }
 static const uint8_t *rebind_cur(Ctx *c) {
     f_7100987cb0(c);
@@ -37,8 +42,8 @@ static const uint8_t *rebind_cur(Ctx *c) {
 /* [witchtime] What runtime/presence.c shows on Discord (docs/RE_NOTES.md section 10): chapter, difficulty, verse (0: none), location
  * banner. Read on the game's thread: the two getters are the game's own, and the verse records are remade between phases. */
 __declspec(dllexport) volatile int game_presence[4] = {-1, 0, 0, 0};
-void f_71007bcc50(Ctx *c);                             /* (x0 the flow object) -> the current chapter, -1 outside one */
-void f_7100b286c0(Ctx *c);                             /* -> the difficulty, 0 .. 3 */
+B3_FN void f_71007bcc50(Ctx *c);                             /* (x0 the flow object) -> the current chapter, -1 outside one */
+B3_FN void f_7100b286c0(Ctx *c);                             /* -> the difficulty, 0 .. 3 */
 static void presence_tick(Ctx *c) {
     static unsigned frame;
     if (frame++ & 63) return;
@@ -72,7 +77,7 @@ void h_rebind_pads(Ctx *c) {
 /* f_710095f464 makes the menus' copy. Pause and Subscreen are read from it (0x7100983660, in 36 places with the menus' own uses of
  * those bits), so while gameplay has the pad, the flags that let the gameplay copy through (0x710095f300), its two bits follow the
  * layout there too. Nothing else of the copy moves, and in a menu nothing does. */
-void f_710095f464(Ctx *c);
+B3_FN void f_710095f464(Ctx *c);
 void h_rebind_menu_pads(Ctx *c) {
     f_710095f464(c);
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
@@ -87,21 +92,21 @@ void h_rebind_menu_pads(Ctx *c) {
     }
 }
 /* f_7100b22cc0(character w0, type w1, action w2) -> the prompt's number */
-void f_7100b22cc0(Ctx *c);
+B3_FN void f_7100b22cc0(Ctx *c);
 void h_prompt_number(Ctx *c) {
     int ch = (uint32_t)c->x[0] == 1;
     f_7100b22cc0(c);
     if (rebind_of(ch)) c->x[0] = (uint32_t)rb_number(game_rebind[ch], (int)(uint32_t)c->x[0]);
 }
 /* f_7100b22ee0, the same -> the mask; its one caller tests the menus' copy of the pad, which is not rewritten */
-void f_7100b22ee0(Ctx *c);
+B3_FN void f_7100b22ee0(Ctx *c);
 void h_action_mask(Ctx *c) {
     int ch = (uint32_t)c->x[0] == 1;
     f_7100b22ee0(c);
     if (rebind_of(ch)) c->x[0] = rb_to_pad(game_rebind[ch], (uint32_t)c->x[0]);
 }
 /* f_7100b31b60(settings x0, character w1) -> the control type. A layout counts from Type A, and the type stays in the save */
-void f_7100b31b60(Ctx *c);
+B3_FN void f_7100b31b60(Ctx *c);
 void h_control_type(Ctx *c) {
     int ch = (uint32_t)c->x[1] == 1;
     f_7100b31b60(c);
@@ -109,7 +114,7 @@ void h_control_type(Ctx *c) {
 }
 /* f_7100c0f960(x0 a text's tag, UTF-16) -> the tag's symbol. Every button tag of the game's text comes here, the HUD's lists every
  * frame: [BTN:R2 ], and [KC:AVOID ] by way of its button (0x7100961b44). By Pro button; the space is in the name. */
-void f_7100c0f960(Ctx *c);
+B3_FN void f_7100c0f960(Ctx *c);
 void h_text_symbol(Ctx *c) {
     static const uint16_t *const tag[16] = {(const uint16_t *)u"[BTN:A ]", (const uint16_t *)u"[BTN:B ]", (const uint16_t *)u"[BTN:X ]", (const uint16_t *)u"[BTN:Y ]",
         (const uint16_t *)u"[BTN:L3 ]", (const uint16_t *)u"[BTN:R3 ]", (const uint16_t *)u"[BTN:L1 ]", (const uint16_t *)u"[BTN:R1 ]", (const uint16_t *)u"[BTN:L2 ]", (const uint16_t *)u"[BTN:R2 ]",
@@ -130,7 +135,7 @@ void h_text_symbol(Ctx *c) {
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
  * instructions). Outputs that overlap go to the lifted original (its order of stores decides there).
  * WT_HOSTFN_CHECK=1 (test): on the first call, 200,000 values through both, outputs and x0 compared. */
-void f_7100b382c0(Ctx *c);
+B3_FN void f_7100b382c0(Ctx *c);
 static uint32_t even_bits16(uint32_t v) {
     v &= 0x55555555u; v = (v | v >> 1) & 0x33333333u; v = (v | v >> 2) & 0x0F0F0F0Fu; v = (v | v >> 4) & 0x00FF00FFu;
     return (v | v >> 8) & 0x0000FFFFu;
@@ -179,7 +184,7 @@ void h_morton_split32(Ctx *c) {
 
 /* f_71007e1fe4: see quad_walk.h. w1 width, w2 height, w7 levels below this node; on the stack the node's Morton index and the
  * two maps. WT_QUADWALK=0 off; WT_QUADWALK_CHECK=1 (test): the lifted walk runs too and must return the same. */
-void f_71007e1fe4(Ctx *c);
+B3_FN void f_71007e1fe4(Ctx *c);
 void h_quad_walk(Ctx *c) {
     static int on = -1, chk;
     static int lifted;                             /* the check's walk: every node lifted (the game DLL has no thread-local storage; one thread walks) */
@@ -204,7 +209,7 @@ void h_quad_walk(Ctx *c) {
  * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). With
  * cutscene_fps = 60 (graphics.ini, WT_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
  * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
-void f_7100d02de0(Ctx *c);
+B3_FN void f_7100d02de0(Ctx *c);
 /* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
 static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
@@ -236,7 +241,7 @@ void h_fps_mode_set(Ctx *c) {
  * is, 1.0 a logic step, two of them a 30 Hz frame (h_main_pass). Such a scene follows real time at any frame rate (#45, #47: its long sounds do, they never wait for a late frame):
  * the step stays even, 0.5 at 60, 1.0 at 30, and what late frames owe is paid off gently (scene_step.h), on the spider ride in whole frames (scene_even). (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
  * follows the real frame time already. */
-void f_7100c1f600(Ctx *c);
+B3_FN void f_7100c1f600(Ctx *c);
 /* The main loop runs two logic steps in a frame of a fixed-step scene, when flags 28 and 30 were set before the frame's first:
  * 2 steps of 1.0 a 30 Hz frame, 60 a second, each 1/60 s. They are of two kinds. In the first, flag 27 set (0x7100670d0c to
  * 0x7100670d90), the timeline update 0x7100bbcb94 recomputes its pause bits. In the second (0x7100670da4: pads, 0x7100671600) it
@@ -248,7 +253,7 @@ void f_7100c1f600(Ctx *c);
  * one a frame. f_7100b20a20 ends a logic step; called from 0x7100670d88 it comes just before the loop's test of bit 28 of
  * w21, that register's last use. Flag 21 repeats the second step until the scene player reaches a frame it seeks
  * (0x7100bb2350 clears the flag), so it is read after the first step; the console's next frame starts with the first kind. */
-void f_7100b20a20(Ctx *c);
+B3_FN void f_7100b20a20(Ctx *c);
 void h_main_pass(Ctx *c) {
     int first = c->x[30] == 0x7100670d8cull;
     f_7100b20a20(c);
@@ -256,7 +261,7 @@ void h_main_pass(Ctx *c) {
     if (state_flags() & 0x200000) g_half = 0; else c->x[21] &= ~(uint64_t)0x10000000;
 }
 /* f_710067037c: its one call, 0x7100670d18, comes just after flag 27 is set in the word at x19 and before the first step's jobs */
-void f_710067037c(Ctx *c);
+B3_FN void f_710067037c(Ctx *c);
 void h_step_kind(Ctx *c) {
     if (scene_second(&g_half, g_one_pass)) { uint32_t f = state_flags() & ~0x8000000u; memcpy((void *)(uintptr_t)c->x[19], &f, 4); }
     f_710067037c(c);
@@ -416,7 +421,7 @@ float fps_fs(Ctx *c, uint64_t key, uint64_t field) {
 /* f_71007077d0(w0): the game's set / clear of flag 28, called by a scene's start (0x7100bb1bf4) and end (0x7100bb2a6c, after it
  * zeroes the movie handle at +168). A movie scene left without it plays on with the subtitles of a 30 fps scene (#72), so it is
  * set again here. Not seen on Linux; the line in the log tells whether that is what a reporter's PC does. */
-void f_71007077d0(Ctx *c);
+B3_FN void f_71007077d0(Ctx *c);
 static void keep_movie_flag(Ctx *c) {
     static uint64_t told;
     uint64_t slots, x0 = c->x[0];
@@ -438,7 +443,7 @@ static void keep_movie_flag(Ctx *c) {
  * multi-level mesh stays at 0, also past its last distance, so the far ones stay drawn. Meshes with one level keep their
  * distance cut, as with the Switch "Increased LOD" mod (mov w8, #0 at 7100bd5b2c), which runs after that cut. */
 __declspec(dllexport) volatile int game_model_lod;         /* 0 = not read yet, 1 the game's, 2 highest; the PC menu (pcmenu.c) changes it */
-void f_7100bd563c(Ctx *c);
+B3_FN void f_7100bd563c(Ctx *c);
 void h_model_lod(Ctx *c) {
     int32_t last, *out = (int32_t *)(uintptr_t)c->x[1];
     memcpy(&last, (void *)(uintptr_t)(c->x[0] + 0x14), 4);
@@ -451,7 +456,7 @@ void h_model_lod(Ctx *c) {
  * last moment starts it: 0x71007a2894(manager *0x710249c470, w1..w5 0, speed s0 0.02, length s1 180 frames, s2 0; the
  * dodge's caller 0x710039d86c), called from the main loop's clock (the game's thread, between frames) with the guest's
  * registers kept. The start routine leaves it alone when the manager is busy or off (+0x9c, +0x168). */
-void f_71007a2894(Ctx *c);
+B3_FN void f_71007a2894(Ctx *c);
 static void test_witch_time(Ctx *c) {
     static int n = -1; static double at[16], t0; static int next;
     struct timespec ts; timespec_get(&ts, TIME_UTC);
@@ -533,8 +538,8 @@ void h_frame_clock(Ctx *c) {
  * switch, 0x7100cfdc50) take it as the window's size. The height stays, the width follows the ratio (even). The scene's
  * targets keep their 16:9 sizes in the game (nvn_vk_draw.c makes them wider: rs_xstretch); the cameras follow below.
  * shortcut: checked on the title screen and 4 minutes of Shibuya (movies, menus and a real ultrawide monitor not yet). */
-void f_710070a740(Ctx *c);
-void f_710070a760(Ctx *c);
+B3_FN void f_710070a740(Ctx *c);
+B3_FN void f_710070a760(Ctx *c);
 static float aspect_want(void) { static float v = -1; if (v < 0) { const char *e = getenv("RECOMPS_ASPECT"); v = e ? (float)atof(e) : 0.0f; if (!(v >= 0.25f && v <= 8.0f)) v = 0.0f; } return v; }
 static void screen_size_aspect(Ctx *c) {
     float a = aspect_want();
@@ -554,7 +559,7 @@ void h_screen_handheld(Ctx *c) { f_710070a760(c); screen_size_aspect(c); }
  * getter's other callers want 1280 (the capture effects' texel sizes, the UI camera) or are not about the screen.
  * f_7100a6f5a0(x s0, y s1) stores the aim's position on screen (one caller, 0x710091c298, by the same projection) for
  * the ring drawn there, in the UI's space (h_ui_ortho): at 21:9 the ring was 290 units right of the aim. */
-void f_7100d02d70(Ctx *c);
+B3_FN void f_7100d02d70(Ctx *c);
 void h_screen_w(Ctx *c) {
     f_7100d02d70(c);
     float a = aspect_want();
@@ -581,7 +586,7 @@ void h_screen_w(Ctx *c) {
  * the height (target_h, 0x7100d02db0). A rectangle over all of the 1280 (or 720) becomes all of the screen: what it clips
  * is widened by h_ui_element. */
 static float g_clip_off, g_clip_y, g_clip_w, g_clip_h;
-void f_7100d02d90(Ctx *c);
+B3_FN void f_7100d02d90(Ctx *c);
 void h_target_w(Ctx *c) {
     f_7100d02d90(c);
     float a = aspect_want();
@@ -591,7 +596,7 @@ void h_target_w(Ctx *c) {
         c->x[0] = (uint32_t)(w * 1280.0 / ui + 0.5);
     }
 }
-void f_7100d02db0(Ctx *c);
+B3_FN void f_7100d02db0(Ctx *c);
 void h_target_h(Ctx *c) {
     f_7100d02db0(c);
     float a = aspect_want();
@@ -601,7 +606,7 @@ void h_target_h(Ctx *c) {
         c->x[0] = (uint32_t)(h * 720.0 / ui + 0.5);
     }
 }
-void f_7100d04414(Ctx *c);
+B3_FN void f_7100d04414(Ctx *c);
 void h_clip_cmd(Ctx *c) {
     int ours = c->x[30] == 0x7100c1e38cull && aspect_want() > 0.0f;
     f_7100d04414(c);
@@ -618,7 +623,7 @@ void h_clip_cmd(Ctx *c) {
  * 0 to 1280 and 0 to 720 whatever the screen: the chapter select and the menus were stretched with it. It gets the space
  * the UI's camera shows in a fight (h_camera_perspective): the 1280 x 720 in the middle, unstretched, and more around it. */
 static float ui_x0, ui_y0, ui_k = 1.0f;      /* a point of the screen in 720 high units (the viewport's) -> the UI's: x * ui_k + ui_x0, y * ui_k + ui_y0 */
-void f_7100d07610(Ctx *c);
+B3_FN void f_7100d07610(Ctx *c);
 void h_ui_ortho(Ctx *c) {
     float a = aspect_want();
     if (a > 16.0f / 9.0f) { ui_x0 = (1280.0f - (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f))) / 2.0f; c->v[0].f[0] += ui_x0; c->v[1].f[0] -= ui_x0; }
@@ -640,7 +645,7 @@ static void ui_capture_uv(float *t) {
     t[0] = (t[0] * 1280.0f - ui_x0) / w; t[2] = (t[2] * 1280.0f - ui_x0) / w;
     t[1] = (t[1] * 720.0f - ui_y0) / h; t[3] = (t[3] * 720.0f - ui_y0) / h;
 }
-void f_7100c025a4(Ctx *c);
+B3_FN void f_7100c025a4(Ctx *c);
 void h_capture_quad(Ctx *c) {
     float t[4]; uint64_t lr = c->x[30]; uint32_t cap = 1;
     if (lr == 0x7100972924ull) memcpy(&cap, (void *)(uintptr_t)(c->x[21] + 0x18), 4);
@@ -649,7 +654,7 @@ void h_capture_quad(Ctx *c) {
     }
     f_7100c025a4(c);
 }
-void f_7100c00b98(Ctx *c);
+B3_FN void f_7100c00b98(Ctx *c);
 void h_gauss_quad(Ctx *c) {      /* two callers, 1000's two passes, with the same rectangle: corrected in a copy */
     float t[4]; memcpy(t, (void *)(uintptr_t)c->x[2], 16); ui_capture_uv(t); c->x[2] = (uint64_t)(uintptr_t)t;
     f_7100c00b98(c);
@@ -661,7 +666,7 @@ void h_gauss_quad(Ctx *c) {      /* two callers, 1000's two passes, with the sam
  * viewport's right edge with the UI's width (0x7100bfcf70) get the viewport's width. Others place themselves at 0..1 of the
  * screen times the UI's size, kept on screen: they get the real size, and the left and top edge by wt_ui_mark (lifter). */
 static float ui_view_w(void) { float a = aspect_want(); return a > 0.0f ? (float)(2 * (int32_t)(720.0f * a / 2.0f + 0.5f)) : 1280.0f; }
-void f_7100c1656c(Ctx *c);
+B3_FN void f_7100c1656c(Ctx *c);
 void h_ui_pos(Ctx *c) {
     float p[3];
     switch (c->x[30]) {
@@ -671,20 +676,20 @@ void h_ui_pos(Ctx *c) {
     }
     f_7100c1656c(c);
 }
-void f_7100bfcf70(Ctx *c);
+B3_FN void f_7100bfcf70(Ctx *c);
 void h_ui_w(Ctx *c) {
     f_7100bfcf70(c);
     uint64_t lr = c->x[30];
     if (lr == 0x71009a83a8ull || lr == 0x71009b05a0ull) c->v[0].f[0] = 1280.0f - 2.0f * ui_x0;
     else if (lr == 0x71009b274cull || lr == 0x71009b28a0ull || lr == 0x71009b48a4ull) c->v[0].f[0] = ui_view_w();
 }
-void f_7100bfcf80(Ctx *c);
+B3_FN void f_7100bfcf80(Ctx *c);
 void h_ui_h(Ctx *c) {
     f_7100bfcf80(c);
     if (c->x[30] == 0x71009a83b0ull || c->x[30] == 0x71009b05a8ull) c->v[0].f[0] = 720.0f - 2.0f * ui_y0;
 }
 void wt_ui_mark(Ctx *c, int x, int y) { c->v[x].f[0] += ui_x0; c->v[y].f[0] += ui_y0; }
-void f_7100a6f5a0(Ctx *c);
+B3_FN void f_7100a6f5a0(Ctx *c);
 void h_aim_pos(Ctx *c) {
     c->v[0].f[0] = c->v[0].f[0] * ui_k + ui_x0; c->v[1].f[0] = c->v[1].f[0] * ui_k + ui_y0;
     f_7100a6f5a0(c);
@@ -693,7 +698,7 @@ void h_aim_pos(Ctx *c) {
  * render targets and the window textures are placed in, 0x10400000 (260 MB; the game's last memory block, 0x10600000).
  * Wider than 16:9 it grows with the width (r2_imports.c adds as much to the memory the game is told it has): at 21:9
  * the 84th render target, 1600x896, did not fit. */
-void f_7100d01380(Ctx *c);
+B3_FN void f_7100d01380(Ctx *c);
 void h_gfx_setup(Ctx *c) {
     float a = aspect_want();
     if (a > 16.0f / 9.0f) {
@@ -710,7 +715,7 @@ void h_gfx_setup(Ctx *c) {
  * 1280x720 (0x7100624e10, 0x7100c04b00), 256 high (0x7100646b64, not 16:9), the caller's own (0x710063fe50). A 16:9 size
  * (within 1 %) gets the screen's shape: wider, the same vertical view and more at the sides (Hor+); narrower, the same
  * horizontal view and more above and below (Vert+: the vertical angle grows). */
-void f_7100cba90c(Ctx *c);
+B3_FN void f_7100cba90c(Ctx *c);
 float tanf(float); float atanf(float);
 static float vert_plus(float fov, float a) { return 2.0f * atanf(tanf(fov * 0.5f) * (16.0f / 9.0f) / a); }
 void h_camera_perspective(Ctx *c) {
@@ -725,7 +730,7 @@ void h_camera_perspective(Ctx *c) {
 }
 /* f_7100cba97c(camera x0, fov s0): the vertical angle alone (3 callers: the scenes' cameras move it every frame). On a camera
  * whose aspect is the screen's (set above), narrower than 16:9, it grows as above. */
-void f_7100cba97c(Ctx *c);
+B3_FN void f_7100cba97c(Ctx *c);
 void h_camera_fov(Ctx *c) {
     float a = aspect_want(), ca;
     uint64_t cam; memcpy(&cam, (void *)(uintptr_t)c->x[0], 8); memcpy(&ca, (void *)(uintptr_t)(cam + 0x3d8), 4);
@@ -741,7 +746,7 @@ void h_camera_fov(Ctx *c) {
  * the file (health -492, 269; the gauges -572, -316; the score 260, 297 ...) moves out by half the extra width, to the
  * screen's edge as at 16:9. Centred layouts (prompts, subtitles, the boss's bar) stay. hud_area = 16:9 (graphics.ini;
  * RECOMPS_HUD_CENTRE=1; "Centered" in the PC menu and the Options screen, at once: game_hud_centre) keeps them in the middle. */
-void f_7100c0ef04(Ctx *c);
+B3_FN void f_7100c0ef04(Ctx *c);
 /* The name of the layout at lay, an entry of a DAT archive in memory, or "". The archive ("DAT\0", file count, offset table at
  * +8, name table at +0x10: u32 name size, then the names) starts before it, 4-aligned, within 16 MB (the UI archives are
  * a few MB); its offset table holds lay - archive. Looked up once per layout loaded (a table of 1024). */
