@@ -487,6 +487,7 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
         return Err(format!("{} could not compile the program's resources", rc.display()));
     }
     let exe = out.join("witch-time-game.exe");
+    make_way(&exe).map_err(|e| format!("{}: {}", s(&exe), e))?; // lld cannot replace a running one
     let mut a = strs(&["-fuse-ld=lld", "-g"]);
     a.extend(jobs.iter().map(|j| s(&j.1)));
     a.push(s(&implib));
@@ -504,6 +505,7 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
 
     // 5. the shader compiler shim, which the program loads beside it; WTBUILD_GLSLANG_LIBS: a static glslang (CI)
     let dll = out.join("wt_glslang.dll");
+    make_way(&dll).map_err(|e| format!("{}: {}", s(&dll), e))?;
     let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-O2", "-w", "-I"]);
     a.extend([s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
@@ -583,6 +585,10 @@ fn link_game(
     fs::write(&rsp, objs.iter().map(|o| format!("\"{}\"\n", o.replace('\\', "/"))).collect::<String>()).map_err(|e| e.to_string())?;
     let name = t.game_lib();
     let dll = build.join(name);
+    // lld cannot replace a game.dll a running game has loaded either (#127)
+    if t.windows() && make_way(&dll).map_err(|e| format!("{}: {}", name, e))? {
+        log(format!("{}: the old one is in use (a witch-time-game.exe still running?), moved to old/", name));
+    }
     let t0 = Instant::now();
     let mut a = strs(&["-shared", "-nostdlib", "-fuse-ld=lld"]);
     if !t.windows() {
@@ -675,11 +681,30 @@ pub fn make_prebuilt(repo: &Path, clang: &str, t: Target, out: &Path, log: &mut 
     Ok(())
 }
 
-/// copy through a new file and a rename: a running game keeps the file it has open
-fn install(from: &Path, to: &Path) -> std::io::Result<()> {
+/// `f` out of the way: deleted, or, when a running process has it loaded, moved to <its folder>/old/, which the next link
+/// empties. Windows can move such a program or DLL but not delete or replace it, as the launcher's updater knows (#127).
+/// True: it was moved
+pub(crate) fn make_way(f: &Path) -> std::io::Result<bool> {
+    if !f.exists() || fs::remove_file(f).is_ok() {
+        return Ok(false);
+    }
+    let old = f.parent().unwrap().join("old");
+    fs::create_dir_all(&old)?;
+    let name = f.file_name().unwrap().to_string_lossy();
+    let free = (0..).map(|n| old.join(format!("{}.{}", name, n))).find(|p| !p.exists()).unwrap();
+    fs::rename(f, free).map(|_| true)
+}
+
+/// copy through a new file and a rename: a running game keeps the file it has open (on Windows by make_way). True: the
+/// old one was in use
+fn install(from: &Path, to: &Path) -> std::io::Result<bool> {
     let tmp = to.with_extension("new");
     fs::copy(from, &tmp)?;
-    fs::rename(&tmp, to)
+    if fs::rename(&tmp, to).is_ok() {
+        return Ok(false);
+    }
+    let moved = make_way(to)?;
+    fs::rename(&tmp, to).map(|_| moved)
 }
 
 /// an input of the player's link (game_shim_eh.o, the UCRT's import library), not a file of the runtime
@@ -689,10 +714,15 @@ fn link_input(f: &str) -> bool {
 
 pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
     let build = crate::layout::build(repo);
+    for e in fs::read_dir(build.join("old")).into_iter().flatten().flatten() {
+        let _ = fs::remove_file(e.path()); // what make_way moved, once nothing holds it
+    }
     let (shim, implibs) = match prebuilt(repo, t, log) {
         Some((dir, files)) => {
             for f in files.iter().filter(|f| !link_input(f)) {
-                install(&dir.join(f), &build.join(f)).map_err(|e| format!("{}: {}", f, e))?;
+                if install(&dir.join(f), &build.join(f)).map_err(|e| format!("{}: {}", f, e))? {
+                    log(format!("{}: the old one is in use (a witch-time-game.exe still running?), moved to old/", f));
+                }
             }
             log(format!("runtime: prebuilt, {} files from {}/", files.len(), PREBUILT));
             (dir.join("game_shim_eh.o"), vec![dir.join(UCRT_IMPLIB)])
@@ -806,5 +836,36 @@ mod tests {
         fs::write(d.join("runtime/a.c"), "edited").unwrap();
         assert_ne!(files_hash(&d, &list), h);
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// #127: a program a process runs (a DLL it loaded is the same) cannot be renamed over on Windows; install moves it
+    #[test]
+    fn install_over_a_running_program() {
+        if !cfg!(windows) {
+            return; // Linux renames over it, the running process keeping its file
+        }
+        let d = std::env::temp_dir().join(format!("wt_install_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let held = d.join("held.exe");
+        fs::copy(Path::new(&std::env::var("SystemRoot").unwrap()).join("System32").join("cmd.exe"), &held).unwrap();
+        // cmd waits for commands on the open pipe
+        let mut child = Command::new(&held)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let new = d.join("new.bin");
+        fs::write(&new, b"new").unwrap();
+        fs::copy(&new, d.join("plain.bin")).unwrap();
+        let plain = fs::rename(d.join("plain.bin"), &held);
+        let r = install(&new, &held);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(plain.map_err(|e| e.kind()), Err(std::io::ErrorKind::PermissionDenied), "the failure of #127");
+        assert!(r.unwrap(), "moved aside");
+        assert_eq!(fs::read(&held).unwrap(), b"new");
+        assert!(d.join("old").join("held.exe.0").is_file());
+        let _ = fs::remove_dir_all(&d);
     }
 }

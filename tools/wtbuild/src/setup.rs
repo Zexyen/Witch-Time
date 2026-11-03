@@ -1024,7 +1024,10 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
     for f in ["SDL3.dll", "libSDL3.so.0"] {
         let from = cx.build.join(f);
         if from.is_file() {
-            copy2(&from, &build.join(f)).map_err(|e| Fail(format!("build/program1/{}: {}", f, e)))?;
+            // a running picture book has it loaded (#127)
+            crate::link::make_way(&build.join(f))
+                .and_then(|_| copy2(&from, &build.join(f)))
+                .map_err(|e| Fail(format!("build/program1/{}: {}", f, e)))?;
         }
     }
     say("  build/program1: the picture book's program is built");
