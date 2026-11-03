@@ -13,7 +13,7 @@
  * The passes are AMD's GLSL (third_party/fsr3, MIT, FidelityFX SDK v1.1.4), compiled by our glslang; the host below
  * follows AMD's ffx_fsr3upscaler.cpp (fsr3upscalerDispatch) for constants, resources and the order of the passes. */
 
-__declspec(dllimport) extern volatile int game_fsr_w, game_fsr_h;      /* game_shim_eh.c h_cam_upload: the jitter's pixel size, 0 = none */
+__declspec(dllimport) extern volatile int game_fsr_w, game_fsr_h, game_fsr_phases;      /* game_shim_eh.c h_cam_upload: the jitter's pixel size (0 = none) and its phase count */
 
 /* AMD's Fsr3UpscalerConstants (ffx_fsr3upscaler_private.h), the std140 block cbFSR3Upscaler */
 typedef struct {
@@ -169,9 +169,9 @@ static void fsr_emit(FsrStr *s, const char *name, int top) {
 /* ---- resources (AMD's internal and shared resources, plus our motion vectors and output) */
 enum { FI_ACC1, FI_ACC2, FI_LUMA1, FI_LUMA2, FI_FP16X1, FI_SHADING, FI_LOCKS, FI_UP1, FI_UP2, FI_SPD, FI_FDMIP1, FI_LH1, FI_LH2, FI_ATOMIC,
        FI_REACT, FI_LUT, FI_DEFR, FI_INFO, FI_DDEPTH, FI_DMV, FI_PREVD, FI_MV, FI_OUT, FI_N };
-static const struct { VkFormat f; uint8_t size; } k_fi[FI_N] = {      /* size: 0 the scene's, 1 half of it, 2 one texel, 3 the 128 x 1 LUT, 4 the output */
+static const struct { VkFormat f; uint8_t size; } k_fi[FI_N] = {      /* size: 0 the scene's (render), 1 half of it, 2 one texel, 3 the 128 x 1 LUT, 4 the output's (AMD's maxUpscaleSize) */
     {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0},
-    {VK_FORMAT_R8_UNORM, 1}, {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0},
+    {VK_FORMAT_R8_UNORM, 1}, {VK_FORMAT_R8_UNORM, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4},
     {VK_FORMAT_R16G16_SFLOAT, 1}, {VK_FORMAT_R16_SFLOAT, 1}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0},
     {VK_FORMAT_R32_UINT, 2}, {VK_FORMAT_R8G8B8A8_UNORM, 0}, {VK_FORMAT_R16_SNORM, 3}, {VK_FORMAT_R8_UNORM, 2}, {VK_FORMAT_R32G32B32A32_SFLOAT, 2},
     {VK_FORMAT_R32_SFLOAT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_R32_UINT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_UNDEFINED, 4},
@@ -209,7 +209,8 @@ static struct {
     int ok;                                        /* 0 not tried, 1 ready, -1 not available here (logged once) */
     VkPipeline pipe[P_N]; VkPipelineLayout pl[P_N]; VkDescriptorSetLayout dl[P_N]; VkSampler smp[2];
     VkBuffer ubo; VMem ubo_mem; uint32_t ubo_pos, ubo_al, cb_off[3];
-    int w, h, blit; FImg img[FI_N];                /* blit: the output is RGBA16F and blitted into the scene's format (no storage for it) */
+    int w, h, uw, uh, blit; FImg img[FI_N];        /* w, h: the scene's (render) size; uw, uh: the output's; blit: the output is RGBA16F (no storage for the scene's format) */
+    Tex *col; LONG64 up_frame, missed;             /* col: the scene colour of the last run; up_frame: FI_OUT filled from it without FSR (fsr_up_view) */
     FsrConst k; uint32_t res_index; int fresh;    /* fresh: resources just made: clear them, reset */
     double prev_vp[16]; float prev_fwd[3], prev_pos[3]; int have_prev;
     LONG64 frame, ran, depth_frame, cam_frame; LONG64 t_last;
@@ -218,7 +219,15 @@ static struct {
     LONG64 runs, resets;
 } F;
 
-static int fsr_want(void) { return gfx_options()->upscaler == 1 && F.ok >= 0; }
+static int fsr_want(void) { rs_scale(); return g_rs_mode >= 1 && F.ok >= 0; }      /* the mode as latched with the scales (rs_scale) */
+/* the scene's scale is the picture's / this (AMD's ratios); 1 where FSR cannot run, so the scene is never left small without it */
+static const char *fsr_unable(void);
+static float fsr_ratio(int mode) {
+    static const float k[6] = {1.0f, 1.0f, 1.5f, 1.7f, 2.0f, 3.0f};
+    if (mode < 2 || mode > 5 || F.ok < 0) return 1.0f;      /* (FSR failing after this was latched: fsr_run applies the scales again) */
+    if (V.device && fsr_unable()) return 1.0f;      /* fsr_setup's checks, once the device is made */
+    return k[mode];
+}
 static int fsr_hdr(const VTex *vt) { return vt->fmt == VK_FORMAT_B10G11R11_UFLOAT_PACK32 || vt->fmt == VK_FORMAT_R16G16B16A16_SFLOAT; }
 static void fsr_off(const char *why) { if (F.ok >= 0) printf("nvn_vk_fsr: FSR is off: %s\n", why); F.ok = -1; game_fsr_w = game_fsr_h = 0; }
 
@@ -251,12 +260,18 @@ static void fsr_img(FImg *im, VkFormat f, int w, int h, int levels, int storage)
     for (int l = 0; l < 6; l++) im->lvl[l] = l < levels ? fsr_view(vt, l, 1) : im->all;
 }
 
-static int fsr_setup(void) {                       /* render thread, once: samplers, the uniform ring, the 8 pipelines */
-    if (!D.has_push) { fsr_off("the device has no VK_KHR_push_descriptor"); return 0; }
-    if (!D.f2.features.shaderStorageImageWriteWithoutFormat) { fsr_off("the device has no shaderStorageImageWriteWithoutFormat"); return 0; }
+static const char *fsr_unable(void) {               /* what the device lacks for FSR, NULL when nothing (physical-device queries only: any thread) */
+    static char m[96];
+    if (!D.has_push) return "the device has no VK_KHR_push_descriptor";
+    if (!D.f2.features.shaderStorageImageWriteWithoutFormat) return "the device has no shaderStorageImageWriteWithoutFormat";
     for (int i = 0; i < FI_N; i++)
-        if (k_fi[i].f && i != FI_LUT && !fmt_supported(k_fi[i].f, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) { char m[96]; snprintf(m, sizeof m, "no storage images of format %d", (int)k_fi[i].f); fsr_off(m); return 0; }
-    if (!fmt_supported(VK_FORMAT_R32_UINT, VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT)) { fsr_off("no image atomics on R32_UINT"); return 0; }
+        if (k_fi[i].f && i != FI_LUT && !fmt_supported(k_fi[i].f, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) { snprintf(m, sizeof m, "no storage images of format %d", (int)k_fi[i].f); return m; }
+    if (!fmt_supported(VK_FORMAT_R32_UINT, VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT)) return "no image atomics on R32_UINT";
+    return NULL;
+}
+static int fsr_setup(void) {                       /* render thread, once: samplers, the uniform ring, the 8 pipelines */
+    const char *why = fsr_unable();
+    if (why) { fsr_off(why); return 0; }
     LONG64 t0 = tk();
     for (int i = 0; i < 2; i++) {
         VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -299,13 +314,13 @@ static int fsr_setup(void) {                       /* render thread, once: sampl
     return 1;
 }
 
-static void fsr_resize(int w, int h, VkFormat col) {      /* the scene's size: every resource made again, history reset */
+static void fsr_resize(int w, int h, int uw, int uh, VkFormat col) {      /* the scene's and the output's sizes: every resource made again, history reset */
     for (int i = 0; i < FI_N; i++) if (F.img[i].vt) { vt_garbage(F.img[i].vt); F.img[i].vt = NULL; }
     F.blit = !fmt_supported(col, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
     for (int i = 0; i < FI_N; i++) {
-        int s = k_fi[i].size, iw = s == 0 || s == 4 ? w : s == 1 ? w / 2 : s == 3 ? 128 : 1, ih = s == 0 || s == 4 ? h : s == 1 ? h / 2 : 1, lv = 1;
+        int s = k_fi[i].size, iw = s == 0 ? w : s == 4 ? uw : s == 1 ? w / 2 : s == 3 ? 128 : 1, ih = s == 0 ? h : s == 4 ? uh : s == 1 ? h / 2 : 1, lv = 1;
         if (i == FI_SPD) { int m = iw > ih ? iw : ih; while (m > 1) { m >>= 1; lv++; } }      /* AMD: the whole chain */
-        fsr_img(&F.img[i], s == 4 ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f, iw, ih, lv, i != FI_LUT);
+        fsr_img(&F.img[i], i == FI_OUT ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f, iw, ih, lv, i != FI_LUT);      /* (size 4 also holds the locks and the history) */
     }
     {   /* AMD's Lanczos-2 table (fsr3upscalerCreate): bound by the accumulate pass */
         int16_t lut[128];
@@ -319,8 +334,8 @@ static void fsr_resize(int w, int h, VkFormat col) {      /* the scene's size: e
         cmd_begin();
         vkCmdCopyBufferToImage(R.cmd, R.ring, F.img[FI_LUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     }
-    F.w = w; F.h = h; F.fresh = 1;
-    printf("nvn_vk_fsr: resources for %dx%d (output %s)\n", w, h, F.blit ? "RGBA16F, blitted" : "in the scene's format, copied");
+    F.w = w; F.h = h; F.uw = uw; F.uh = uh; F.fresh = 1;
+    printf("nvn_vk_fsr: resources for %dx%d, output %dx%d (%s)\n", w, h, uw, uh, F.blit ? "RGBA16F, blitted" : "in the scene's format");
 }
 
 static void fsr_clear(int i, float v0, float v1, uint32_t u0) {
@@ -376,7 +391,7 @@ static void fsr_dispatch(int p, uint32_t gx, uint32_t gy) {
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pipe[p]);
     vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pl[p], 0, ps->n, w);
     vkCmdDispatch(R.cmd, gx ? gx : 1, gy ? gy : 1, 1);
-    fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+    fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);      /* the next frame's clears too */
 }
 static void fsr_inv4(const double *m, double *o) {      /* 4x4 inverse, row major (cofactors); a singular matrix gives the identity */
@@ -404,13 +419,17 @@ static void fsr_inv4(const double *m, double *o) {      /* 4x4 inverse, row majo
 /* render thread, at a draw whose fragment stage reads `col` (the scene's colour) with `depth` the scene's depth */
 static void fsr_run(Tex *col, Tex *depth, int fx) {
     VTex *vc = vt_get(col), *vd = vt_get(depth);
-    int w = vc->w, h = vc->h;
+    int w = vc->w, h = vc->h, uw = w, uh = h;
     if (vd->w != w || vd->h != h) return;
-    if (F.ok == 0 && !fsr_setup()) return;
+    if (vc->rs) rs_size(col->b.width, col->b.height, 1, &uw, &uh);      /* the output: as the tonemap's target, which has the scene's game size at the picture's scale */
+    if (uw < w || uh < h) uw = w, uh = h;
+    if (F.ok == 0 && !fsr_setup()) { if (rs_render_scale() != rs_scale()) rs_apply(); return; }      /* a quality mode without FSR: the scene back at the picture's scale (fsr_ratio is 1 now) */
     pass_end();
     cmd_begin();
     pt_mark(w, h, 0, 0x118, 0, 0, 1);              /* WT_VK_PASSTIME: FSR (and its copy) as a kind of its own, "format 0x118" */
-    if (w != F.w || h != F.h || !F.img[FI_OUT].vt || (!F.blit && F.img[FI_OUT].vt->fmt != vc->fmt)) fsr_resize(w, h, vc->fmt);
+    fsr_barrier(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);      /* FI_OUT: an earlier tonemap's read, fsr_up_view's blit */
+    if (w != F.w || h != F.h || uw != F.uw || uh != F.uh || !F.img[FI_OUT].vt || (!F.blit && F.img[FI_OUT].vt->fmt != vc->fmt)) fsr_resize(w, h, uw, uh, vc->fmt);
+    F.col = col;
     LONG64 now = tk();
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     double dt = F.t_last ? (double)(now - F.t_last) / (double)fq.QuadPart : 1.0 / 60.0;
@@ -419,7 +438,8 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     /* the camera of the scene's draws: c3 rows (h_cam_upload): [0..15] view, [16..31] projection, [32..47] VP, [48..63] inverse view */
     const float *m = F.c3;
     double jx = m[30] != 0.0f ? (double)m[18] / m[30] : 0.0, jy = m[30] != 0.0f ? (double)m[22] / m[30] : 0.0;      /* the projection's [0][2], [1][2]: 0 but for our jitter */
-    if (fabs(jx) * w > 1.01 || fabs(jy) * h > 1.01) jx = jy = 0.0;      /* an off-centre projection of the game's own, not our jitter */
+    if (fabs(jx) * w > 1.15 || fabs(jy) * h > 1.15) jx = jy = 0.0;      /* an off-centre projection of the game's own, not our jitter (1.15: a camera
+                                                                         jittered for the last, smaller dynamic-resolution size reaches 1.09) */
     double vp[16], inv[16], mm[16];
     for (int i = 0; i < 16; i++) vp[i] = m[32 + i];
     for (int c = 0; c < 4; c++) { vp[c] -= jx * vp[12 + c]; vp[4 + c] -= jy * vp[12 + c]; }      /* without the jitter: row 0 / 1 -= j * row 3 */
@@ -451,16 +471,18 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
         double t = tan(0.5 * fovy), asp = (double)w / h, q = zf / (zn - zf);
         k->previousFrameRenderSize[0] = k->renderSize[0]; k->previousFrameRenderSize[1] = k->renderSize[1];
         k->previousFrameUpscaleSize[0] = k->upscaleSize[0]; k->previousFrameUpscaleSize[1] = k->upscaleSize[1];
-        k->renderSize[0] = k->upscaleSize[0] = k->maxRenderSize[0] = k->maxUpscaleSize[0] = w;
-        k->renderSize[1] = k->upscaleSize[1] = k->maxRenderSize[1] = k->maxUpscaleSize[1] = h;
+        k->renderSize[0] = k->maxRenderSize[0] = w; k->renderSize[1] = k->maxRenderSize[1] = h;
+        k->upscaleSize[0] = k->maxUpscaleSize[0] = uw; k->upscaleSize[1] = k->maxUpscaleSize[1] = uh;
         k->deviceToViewDepth[0] = (float)(-q); k->deviceToViewDepth[1] = (float)(q * zn); k->deviceToViewDepth[2] = (float)(t * asp); k->deviceToViewDepth[3] = (float)t;
         k->previousFrameJitterOffset[0] = k->jitterOffset[0]; k->previousFrameJitterOffset[1] = k->jitterOffset[1];
         k->jitterOffset[0] = (float)(jx * w * 0.5); k->jitterOffset[1] = (float)(-jy * h * 0.5);      /* pixels, y down (AMD: projection += (2x/w, -2y/h)) */
         k->motionVectorScale[0] = k->motionVectorScale[1] = 1.0f;      /* ours are in UV already */
-        k->downscaleFactor[0] = k->downscaleFactor[1] = 1.0f;
+        k->downscaleFactor[0] = (float)w / uw; k->downscaleFactor[1] = (float)h / uh;
         k->motionVectorJitterCancellation[0] = k->motionVectorJitterCancellation[1] = 0.0f;
         k->tanHalfFOV = (float)(t * asp);
-        k->jitterPhaseCount = 8.0f;                 /* ffxFsr3UpscalerGetJitterPhaseCount at 1:1; h_cam_upload's sequence */
+        {   double r = (double)uw / w;          /* ffxFsr3UpscalerGetJitterPhaseCount, rounded (our sizes are rounded): 8 at 1:1, 18 at 1.5, 32 at 2 */
+            int ph = (int)(8.0 * r * r + 0.5);
+            k->jitterPhaseCount = (float)ph; game_fsr_phases = ph; }
         k->deltaTime = (float)(dt < 0 ? 0 : dt > 1 ? 1 : dt);
         k->deltaPreExposure = 1.0f; k->viewSpaceToMetersFactor = 1.0f;
         k->frameIndex = reset ? 0.0f : k->frameIndex + 1.0f;
@@ -500,25 +522,34 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     fsr_dispatch(P_SC, sc_x, sc_y);
     fsr_dispatch(P_REACT, src_x, src_y);
     fsr_dispatch(P_INST, src_x, src_y);
-    fsr_dispatch(P_ACC, src_x, src_y);              /* upscale size = render size */
+    fsr_dispatch(P_ACC, (uint32_t)(uw + 7) / 8, (uint32_t)(uh + 7) / 8);      /* at the output's size (AMD: dispatchDst) */
     F.res_index = (F.res_index + 1) % 16;
 
-    /* the result into the scene's colour */
-    vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    /* the result into the scene's colour: the bloom reads it there (a 2 x 2 gather that needs the scene's size); at another size
+     * the tonemap reads FI_OUT itself (fsr_up_view) and this is a linear reduction */
     VkImageSubresourceLayers sl = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    if (F.blit) {
+    if (uw != w || uh != h) {
+        if (fmt_supported(vc->fmt, VK_FORMAT_FEATURE_BLIT_DST_BIT) && rs_filter(F.img[FI_OUT].vt) == VK_FILTER_LINEAR) {      /* shortcut: one linear step also above 2:1 (Ultra Performance): bloom may shimmer a little there; reduce in 2:1 steps if it shows */
+            vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkImageBlit b; memset(&b, 0, sizeof b);
+            b.srcSubresource = b.dstSubresource = sl; b.srcOffsets[1].x = uw; b.srcOffsets[1].y = uh; b.dstOffsets[1].x = w; b.dstOffsets[1].y = h; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
+            vkCmdBlitImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+        }
+    } else if (F.blit) {
+        vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageBlit b; memset(&b, 0, sizeof b);
         b.srcSubresource = b.dstSubresource = sl; b.srcOffsets[1].x = b.dstOffsets[1].x = w; b.srcOffsets[1].y = b.dstOffsets[1].y = h; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
         vkCmdBlitImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
     } else {
+        vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageCopy c; memset(&c, 0, sizeof c);
         c.srcSubresource = c.dstSubresource = sl; c.extent.width = (uint32_t)w; c.extent.height = (uint32_t)h; c.extent.depth = 1;
         vkCmdCopyImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     }
     game_fsr_w = w; game_fsr_h = h;
-    if (F.runs++ == 0) printf("nvn_vk_fsr: first run at %dx%d (scene depth %dx%d) before a %s draw, jitter %.3f, %.3f px\n", w, h, vd->w, vd->h, fx == FX_DOWN ? "bloom downsample" : "tonemap",
+    if (F.runs++ == 0) printf("nvn_vk_fsr: first run at %dx%d to %dx%d (%d jitter phases) before a %s draw, jitter %.3f, %.3f px\n", w, h, uw, uh, game_fsr_phases, fx == FX_DOWN ? "bloom downsample" : "tonemap",
                               (double)F.k.jitterOffset[0], (double)F.k.jitterOffset[1]);
-    else if (F.runs % 1800 == 0) printf("nvn_vk_fsr: %lld runs, %lld history resets, jitter %.3f, %.3f px\n", (long long)F.runs, (long long)F.resets, (double)F.k.jitterOffset[0], (double)F.k.jitterOffset[1]);
+    else if (F.runs % 1800 == 0) printf("nvn_vk_fsr: %lld runs, %lld history resets, %lld tonemaps without FSR, jitter %.3f, %.3f px\n", (long long)F.runs, (long long)F.resets, (long long)F.missed, (double)F.k.jitterOffset[0], (double)F.k.jitterOffset[1]);
 }
 
 /* ---- issue 118, step 2: the dither. The depth pre-pass of fading objects (near the camera, LOD cross-fades: ZMap_*, 492 stages)
@@ -601,6 +632,37 @@ static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const Vi
     }
     return d->ph[0] ? d->view[fsr_dither_phase_of(F.frame)] : NULL;
 }
+/* nvn_vk_draw.c resolve_sampler: a tonemap (FX_GRAIN) into a target at the picture's scale (rs_promote) reads FSR's output in place
+ * of the scene colour (the 2:1 bloom reads the scene colour at its own size, see fsr_run). In a frame FSR did not run, a linear
+ * enlargement of the scene colour (counted: the 1800-run line). NULL: the game's image. */
+static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view) {
+    if (s != 1 || t != F.col || !F.img[FI_OUT].vt || (F.uw == F.w && F.uh == F.h) || !R.prog[1] || stage_fx(&R.prog[1]->st[1]) != FX_GRAIN || !R.ncol || !R.col[0].tex || !fsr_want()) return NULL;
+    Tex *c = R.col[0].tex;
+    if (!rs_post_has(c) && !(c->vk && ((VTex *)c->vk)->post)) return NULL;      /* (a promoted target has no image until its pass) */
+    EView e;
+    eview_of(t, vt, view, &e);
+    if (e.format != t->b.format || e.lvl0 != 0 || e.swz[0] != 2 || e.swz[1] != 3 || e.swz[2] != 4 || e.swz[3] != 5) return NULL;
+    if (F.ran != F.frame && F.up_frame != F.frame) {
+        if (vt->w != F.w || vt->h != F.h || !fmt_supported(F.img[FI_OUT].vt->fmt, VK_FORMAT_FEATURE_BLIT_DST_BIT) || rs_filter(vt) != VK_FILTER_LINEAR) return NULL;
+        pass_end(); cmd_begin();
+        fsr_barrier(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);      /* an earlier frame's reads and writes of FI_OUT */
+        vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkImageBlit b; memset(&b, 0, sizeof b);
+        b.srcSubresource.aspectMask = b.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.srcSubresource.layerCount = b.dstSubresource.layerCount = 1;
+        b.srcOffsets[1].x = vt->w; b.srcOffsets[1].y = vt->h; b.dstOffsets[1].x = F.uw; b.dstOffsets[1].y = F.uh; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
+        vkCmdBlitImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);
+        fsr_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        F.up_frame = F.frame; F.missed++;
+    }
+    return F.img[FI_OUT].all;
+}
+static int fsr_reads(VStage *fs, Tex *want) {      /* the fragment stage samples this texture at some unit */
+    for (int i = 0; fs && i < fs->nsmp; i++) {
+        Tex *t = NULL; View view; SamplerParams sp;
+        if (fs->smp[i].unit < 32 && (nvn_front_handle(R.tpool, R.spool, R.nvn_tex[1][fs->smp[i].unit], &t, &view, &sp) & 1) && t == want) return 1;
+    }
+    return 0;
+}
 
 /* nvn_vk_draw.c draw_prepare, before its textures: notes the scene's draws (depth and camera), runs FSR at the first draw that
  * reads the finished scene (the first bloom downsample, or the tonemap) */
@@ -620,15 +682,16 @@ static void fsr_draw(VStage *fs) {
             return;
         }
     }
-    if (F.ran == F.frame || !F.depth || F.depth_frame != F.frame || F.cam_frame != F.frame || !fs || !R.prog[1] || F.depth->dead) return;
-    int fx = stage_fx(&R.prog[1]->st[1]);
-    if (fx != FX_GRAIN && fx != FX_DOWN) return;
-    for (int i = 0; i < fs->nsmp; i++) {
-        unsigned un = fs->smp[i].unit;
-        Tex *t = NULL; View view; SamplerParams sp;
-        if (un >= 32 || !(nvn_front_handle(R.tpool, R.spool, R.nvn_tex[1][un], &t, &view, &sp) & 1) || !t || t->dead || !t->vk) continue;
-        if (t != c && t->b.width == F.depth->b.width && t->b.height == F.depth->b.height && fsr_hdr(t->vk) && ((VTex *)t->vk)->samples == 1) { fsr_run(t, F.depth, fx); return; }
-    }
+    int fx = fs && R.prog[1] ? stage_fx(&R.prog[1]->st[1]) : 0;
+    if ((fx == FX_GRAIN || fx == FX_DOWN) && F.ran != F.frame && F.depth && F.depth_frame == F.frame && F.cam_frame == F.frame && !F.depth->dead)
+        for (int i = 0; i < fs->nsmp; i++) {
+            unsigned un = fs->smp[i].unit;
+            Tex *t = NULL; View view; SamplerParams sp;
+            if (un >= 32 || !(nvn_front_handle(R.tpool, R.spool, R.nvn_tex[1][un], &t, &view, &sp) & 1) || !t || t->dead || !t->vk) continue;
+            if (t != c && t->b.width == F.depth->b.width && t->b.height == F.depth->b.height && fsr_hdr(t->vk) && ((VTex *)t->vk)->samples == 1) { fsr_run(t, F.depth, fx); break; }
+        }
+    /* upscaling: the target of a tonemap that reads FSR's scene colour goes to the picture's scale (before this draw's pass) */
+    if (fx == FX_GRAIN && c && !c->dead && c->vk && !((VTex *)c->vk)->post && F.col && (F.uw != F.w || F.uh != F.h) && fsr_reads(fs, F.col)) rs_promote(c);
 }
 /* nvn_vk_draw.c, at shutdown (the GPU is idle; the images went with the others) */
 static void fsr_shutdown(void) {

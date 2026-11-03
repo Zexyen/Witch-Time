@@ -129,6 +129,7 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
         "game_hud_centre",
         "game_fsr_w",
         "game_fsr_h",
+        "game_fsr_phases",
         "sdk_data",
         "sdk_data_count",
         "sdk_fns",
