@@ -101,16 +101,25 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	}
 	make_dir(paths.run);
 	// as docs/STATUS.md runs it: the dump's data through targets/romfs, saves in build/userdata (..\userdata from build/run).
-	// After a program switch the variables the other program had are set again (Linux starts the launcher again in the
-	// same environment)
-	set_env("WT_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", after_switch);
+	// After another program ran, by a switch or before it crashed, the variables it had are set again (Linux starts the
+	// launcher again in the same environment)
+	const char* last = std::getenv("WT_PROGRAM");
+	const bool other = after_switch || (last && std::strcmp(last, std::to_string(program).c_str()) != 0);
+	set_env("WT_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", other);
 	set_env("WT_PROGRAM", std::to_string(program), true);
-	if (program || after_switch)
+	if (program || other)
 	{                                            // each program its own shaders: the container store is tied to its root_000.pkz
 		const std::string own = program ? "-program" + std::to_string(program) : "";
 		set_env("WT_VK_CACHE", paths.build + "/cache/vk" + own, true);
 		set_env("WT_VK_CONTAINERS", paths.build + "/cache/vk_containers2" + own, true);
 	}
+	// program N's exe is in build/programN, where the runtime's <exe>/../config would be build/config
+	const std::string config = paths.config + "/controllers.ini";
+	const char* c = std::getenv("WT_CONFIG");
+	if (program)
+		set_env("WT_CONFIG", config, false);
+	else if (c && config == c)
+		unset_env("WT_CONFIG");                  // ours, from program N: program 0 finds config/ itself, and refreshes graphics.ini
 	set_env("WT_TITLE", "Witch Time", false);
 	set_env("WT_VK_MISSING", "warn", false);
 	// Linux runs the game in this process, named witch-time, which nnaudio.c's test-copy rule would leave silent

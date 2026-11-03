@@ -22,6 +22,7 @@ inline const char* const GAME_LIB = "game.so";
 bool make_dir(const std::string& path);
 // setenv(name, value, overwrite)
 void set_env(const char* name, const std::string& value, bool overwrite);
+void unset_env(const char* name);
 bool change_dir(const std::string& path);
 // a program file that can be started (on Windows: that exists)
 bool is_program(const std::string& path);

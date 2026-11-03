@@ -33,6 +33,12 @@ void set_env(const char* name, const std::string& value, bool overwrite)
 	_putenv_s(name, value.c_str());                              // and getenv() here
 }
 
+void unset_env(const char* name)
+{
+	SetEnvironmentVariableW(widen(name).c_str(), nullptr);
+	_putenv_s(name, "");                                         // an empty value removes it
+}
+
 bool change_dir(const std::string& path) { return SetCurrentDirectoryW(widen(path).c_str()) != 0; }
 
 bool is_program(const std::string& path)
@@ -168,6 +174,8 @@ void ChildProcess::stop()
 bool make_dir(const std::string& path) { return mkdir(path.c_str(), 0755) == 0; }
 
 void set_env(const char* name, const std::string& value, bool overwrite) { setenv(name, value.c_str(), overwrite); }
+
+void unset_env(const char* name) { unsetenv(name); }
 
 bool change_dir(const std::string& path) { return chdir(path.c_str()) == 0; }
 

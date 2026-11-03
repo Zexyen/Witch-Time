@@ -88,7 +88,7 @@ void BuildRunner::stop()
 
 void BuildRunner::line(const std::string& l)
 {
-	// "[i/10] step ...", "[i/10] step: ok  12.3s", "[i/10] step: FAILED"
+	// "[i/n] step ...", "[i/n] step: ok  12.3s", "[i/n] step: FAILED"
 	if (l.size() > 3 && l[0] == '[' && l.find('/') < l.find(']'))
 	{
 		size_t close = l.find(']');

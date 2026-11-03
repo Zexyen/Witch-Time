@@ -954,7 +954,7 @@ void App::refresh_build()
 	building = run;
 	converting = false;
 	phase = run ? phase_of(runner.current) : complete ? "ready" : !runner.failed.empty() ? "stopped" : progress > 0 ? "paused" : "not started";
-	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of 10 · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
+	build_aside = run ? "step " + std::to_string(std::max(cur, 0) + 1) + " of " + std::to_string(BuildRunner::steps().size()) + " · " + minutes(now_seconds() - runner.started_at) + " so far" : phase;
 	if (run)
 	{
 		std::string doing = phase_of(runner.current);

@@ -948,12 +948,21 @@ const PROGRAM1_EXEFS: [(&str, u64, &str); 3] = [
 ];
 
 fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
-    let dump = need_dump(cx)?;
-    let src = Path::new(&dump).join("program1");
-    if !src.join("exefs").join("main").is_file() {
-        say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
-        return Ok(());
-    }
+    let repo = cx.root().to_path_buf();
+    let (targets1, build1, _) = crate::layout::folders(&repo, 1);
+    // the dump's program1/; when the dump folder itself is gone (moved, deleted, its drive unplugged), the copy a
+    // finished book step left in targets/program1: an update redoes this step, and no other step it redoes needs the
+    // dump. A dump without program1/ skips it, so taking the folder out gets past a book that fails
+    let dump = cx.dump.as_deref().map(Path::new).filter(|d| d.is_dir());
+    let built = link_outputs(Target::host()).iter().all(|f| build1.join(f).is_file());
+    let src = match dump {
+        Some(d) if d.join("program1").join("exefs").join("main").is_file() => d.join("program1"),
+        None if built && targets1.join("exefs").join("main").is_file() => targets1.clone(),
+        _ => {
+            say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
+            return Ok(());
+        }
+    };
     for (name, size, sha) in PROGRAM1_EXEFS {
         let f = src.join("exefs").join(name);
         let have = (fs::metadata(&f).map(|m| m.len()).unwrap_or(0), sha256_file(&f).unwrap_or_default());
@@ -964,27 +973,38 @@ fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
             )));
         }
     }
-    if !src.join("romfs").join("root_000.pkz").is_file() {
+    // "Move the game data here" moved the romfs into targets/program1 the first time
+    if !src.join("romfs").join("root_000.pkz").is_file() && !targets1.join("romfs").join("root_000.pkz").is_file() {
         return Err(Fail("program1/romfs/root_000.pkz is missing: the picture book's program needs its romfs too".into()));
     }
-    let repo = cx.root().to_path_buf();
     crate::layout::set_program(1);
     let r = build_program(cx, &repo, &src);
     crate::layout::set_program(0);
     r
 }
 
+/// the dump has the picture book's program, and build1 (build/program1) has no finished link of it
+fn book_not_built(dump: Option<&str>, build1: &Path) -> bool {
+    dump.map_or(false, |d| Path::new(d).join("program1").join("exefs").join("main").is_file())
+        && link_outputs(Target::host()).iter().any(|f| !build1.join(f).is_file())
+}
+
 fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
     let (targets, build) = (crate::layout::targets(repo), crate::layout::build(repo));
     let exefs = targets.join("exefs");
     fs::create_dir_all(&exefs).map_err(|e| Fail(e.to_string()))?;
-    for (name, _, _) in PROGRAM1_EXEFS {
-        copy2(&src.join("exefs").join(name), &exefs.join(name)).map_err(|e| Fail(format!("program1/exefs/{}: {}", name, e)))?;
+    if src != targets {
+        // never with src == targets: place_folder's move would delete the files it keeps
+        for (name, _, _) in PROGRAM1_EXEFS {
+            copy2(&src.join("exefs").join(name), &exefs.join(name)).map_err(|e| Fail(format!("program1/exefs/{}: {}", name, e)))?;
+        }
+        say(format!("  targets/program1/romfs: {}", place_folder(&targets.join("romfs"), &src.join("romfs"), cx.a.move_dump)?));
+    } else {
+        say("  targets/program1: from the last build (the dump folder is gone)");
     }
     for name in ["main", "sdk"] {
         convert_nso(&exefs.join(name), &exefs.join(format!("{}.elf", name))).map_err(|e| Fail(format!("program1 {}: {}", name, e)))?;
     }
-    say(format!("  targets/program1/romfs: {}", place_folder(&targets.join("romfs"), &src.join("romfs"), cx.a.move_dump)?));
     cx.logged("book-tables", |log| tables::run(repo, log))?;
     let (elf, gen_eh) = (exefs.join("main.elf"), build.join("gen_eh"));
     cx.logged("book-lift", |log| {
@@ -998,6 +1018,13 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
     for f in link_outputs(Target::host()) {
         if !build.join(f).is_file() {
             return Err(Fail(format!("build/program1/{} is missing after the link (see {})", f, cx.logs.join("book-link.log").display())));
+        }
+    }
+    // the release ships SDL3 in build/ only, and a Windows program finds its DLLs beside it
+    for f in ["SDL3.dll", "libSDL3.so.0"] {
+        let from = cx.build.join(f);
+        if from.is_file() {
+            copy2(&from, &build.join(f)).map_err(|e| Fail(format!("build/program1/{}: {}", f, e)))?;
         }
     }
     say("  build/program1: the picture book's program is built");
@@ -1155,6 +1182,10 @@ pub fn main(args: &[String]) -> i32 {
             done.remove(*s);
         }
     }
+    // a book step that found no program1 folder is done, so one put in the dump since then is built at the next run
+    if cx.done().contains_key("book") && book_not_built(cx.dump.as_deref(), &crate::layout::folders(Path::new(&repo), 1).1) {
+        cx.done().remove("book");
+    }
     let t_all = Instant::now();
     let n = STEPS.len();
     for (i, s) in STEPS.iter().enumerate() {
@@ -1236,6 +1267,24 @@ mod tests {
         assert_eq!(fs::read(dst.join("movie").join("b.webm")).unwrap(), b"b");
         assert_eq!(fs::read(dst.join("a.pkz")).unwrap(), b"aa");
         assert!(place_folder(&dst, &src, true).is_ok()); // moved before: in place
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn book_added_after_a_build() {
+        let t = std::env::temp_dir().join(format!("wtbuild_book_{}", std::process::id()));
+        let (dump, build1) = (t.join("dump"), t.join("build").join("program1"));
+        fs::create_dir_all(&build1).unwrap();
+        let d = dump.to_str();
+        assert!(!book_not_built(None, &build1)); // no dump known: nothing to build
+        assert!(!book_not_built(d, &build1)); // a dump without program1
+        fs::create_dir_all(dump.join("program1").join("exefs")).unwrap();
+        fs::write(dump.join("program1").join("exefs").join("main"), b"m").unwrap();
+        assert!(book_not_built(d, &build1)); // put in the dump after the build
+        for f in link_outputs(Target::host()) {
+            fs::write(build1.join(f), b"x").unwrap();
+        }
+        assert!(!book_not_built(d, &build1)); // built
         fs::remove_dir_all(&t).unwrap();
     }
 }
