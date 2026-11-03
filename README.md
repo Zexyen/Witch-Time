@@ -95,5 +95,6 @@ its end starts Bayonetta 3 again, back in the chapter-select room. Both use the 
 Lifter, runtime and build scripts come from B2recomp (K0NL), which builds on
 [ssbu-recomp](https://github.com/Denkishi/ssbu-recomp) (Denkishi). GPL-3.0; see `NOTICE.md` and `LICENSE`.
 
-The logo's lettering is set in [Cinzel Decorative](https://fonts.google.com/specimen/Cinzel+Decorative) by Natanael
-Gama (SIL Open Font License 1.1), converted to outlines; the font file itself is not included.
+The logo's lettering is set in the "Bayonetta" typeface by
+[Kustren](http://kustren.deviantart.com/) (free for non-commercial use), converted to outlines; the font file itself
+is not included.
