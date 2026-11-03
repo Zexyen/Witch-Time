@@ -106,7 +106,11 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	set_env("WT_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", after_switch);
 	set_env("WT_PROGRAM", std::to_string(program), true);
 	if (program || after_switch)
-		set_env("WT_VK_CACHE", paths.build + "/cache/vk" + (program ? "-program" + std::to_string(program) : ""), true);
+	{                                            // each program its own shaders: the container store is tied to its root_000.pkz
+		const std::string own = program ? "-program" + std::to_string(program) : "";
+		set_env("WT_VK_CACHE", paths.build + "/cache/vk" + own, true);
+		set_env("WT_VK_CONTAINERS", paths.build + "/cache/vk_containers2" + own, true);
+	}
 	set_env("WT_TITLE", "Witch Time", false);
 	set_env("WT_VK_MISSING", "warn", false);
 	// Linux runs the game in this process, named witch-time, which nnaudio.c's test-copy rule would leave silent
