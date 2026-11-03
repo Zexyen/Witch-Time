@@ -97,6 +97,8 @@ private:
 	BuildRunner runner;
 	enum class Job { none, verify, build, textures } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
+	int program = 0;                   // the program the next Play starts (game_host.h; a program switch sets it)
+	bool after_switch = false;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	bool play_after_stop = false;      // Play during the texture conversion: it is stopped, and the game starts when it has
 	bool typed = false;                // the dump folder's box was typed or clicked in since the screen opened

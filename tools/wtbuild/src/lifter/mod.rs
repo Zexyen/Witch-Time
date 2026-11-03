@@ -26,6 +26,9 @@ pub struct Image {
     pub patches: HashMap<i64, u32>,
     /// the frame counters that move by the game time due (fps::counters; main's, as the patches: empty for a stand-in)
     pub fps_counters: std::collections::HashSet<i64>,
+    /// [witchtime] this main is Bayonetta 3 (PRJ_040): only then do its address tables (host overrides, UI sites, the
+    /// Options rows, the frame counters) apply; program 1 of the same game (the picture book, PRJ_041) has other code
+    pub b3: bool,
 }
 
 /// .text size (the first PT_LOAD) and the DYNAMIC tags (first value of each tag).
@@ -57,6 +60,17 @@ pub fn layout(img: &[u8]) -> (i64, HashMap<i64, u64>) {
     }
 }
 
+/// [witchtime] the module path at the start of main's rodata (the second PT_LOAD) names the project: Bayonetta 3 is
+/// "...\PRJ_040.nss" (program 1 of the same game, the picture book, is PRJ_041)
+fn is_b3(img: &[u8]) -> bool {
+    let phoff = u64_at(img, 0x20) as usize;
+    let ro = (0..u16_at(img, 0x38) as usize).map(|i| phoff + i * 0x38).filter(|&p| u32_at(img, p) == 1).nth(1);
+    let Some(p) = ro else { return false };
+    let off = u64_at(img, p + 8) as usize;
+    let len = (u32_at(img, off + 4) as usize).min(0x200);
+    img.get(off + 8..off + 8 + len).map_or(false, |s| s.ends_with(b"\\PRJ_040.nss"))
+}
+
 impl Image {
     /// main.elf: BASE 0x7100000000, layout from the ELF.
     pub fn main(img: Vec<u8>) -> Image {
@@ -74,6 +88,7 @@ impl Image {
             strtab: g(5),
             patches: HashMap::new(),
             fps_counters: Default::default(),
+            b3: is_b3(&img),
             img,
         }
     }

@@ -26,10 +26,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-const STEPS: [&str; 10] = ["deps", "verify", "convert", "mods", "tables", "lift", "compile", "link", "text", "check"];
+const STEPS: [&str; 11] = ["deps", "verify", "convert", "mods", "tables", "lift", "compile", "link", "book", "text", "check"];
 /// cheap: deps finds the tools every later step uses, mods notices a changed mods folder
 const ALWAYS: [&str; 2] = ["deps", "mods"];
-const REDO_ON_UPDATE: [&str; 6] = ["tables", "lift", "compile", "link", "text", "check"];
+const REDO_ON_UPDATE: [&str; 7] = ["tables", "lift", "compile", "link", "book", "text", "check"];
 
 // ---- the one version this port handles
 const VERSION: &str = "the build with main build ID b47cc79b88b7091e";
@@ -937,6 +937,73 @@ fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     Ok(())
 }
 
+/// [witchtime] program 1 of the application (issue 115): the Old Picture Book's story (the Bayonetta Origins prologue),
+/// which Bayonetta 3 starts with nn::oe::ExecuteProgram. From the dump's program1/ folder (exefs/ main, sdk, main.npdm and
+/// romfs/, extracted from the update as the game's own), when it has one: convert, tables, lift, compile and link on its
+/// own folders (layout.rs), into targets/program1 and build/program1. Without it the book cannot open; the rest plays.
+const PROGRAM1_EXEFS: [(&str, u64, &str); 3] = [
+    ("main", 12840018, "d6e43604b86503373c108e40800af680c8f4133d6d42af869f462a39dd7f3cdf"),
+    ("sdk", 5989236, "2a89fa1c0e677710e89ed29b578162affef530a0c9b8c93cda15d50a57a20d28"),
+    ("main.npdm", 1604, "060e9cc8c9541b245240ce76c44401a6984cc6f070e96d1d9ed428d553f05153"),
+];
+
+fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
+    let dump = need_dump(cx)?;
+    let src = Path::new(&dump).join("program1");
+    if !src.join("exefs").join("main").is_file() {
+        say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
+        return Ok(());
+    }
+    for (name, size, sha) in PROGRAM1_EXEFS {
+        let f = src.join("exefs").join(name);
+        let have = (fs::metadata(&f).map(|m| m.len()).unwrap_or(0), sha256_file(&f).unwrap_or_default());
+        if have != (size, sha.to_string()) {
+            return Err(Fail(format!(
+                "program1/exefs/{}: not the picture book's program of this version (size {}, SHA-256 {}); expected {} bytes, {}",
+                name, have.0, have.1, size, sha
+            )));
+        }
+    }
+    if !src.join("romfs").join("root_000.pkz").is_file() {
+        return Err(Fail("program1/romfs/root_000.pkz is missing: the picture book's program needs its romfs too".into()));
+    }
+    let repo = cx.root().to_path_buf();
+    crate::layout::set_program(1);
+    let r = build_program(cx, &repo, &src);
+    crate::layout::set_program(0);
+    r
+}
+
+fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
+    let (targets, build) = (crate::layout::targets(repo), crate::layout::build(repo));
+    let exefs = targets.join("exefs");
+    fs::create_dir_all(&exefs).map_err(|e| Fail(e.to_string()))?;
+    for (name, _, _) in PROGRAM1_EXEFS {
+        copy2(&src.join("exefs").join(name), &exefs.join(name)).map_err(|e| Fail(format!("program1/exefs/{}: {}", name, e)))?;
+    }
+    for name in ["main", "sdk"] {
+        convert_nso(&exefs.join(name), &exefs.join(format!("{}.elf", name))).map_err(|e| Fail(format!("program1 {}: {}", name, e)))?;
+    }
+    say(format!("  targets/program1/romfs: {}", place_folder(&targets.join("romfs"), &src.join("romfs"), cx.a.move_dump)?));
+    cx.logged("book-tables", |log| tables::run(repo, log))?;
+    let (elf, gen_eh) = (exefs.join("main.elf"), build.join("gen_eh"));
+    cx.logged("book-lift", |log| {
+        let img = fs::read(&elf).map_err(|e| format!("{}: {}", elf.display(), e))?;
+        lifter::eh::lift_main(&lifter::Image::main(img), &gen_eh, log).map(|_| ())
+    })?;
+    let (r, clang, jobs) = (cx.repo.clone(), cx.clang.clone(), cx.jobs);
+    let out = cx.logged("book-compile", |log| compile::run_step(&r, &clang, Target::host(), jobs, &child_env, log))?;
+    say(format!("  {}", out.lines().find(|l| l.starts_with("compiled ")).unwrap_or("compiled")));
+    cx.logged("book-link", |log| link::run_step(repo, &clang, Target::host(), &child_env, log))?;
+    for f in link_outputs(Target::host()) {
+        if !build.join(f).is_file() {
+            return Err(Fail(format!("build/program1/{} is missing after the link (see {})", f, cx.logs.join("book-link.log").display())));
+        }
+    }
+    say("  build/program1: the picture book's program is built");
+    Ok(())
+}
+
 fn step_text(cx: &mut Ctx) -> Result<(), Fail> {
     let root = cx.root().to_path_buf();
     let romfs = cx.targets.join("romfs");
@@ -1106,6 +1173,7 @@ pub fn main(args: &[String]) -> i32 {
             "lift" => step_lift,
             "compile" => step_compile,
             "link" => step_link,
+            "book" => step_book,
             "text" => step_text,
             _ => step_check,
         };

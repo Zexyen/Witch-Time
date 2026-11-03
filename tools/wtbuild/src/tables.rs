@@ -68,8 +68,8 @@ fn dynsyms(e: &Elf) -> Result<Vec<(String, u16, u64)>, String> {
 }
 
 pub fn run(root: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
-    let gen = root.join("runtime").join("gen");
-    let exefs = root.join("targets").join("exefs");
+    let gen = crate::layout::gen(root);
+    let exefs = crate::layout::targets(root).join("exefs");
     let rd = |p: &Path| fs::read(p).map_err(|e| format!("{}: {}", p.display(), e));
     let wr = |name: &str, s: &[u8]| fs::write(gen.join(name), s).map_err(|e| format!("{}: {}", name, e));
     // a release (git archive) or a fresh checkout has no runtime/gen/: nothing in it is tracked

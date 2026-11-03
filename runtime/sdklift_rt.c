@@ -184,7 +184,7 @@ void sdk_host_call(Ctx *c, int index) {
     if (!f) {
         const char *name = sdk_host_names[index];
         for (int i = 0; i < g_override_count && !f; i++) if (strcmp(g_override[i].name, name) == 0) f = g_override[i].fn;
-        if (!f) f = import_lookup(name);
+        if (!f) f = import_lookup_any(name);
         if (!f) {                                           /* malloc & co: functions the GAME defines and the SDK imports */
             uint64_t g = game_symbol(name);
             if (g) { call_indirect(c, g); return; }

@@ -138,10 +138,84 @@ static void oe_GetPerformanceMode(Ctx *c) {
     ImportFn op = import_lookup("_ZN2nn2oe16GetOperationModeEv");
     if (op) op(c); else RET(1);
 }
+/* nn::oe::GetPerformanceConfiguration(PerformanceMode): program 1 (the picture book) asks for the clock set of a mode.
+ * shortcut: one value for both modes, 0x00020003 (the docked default set; NOT VERIFIED against a console); model it per
+ * mode if the program draws differently by the answer */
+static void oe_GetPerformanceConfiguration(Ctx *c) { RET(0x00020003u); }
+
+/* [witchtime] the program switch (issue 115): the picture book on Bayonetta 3's shelf runs program 1 of the application
+ * (the Bayonetta Origins prologue), which runs program 0 again at its end. nn::oe::ExecuteProgram(index, param, size)
+ * ends this program on the console and starts the other one, which gets param from TryPopLaunchParameter. Here it
+ * writes the switch file (<userdata>/program_switch.bin, or WT_PROGRAM_SWITCH) and ends the process with exit code
+ * PROGRAM_SWITCH_EXIT; the launcher then starts program <index> (launcher/src/game_host.cpp). The file: "WTPS", the
+ * program index (u32), the size (u32), the parameter. The program started reads it once and deletes it. */
+#define PROGRAM_SWITCH_EXIT 86
+#define PROGRAM_SWITCH_MAX 0x10000
+static void switch_path(char *p, size_t n) {
+    const char *e = getenv("WT_PROGRAM_SWITCH"), *u = getenv("WT_USERDATA");
+    if (e && e[0]) snprintf(p, n, "%s", e);
+    else snprintf(p, n, "%s/program_switch.bin", u && u[0] ? u : "../userdata");
+}
+static uint8_t g_launch[PROGRAM_SWITCH_MAX];
+static int g_launch_size = -1;                           /* -1: this start did not come from a program switch */
+static volatile LONG g_launch_read;
+/* boot.c, before the game runs: the parameter a program switch left for this program (WT_PROGRAM = its index, 0 if
+ * unset), taken out of the file so a later plain start does not see it */
+void program_switch_take(void) {
+    char p[1024];
+    switch_path(p, sizeof p);
+    FILE *f = fopen(p, "rb");
+    if (!f) return;
+    uint8_t h[12];
+    const char *pe = getenv("WT_PROGRAM");
+    uint32_t want = pe ? (uint32_t)atoi(pe) : 0, index, size;
+    if (fread(h, 1, 12, f) == 12 && !memcmp(h, "WTPS", 4) && (memcpy(&index, h + 4, 4), memcpy(&size, h + 8, 4), index == want)
+        && size <= PROGRAM_SWITCH_MAX && fread(g_launch, 1, size, f) == size) {
+        g_launch_size = (int)size;
+        printf("program switch: started as program %u with a %u-byte launch parameter\n", index, size);
+    } else printf("program switch: %s is not for this program (%u), ignored\n", p, want);
+    fclose(f);
+    remove(p);
+}
+int program_switched_in(void) { return g_launch_size >= 0; }   /* nnfs.c PopOpenUsers: the previous program's user */
+/* bool TryPopLaunchParameter(size_t *out_size, void *buf, size_t buf_size): once, as the console's queue */
+static void oe_TryPopLaunchParameter(Ctx *c) {
+    if (g_launch_size < 0 || InterlockedExchange(&g_launch_read, 1)) { RET(0); return; }
+    size_t n = (size_t)g_launch_size < A2 ? (size_t)g_launch_size : (size_t)A2;
+    memcpy((void *)(uintptr_t)A1, g_launch, n);
+    wr64(A0, (uint64_t)g_launch_size);
+    RET(1);
+}
+static void oe_ExecuteProgram(Ctx *c) {
+    char p[1024];
+    uint32_t index = (uint32_t)A0, size = (uint32_t)(A2 < PROGRAM_SWITCH_MAX ? A2 : PROGRAM_SWITCH_MAX);
+    switch_path(p, sizeof p);
+    FILE *f = fopen(p, "wb");
+    int ok = f && fwrite("WTPS", 1, 4, f) == 4 && fwrite(&index, 4, 1, f) == 1 && fwrite(&size, 4, 1, f) == 1
+             && fwrite((const void *)(uintptr_t)A1, 1, size, f) == size;
+    if (f && fclose(f)) ok = 0;
+    printf("\nprogram switch: ExecuteProgram(%u, %u bytes) %s %s\n", index, size, ok ? "written to" : "COULD NOT BE WRITTEN to", p);
+    report_and_exit(ok ? PROGRAM_SWITCH_EXIT : 5);
+}
 
 /* nn::hid::GetMouseState(MouseState *): no mouse on the console side (the PC mouse drives the camera through nnpad);
  * samplingNumber, x, y, deltas, wheel, buttons, attributes all 0 = not connected. */
 static void hid_GetMouseState(Ctx *c) { memset((void *)(uintptr_t)A0, 0, 40); }
+/* [witchtime] program 1 (the picture book). GetTouchScreenStates<1>(TouchScreenState<1> *, int count): one state with no
+ * touch (samplingNumber 0, count 0, the touch record zero; 0x38 bytes) = nobody touches the screen. */
+static void hid_GetTouchScreenStates1(Ctx *c) { if ((int)A1 < 1) { RET(0); return; } memset((void *)(uintptr_t)A0, 0, 0x38); RET(1); }
+/* GetVibrationDeviceInfo(VibrationDeviceInfo *, handle): {type 1 = linear resonant actuator, position} as a Pro
+ * Controller's two motors; the position is the handle's device index (byte 3: 0 left, 1 right) */
+static void hid_GetVibrationDeviceInfo(Ctx *c) { wr32(A0, 1); wr32(A0 + 4, rd32(A1) >> 24 & 1); }
+/* clock(): the time since the start in microseconds (the SDK's musl: CLOCKS_PER_SEC 1000000). shortcut: wall time, not
+ * CPU time; program 1 only measures intervals with it */
+static void c_clock(Ctx *c) {
+    static LARGE_INTEGER f, t0;
+    LARGE_INTEGER t;
+    if (!f.QuadPart) { QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0); }
+    QueryPerformanceCounter(&t);
+    RET((uint64_t)((t.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart));
+}
 
 /* libc++ threads (Nintendo's libc++ on nn::os). __libcpp_thread_get_current_id: a value that is the same on every call
  * from one thread and differs between threads, never 0 (0 is "no thread"; protobuf's init-recursion check compares it). */
@@ -213,6 +287,8 @@ static const ImportDef b3_imports[] = {
     {"_ZN2nn2fs25GetCurrentThreadFsContextEv", fs_GetCurrentThreadFsContext},
     {"_ZN2nn2fs25SetCurrentThreadFsContextEPKNS0_9FsContextE", fs_SetCurrentThreadFsContext},
     {"_ZN2nn2oe18GetPerformanceModeEv", oe_GetPerformanceMode},
+    {"_ZN2nn2oe27GetPerformanceConfigurationENS0_15PerformanceModeE", oe_GetPerformanceConfiguration},
+    {"_ZN2nn2oe14ExecuteProgramEiPKvm", oe_ExecuteProgram}, {"_ZN2nn2oe21TryPopLaunchParameterEPmPvm", oe_TryPopLaunchParameter},
     {"_ZN2nn2oe28SetResumeNotificationEnabledEb", nothing},
     {"_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb", nothing},
     {"_ZN2nn2oe38SetUserInactivityDetectionTimeExtendedEb", nothing},
@@ -222,6 +298,9 @@ static const ImportDef b3_imports[] = {
     {"_ZN2nn3hid15InitializeMouseEv", nothing},
     {"_ZN2nn5audio41GetActiveAudioDeviceChannelCountForOutputEv", ret2},          /* the host output is opened as stereo */
     {"_ZN2nn3hid13GetMouseStateEPNS0_10MouseStateE", hid_GetMouseState},
+    {"_ZN2nn3hid20GetTouchScreenStatesILm1EEEiPNS0_16TouchScreenStateIXT_EEEi", hid_GetTouchScreenStates1},
+    {"_ZN2nn3hid22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE", hid_GetVibrationDeviceInfo},
+    {"clock", c_clock},
     {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE", ret0},   /* the applet: "controllers are fine" */
 };
 

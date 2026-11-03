@@ -64,6 +64,7 @@ M2F(m_atan2f, atan2f) M2F(m_powf, powf) M2F(m_fmodf, fmodf)
 M1D(m_sin, sin) M1D(m_cos, cos) M1D(m_tan, tan)
 M1D(m_exp, exp) M1D(m_log, log) M1D(m_log2, log2) M1D(m_log10, log10)
 M2D(m_pow, pow) M2D(m_fmod, fmod)
+M1F(m_sinhf, sinhf) M1F(m_coshf, coshf) M1F(m_asinhf, asinhf) M1F(m_acoshf, acoshf) M1D(m_sqrt, sqrt)    /* [witchtime] program 1 */
 
 static const ImportDef base_imports[] = {
     {"memalign", i_aligned_alloc},
@@ -79,6 +80,7 @@ static const ImportDef base_imports[] = {
     {"sin", m_sin}, {"cos", m_cos}, {"tan", m_tan},
     {"exp", m_exp}, {"log", m_log}, {"log2", m_log2}, {"log10", m_log10},
     {"pow", m_pow}, {"fmod", m_fmod},
+    {"sinhf", m_sinhf}, {"coshf", m_coshf}, {"asinhf", m_asinhf}, {"acoshf", m_acoshf}, {"sqrt", m_sqrt},
 };
 
 void register_sdk_imports(void);         /* nnsdk.c */
@@ -324,6 +326,7 @@ static int b3_main(int argc, char **argv) {
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
     { void register_r2_imports(void); register_r2_imports(); }   /* [Recomps#1] R2: our SDK 3.6.0 imports (r2_imports.c); register_sdk2 below only fills gaps */
     { void register_b3_imports(void); register_b3_imports(); }   /* [witchtime] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
+    { void program_switch_take(void); program_switch_take(); }   /* [witchtime] a launch parameter left by the other program (issue 115) */
     { void options_row_install(void); options_row_install(); }   /* [witchtime] the PC Settings row of the game's Options screen */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / WT_STRICT (plan\FAKE_AUDIT.md) */

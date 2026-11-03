@@ -46,7 +46,7 @@ const SDKA: [&str; 15] = [
 fn game_only(shim: &str) -> BTreeSet<String> {
     shim.lines()
         .filter_map(|l| {
-            let hex = l.strip_prefix("void f_71")?;
+            let hex = l.strip_prefix("B3_FN ").unwrap_or(l).strip_prefix("void f_71")?; // B3_FN: a weak reference (#115)
             let n = hex.bytes().take_while(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')).count();
             (n > 0 && hex[n..].starts_with("(Ctx *c);")).then(|| format!("f_71{}", &hex[..n]))
         })
@@ -238,7 +238,7 @@ mod tests {
     fn game_functions() {
         // a definition, an indented line, no digits, upper case and another prefix do not count
         let shim = [
-            "void f_7100b382c0(Ctx *c);",
+            "B3_FN void f_7100b382c0(Ctx *c);",
             "void f_71007e1fe4(Ctx *c);  /* x */",
             "void f_7100b382c0(Ctx *c) {",
         ]

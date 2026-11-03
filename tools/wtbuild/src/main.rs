@@ -4,6 +4,7 @@ mod fps_census;
 mod freestanding_check;
 #[cfg(test)]
 mod golden;
+mod layout;
 mod lifter;
 mod link;
 mod lprof;
@@ -52,7 +53,13 @@ fn print_all(lines: Result<Vec<String>, String>) {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // [witchtime] --program N: the tables, compile and link commands work on program N's folders (layout.rs)
+    if let Some(i) = args.iter().position(|a| a == "--program") {
+        let p = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or_else(|| die("--program needs a number"));
+        layout::set_program(p);
+        args.drain(i..i + 2);
+    }
     match args.first().map(String::as_str) {
         Some("lift-words") => {
             // lines "<word hex> <pc hex> <entry hex> <end hex>" on stdin -> one statement per line

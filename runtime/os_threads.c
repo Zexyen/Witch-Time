@@ -335,6 +335,7 @@ static void os_SetThreadName(Ctx *c) {               /* the guest string may be 
 static void os_GetCurrentThread(Ctx *c) { RET(t_thread ? t_thread : (uint64_t)g_main_thread); }
 static Obj *thread_obj(uint64_t key);
 static void os_GetThreadId(Ctx *c) { Obj *o = obj(A0); RET(o->thread ? GetThreadId(o->thread) : GetCurrentThreadId()); }
+static void os_GetThreadCurrentPriority(Ctx *c) { Obj *o = obj(A0 ? A0 : (uint64_t)(uintptr_t)g_main_thread); RET((uint64_t)(o->priority ? o->priority : OS_DEFAULT_PRIORITY)); }   /* [witchtime] program 1 */
 static void os_YieldThread(Ctx *c) { (void)c; SwitchToThread(); }
 static void os_SleepThread(Ctx *c) { sleep_ns((int64_t)A0); }
 /* Core numbers and affinity masks. The console runs the application on cores 0..2 (GetThreadAvailableCoreMask = 7);
@@ -480,6 +481,8 @@ static void ev_timedwait(Ctx *c) { uint64_t k_ = A0; L1O("event timedwait >", k_
 static void cv_wait(Ctx *c) { uint64_t k_ = A0; L1O("cv wait >", k_); SleepConditionVariableCS(&obj(A0)->cv, &obj(A1)->cs, INFINITE); L1O("cv wait <", k_); }
 static void cv_signal(Ctx *c) { L1O("cv SIGNAL", A0); WakeConditionVariable(&obj(A0)->cv); }
 static void cv_broadcast(Ctx *c) { L1O("cv BROADCAST", A0); WakeAllConditionVariable(&obj(A0)->cv); }
+/* [witchtime] program 1 (the picture book): nn::os::ConditionVariableStatus, 0 timed out, 1 woken */
+static void cv_timedwait(Ctx *c) { RET(SleepConditionVariableCS(&obj(A0)->cv, &obj(A1)->cs, ns_to_ms((int64_t)A2)) ? 1 : 0); }
 
 /* ---------------------------------------------------------------- semaphores */
 static void sem_init(Ctx *c) { obj_reset(A0); Obj *o = obj(A0); o->count = (int)A1; o->max = (int)A2; }
@@ -624,6 +627,7 @@ static const ImportDef thread_imports[] = {
     {OS("26GetThreadAvailableCoreMaskEv"), os_AvailableCoreMask},
     {OS("16GetCurrentThreadEv"), os_GetCurrentThread},
     {OS("11GetThreadIdEPKNS0_10ThreadTypeE"), os_GetThreadId},
+    {OS("24GetThreadCurrentPriorityEPKNS0_10ThreadTypeE"), os_GetThreadCurrentPriority},
     {OS("11YieldThreadEv"), os_YieldThread}, {OS("11SleepThreadENS_8TimeSpanE"), os_SleepThread},
     {OS("15AllocateTlsSlotEPNS0_7TlsSlotEPFvmE"), os_AllocateTlsSlot}, {OS("18SdkAllocateTlsSlotEPNS0_7TlsSlotEPFvmE"), os_AllocateTlsSlot},
     {OS("11FreeTlsSlotENS0_7TlsSlotE"), os_FreeTlsSlot}, {OS("11GetTlsValueENS0_7TlsSlotE"), os_GetTlsValue}, {OS("11SetTlsValueENS0_7TlsSlotEm"), os_SetTlsValue},
@@ -642,6 +646,7 @@ static const ImportDef thread_imports[] = {
     {OS("18TryWaitSystemEventEPNS0_15SystemEventTypeE"), ev_trywait}, {OS("15WaitSystemEventEPNS0_15SystemEventTypeE"), ev_wait},
     {OS("27InitializeConditionVariableEPNS0_21ConditionVariableTypeE"), mtx_init}, {OS("25FinalizeConditionVariableEPNS0_21ConditionVariableTypeE"), nothing},
     {OS("21WaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeE"), cv_wait},
+    {OS("26TimedWaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeENS_8TimeSpanE"), cv_timedwait},
     {OS("23SignalConditionVariableEPNS0_21ConditionVariableTypeE"), cv_signal}, {OS("26BroadcastConditionVariableEPNS0_21ConditionVariableTypeE"), cv_broadcast},
     {"pthread_cond_broadcast", cv_broadcast}, {"pthread_cond_destroy", ret0},
     {OS("19InitializeSemaphoreEPNS0_13SemaphoreTypeEii"), sem_init}, {OS("17FinalizeSemaphoreEPNS0_13SemaphoreTypeE"), nothing},

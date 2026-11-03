@@ -55,7 +55,7 @@ Setup puts the game data (the dump's `romfs`) in `targets/romfs`, so the Witch T
 moved anywhere: copied by default (hard links on the same drive, so no extra space, and your dump stays whole), or moved
 with `--move-dump` (the launcher's "Move the game data here" switch).
 
-The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
+The steps (`deps verify convert mods tables lift compile link book text check`, resumable; `--only`, `--from`, `--status`)
 are described in `tools/wtbuild/README.md`, "Steps". The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
 
 ## Build (Windows)
@@ -79,6 +79,16 @@ when it is missing. The game runs as `build\witch-time-game.exe`, with its own w
 Building the runtime yourself (a checkout, or a changed `runtime\`) needs llvm-mingw and the MinGW builds of SDL3,
 FFmpeg, glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-builds all of it on Linux
 (`.github/workflows/release.yml`, job `windows`): `wtbuild runtime --target windows --out prebuilt`.
+
+## The picture book
+
+The Old Picture Book (Rodin's Treasures, then the shelf of the chapter-select room) opens a second program of the game:
+program 1 of its update (title ID 01004A4010FEA001, update 1.2.0), the Bayonetta Origins prologue. Your dump needs it as
+a `program1/` folder beside `exefs/` and `romfs/`: `program1/exefs/` (`main`, `sdk`, `main.npdm`) and
+`program1/romfs/` (36 files, 361 MB), extracted with your own tools from that program of your own update, as you did
+for the game. The `book` step checks and builds it into `build/program1` (about 3 minutes); without the folder it is
+skipped and opening the book says so. In the game, yes on "Open the book?" ends Bayonetta 3 and starts the prologue;
+its end starts Bayonetta 3 again, back in the chapter-select room. Both use the same save folder and settings.
 
 ## Credits
 

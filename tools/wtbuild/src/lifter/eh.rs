@@ -102,6 +102,9 @@ const OPTX_PAGE: i64 = 0x7105a00000;
 
 /// [witchtime] the PC settings rows of the Options screen: instruction patches.
 pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
+    if !im.b3 {
+        return Ok(()); // another program: these addresses are Bayonetta 3's
+    }
     fn adrp(rd: u32, pc: i64, target: i64) -> u32 {
         let imm = (((target >> 12) - (pc >> 12)) & 0x1fffff) as u32;
         0x90000000 | (imm & 3) << 29 | (imm >> 2) << 5 | rd
@@ -413,11 +416,11 @@ struct FullEnv {
 }
 
 impl FullEnv {
-    fn new() -> FullEnv {
+    fn new(b3: bool) -> FullEnv {
         FullEnv {
             wanted: Vec::new(),
             wanted_set: HashSet::new(),
-            overrides: HOST_OVERRIDES.iter().cloned().collect(),
+            overrides: if b3 { HOST_OVERRIDES.iter().cloned().collect() } else { HashMap::new() },
         }
     }
     fn want(&mut self, a: i64) {
@@ -487,7 +490,7 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
     let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
     let mut lines = lines;
-    for (pc, stmt) in lines.iter_mut() {
+    for (pc, stmt) in lines.iter_mut().filter(|_| im.b3) {
         if let Some(&(_, r)) = UI_SIZE_SITES.iter().find(|s| s.0 == *pc) {
             for (bits, f) in [("0x44a00000", "wt_ui_w_bits"), ("0x44340000", "wt_ui_h_bits")] {
                 if *stmt == format!("c->x[{}] = (uint32_t)({}ULL);", r, bits) {
@@ -575,7 +578,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
         let results: Vec<(usize, usize, Vec<i64>)> = pending
             .par_chunks(400)
             .map(|part| {
-                let (mut plt, mut env) = (Plt::new(), FullEnv::new());
+                let (mut plt, mut env) = (Plt::new(), FullEnv::new(im.b3));
                 let (mut n, mut b) = (0, 0);
                 for &a in part {
                     let (_, k, kb, _) = lift_function(&cx, &mut plt, &mut env, a);
@@ -625,7 +628,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     let written: Vec<Result<(String, bool, Vec<(i64, i64)>), String>> = jobs
         .par_iter()
         .map(|(name, entries)| {
-            let (mut plt, mut env) = (Plt::new(), FullEnv::new());
+            let (mut plt, mut env) = (Plt::new(), FullEnv::new(im.b3));
             let mut texts = Vec::with_capacity(entries.len());
             let mut resume = Vec::new();
             for &a in entries {
