@@ -107,6 +107,8 @@ static const Row k_rows[] = {
      {"game", "highest"}, {"Game", "Highest"}},
     {"film_grain", "Film grain", "The game's moving noise over the picture. Off: a clean picture; the vignette stays.", NULL, "on", A_LIVE, 0,
      {"on", "off"}, {"On", "Off"}},
+    {"upscaler", "Anti-aliasing", "FSR 3.1 (experimental): jagged edges, shimmer and the screen-door of fading objects are smoothed over frames. Moving characters can leave faint trails.", "WT_UPSCALER", "off", A_LIVE, 0,
+     {"off", "fsr3"}, {"Game", "FSR 3.1"}},
     {"aspect", "Picture fit", "Keep shape: the picture keeps its shape, with black bars on a window of another shape. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep shape", "Stretch"}},
     {"aspect_ratio", "Aspect ratio", "Fixed: the game's 16:9. Unlocked: the window's shape at the start (borderless and fullscreen: the monitor's); wider shows more at the sides, narrower more above and below.", "RECOMPS_ASPECT", "16:9", A_RESTART, 0,

@@ -161,6 +161,13 @@ static const char *const k_default_ini =
 ";   on: the game's moving noise over the picture. off: a clean picture; the vignette stays. Applies while the game runs.\r\n"
 "film_grain = on\r\n"
 "\r\n"
+"; upscaler = off | fsr3      (Vulkan; experimental)\r\n"
+";   fsr3: AMD FSR 3.1 as anti-aliasing at the internal resolution: jagged edges, shimmer and the screen-door of fading\r\n"
+";   objects are smoothed over frames.\r\n"
+";   Characters and effects that move on their own can leave faint trails. About 0.5 to 2 ms of\r\n"
+";   GPU time a frame, more at higher internal resolutions. Applies while the game runs.\r\n"
+"upscaler = off\r\n"
+"\r\n"
 "; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
 ";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
 ";   less work for the CPU, and a sharper picture. The launcher makes that folder after a build, about 16 GB: 12 minutes on 4\r\n"
@@ -261,6 +268,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "latency")) g_gfx_latency = !_stricmp(val, "lowest") ? 2 : !_stricmp(val, "low") ? 1 : 0;      /* track L1 (display.c latency_mode) */
         else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
+        else if (!_stricmp(key, "upscaler")) o->upscaler = !_stricmp(val, "fsr3");      /* [witchtime] issue 118 */
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
         else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
@@ -279,6 +287,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
+    if (getenv("WT_UPSCALER")) o->upscaler = !_stricmp(getenv("WT_UPSCALER"), "fsr3");      /* [witchtime] issue 118 */
     {   /* [witchtime] texture_lod_bias: WT_TEXTURE_LOD_BIAS wins; -3 .. 3 */
         const char *e = getenv("WT_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
@@ -493,7 +502,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
-    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain;
+    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);
     return 1;

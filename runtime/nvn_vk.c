@@ -642,3 +642,4 @@ void nvn_vk_selftest_hook(void) {
 
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
 #include "nvn_vk_pcmenu.c"                                 /* [witchtime] the PC settings menu on the screen */
+#include "nvn_vk_fsr.c"                                    /* [witchtime] issue 118: FSR 3.1 as anti-aliasing */

@@ -84,6 +84,7 @@ const std::vector<SettingDef>& setting_defs()
 			{{"-1", "–1"}, {"-0.5", "–0.5"}, {"0", "0 — game"}, {"0.5", "+0.5"}, {"1", "+1"}}, 1, "0"},
 		{"model_lod", "Model detail", "Highest keeps the finest detail at any distance", {{"game", "Game"}, {"highest", "Highest"}}, 1},
 		{"film_grain", "Film grain", "The game's moving noise; the vignette stays", {{"on", "On"}, {"off", "Off"}}, 1},
+		{"upscaler", "Anti-aliasing", "FSR 3.1 smooths edges over frames (experimental)", {{"off", "Game"}, {"fsr3", "FSR 3.1"}}, 1},
 		{"aspect", "Picture fit", "Keep the picture's shape, or fill the window", {{"keep", "Keep shape"}, {"stretch", "Stretch"}}, 1},
 		{"aspect_ratio", "Aspect ratio", "Unlocked takes the window's shape; next start", {{"16:9", "Fixed"}, {"auto", "Unlocked"}}, 1},
 		{"hud_area", "HUD layout", "Wider than 16:9: HUD at the edges, or centred", {{"screen", "Full Screen"}, {"16:9", "Centered"}}, 1},

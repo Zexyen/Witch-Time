@@ -788,6 +788,66 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
     function pointer.
   The temporary overrides were removed.
 
+## FSR 3.1 as anti-aliasing (issues 118, 119; 2026-11-03; experimental)
+
+`upscaler = fsr3` (graphics.ini, PC settings "Anti-aliasing", the launcher; `WT_UPSCALER` wins; off by default): AMD FSR
+3.1.4 at the internal resolution (render size = output size, AMD's "native AA"), with no AMD binary: the upscaler's GLSL
+from the FidelityFX SDK v1.1.4 (MIT, `runtime/third_party/fsr3`, 27 files) compiled by our glslang at first use (8 compute
+pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/nvn_vk_fsr.c`) that follows the SDK's
+`ffx_fsr3upscaler.cpp` for constants, resources, clears and the order of the passes.
+- **The engine draws no motion vectors.** Its motion-blur and velocity programs (`reconstructionblur` and its tile passes,
+  `FilterShaderCameraVelocity`, `ZLinearCamVelocity`, `modelshadervelocitymap(scr)`, `VelocityMap_*`, `CnsVelocity*`) are built at
+  load (`f_71006a2408`, `f_71006a55b0`) but no code binds them for a draw: the one material lookup `f_7100d47e8c` is called with
+  slot 3 (the velocity technique) NULL (`0x71007f5058`), the per-type binder `f_7100d5740c` is reachable only from technique
+  objects no list holds, and pass 0x49 is begun and cleared to zero velocity every frame with no draw. No pipeline with any of
+  these stages was ever made in five caches. So there is no flag to turn on; the inputs are made here.
+- **Jitter**: `h_cam_upload` (game_shim_eh.c; the direct call at `0x7100cbb4d4` to the camera upload `f_7100cb9440`). The
+  scene binds the record `*(*(0x710249d0d8) + 0x16d0)` of the pool `*(0x71024ac350)` (`0x71006888dc`); while the runtime runs FSR
+  (`game_fsr_w` / `_h`, the scene image's size) that record is uploaded every frame with its projection (+0x40) and view-
+  projection (+0x80) shifted by FSR's Halton(2,3) step (8 phases at 1:1), then both and the copies made from them (+0x1b0, when
+  +0x400 is set) are put back. Shadows (c8), the full-screen filters (c4) and the HUD (its own cameras) do not read that buffer.
+- **Motion vectors**: one compute pass at the scene's size from its depth (D24S8, 0 near, 1 far) and this and the last
+  frame's view-projection without jitter, both read from c3 of the scene's draws (rows 32..47; the jitter back from [0][2] and
+  [1][2], which are 0 in the game's projection). Everything that moves on its own gets the camera's motion only.
+- **Where**: on the scene's HDR colour (R11G11B10F) after the transparents, at the first bloom downsample of the frame that
+  reads it (`stage_fx` FX_DOWN: `filterdownsample.pso`, `filterbloomwithdownsample.pso` of shader.dat; the tonemaps as a
+  fallback); the result is copied back, so bloom, exposure, the tonemap, the grain, FXAA and the HUD run as before. FSR's
+  auto-exposure; no reactive or transparency mask; no sharpening.
+- **Measured** (Linux, RX 9070 XT, RADV, the issue-72 save: Chapter 2's start, its cutscene, the track fight; hidden window):
+  at 1.0 the first run happens before a bloom downsample, the jitter follows the sequence, 1800 frames had 11 history
+  resets (dynamic-resolution level changes and guessed camera cuts). Rails, the platform edge and the canopy lose their steps
+  and crawl (`~/.cache/wt-118/impl/cmp`); the gravel is a little softer. At 2.4 (the fight at 3456x1958, the game's 1440x816
+  level) FSR and its copy take 1.59 ms of GPU a frame (`WT_VK_PASSTIME`): 6.12 against 4.69 ms in marked segments over 9,914
+  fight frames; frame times equal (21.8 ms mean over the route, which waits on the CPU). Validation layer: no message of ours.
+- **The dither (step 2)**: fading objects (LOD cross-fades, objects near the camera) discard in their depth pre-pass (ZMap_*,
+  492 stages) against a 64 x 64 RGBA8 pattern at the pixel, `texelFetch(t14, uint(gl_FragCoord) & 63)`, threshold
+  R * c7[4] + G * c7[5]. The game's pattern (read back): R 1 .. 254 in 2 x 2 blocks, none in 96 .. 127, G = 255 - R exactly,
+  so the two meshes of a cross-fade (weights (1, 0) and (0, 1), alphas a and 1 - a) cover each pixel once; nothing in it changes
+  from frame to frame (the weights alternate per object, not per frame). While FSR runs, every draw into a scene depth that
+  samples that texture at unit 14 gets one of 13 phases of it (`runtime/fsr_dither.h`, `tests/fsr_dither_test.c`): phase p gives
+  each texel the thresholds of the texel p * 4096 / 13 places further in the order of R (ranks, not values, because of the
+  uneven histogram), so every frame is a permutation of the game's own values and covers exactly what the game's pattern covers;
+  over frames (order 8 * frame mod 13, about the golden ratio, coprime with the 8 steps of the jitter) a pixel is drawn in that
+  same share, within a frame over any 3 frames in a row on the game's real pattern, and FSR's history averages it. The texture
+  is learnt from a depth-only draw into the scene's depth, read back once (one GPU wait) and used only if it is that kind of
+  pattern (unit 14 is an ordinary material texture in about 1,500 other stages; the effects read another 64 x 64 texture there
+  by screen position, left alone). Shadow casters keep the game's pattern. Measured on a billboard during a cross-fade of the
+  route's cutscene (frame 3702, every pattern draw forced to discard where R > 0.5 by a test switch, since removed): relative
+  hole energy 0.76-0.93 before FSR; after FSR 0.13 with the phases against 0.37 with the game's fixed pattern (which the jitter
+  only blurs: 0.30, 0.23 the next two frames). The route's fades last about 10 frames; a long fade near the camera (the
+  reporter's case) was not on it. `WT_FSR_DITHER=0` (TEST): the game's pattern with FSR; `=alt`: fixed in every other 30 frames.
+- **Not done**: Bayonetta's whipping hair and fast limbs smear a little (camera vectors only; per-object vectors would need the
+  game's velocity vertex stage, `modelshadervelocitymap.vso`, drawn again, or a previous-position output in the translator).
+  Each change of the game's dynamic-resolution level (8 sets, 1600x896 .. 640x360;
+  10 in 3.5 minutes of the route, mostly around the cutscene) makes the resources again and resets the history; making every
+  report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was taken
+  out. No real upscaling yet (quality modes need a second scale for the images after FSR). Not run on Windows, the Deck,
+  Android, NVIDIA or Intel.
+- **FSR 4 and frame generation**: FSR 4.1.2 on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000
+  and newer); Adrenalin does not upgrade a Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping
+  them: at most a DLL the player adds. AMD's frame-generation swapchain wants four queues and its own present thread, against
+  display.c's pacing (issue 119 waits on this).
+
 ## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
 
 **First step done (2026-10-27): `frame_rate = 61 .. 120` in graphics.ini.** `h_frame_clock` (`runtime/game_shim_eh.c`)

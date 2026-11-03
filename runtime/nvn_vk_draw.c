@@ -1733,6 +1733,8 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
     return vt_view(vt, &e, -1, 1);
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
+static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
+static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
@@ -1953,6 +1955,7 @@ static void resolve_sampler(int s, VStage *v, int i) {
         Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
         if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
         VTex *vt = vt_get(t);
+        VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's shifted dither while FSR runs (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
         if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
         EView e;
@@ -1967,6 +1970,7 @@ static void resolve_sampler(int s, VStage *v, int i) {
             if (attached && have_targets_live()) { if (!vt->feedback) { vt->feedback = 1; R.feedback++; pass_end(); } vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL); }
             else vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             g_dtex[g_ndtex].view = vt_view(vt, &e, dim, 0); g_dtex[g_ndtex].layout = vt->layout;
+            if (dither && dim == DIM_2D) { g_dtex[g_ndtex].view = dither; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_GENERAL; }
         } else { static int n; R.dummy_kind++;
             if (n < 3) printf("nvn_vk: (detail of the next line) frame %lld, program #%d, texture format 0x%x, %d x %d x %d, %d levels, draws so far with a dummy for a view-kind mismatch: %lld\n", (long long)nvn_front_frame_next(), R.prog[s] ? R.prog[s]->serial : -1, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), (long long)R.dummy_kind);
             if (n++ < 20) printf("nvn_vk: texture unit %u of the %s stage: the shader declares view kind %d, the texture is kind %d (target %d, %d samples): a dummy is bound\n", u, s ? "fragment" : "vertex", dim, have, e.target, vt->samples); }
@@ -3214,6 +3218,7 @@ static int draw_prepare(unsigned prim) {
     if (tess) { sv[nsv] = tcs; sx[nsv++] = 3; sv[nsv] = tes; sx[nsv++] = 4; }
 
     PT(0);
+    fsr_draw(fs);                                  /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass) */
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
     g_movie_y = 0; g_fs_screen = g_fs_small = 0;
@@ -4836,6 +4841,7 @@ static void vk_present2(void *arg, int progress) {
         if (wt > 0 && frame == wt && !progress) { printf("nvn_vk_watchdog: TEST: the render thread is held %d s at frame %lld (WT_VK_WD_TEST)\n", ws, (long long)frame); fflush(stdout); wt = -1; Sleep((DWORD)ws * 1000); }
     }
     if (progress) goto swap;
+    fsr_present();                                 /* [witchtime] issue 118 */
     if (g_tl_t0 && g_tl_first) { LONG64 now = tk(); g_tl_sum[0] += g_tl_first - g_tl_t0; g_tl_sum[1] += g_tl_last - g_tl_t0; g_tl_sum[2] += now - g_tl_t0; g_tl_n++; g_tl_first = 0; }
     if (g_pt_on > 0 && g_in_fight) g_pt_frames++;
     if (j->win) for (int i = 0; i < j->win->count && i < 8; i++) wintex_note(j->win->tex[i]);
@@ -5447,6 +5453,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < 8; i++) for (int k = 0; k < 2; k++) if (g_sem[i][k]) { vkDestroySemaphore(V.device, g_sem[i][k], NULL); g_sem[i][k] = NULL; }
     for (int i = 0; i < 16; i++) if (g_sem_img[i]) { vkDestroySemaphore(V.device, g_sem_img[i], NULL); g_sem_img[i] = NULL; }
     fl_shutdown();
+    fsr_shutdown();                                /* [witchtime] issue 118 (its images went with g_vtex_all) */
     hdr_views(0);                                  /* [Recomps#1] finding 147: the HDR pass */
     if (g_hdr.pipe) vkDestroyPipeline(V.device, g_hdr.pipe, NULL);
     if (g_hdr.pl) { vkDestroyPipelineLayout(V.device, g_hdr.pl, NULL); vkDestroyDescriptorSetLayout(V.device, g_hdr.dl, NULL); vkDestroyDescriptorPool(V.device, g_hdr.dp, NULL); vkDestroySampler(V.device, g_hdr.smp, NULL); }

@@ -122,6 +122,10 @@ int main(int argc, char **argv) {
     change(9, 1, 0); assert(gfx_options()->no_film_grain && !row_restart(9));
     assert(gfx_ini_get("film_grain", buf, sizeof buf) && !strcmp(buf, "off"));
     change(9, -1, 0); assert(!gfx_options()->no_film_grain);
+    assert(!gfx_options()->upscaler && g_cur[10] == 0);      /* issue 118: not in the file: off */
+    change(10, 1, 0); assert(gfx_options()->upscaler == 1 && !row_restart(10));
+    assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3"));
+    change(10, -1, 0); assert(!gfx_options()->upscaler);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
     pcmenu_take_work(); change(5, 1, 0); assert(row_restart(5) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */
