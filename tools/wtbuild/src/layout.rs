@@ -61,6 +61,9 @@ mod tests {
     fn program_folders() {
         let r = Path::new("/w");
         assert_eq!(folders(r, 0), ("/w/targets".into(), "/w/build".into(), "/w/runtime/gen".into()));
-        assert_eq!(folders(r, 1), ("/w/targets/program1".into(), "/w/build/program1".into(), "/w/build/program1/gen".into()));
+        assert_eq!(
+            folders(r, 1),
+            ("/w/targets/program1".into(), "/w/build/program1".into(), "/w/build/program1/gen".into())
+        );
     }
 }
