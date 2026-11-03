@@ -287,14 +287,29 @@ static void dump_guest_registers(void) {
 }
 
 /* ---------------------------------------------------------------- imports */
+/* [witchtime] handlers whose name this main does not import, kept for the lifted SDK's cut calls (sdk_host_call): program
+ * 1 (the picture book) imports less than Bayonetta 3, and its lifted SDK code still calls e.g. SdkMutexType::Lock */
+static ImportDef *g_spare;
+static int g_spare_n, g_spare_cap;
+
 void register_imports(const ImportDef *defs, int count) {
     for (int d = 0; d < count; d++) {
         int found = 0;
         for (int i = 0; i < dyn_sym_count; i++) {
             if (!dyn_syms[i].defined && strcmp(dyn_syms[i].name, defs[d].name) == 0) { g_handlers[i] = defs[d].fn; found = 1; }
         }
-        (void)found;
+        if (!found) {
+            if (g_spare_n == g_spare_cap) g_spare = realloc(g_spare, (size_t)(g_spare_cap = g_spare_cap ? g_spare_cap * 2 : 256) * sizeof *g_spare);
+            g_spare[g_spare_n++] = defs[d];
+        }
     }
+}
+
+/* import_lookup, or else the last handler registered under a name main does not import */
+ImportFn import_lookup_any(const char *name) {
+    ImportFn f = import_lookup(name);
+    for (int i = g_spare_n - 1; i >= 0 && !f; i--) if (strcmp(g_spare[i].name, name) == 0) f = g_spare[i].fn;
+    return f;
 }
 
 /* Handler currently registered for an imported function, or NULL (not imported / still a stub). */

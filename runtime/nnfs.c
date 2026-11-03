@@ -1122,6 +1122,12 @@ void acc_ListOpenUsers(Ctx *c) {
 }
 static void acc_TryOpenPreselectedUser(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); wr64(A0 + 16, 0); InterlockedExchange(&g_acc_user_open, 1); RET(1); }
 static void acc_GetUserId(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); RET(0); }
+/* [witchtime] the program switch of the picture book (issue 115): Bayonetta 3 pushes its open user before ExecuteProgram, program 1
+ * pops it at its start (or asks the user selector, or opens the user by its id): always the one local user */
+static void acc_open_handle(uint64_t h) { wr64(h, 1); wr64(h + 8, 0); wr64(h + 16, 0); InterlockedExchange(&g_acc_user_open, 1); }
+static void acc_PopOpenUsers(Ctx *c) { int program_switched_in(void); int n = (int)A2 > 0 && program_switched_in(); wr32(A0, (uint32_t)n); if (n) acc_open_handle(A1); RET(0); }
+static void acc_OpenUser(Ctx *c) { acc_open_handle(A0); RET(0); }
+static void acc_ShowUserSelector(Ctx *c) { wr64(A0, 1); wr64(A0 + 8, 0); RET(0); }
 static void acc_CloseUser(Ctx *c) { (void)c; }          /* the user stays open for the save-data checks (one user, one session) */
 /* The nickname of the console user is the name of the Windows user (WT_NICKNAME overrides): UTF-8, at most 32
  * bytes, NUL-terminated, in the 33-byte Nickname. */
@@ -1179,6 +1185,9 @@ static const ImportDef fs_imports[] = {
     {AC("10InitializeEv"), fs_ok},
     {AC("22TryOpenPreselectedUserEPNS0_10UserHandleE"), acc_TryOpenPreselectedUser},
     {AC("9CloseUserERKNS0_10UserHandleE"), acc_CloseUser},                                                                               /* [Recomps#1] */
+    {AC("13PushOpenUsersEv"), keep}, {AC("12PopOpenUsersEPiPNS0_10UserHandleEi"), acc_PopOpenUsers},                                  /* [witchtime] */
+    {AC("8OpenUserEPNS0_10UserHandleERKNS0_3UidE"), acc_OpenUser},
+    {AC("16ShowUserSelectorEPNS0_3UidERKNS0_21UserSelectionSettingsE"), acc_ShowUserSelector},
     {AC("9GetUserIdEPNS0_3UidERKNS0_10UserHandleE"), acc_GetUserId}, {AC("11GetNicknameEPNS0_8NicknameERKNS0_3UidE"), acc_GetNickname},
     {AC("36EnsureNetworkServiceAccountAvailableERKNS0_10UserHandleE"), acc_unavailable},
     {AC("12AsyncContextC1Ev"), keep}, {AC("12AsyncContextD1Ev"), keep},

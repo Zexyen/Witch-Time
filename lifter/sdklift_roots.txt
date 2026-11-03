@@ -63,3 +63,18 @@ vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 130 HalGM200_vt_130
 vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 140 HalGM200_vt_140
 vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 148 HalGM200_vt_148
 vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 160 HalGM200_vt_160
+
+# [witchtime] the SDK's own lock (it needs the kernel's thread handles and ArbitrateLock) goes to the runtime's handler
+# even when main does not import it: program 1 (the picture book) does not, and its lifted hid code locks one early
+cut _ZN2nn2os12SdkMutexType4LockEv
+cut _ZN2nn2os12SdkMutexType6UnlockEv
+
+# [witchtime] libc++ that program 1 (the picture book) imports from the sdk (Bayonetta 3 has its own copy): pure code
+_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7compareEmmPKcm
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKc
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE7replaceEmmPKc
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEaSERKS5_
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_
+_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_mmRKS4_
+_ZNSt3__16__sortIRNS_6__lessIjjEEPjEEvT0_S5_T_
