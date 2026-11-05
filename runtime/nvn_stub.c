@@ -134,6 +134,26 @@ static void nobj_drop(uint64_t key) {                                   /* the o
         if ((*pp)->key == key) { NvnObj *o = *pp; __atomic_store_n(pp, o->next, __ATOMIC_RELEASE); o->next = g_objs_free; g_objs_free = o; break; }
     ReleaseSRWLockExclusive(&g_objs_lock);
 }
+/* [witchtime] issues 132, 133: the NVN buffer that holds a GPU address: the bound of an index buffer whose indices a compute
+ * dispatch chooses (draw records written on the GPU). A locked walk over every object (tens of thousands, about 0.5 ms):
+ * nvn_vk_draw.c keeps the answer and checks it with nvn_stub_buffer_still. 1 = found (*key: the buffer object). */
+int nvn_stub_buffer_of(uint64_t addr, uint64_t *key, uint64_t *base, uint64_t *size) {
+    NvnObj *best = NULL;
+    AcquireSRWLockExclusive(&g_objs_lock);
+    for (int h = 0; h < 4096; h++)
+        for (NvnObj *o = g_objs[h]; o; o = o->next)
+            if (o->pool && o->size && addr >= o->memory && addr - o->memory < o->size && (!best || o->size < best->size)) best = o;      /* a buffer names its pool; the smallest that holds the address */
+    if (best) { *key = best->key; *base = best->memory; *size = best->size; }
+    ReleaseSRWLockExclusive(&g_objs_lock);
+    return best != NULL;
+}
+int nvn_stub_buffer_still(uint64_t key, uint64_t base, uint64_t size) {      /* the buffer object still exists with this range (lock-free, as nobj, never inserts) */
+    unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
+    int steps = 0;
+    for (NvnObj *o = __atomic_load_n(&g_objs[h], __ATOMIC_ACQUIRE); o && steps < 256; o = __atomic_load_n(&o->next, __ATOMIC_ACQUIRE), steps++)
+        if (__atomic_load_n(&o->key, __ATOMIC_RELAXED) == key) return o->pool && o->memory == base && o->size == size;
+    return 0;
+}
 void nvn_label_set(uint64_t obj, const char *text);                    /* nvn_gl.c */
 void nvn_label_drop(uint64_t obj);
 void nvn_gl_memory_written(uint64_t addr, uint64_t size);

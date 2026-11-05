@@ -1538,6 +1538,65 @@ where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bou
   49 frames over 50 ms in three Tokyo 1.0 runs of the same build). Not fixed.
 - No other hot spot stood out: render(host) is the top thread at 4.3-6.5 ms a frame.
 
+## The render thread and the GPU overlap (2026-11-05; issues 132, 133)
+
+Issue 133 (Windows, i9-10850K, RTX 5080, 3440x1440): 35 fps in Shibuya with CPU 19 % and GPU 51 %; issue 132: the Steam
+Deck cannot hold 60. **Cause**: the render thread and the GPU took turns. Wherever the replay needed a result the GPU
+writes, it submitted and waited for everything queued, the previous frame included, so a frame cost the replay's CPU time
+plus the GPU's time and neither looked busy. Measured on the RX 9070 XT at the issue's shape (aspect 21:9, resolution
+scale 2.4, the GPU at 11-15 ms a frame): frames whose GPU work took 14-16 ms were 98 % late, at 20 ms on average, though the
+GPU alone fits in 16.7 ms. The sampler (`WT_LPROF`, waits sorted by caller) had the render thread 57 % in `slot_wait`: 33 %
+in the batch-start `cb_sync`, 24 % in `indirect_src`. A Windows RX 6700 XT player's log shows the same (12.9 ms of GPU
+wait in a 17.4 ms replay at 48 fps).
+
+What B3 does in a Shibuya frame (`WT_VK_DRAWLOG` with the new DLI / DLG lines): the CPU clears a 0x14000-byte count
+buffer (two, used in turn); the depth prepass's fragment shaders store each object's visibility into it; about 370
+objects are then drawn as `nvnCommandBufferMultiDrawElementsIndirect` with `maxDrawCount` 1, the record in guest memory
+and the count (0 or 1) in that buffer; about 240 of them are visible. Some frames add a particle draw whose record a
+dispatch writes (4 indices, 5,000-10,000 instances, from a 120,000-byte index buffer). At the start of each frame the
+exposure that the last frame's luminance pass stored (32 bytes) is copied into four views' constants with
+`nvnCommandBufferCopyBufferToBuffer`.
+
+The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
+- **Counts and records read by the GPU** (`gpucount_on`, `WT_VK_GPUCOUNT=0` to turn off): a count that compute or a
+  storing draw wrote in this batch is read by `vkCmdDraw(Indexed)IndirectCount` from the compute buffer (the one record goes
+  to the ring, first index rebased); records written in this batch are read by `vkCmdDraw(Indexed)Indirect(Count)` straight
+  from the buffer, with the whole NVN buffer from the index address on bound as the index range (`index_extent`, a locked
+  walk of the object table in `nvn_stub.c`, kept and checked lock-free). A culled object now costs its draw preparation
+  instead of a wait. Needs `drawIndirectCount` and `drawIndirectFirstInstance`; otherwise the CPU path as before.
+- **No wait at the batch start** (`cb_defer_pending`, `WT_VK_CBLAZY=0`): in keep mode the last batch's compute buffers
+  become kept without waiting (counted as written: a landing merges the bytes compute changed); a new `wserial` (the
+  submission of a buffer's last write) is what a CPU read of a kept buffer waits for (`cb_kept_ready`); the next command
+  buffer starts with a full barrier.
+- **Overwritten kept buffers dropped** (`cb_kept_discard`, `WT_VK_CBDISCARD=0`): a clear, update or copy that covers a kept
+  buffer whole drops it instead of landing it (the count buffer's clear waited for the GPU that way).
+- **Buffer copies on the GPU** (`gcp_*`, `WT_VK_GPUCOPY=0`): a copy from a kept buffer the GPU has not finished (at most 4 KB)
+  is an overlay; every ring copy of the destination is patched by `vkCmdCopyBuffer` in the slot's `up` command buffer, and
+  the bytes reach guest memory when the source's writer has finished (oldest first, merged with a snapshot). Other CPU reads
+  and writes of the destination, changes of the source and the game's fence waits settle first.
+
+| Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
+|---|---|---|---|---|---|---|
+| 21:9, scale 2.4, all off | 57.5-57.7 | 82.0-82.5 % | 44.5-44.8 | 19.8 / 22.4 | 11.9 | 7.5 / 6.9 |
+| 21:9, scale 2.4, all on | 60.0 | 98.4-98.8 % | 51.2-52.8 | 16.8 / 18.9 | 10.7-11.9 | 3.5 / 0.04 |
+| 16:9, scale 1.0, all off | 60.0 | 99.2-99.3 % | 55.5-56.2 | 16.9 / 17.8-18.0 | 3.2 | 4.4-4.5 / 1.6 |
+| 16:9, scale 1.0, all on | 60.0 | 98.7-98.8 % | 53.2 | 16.8 / 18.8 | 3.2 | 3.3 / 0.01-0.02 |
+
+(Two runs each way at each setting, interleaved. In the 2.4 runs with the change, frames with 14-16 ms of GPU work are
+5-7 % late against 98 %. At 1.0, where this PC is far from either limit, the render thread's CPU time rises 0.3-0.4 ms a
+frame (draw preparation of the culled objects) while its wall time falls 1.1-1.2 ms; slightly more frames end at 18.5-20 ms
+(p99 18.8 against 17.8-18.0, the "at 60" share 0.5 points lower), fewer go past that (p99.9 20.6-20.8 against
+22.3-22.7 ms).) Vulkan validation with synchronization validation (`WT_VK_VALIDATE=1
+VK_LAYER_VALIDATE_SYNC=1`, 150 s of Shibuya): no hazard and no error from these paths. Screenshots every 600 frames,
+switched on and off: nothing missing, exposure the same (the runs drift apart in game time, so compared by eye).
+
+Tried and not kept: `WT_VK_SPLIT=200 / 60` (submissions at pass changes): +1 fps, frames with 14-16 ms of GPU still 93-95 %
+late. The batch-start part alone: no gain, the wait moved to the count buffer's clear and then to the exposure copy (the
+sampler showed it each time); only all four parts together free the render thread.
+
+Not checked: Windows, NVIDIA and AMD's Windows driver (the paths were run on RADV only), the Steam Deck, other chapters
+(indirect dispatches whose group counts compute writes still wait on the CPU; none in Shibuya), the OpenGL renderer (unchanged).
+
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
 `aspect_ratio = 16:9 | auto | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own
@@ -1767,8 +1826,9 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
   same texel size as the shader's typed format (else logged as missing).
 - Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
   (`shortcut:` in `nnmovie_mf.c`).
-- Indirect draws are read on the CPU (one Vulkan draw per record) instead of `vkCmdDrawIndirect*`; records in a compute
-  buffer of the batch cost a submit and a wait.
+- Indirect draws are read on the CPU (one Vulkan draw per record) unless compute wrote their count or records in this batch
+  (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count with more than one record read on the CPU,
+  and indirect dispatches, still cost a submit and a wait.
 - Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
   same pass (as on NVN without an explicit barrier).
 - Tessellation: a tessellated pipeline is made on the render thread at its first draw (one hitch; the driver's pipeline
