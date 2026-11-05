@@ -288,7 +288,10 @@ static int fsr_setup(void) {                       /* render thread, once: sampl
             VkDescriptorSetLayoutBinding b = {k_fpass[p].b[i].b, k_fpass[p].b[i].k == K_SRV ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : k_fpass[p].b[i].k == K_UAV ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL};
             lb[n++] = b;
         }
-        if (p != P_MV) for (int i = 0; i < 2; i++) { VkDescriptorSetLayoutBinding b = {1000u + (uint32_t)i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, &F.smp[i]}; lb[n++] = b; }
+        /* [issue 140] AMD's s_PointClamp / s_LinearClamp: pushed with the images (fsr_dispatch). They were immutable samplers that
+         * were never pushed: in a push layout those are undefined until pushed (vkCmdPushDescriptorSetKHR), which RADV and the
+         * validation layer let pass, and the suspect in an RTX 4090's lost device after about 1100 FSR frames (not proven). */
+        if (p != P_MV) for (int i = 0; i < 2; i++) { VkDescriptorSetLayoutBinding b = {1000u + (uint32_t)i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; lb[n++] = b; }
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; li.bindingCount = (uint32_t)n; li.pBindings = lb;
         VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &F.dl[p]));
@@ -388,9 +391,18 @@ static void fsr_dispatch(int p, uint32_t gx, uint32_t gy) {
         else { FImg *im = &F.img[fsr_res(r)]; ii[i].imageView = ps->b[i].k == K_UAV ? im->lvl[0] : im->all; }
         w[i].descriptorType = ps->b[i].k == K_SRV ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[i].pImageInfo = &ii[i];
     }
+    int n = ps->n;                                 /* (at most 13 + the 2 samplers: the arrays' 15) */
+    if (p != P_MV) for (int i = 0; i < 2; i++, n++) {      /* the samplers at 1000 / 1001 (fsr_setup) */
+        memset(&w[n], 0, sizeof w[n]); memset(&ii[n], 0, sizeof ii[n]);
+        ii[n].sampler = F.smp[i];
+        w[n].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[n].dstBinding = 1000u + (uint32_t)i; w[n].descriptorCount = 1; w[n].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER; w[n].pImageInfo = &ii[n];
+    }
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pipe[p]);
-    vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pl[p], 0, ps->n, w);
+    vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pl[p], 0, (uint32_t)n, w);
+    ckpt(3, NULL, NULL, NULL);                     /* WT_VK_CHECKPOINTS: the dump names FSR's pass (hb[0]) */
+    if (g_ck_on && g_ckn) g_ck[(g_ckn - 1) % CK_N].hb[0] = (uint64_t)p;
     vkCmdDispatch(R.cmd, gx ? gx : 1, gy ? gy : 1, 1);
+    ckpt(2, NULL, NULL, NULL);
     fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);      /* the next frame's clears too */
 }
