@@ -1,0 +1,23 @@
+# Assigns every new issue to Zexyen. Actions > Auto assign > Run workflow assigns all the open issues.
+name: Auto assign
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  assign:
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          for n in ${ISSUE:-$(gh issue list --state open --limit 1000 --json number --jq '.[].number')}; do
+            gh api "repos/$GH_REPO/issues/$n/assignees" -f 'assignees[]=Zexyen' --silent
+          done
