@@ -946,6 +946,13 @@ static void dec_GetInputBuffer(Ctx *c) {              /* (int index, Buffer *out
     uint64_t b = A2;
     if (!d || !b || i < 0 || i >= d->nin) { RET(ST_INVALID); return; }
     buf_release(c, b);
+    /* MediaCodec::getInputBuffer fails for a buffer the client does not own [subsdk 0x2c3a20]. B3's loop (SeekTo(0), Flush,
+     * Start [0x7100cd6394]) keeps its own index list, so it holds stale indices; on this failure it waits a tick
+     * [0x7100cd68e0], while a Read into one would be refused and become a false end of stream (#138). */
+    dec_lock(d);
+    int owned = d->in_state[i] == IN_CLIENT;
+    dec_unlock(d);
+    if (!owned) { RET(ST_FAILED); return; }
     wr64(b + B_BASE, (uint64_t)(uintptr_t)(d->mem + (size_t)i * SLOT_BYTES));
     wr64(b + B_CAP, SLOT_BYTES);
     wr32(b + B_OFFSET, 0); wr32(b + B_SIZE, 0);
