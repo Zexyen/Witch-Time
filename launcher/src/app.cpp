@@ -1327,9 +1327,9 @@ void App::play()
 		return;
 	}
 	std::string tag, message;
-	if (play_only && !after_switch && update::state(tag, message) == update::State::available)
+	if (play_only && !after_switch && !update_offered && update::state(tag, message) == update::State::available)
 	{
-		play_only = false;                       // --play with a newer release out: the title offers it (issue 143)
+		update_offered = true;                   // --play with a newer release out: the title offers it (issue 143)
 		return;
 	}
 	if (stale)

@@ -85,7 +85,7 @@ FFmpeg, glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI 
 `witch-time --play` (Windows: `witch-time.exe --play`) skips the launcher's screens: it starts the game and closes
 when the game does. Use it for a Steam shortcut (launch options `--play`), Playnite or LaunchBox (arguments `--play`)
 or a desktop entry. The launcher still opens when it has something to show: a newer release (it waits up to 5 s for
-the check), a game that is not built yet, or one built by an older release.
+the check; Play there still closes with the game), a game that is not built yet, or one built by an older release.
 
 ## The picture book
 

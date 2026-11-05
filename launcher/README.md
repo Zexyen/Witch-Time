@@ -64,9 +64,10 @@ driver ("Build (Windows)" in the main README).
   sources feed (`REDO_ON_UPDATE` in `tools/wtbuild/src/setup.rs`).
 - **Straight to the game.** `witch-time --play` (on Windows `witch-time.exe --play`) starts the game at once and ends
   when it does, for a Steam shortcut (Steam Deck game mode), Playnite, LaunchBox or a desktop entry. A release build first
-  waits for the update check (up to 5 s): when a newer release is out, the launcher stays open and offers it. It also
-  stays when the game is not built yet, or was built by another release (the build screen). On Windows the top-level
-  `witch-time.exe` waits for `build\witch-time.exe` and ends with it, so those launchers see the game running (#143).
+  waits for the update check (up to 5 s): when a newer release is out, the launcher stays open and offers it, and Play
+  there still ends with the game. It also stays when the game is not built yet, or was built by another release (the
+  build screen). On Windows the top-level `witch-time.exe` waits for `build\witch-time.exe` and ends with it, so those
+  launchers see the game running (#143).
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 
