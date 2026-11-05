@@ -1,5 +1,6 @@
-/* witch-time.exe at the top of a Windows release: starts build\witch-time.exe beside it with the same arguments and
- * ends (on Linux a symbolic link stands there). */
+/* witch-time.exe at the top of a Windows release: starts build\witch-time.exe beside it with the same arguments, waits
+ * for it and ends with its exit code, so Steam, Playnite or LaunchBox see the game running until it ends (issue 143;
+ * on Linux a symbolic link stands there). */
 #include <windows.h>
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR args, int show)
@@ -26,6 +27,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR args, int show)
 		return 1;
 	}
 	CloseHandle(pi.hThread);
+	MSG msg;    /* one empty peek: this program is idle, so Windows drops its startup cursor */
+	PeekMessageW(&msg, NULL, 0, 0, PM_NOREMOVE);
+	DWORD code = 1;
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	GetExitCodeProcess(pi.hProcess, &code);
 	CloseHandle(pi.hProcess);
-	return 0;
+	return (int)code;
 }

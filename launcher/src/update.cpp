@@ -153,23 +153,24 @@ void check(const Paths& paths)
 	const long long mine = version_number(WT_VERSION);
 	if (mine < 0)
 		return;
+	set(State::checking, "");
 	std::thread([mine] {
 		int code = -1;
 		std::string json = run_capture({"curl", "-sSfL", "--max-time", "20", "-H", "Accept: application/vnd.github+json", LATEST}, ".", &code);
 		std::vector<std::string> tags = json_strings(json, "tag_name");
 		if (code || tags.empty() || version_number(tags[0]) <= mine)
-			return;
+			return set(State::none, "");
 		std::string url;
 		for (const std::string& u : json_strings(json, "browser_download_url"))
 			if (ends_with(u, ASSET))
 				url = u;
 		if (url.empty())
-			return;
+			return set(State::none, "");
 		// GitHub lists an asset's digest ("sha256:<hash>") ahead of its download URL
 		size_t at = json.rfind("\"digest\"", json.find(url));
 		std::vector<std::string> digests = at == std::string::npos ? std::vector<std::string>{} : json_strings(json.substr(at), "digest");
 		if (digests.empty() || digests[0].size() != 71 || digests[0].compare(0, 7, "sha256:") != 0)
-			return;
+			return set(State::none, "");
 		std::lock_guard<std::mutex> l(shared().m);
 		shared().tag = tags[0];
 		shared().url = url;
@@ -210,6 +211,7 @@ void restart(const Paths& paths)
 	if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
 	{
 		CloseHandle(pi.hThread);
+		WaitForSingleObject(pi.hProcess, INFINITE);   // the top-level witch-time.exe (start.c), and Steam through it, waits for this process
 		CloseHandle(pi.hProcess);
 	}
 #else
