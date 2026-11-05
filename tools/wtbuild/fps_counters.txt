@@ -72,3 +72,13 @@
 71007a25bc int countdown -1 a frame: the long slow-down of a fatal hit (60 at 0.01)  [x19 + 80]
 71007a259c int countdown -1 a frame: Witch Time's second mode (60 at 0.2, one enemy's attack)  [x19 + 144]
 71007a258c int countdown -1 a frame: Witch Time may not start, a running one ends (2)  [x19 + 156]
+# Hit-stops and vibration (issue 134 follow-up, 2026-11-05; census of the Shibuya fight at 60 and 120). Bayonetta's own
+# hits never use the engine's time nodes (their timers are floats that take the step); an enemy's attack landing does
+# (0x71000d3440: the attacker and its victim freeze 2 .. 12 frames at 0.01, 30 for one enemy) and Bayonetta's damage
+# state 204 (5 frames). The node's delay +0x34 is never above 0 (every request passes 0) and the objects' delay slots
+# (0x71000830a0, 0x7100501240) are "after this update's hits", so neither is listed.
+7100c1f904 int countdown -1 a frame: a time node's hit-stop frames (the node tick 0x7100c1f798)  [x14 + 48]
+# The pad's vibration blend 0x7100cc3710 (B2recomp's issue 53: "vibration feels weaker at 120"): each rumble request
+# sets a count of steps over which amplitude and frequency are blended; at 120 every rumble lasted half as long.
+7100cc376c int countdown -1 a frame: steps left of a slot-A rumble (30 / 60 / 120 ...)  [x11 + 16]
+7100cc37ec int countdown -1 a frame: steps left of a slot-B rumble (the hit pulse: 3)  [x11 + 112]
