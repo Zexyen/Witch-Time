@@ -956,10 +956,22 @@ not changed; it is to be retired).
   ADDS (shifted register) for a store pair. **`fps_ci` at 0**: these sites run every update, also at 0, and below
   60 fps (frame_rate above 60) frames of 2 steps piled up there as owed time (up to 8) that the next window paid at
   once: at 44 fps a 15-step window went 15 -> 7 on its first visit. A countdown at 0 now owes nothing; the same
-  window then lasts its 0.25 s. Not listed: the engine's hit-stop nodes (`7100c1f87c`, `7100c1f904`) and the
-  objects' delayed hit-stops (`71000830a0`, `7100501240`; all hit-stops last half as long at 120, a combat test
-  first), the input manager's four 10-step button latches (`7100790018` ..; no reader found), the manager's +0x70 /
-  +0xac (never set) and +0x7c (an STP store the finder does not take). Not played by hand.
+  window then lasts its 0.25 s. Not listed: the input manager's four 10-step button latches (`7100790018` ..; no
+  reader found), the manager's +0x70 / +0xac (never set) and +0x7c (an STP store the finder does not take). Not
+  played by hand.
+- **Hit-stops and vibration (issue 134 follow-up, 2026-11-05)**: a census of the Shibuya fight at 60 and 120 (240 s
+  of combo attacks): Bayonetta's own hits keep real time already (their per-object timers are floats that take the
+  step); the engine's time nodes (tick `7100c1f798`, request `7100c1f100`) freeze an object only when an enemy's
+  attack lands (`71000d3440`: the attacker and its victim, 2 .. 12 frames at 0.01, 30 for one enemy) and in
+  Bayonetta's damage state 204 (5 frames). Listed: the node's frames (`7100c1f904`), and the pad's vibration blend
+  `7100cc3710` (`7100cc376c`, `7100cc37ec`: each rumble's steps; B2recomp's issue 53 "vibration feels weaker at
+  120"). The node's delay (`7100c1f87c`) is never above 0 (all 293 requests pass 0) and the objects' delay slots
+  (`71000830a0`, `7100501240`) mean "after this update's hits": not listed. Measured with the bot idle between
+  attacks so that enemies hit it (probe of the stores, `~/.cache/wt-134/runlen.py`): a 3-frame freeze 0.033 s at 60,
+  0.017 s at 120 stock, 0.033 s patched; 9 frames 0.079 s stock, 0.133 s patched; rumbles of 11 / 15 steps 0.189 /
+  0.233 s at 60, 0.084 / 0.145 s stock, 0.165 / 0.232 s patched. A 2-frame freeze ends about 4 ms early (the first
+  visit moves 1). The other frame-locked event counters of that census are load waits, handle counts, a dead BGM
+  countdown and cosmetic fades (a lighting crossfade `71007f2f30`, model fades `71007f0984`); not listed.
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
   the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
   smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other
