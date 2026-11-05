@@ -340,8 +340,8 @@ void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
  * an update). A counter visit moves by the frames due since that field's last visit when it also ran in the previous
  * update, so it keeps the game's time at 90, 120, 144 fps or a rate that changes from frame to frame; a second visit in
  * the same update moves as the first did (a counter the game steps twice a frame); any other visit (the first, a one-off
- * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 with no frame due (a
- * test of the result for 0 fires as made); an up-counter moves at most 1 a visit (a test for an exact value is not
+ * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 (a test of the result
+ * for 0 fires as made; at 0 nothing is owed); an up-counter moves at most 1 a visit (a test for an exact value is not
  * passed over); what a limit holds back is owed to the next visits (at most 8). Off (the stock 1) unless frame_rate is
  * above 60; WT_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
  * fps_patch.py (finding 134), written again for B3. */
@@ -393,7 +393,10 @@ uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int si
     if (!fc_sites_on() || !g_upd) return (uint32_t)k;
     FcCnt *r;
     int64_t de = fc_visit(key, field, &r), w = (int32_t)wb;
-    if (sign < 0) { if (de == 0 && w == 0) de = 1; fc_limit(r, &de, w > k ? 1 + (w - k) / k : 1); }
+    /* at 0 a countdown takes the stock step and owes nothing: frames of 2 below 60 fps would pile up there and cut the next
+     * window short (issue 134) */
+    if (sign < 0 && w == 0) { r->carry = 0; return (uint32_t)k; }
+    if (sign < 0) fc_limit(r, &de, w > k ? 1 + (w - k) / k : 1);
     else fc_limit(r, &de, 1);
     return (uint32_t)(k * de);
 }

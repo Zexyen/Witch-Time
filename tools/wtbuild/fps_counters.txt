@@ -21,3 +21,54 @@
 # double-taps while moving forward, 0.12 / 0.20 / 0.30 s apart, transform at 60 for 0.12 and 0.20, at 120 only for
 # 0.12; six frame-locked countdowns of the double-tap census patched, then bisected to this one: with it, 0.20
 # transforms at 120 and 0.30 still does not, as at 60.
+# The stick-motion tracker 0x710055a7ec (issue 134; called once a logic step by the player's input update 0x7100559ebc,
+# B2's 0x71000579d0): moves such as back, forward + attack and forward, forward + attack rarely came out at 120 because
+# every one of its windows counts logic steps. Two arrays of 8 octant countdowns (+0x178.. set to 22 at a push,
+# +0x198.. set to 27) for the stick rotations; 710055a83c / 710055a8dc / 710055a8f0 above are three of them.
+710055a814 int countdown -1 a frame: octant 0 of the 22-frame array (loaded through x0, stored through x19)  [x19 + 376]
+710055a828 int countdown -1 a frame: octant 0 of the 27-frame array  [x19 + 408]
+710055a850 int countdown -1 a frame: octant 1 of the 27-frame array  [x19 + 412]
+710055a864 int countdown -1 a frame: octant 2 of the 22-frame array  [x19 + 384]
+710055a878 int countdown -1 a frame: octant 2 of the 27-frame array  [x19 + 416]
+710055a88c int countdown -1 a frame: octant 3 of the 22-frame array  [x19 + 388]
+710055a8a0 int countdown -1 a frame: octant 3 of the 27-frame array  [x19 + 420]
+710055a8b4 int countdown -1 a frame: octant 4 of the 22-frame array  [x19 + 392]
+710055a8c8 int countdown -1 a frame: octant 4 of the 27-frame array  [x19 + 424]
+710055a904 int countdown -1 a frame: octant 6 of the 22-frame array  [x19 + 400]
+710055a918 int countdown -1 a frame: octant 6 of the 27-frame array  [x19 + 432]
+710055a92c int countdown -1 a frame: octant 7 of the 22-frame array  [x19 + 404]
+710055a940 int countdown -1 a frame: octant 7 of the 27-frame array  [x19 + 436]
+# The push windows: a push opens 10 frames (15 for one state) for the next one; a second push the same way opens
+# "same direction twice" for 10 / 15, the opposite way "back, forward" for 10 / 15; a second set with its own lengths.
+710055ae94 int countdown -1 a frame: the window for the next push (10 / 15)  [x19 + 480]
+710055ac4c int countdown -1 a frame: the same direction twice (10 / 15; two decrement paths into this store)  [x19 + 492]
+710055ac5c int countdown -1 a frame: opposite directions, back then forward (10 / 15)  [x19 + 488]
+710055af08 int countdown -1 a frame: the second set's window for the next push (15, then 10)  [x19 + 516]
+710055ac6c int countdown -1 a frame: the second set's same direction twice (15)  [x19 + 528]
+710055ac7c int countdown -1 a frame: the second set's opposite directions (15)  [x19 + 524]
+710055ac8c int countdown -1 a frame: 5 after a push from neutral  [x19 + 500]
+710055acc4 int countdown -1 a frame: 5 after a push from neutral  [x19 + 560]
+710055ac9c int countdown -1 a frame (set outside the tracker)  [x19 + 504]
+710055acac int countdown -1 a frame (set outside the tracker; the command decoder 0x710055b058 waits while it is above 0)  [x19 + 1024]
+710055afa8 float countdown -1.0 a frame: 10 / 6 / 2 after the 1st / 2nd / later quick push  [x19 + 1044]
+710055b01c int countdown -1 a frame: 45 after a push, the push count +0x41c is reset at 0 (two decrement paths)  [x19 + 1048]
+# The command decoder 0x710055b058 (runs right after the tracker): per-command buffers through x24 (32 entries each,
+# input + 0x2b8 / + 0x338). A press waits in the first until an action takes it (20 steps, 28 for the kick, 5 for jump
+# and dodge, 40 for the demons), so an attack pressed during a recovery still comes out; the move check
+# 0x710044fb10 tests it with the tracker's windows.
+710055b2d4 int countdown -1 a frame: the press buffer of each command (20 / 28 / 5 / 40)  [x24 - 128]
+710055b2e4 int countdown -1 a frame: the second-press window of each command (20)  [x24 + 0]
+710055b93c int up-counter +1 a frame while the last demon command's button is held, kept at 10: tap or hold  [x8 + 0]
+710055b18c int countdown -1 a frame: 2-step command lockout after some states begin  [x19 + 1036]
+# Witch Time (issue 134): the dodge's own window and Witch Time's length already take the step. Frame-locked: the
+# 5-step window after a hit lands (Viola's parry, Bat Within and Mahaa-Kalaa turn the hit into Witch Time while it is
+# above 0), and the Witch Time manager 0x71007a231c's slow-down slots (B2's 0x7100b01ce8, "Witch Time's end"): each
+# holds a rate for a number of frames. Its +0x70, +0x7c, +0xac and +0x174 are not listed: never set above 0, an STP
+# store, or a one-update flag.
+7100435754 int countdown -1 a frame: the window after a hit lands, before the damage (5)  [x19 + 10872]
+71007a2344 int countdown -1 a frame: the slow-down before Witch Time and of finishing hits (16 at 0.125, 20, ...)  [x19 + 56]
+71007a2394 int countdown -1 a frame: the enemies' slow-down on a finishing hit (2 .. 60)  [x19 + 68]
+71007a25ac int countdown -1 a frame: the near-freeze when Bayonetta is hit (10 at 0.01)  [x19 + 152]
+71007a25bc int countdown -1 a frame: the long slow-down of a fatal hit (60 at 0.01)  [x19 + 80]
+71007a259c int countdown -1 a frame: Witch Time's second mode (60 at 0.2, one enemy's attack)  [x19 + 144]
+71007a258c int countdown -1 a frame: Witch Time may not start, a running one ends (2)  [x19 + 156]

@@ -938,6 +938,28 @@ not changed; it is to be retired).
   listed, 120 matches 60 (0.20 transforms, 0.30 not). The first 10 sites were not the cause (`WT_FPS_COUNTERS=0`,
   new: the sites' stock +/-1 at run time, the same failure). It was not in the 62 of the fight census: it runs only
   after a dodge, too few visits for its filter. Input windows like it need a census of the move itself.
+- **Stick-motion moves and Witch Time (issue 134, 2026-11-05)**: back, forward + attack and forward, forward + attack
+  rarely came out at 120. The stick tracker `710055a7ec` (B2's `71000579d0`; input block = player + 0x1780, called once
+  an update by `7100559ebc`) counts every window in logic steps: the next push (+0x1e0, 10), same direction twice
+  (+0x1ec), opposite directions (+0x1e8), a second set of 15 (+0x204 / +0x20c / +0x210), two arrays of 8 octants (22 and
+  27) for the rotations. All 28 of its countdowns are listed now, with the command decoder's press buffers (`710055b058`:
+  20 / 28 / 5 / 40 steps per command, so a press during a recovery waits as long as at 60), the 5-step window after a
+  hit (Viola's parry, Bat Within, Mahaa-Kalaa start Witch Time inside it) and the Witch Time manager `71007a231c`'s
+  slow-down slots (its intro slow, 16 frames at 0.125; B2's "Witch Time's end"). The dodge's own window and Witch
+  Time's length already take the step. Scripted flicks 0.05 .. 0.25 s apart, then punch (`~/.cache/wt-134`,
+  `trials.py`; a census build with a probe of the sites' stores): at 60 both windows open up to 0.14 s, not at 0.18;
+  at 120 stock only up to 0.08; patched, 120 matches 60 in all 24 trials. The intro slow: 30 store visits at 60 and at
+  stock 120, 60 patched. **The finder** (`lifter/fps.rs`) missed three forms: a store through a copy of the base
+  (`mov x19, x0`), a second decrement that reaches the store by a conditional branch (+0x1ec, +0x418 and four
+  manager slots count down on two paths; the old finder patched only the rarer one), and any site after a `b.lt`
+  whose register number equals the condition (11), which `writes_gpr` took for a write; it also took 64-bit ORR /
+  ADDS (shifted register) for a store pair. **`fps_ci` at 0**: these sites run every update, also at 0, and below
+  60 fps (frame_rate above 60) frames of 2 steps piled up there as owed time (up to 8) that the next window paid at
+  once: at 44 fps a 15-step window went 15 -> 7 on its first visit. A countdown at 0 now owes nothing; the same
+  window then lasts its 0.25 s. Not listed: the engine's hit-stop nodes (`7100c1f87c`, `7100c1f904`) and the
+  objects' delayed hit-stops (`71000830a0`, `7100501240`; all hit-stops last half as long at 120, a combat test
+  first), the input manager's four 10-step button latches (`7100790018` ..; no reader found), the manager's +0x70 /
+  +0xac (never set) and +0x7c (an STP store the finder does not take). Not played by hand.
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
   the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
   smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other

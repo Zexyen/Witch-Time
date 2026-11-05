@@ -134,13 +134,14 @@ fn csel(w: u32) -> Option<(u32, u32, u32)> {
 /// whether w may write general register r: anything with r in bits 0-4 but a store (conservative: a site is lost, never
 /// taken wrongly)
 fn writes_gpr(w: u32, r: u32) -> bool {
-    if w & 31 != r {
-        return false;
+    if w & 31 != r || cond_target(w, 0).is_some() {
+        return false; // a conditional branch's low bits are its condition or register tested
     }
     if let Some((load, fp, ..)) = ldst(w) {
         return load && !fp;
     }
-    !(bits(w, 29, 27) == 0b101 && bits(w, 22, 22) == 0) // a store pair
+    // a store pair (bit 25 clear: ORR / ADDS shifted register share bits 29-27 and do write)
+    !(bits(w, 29, 27) == 0b101 && bits(w, 25, 25) == 0 && bits(w, 22, 22) == 0)
 }
 
 /// the last instruction in [lo, at) of the straight-line code before at that writes SIMD&FP register r, as far as the
@@ -160,6 +161,22 @@ fn fp_def(im: &Image, lo: i64, at: i64, r: u32) -> Option<(i64, u32)> {
         pc -= 4;
     }
     None
+}
+
+/// the target of a conditional branch at pc (B.cond, CBZ / CBNZ, TBZ / TBNZ)
+fn cond_target(w: u32, pc: i64) -> Option<i64> {
+    if w & 0xff000010 == 0x54000000 || w & 0x7e000000 == 0x34000000 {
+        return Some(pc + 4 * sext(bits(w, 23, 5) as i64, 19));
+    }
+    (w & 0x7e000000 == 0x36000000).then(|| pc + 4 * sext(bits(w, 18, 5) as i64, 14))
+}
+
+/// the register known to hold the base n after w: a `mov xd, xn` (ORR xd, xzr, xn) makes it d, a write ends it
+fn step_alias(a: Option<u32>, w: u32, n: u32) -> Option<u32> {
+    if w & 0xffe0ffe0 == 0xaa0003e0 && (w >> 16) & 31 == n && w & 31 != 31 {
+        return Some(w & 31);
+    }
+    a.filter(|&r| !writes_gpr(w, r))
 }
 
 const WIN: i64 = 8 * 4; // at most 8 instructions from the load to the op, and from the op to the store
@@ -218,7 +235,10 @@ pub fn sites(im: &Image, entry: i64, end: i64) -> Vec<Site> {
             q += 4;
         }
         let Some((opc, rd, kind, one)) = op else { continue };
-        // the store of rd (or of a CSEL that takes it: t = max(t - 1, 0)) to the same field
+        // a copy of the base (mov xd, xn) between the load and the store: the store may name it (`mov x19, x0` at entry)
+        let mut alias = (load + 4..opc).map(|p| im.word(p)).fold(None, |a, v| step_alias(a, v, rn));
+        // the store of rd (or of a CSEL that takes it: t = max(t - 1, 0)) to the same field, also the target of a
+        // conditional branch (two paths that count the field down into one store)
         let mut rd = rd;
         let mut s = opc + 4;
         while s < end && s <= opc + WIN {
@@ -226,12 +246,19 @@ pub fn sites(im: &Image, entry: i64, end: i64) -> Vec<Site> {
             if is_flow(v) {
                 break;
             }
-            if let Some((false, sfp, ssize, srt, srn, soff)) = ldst(v) {
-                if sfp == fp && ssize == size && srt == rd && srn == rn && soff == off {
-                    out.push(Site { load, op: opc, store: s, base: rn, off, kind, val: rt, one, src: rd });
-                    break;
-                }
+            let stores = |w: u32| {
+                matches!(ldst(w), Some((false, sfp, ssize, srt, srn, soff))
+                    if sfp == fp && ssize == size && srt == rd && (srn == rn || Some(srn) == alias) && soff == off)
+            };
+            if stores(v) {
+                out.push(Site { load, op: opc, store: s, base: rn, off, kind, val: rt, one, src: rd });
+                break;
             }
+            if let Some(t) = cond_target(v, s).filter(|t| (entry..end).contains(t) && stores(im.word(*t))) {
+                out.push(Site { load, op: opc, store: t, base: rn, off, kind, val: rt, one, src: rd });
+                break;
+            }
+            alias = step_alias(alias, v, rn);
             if let Some((d, a, b)) = csel(v).filter(|_| !fp) {
                 if (a == rd || b == rd) && d != rn && d != 31 {
                     rd = d;
@@ -344,5 +371,48 @@ mod tests {
         assert_eq!(csel(0x1a9fc128), Some((8, 9, 31)));
         // cmp w8, #1 writes no register
         assert_eq!(addsub_imm(0x7100051f), None);
+        // mov x19, x2 and adds w8, w8, w9 write their register; stp x29, x30, [sp, #16] does not
+        assert!(writes_gpr(0xaa0203f3, 19) && writes_gpr(0x2b090108, 8) && !writes_gpr(0xa9017bfd, 29));
+        // b.lt (condition 11) and cbz w8 write no register
+        assert!(!writes_gpr(0x5400006b, 11) && !writes_gpr(0x34000048, 8));
+    }
+
+    /// the store through a copy of the base and the store reached by a conditional branch (the stick tracker's forms,
+    /// 0x710055a7ec: its first octant through x0 / x19, the double-push window counted down on two paths)
+    #[test]
+    fn site_paths() {
+        let words: [u32; 23] = [
+            // ldr w8, [x0, #0x178]; mov x20, x1; mov x19, x0; subs w9, w8, #1; b.lt +12; mov w8, w9; str w9, [x19, #0x178]; ret
+            0xb9417808, 0xaa0103f4, 0xaa0003f3, 0x71000509, 0x5400006b, 0x2a0903e8, 0xb9017a69, 0xd65f03c0,
+            // 0x20: ldr w8, [x19, #0x1ec]; subs w8, w8, #1; b.lt +8; str w8, [x19, #0x1ec]; ret
+            0xb941ee68, 0x71000508, 0x5400004b, 0xb901ee68, 0xd65f03c0,
+            // 0x34: ldr w8, [x19, #0x1ec]; subs w8, w8, #1; b.ge 0x2c; b 0x30
+            0xb941ee68, 0x71000508, 0x54ffff8a, 0x17fffffc,
+            // 0x44: ldr w8, [x0, #16]; mov x19, x0; mov x19, x2; sub w8, w8, #1; str w8, [x19, #16]; ret: another object
+            0xb9401008, 0xaa0003f3, 0xaa0203f3, 0x51000508, 0xb9001268, 0xd65f03c0,
+        ];
+        let mut img = vec![0u8; 0x1000];
+        img.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+        let b = 0x7100000000i64;
+        let im = Image {
+            img,
+            base: b,
+            file_off: 0x1000,
+            text_size: 4 * words.len() as i64,
+            rela: 0,
+            relasz: 0,
+            jmprel: 0,
+            pltrelsz: 0,
+            symtab: 0,
+            strtab: 0,
+            patches: Default::default(),
+            fps_counters: Default::default(),
+            b3: false,
+        };
+        let got: Vec<(i64, i64, i64, u32, i64)> =
+            sites(&im, b, b + 4 * words.len() as i64).iter().map(|s| (s.load - b, s.op - b, s.store - b, s.base, s.off)).collect();
+        assert_eq!(got, vec![(0x00, 0x0c, 0x18, 0, 0x178), (0x20, 0x24, 0x2c, 19, 0x1ec), (0x34, 0x38, 0x2c, 19, 0x1ec)]);
+        assert_eq!(cond_target(0x54ffff8a, b + 0x3c), Some(b + 0x2c));
+        assert_eq!(cond_target(0x17fffffc, b + 0x40), None);
     }
 }
