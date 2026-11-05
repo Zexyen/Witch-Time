@@ -22,7 +22,7 @@ static int have_targets_live(void);
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetDepthBias) \
     X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetLineWidth) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) \
     X(vkCmdSetPrimitiveTopology) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
-    X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) \
+    X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) \
     X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) \
     X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetQueryPoolResults) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkResetQueryPool) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) X(vkDestroyPipelineCache) X(vkCmdCopyBuffer) \
     X(vkCreateDescriptorUpdateTemplate) X(vkUpdateDescriptorSetWithTemplate) X(vkDestroyDescriptorUpdateTemplate)
@@ -30,6 +30,7 @@ static int have_targets_live(void);
 VKD(X)
 #undef X
 static PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT;
+static PFN_vkCmdDrawIndexedIndirectCount vkCmdDrawIndexedIndirectCount_; static PFN_vkCmdDrawIndirectCount vkCmdDrawIndirectCount_;      /* [witchtime] issues 132, 133: g_gpucount */
 static PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR;
 static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
 static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
@@ -255,7 +256,7 @@ static VkBuffer vbuf_new(uint64_t size, VkFlags usage, VMem *mem) {
 
 /* ---------------------------------------------------------------- command buffers in flight */
 #define NSLOT 8
-typedef struct { VkCommandBuffer cmd, up; VkFence fence; VkDescriptorPool pool[16]; int npool, ipool, pending, up_rec; uint64_t serial; LONG64 ts_frame; } Slot;      /* up: finding 140, copies submitted before cmd */
+typedef struct { VkCommandBuffer cmd, up; VkFence fence; VkDescriptorPool pool[16]; int npool, ipool, pending, up_rec, up_ovl; uint64_t serial; LONG64 ts_frame; } Slot;      /* up: finding 140, copies submitted before cmd */
 typedef struct VTex VTex;
 static struct {
     Slot slot[NSLOT]; int cur, recording; uint64_t serial, done;      /* serial: number of the last submission; done: every submission up to here has finished */
@@ -536,6 +537,7 @@ static int g_dsh_ok, g_dsh3_ok, g_dsh_topo = -1, g_dsh_rst = -1, g_dsh_on = -1;
 static LONG64 g_dsh_sent, g_dsh_kept;              /* state commands recorded / left out (printed with nvn_vk_perf) */
 static void dsh_forget(void) { g_dsh_ok = g_dsh3_ok = 0; g_dsh_topo = g_dsh_rst = -1; }
 static int dsh_on(void) { if (g_dsh_on < 0) g_dsh_on = !(getenv("WT_VK_DYNSHADOW") && !atoi(getenv("WT_VK_DYNSHADOW"))); return g_dsh_on; }
+static int g_cb_lazy_bar;                        /* [witchtime] cb_defer_pending: the next command buffer starts with a full barrier */
 static void cmd_begin(void) {
     if (R.recording) return;
     dsh_forget();
@@ -550,6 +552,12 @@ static void cmd_begin(void) {
     VKC(vkResetCommandBuffer(s->cmd, 0));
     VKC(vkBeginCommandBuffer(s->cmd, &bi));
     R.cmd = s->cmd; R.recording = 1; R.in_pass = 0; R.pipe_bound = NULL; R.dyn_dirty = R.vi_dirty = 1;
+    if (g_cb_lazy_bar) {                           /* [witchtime] issues 132, 133: the last batch may still run on the GPU (cb_defer_pending): its reads and writes come before this batch's */
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        g_cb_lazy_bar = 0;
+    }
     oq_slot_reset(R.cur);                                 /* [Recomps#1] occlusion queries of this slot */
     if (g_ts_on < 0) {
         g_ts_on = getenv("WT_VK_GPUTIME") && atoi(getenv("WT_VK_GPUTIME")) && V.props.limits.timestampComputeAndGraphics;
@@ -591,8 +599,9 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     uint32_t ncb = 0;
     if (s->up_rec) {                               /* [Recomps#1] finding 140: the copies into vertex buffers kept on the GPU, before the draws that read them */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
-        vkCmdPipelineBarrier(s->up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = s->up_ovl ? VK_ACCESS_MEMORY_READ_BIT : VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+        vkCmdPipelineBarrier(s->up, VK_PIPELINE_STAGE_TRANSFER_BIT, s->up_ovl ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &mb, 0, NULL, 0, NULL);      /* up_ovl: GPU copies into the ring (gcp_patch), read by any stage */
+        s->up_ovl = 0;
         VKC(vkEndCommandBuffer(s->up));
         cbs[ncb++] = s->up; s->up_rec = 0;
     }
@@ -607,7 +616,8 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     R.recording = 0; R.cmd = NULL; R.flushes++;
     return R.serial;
 }
-static void cmd_wait_all(void) { cmd_submit(NULL, NULL); for (int i = 0; i < NSLOT; i++) slot_wait(&R.slot[i]); R.done = R.serial; nvn_front_done_moved(); }
+static void gcp_settle_done(void);
+static void cmd_wait_all(void) { cmd_submit(NULL, NULL); for (int i = 0; i < NSLOT; i++) slot_wait(&R.slot[i]); R.done = R.serial; gcp_settle_done(); nvn_front_done_moved(); }
 
 /* ---------------------------------------------------------------- stream ring */
 #define RING_ALIGN 256
@@ -622,6 +632,8 @@ static uint64_t ring_raw(const void *p, uint64_t n) {
     return off;
 }
 static LONG64 g_rp_asked, g_rp_hits, g_rp_bytes;     /* finding 138: the range cache of ring_put ("nvn_vk_ring:" line) */
+static int g_ngcp;                                 /* [witchtime] issues 132, 133: GPU buffer copies not in guest memory yet (gcp_add) */
+static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off);
 static uint64_t ring_put(uint64_t addr, uint64_t size) {
     unsigned h = (unsigned)(((addr >> 4) ^ (size * 0x9E3779B1u)) * 2654435761u) >> 19;
     g_rp_asked++;
@@ -631,6 +643,7 @@ static uint64_t ring_put(uint64_t addr, uint64_t size) {
         if (R.acache[i].gen != R.gen) { h = i; break; }
     }
     uint64_t off = ring_raw(P(addr), size);
+    if (g_ngcp) gcp_patch(addr, size, off);
     g_rp_bytes += (LONG64)size;
     h &= 8191;
     R.acache[h].addr = addr; R.acache[h].size = size; R.acache[h].off = off; R.acache[h].gen = R.gen;
@@ -1760,6 +1773,7 @@ static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /
 static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
+static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -2194,7 +2208,7 @@ static void set_dynamic_state3(int samples) {
  * when the render thread is idle or a sync is waited for. The OpenGL path copies back before the next draw; what guest
  * memory holds once the batch is done is the same. Anything that reads guest memory through a range that only partly lies
  * in a CB forces the copy-back at once (cb_sync: submit, wait; counted). */
-typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (WT_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it */
+typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww, wserial; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (WT_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it; wserial: the one holding the last command that wrote it (cb_kept_ready) */
 static int g_cb_merge = -1;                        /* WT_VK_CBMERGE=0: the whole range is copied back as before session 5 */
 /* Round 16 (P3 section 15), WT_VK_CBKEEP=1 (0 = before: every buffer is filled from guest memory at its first dispatch of
  * a batch, twice, and merged back after the batch): a compute-written buffer STAYS on the GPU side between batches.
@@ -2334,7 +2348,7 @@ static void cb_keep_back(CB *c, const uint8_t *src) {      /* src: the bytes in 
             if (mv == sv) { if (g[k] != sv) g_ck_gwords++; continue; }
             if (g[k] == sv) g[k] = mv; else { g_ck_gwords++; g_ck_conflicts++; }
         }
-        if (tail) memcpy((uint8_t *)g + nw * 8, (const uint8_t *)m + nw * 8, tail);
+        for (size_t b = nw * 8; b < nw * 8 + tail; b++) if (((uint8_t *)g)[b] == c->snap[b]) ((uint8_t *)g)[b] = ((const uint8_t *)m)[b];      /* [witchtime] the last bytes as the words: a byte the game changed stays its own */
     } else {
         /* the buffer may be write-combined device memory (WT_VK_CBMEM): read word by word it costs about 1 us per word
          * (run p16t_bf_after: 12.8 ms of the render thread for one landing); it is read ONCE, in one block, into ordinary
@@ -2350,7 +2364,7 @@ static void cb_keep_back(CB *c, const uint8_t *src) {      /* src: the bytes in 
             if (mv == sv) { if (g[k] != sv) g_ck_gwords++; continue; }
             if (g[k] == sv) g[k] = mv; else { g_ck_gwords++; g_ck_conflicts++; }
         }
-        if (tail) memcpy((uint8_t *)g + nw * 8, (const uint8_t *)m + nw * 8, tail);
+        for (size_t b = nw * 8; b < nw * 8 + tail; b++) if (((uint8_t *)g)[b] == c->snap[b]) ((uint8_t *)g)[b] = ((const uint8_t *)m)[b];      /* [witchtime] the last bytes as the words: a byte the game changed stays its own */
     }
     R.cb_bytes += (LONG64)c->size; g_ck_land_bytes += (LONG64)c->size;
 }
@@ -2395,7 +2409,7 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
                 if (mv == sv) { if (g[k] != sv) gw++; continue; }
                 if (g[k] == sv) g[k] = mv; else { gw++; cf++; }
             }
-            if (tail) memcpy((uint8_t *)g + nw * 8, (const uint8_t *)m + nw * 8, tail);
+            for (size_t b = nw * 8; b < nw * 8 + tail; b++) if (((uint8_t *)g)[b] == c->snap[b]) ((uint8_t *)g)[b] = ((const uint8_t *)m)[b];      /* [witchtime] the last bytes as the words: a byte the game changed stays its own */
             R.cb_bytes += (LONG64)c->size; R.cb_guest_words += gw; R.cb_conflict_words += cf;
             if (gw) { static int n; if (n++ < 10) printf("nvn_vk: copy-back of %llx+%llu: the guest wrote %lld words of the range while it was pending (%lld of them also written by compute); merged\n", (unsigned long long)c->addr, (unsigned long long)c->size, (long long)gw, (long long)cf); }
         }
@@ -2409,11 +2423,145 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
     R.gen++;                                       /* guest memory changed: ranges are streamed again */
 }
 static void cb_ring_wrap(void) { if (g_cb_pending) cb_land(0); else cb_masks(); }      /* after cmd_wait_all: the mask words in the ring are about to be reused */
+/* [witchtime] issues 132, 133: at a batch start the last batch's buffers become kept WITHOUT waiting for the GPU. cb_sync
+ * waited there for the whole last frame (a third of the render thread in a GPU-heavy frame), while in keep mode nothing is
+ * copied: the wait was only for the dispatches' write masks, so each buffer now counts as written (stale: a landing merges
+ * the words compute changed, the same bytes). The CPU reads a kept buffer's memory only after cb_kept_ready (wserial: the
+ * submission that wrote it last). The next command buffer starts with a full barrier (g_cb_lazy_bar): the last batch may
+ * still be reading what this one writes. A last batch that has already finished lands as before. WT_VK_CBLAZY=0: off. */
+#define CBLAZY_DEFAULT 1
+static void gcp_src_changes(const CB *c); static int cb_overlap(uint64_t addr, uint64_t size);      /* below */
+static int g_cb_lazy = -1;
+static LONG64 g_cb_lazy_n, g_cb_ready_waits, g_ck_discarded;
+static int cb_defer_pending(void) {
+    if (g_cb_lazy < 0) g_cb_lazy = getenv("WT_VK_CBLAZY") ? atoi(getenv("WT_VK_CBLAZY")) : CBLAZY_DEFAULT;
+    if (!g_cb_lazy || g_cb_keep != 1 || g_cb_merge <= 0 || g_cb_live || !g_cb_pending) return 0;      /* merge: a buffer counted as written gives back only the bytes compute changed */
+    if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= g_cb_serial && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    if (R.done >= g_cb_serial) return 0;           /* finished already: cb_sync lands it with the exact masks, without a wait */
+    for (int i = 0; i < CB_N; i++) {
+        CB *c = &g_cb[i];
+        if (c->state != 2) continue;
+        c->stale = 1; c->dirty = 0; c->state = 3; c->age = 0; g_cb_nkept++;      /* kserial: the submission that ended its batch (cb_batch_end) */
+        if (c->addr < g_kept_lo) g_kept_lo = c->addr;
+        if (c->addr + c->size > g_kept_hi) g_kept_hi = c->addr + c->size;
+    }
+    g_ncdisp = 0;                                  /* their write masks are not read */
+    g_cb_pending = 0; g_live_n = 0; g_cb_epoch++; g_cb_lazy_n++;
+    g_cb_lazy_bar = 1;                             /* the next command buffer begins with a full barrier; one being recorded gets it now */
+    if (R.recording) {
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        pass_end();
+        mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        g_cb_lazy_bar = 0;
+    }
+    return 1;
+}
+static void cb_kept_ready(CB *c) {                 /* the GPU has finished what wrote a kept buffer before the CPU reads its memory */
+    if (R.done >= c->wserial) return;              /* always so when the batch start waited */
+    if (drawlog_on()) printf("DLG f%lld kept_ready WAIT CB %llx+%llx for %llu (done %llu, serial %llu) from %p\n", nvn_front_frame_next(), (unsigned long long)c->addr, (unsigned long long)c->size, (unsigned long long)c->wserial, (unsigned long long)R.done, (unsigned long long)R.serial, __builtin_return_address(0));
+    for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->wserial) slot_wait(&R.slot[i]);
+    if (R.done < c->wserial) R.done = c->wserial;  /* wserial was submitted (its batch has ended) and every slot up to it has finished */
+    g_cb_ready_waits++;
+}
+static void cb_kept_discard(uint64_t addr, uint64_t size);      /* below cb_kept_index */
+static int cb_kept_wrote(CB *k);                  /* below cb_guest_wrote */
+/* [witchtime] issues 132, 133: buffer copies the GPU makes. nvnCommandBufferCopyBufferToBuffer runs on the GPU in order; the
+ * replay copied on the CPU, so a source in a compute buffer the GPU had not finished made the frame wait for it. B3 copies the
+ * exposure its last frame's luminance pass wrote (32 bytes) into four views' constants at the start of every frame: a wait
+ * for most of the last frame, every frame. Such a copy (from a kept buffer, at most 4 KB) is now an OVERLAY: guest memory
+ * keeps its bytes for now; every copy of the destination into the ring (ring_put) is patched on the GPU from the source buffer,
+ * in the slot's `up` command buffer after a barrier; and the bytes reach guest memory once the source's writer has finished
+ * (gcp_settle_upto, oldest first, only the bytes nobody changed since, as the copy-back merge). Any other CPU read or write of
+ * the destination, any change of the source buffer and the game's fence waits settle first, waiting if they must. Kept
+ * vertex buffers do not take an overlaid range (vrc_cb_touch). WT_VK_GPUCOPY=0: off. */
+#define GCP_N 32
+typedef struct { uint64_t dst, size, soff, wserial; int src; uint8_t *snap; } GCopy;
+static GCopy g_gcp[GCP_N];
+static int g_gpucopy = -1, g_gcp_busy;
+static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped;
+static VkCommandBuffer up_cmd(void);
+static int gcp_hits(int i, uint64_t addr, uint64_t size) { return addr < g_gcp[i].dst + g_gcp[i].size && g_gcp[i].dst < addr + size; }
+static void gcp_remove(int i) { free(g_gcp[i].snap); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
+static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach guest memory, oldest first; wait 0: only while their source's writer has finished */
+    if (g_gcp_busy) return;                        /* a wait below can come back here (slot_wait does not, cb_poll does) */
+    g_gcp_busy = 1;
+    for (; g_ngcp && last >= 0; last--) {
+        GCopy *o = &g_gcp[0];
+        if (R.done < o->wserial) {
+            if (!wait) break;
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= o->wserial) slot_wait(&R.slot[i]);
+            if (R.done < o->wserial) R.done = o->wserial;      /* submitted (its batch has ended) and every slot up to it has finished */
+            g_gcp_waits++;
+        }
+        uint8_t *g = P(o->dst);
+        const uint8_t *m = (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+        for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
+        R.gen++;                                   /* guest memory changed: ranges are streamed again */
+        gcp_remove(0);
+    }
+    g_gcp_busy = 0;
+}
+static void gcp_settle_done(void) { if (g_ngcp) gcp_settle_upto(g_ngcp - 1, 0); }
+static void gcp_touch(uint64_t addr, uint64_t size) {      /* the CPU reads or writes the range: what GPU copies put there gets there first */
+    int last = -1;
+    for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, addr, size)) last = i;
+    if (last >= 0) gcp_settle_upto(last, 1);
+}
+static void gcp_overwritten(uint64_t addr, uint64_t size) {      /* the CPU writes every byte of the range: copies that only went there are dropped */
+    for (int i = g_ngcp - 1; i >= 0; i--) if (g_gcp[i].dst >= addr && g_gcp[i].dst + g_gcp[i].size <= addr + size) { gcp_remove(i); g_gcp_dropped++; }
+    gcp_touch(addr, size);
+}
+static void gcp_src_changes(const CB *c) {         /* the source buffer is about to change or go: what was copied from it settles */
+    int last = -1, idx = (int)(c - g_cb);
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx) last = i;
+    if (last >= 0) gcp_settle_upto(last, 1);
+}
+static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the copy is an overlay (and nothing else is to be done) */
+    if (g_gpucopy < 0) g_gpucopy = !(getenv("WT_VK_GPUCOPY") && !atoi(getenv("WT_VK_GPUCOPY")));
+    if (!g_gpucopy || !size || size > 4096 || g_ngcp == GCP_N || !g_cb_nkept || g_cb_keep != 1 || (src < dst + size && dst < src + size)) return 0;
+    CB *s = NULL;
+    for (int i = 0; i < CB_N && !s; i++) if (g_cb[i].state == 3 && src >= g_cb[i].addr && src + size <= g_cb[i].addr + g_cb[i].size) s = &g_cb[i];
+    if (!s || R.done >= s->wserial || cb_kept_wrote(s)) return 0;      /* no kept buffer holds the source, the GPU has finished it, or the game wrote into it (landed with the merge): the CPU copies at once */
+    for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= s->wserial && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    if (R.done >= s->wserial) return 0;
+    if (g_cb_live && cb_overlap(dst, size)) return 0;      /* the destination is a compute buffer's of this batch */
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
+    for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, src, size)) return 0;      /* the source is another copy's destination */
+    GCopy *o = &g_gcp[g_ngcp++];
+    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial;
+    o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
+    g_gcp_made++;
+    R.gen++;                                       /* the range is streamed again, now with the patch */
+    return 1;
+}
+static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring_put copied [addr, +size) to the ring at off: the GPU copies go over it */
+    for (int i = 0; i < g_ngcp; i++) {
+        if (!gcp_hits(i, addr, size)) continue;
+        GCopy *o = &g_gcp[i];
+        uint64_t x0 = o->dst > addr ? o->dst : addr, x1 = o->dst + o->size < addr + size ? o->dst + o->size : addr + size;
+        VkCommandBuffer up = up_cmd();
+        Slot *sl = &R.slot[R.cur];
+        if (!sl->up_ovl) {                         /* the source's writer is in an earlier submission */
+            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+            sl->up_ovl = 1;
+        }
+        VkBufferCopy r = {o->soff + (x0 - o->dst), off + (x0 - addr), x1 - x0};
+        vkCmdCopyBuffer(up, g_cb[o->src].buf, R.ring, 1, &r);
+        g_cb[o->src].touch = 1;                    /* named by a command of this batch: not given out before it has run (cb_kept_land, cb_kept_discard) */
+        g_gcp_patches++;
+    }
+}
 /* WT_VK_CBKEEP: a kept buffer's bytes go to guest memory and the entry is free (see the comment at g_cb_keep). The batch
- * that used it last has finished (it became "kept" only then); its Vulkan buffer is not given out again before the
- * submission that ended that batch has finished (busy). */
+ * that used it last has finished (it became "kept" only then, or cb_kept_ready waits for it); its Vulkan buffer is not
+ * given out again before the submission that ended that batch has finished (busy). */
 static void cb_kept_land(CB *c, int cause) {
     LONG64 t0 = tk();
+    if (g_ngcp) gcp_src_changes(c);
+    cb_kept_ready(c);
+    if (drawlog_on()) printf("DLG f%lld kept_land cause %d CB %llx+%llx stale %d\n", nvn_front_frame_next(), cause, (unsigned long long)c->addr, (unsigned long long)c->size, c->stale);
     cg_unguard((int)(c - g_cb));
     cb_keep_back(c, NULL);
     c->state = 0; c->stale = c->dirty = 0; c->busy = c->touch ? R.serial + 2 : c->kserial; c->touch = 0;      /* touch: a draw of this batch names the buffer (buf_ref): it may be in the command buffer after the one being recorded */
@@ -2454,6 +2602,7 @@ static void cb_land_start(CB *c) {
     g_ck_async++;
 }
 static void cb_land_finish(CB *c) {                /* state 4 and its copy has finished */
+    if (g_ngcp) gcp_src_changes(c);
     LONG64 t0 = tk();
     cg_unguard((int)(c - g_cb));
     cb_keep_back(c, (const uint8_t *)c->stg_mem.map);
@@ -2463,6 +2612,7 @@ static void cb_land_finish(CB *c) {                /* state 4 and its copy has f
     { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
 }
 static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in guest memory now */
+    if (drawlog_on()) printf("DLG f%lld land_force cause %d CB %llx+%llx%s\n", nvn_front_frame_next(), cause, (unsigned long long)c->addr, (unsigned long long)c->size, R.done < c->lserial ? " WAIT" : "");
     if (R.recording && c->lserial > R.serial) cmd_submit(NULL, NULL);
     if (R.done < c->lserial) {
         for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->lserial) slot_wait(&R.slot[i]);
@@ -2512,6 +2662,25 @@ static void cb_kept_index(void) {
         if (g_cb[i].addr + g_cb[i].size > g_kept_hi) g_kept_hi = g_cb[i].addr + g_cb[i].size;
     }
 }
+/* [witchtime] issues 132, 133: a guest-memory command overwrites every byte of a kept (or landing) buffer: what compute left
+ * there is never read again, so the entry is dropped instead of landed. B3 clears its culling counts at the start of each frame
+ * that way; landing them first made the frame wait for the GPU. WT_VK_CBDISCARD=0: off. */
+static int g_cb_discard = -1;
+static void cb_kept_discard(uint64_t addr, uint64_t size) {
+    if (g_cb_discard < 0) g_cb_discard = !(getenv("WT_VK_CBDISCARD") && !atoi(getenv("WT_VK_CBDISCARD")));
+    if (!g_cb_discard || !g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo) return;
+    for (int n = 0; n < g_kept_n && g_cb_nkept; n++) {      /* the kept and landing buffers as at the batch start (the set only shrinks) */
+        int i = g_kept_idx[n];
+        CB *c = &g_cb[i];
+        if (c->state < 3 || c->addr < addr || c->addr + c->size > addr + size) continue;
+        if (g_ngcp) gcp_src_changes(c);
+        uint64_t busy = c->touch ? R.serial + 2 : c->kserial;      /* touch: a draw of this batch names it; a landing's copy (state 4) still reads it */
+        if (c->state == 4 && c->lserial > busy) busy = c->lserial;
+        cg_unguard(i);
+        c->state = 0; c->stale = c->dirty = 0; c->touch = 0; c->busy = busy; g_ck_discarded++;
+        if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
+    }
+}
 static void cb_kept_range(uint64_t addr, uint64_t size, int cause) {
     if (!g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo) return;
     for (int n = 0; n < g_kept_n && g_cb_nkept; n++) {
@@ -2540,6 +2709,10 @@ static int cb_guest_wrote(CB *k) {
     if (!nw) { g_ck_unwatched++; return 0; }
     return nw > k->ww;
 }
+static int cb_kept_wrote(CB *k) {                  /* [witchtime] asked once per batch, as buf_ref and indirect_src ask */
+    if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
+    return k->wrote;
+}
 static void cb_kept_all(int cause) { for (int i = 0; i < CB_N && g_cb_nkept; i++) { if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else if (g_cb[i].state == 4) cb_land_force(&g_cb[i], cause); } }
 static void cb_kept_age(void) {                    /* at the start of a batch */
     static int lim = -1;
@@ -2567,9 +2740,11 @@ static void oq_poll(void) {
 }
 static void cb_poll(void) {                        /* pending CBs whose submission has finished are copied back; never waits */
     oq_poll();
-    if (!g_cb_pending) return;
-    if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
-    if (R.done >= g_cb_serial) cb_land(0);
+    if (g_cb_pending) {
+        if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+        if (R.done >= g_cb_serial) cb_land(0);
+    }
+    gcp_settle_done();                             /* [witchtime] also with nothing pending: a fence wait that waited (vk_sync_wait) answers with the GPU copies settled */
 }
 /* [Recomps#1] the host clock in ns, the timestamp nvn_gl.c's now_ns() writes for counter reports */
 static uint64_t vk_now_ns(void) {
@@ -2585,6 +2760,7 @@ static void cb_sync(void) {                        /* guest memory must hold wha
     if (g_cb_live) { g_cb_serial = cmd_submit(NULL, NULL); R.cb_syncs++; }
     if (R.done < g_cb_serial) {
         LARGE_INTEGER t0, t1;
+        if (drawlog_on()) printf("DLG f%lld cb_sync WAIT for %llu (done %llu, live %d, pending %d) from %p\n", nvn_front_frame_next(), (unsigned long long)g_cb_serial, (unsigned long long)R.done, g_cb_live, g_cb_pending, __builtin_return_address(0));
         QueryPerformanceCounter(&t0);
         for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= g_cb_serial) slot_wait(&R.slot[i]);
         if (R.done < g_cb_serial) R.done = g_cb_serial;
@@ -2609,7 +2785,7 @@ static void cb_live_add(CB *c) {
 static void cb_batch_end(void) {
     if (!g_cb_live) return;
     g_cb_serial = cmd_submit(NULL, NULL);
-    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) { c->state = 2; c->kserial = g_cb_serial; c->touch = 0; } }
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) { c->state = 2; c->kserial = g_cb_serial; c->touch = 0; if (!c->wserial || c->wserial > g_cb_serial) c->wserial = g_cb_serial; } }
     g_live_n = 0;
     g_cb_pending = g_cb_live; g_cb_live = 0; g_live_lo = ~0ull; g_live_hi = 0;
 }
@@ -2634,6 +2810,7 @@ static int cb_sync_needed(uint64_t addr, uint64_t size) {
 }
 /* [witchtime] guest memory the CPU is about to read (indirect draw / dispatch records) holds what compute wrote into it */
 static void cpu_read_sync(uint64_t addr, uint64_t size) {
+    if (g_ngcp) gcp_touch(addr, size);
     if (g_cb_live && cb_overlap(addr, size)) cb_sync();
     if (g_cb_nkept) cb_kept_range(addr, size, 3);
 }
@@ -2644,8 +2821,9 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
 static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [witchtime] dispatches / storing draws recorded; the count at the last wait of indirect_src */
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
-    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) return (const uint8_t *)c->mem.map + (addr - c->addr);      /* nothing written since the last wait */
+    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) { if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, no wait\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); return (const uint8_t *)c->mem.map + (addr - c->addr); }      /* nothing written since the last wait */
     if (c && c->mem.map) {
+        if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, WAIT (serial %llu, done %llu)\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size, (unsigned long long)R.serial, (unsigned long long)R.done);
         if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
             VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             pass_end();
@@ -2664,10 +2842,51 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
             if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || !k->mem.map) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
             if (k->wrote) break;
+            if (drawlog_on()) printf("DLI f%lld src %llx+%llx kept CB %llx+%llx\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)k->addr, (unsigned long long)k->size);
+            cb_kept_ready(k);
             return (const uint8_t *)k->mem.map + (addr - k->addr);
         }
+    if (drawlog_on()) printf("DLI f%lld src %llx+%llx guest memory%s\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, g_cb_live && cb_overlap(addr, size) ? " (overlaps a live CB: cb_sync)" : "");
     cpu_read_sync(addr, size);
     return P(addr);
+}
+/* [witchtime] issues 132, 133: B3 culls on the GPU. Each object is an indirect draw of at most one record kept in guest memory,
+ * and a compute dispatch of the same batch writes its count (0 or 1) into a buffer the CPU cleared at the start of the frame.
+ * Reading that count on the CPU (indirect_src) made the render thread wait for everything the GPU had queued, the previous
+ * frame included: the replay and the GPU took turns. Now such a draw goes to the GPU whole: the records are copied into the
+ * ring (the CPU knows them) and vkCmdDraw(Indexed)IndirectCount reads the count from the compute buffer itself; a culled
+ * object costs its draw preparation instead of a wait. Records compute wrote stay on the CPU path. WT_VK_GPUCOUNT=0: off. */
+#define GPUCOUNT_DEFAULT 1
+static int g_gpucount = -1;
+static LONG64 g_gc_calls, g_gc_draws, g_gc_fallback, g_gr_calls, g_gr_noext;
+static int gpucount_on(void) {
+    if (g_gpucount < 0) {
+        const char *e = getenv("WT_VK_GPUCOUNT");
+        int want = e ? atoi(e) : GPUCOUNT_DEFAULT;
+        g_gpucount = want && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
+        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (WT_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount or drawIndirectFirstInstance)");
+    }
+    return g_gpucount;
+}
+static int gpu_written(uint64_t addr, uint64_t size) {       /* a CB of this batch holds the range and the CPU would wait to read it */
+    if (!gpucount_on() || !g_cb_live || g_gpu_writes == g_gpu_writes_seen) return 0;
+    CB *c = cb_inside(addr, size);
+    return c && !((addr - c->addr) & 3);           /* Vulkan reads records and counts at offsets that are multiples of 4 */
+}
+/* The bound of an index buffer whose indices compute chooses: the NVN buffer the index address is in (nvn_stub.c), from it to
+ * the buffer's end. A few addresses a frame; each answer is kept and checked against the buffer object (lock-free). */
+int nvn_stub_buffer_of(uint64_t addr, uint64_t *key, uint64_t *base, uint64_t *size); int nvn_stub_buffer_still(uint64_t key, uint64_t base, uint64_t size);
+static int index_extent(uint64_t ib, uint64_t *size) {
+    static struct { uint64_t ib, key, base, size; } c[16];
+    static int next;
+    for (int i = 0; i < 16; i++)
+        if (c[i].ib == ib && c[i].size && nvn_stub_buffer_still(c[i].key, c[i].base, c[i].size)) { *size = c[i].base + c[i].size - ib; return 1; }
+    uint64_t key, base, sz;
+    if (!nvn_stub_buffer_of(ib, &key, &base, &sz) || base + sz - ib > R.ring_size / 4) return 0;
+    int i = next++ & 15;
+    c[i].ib = ib; c[i].key = key; c[i].base = base; c[i].size = sz;
+    *size = base + sz - ib;
+    return 1;
 }
 /* [witchtime] TEST ONLY (with WT_VK_DRAWLOG): a storage range of a draw / dispatch and its first words as the GPU will see them */
 static void drawlog_ssbo(const char *who, int k, Range r, int written) {
@@ -2685,6 +2904,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
             CB *k = &g_cb[i];
             if (k->state != 3 || k->addr != addr || k->size != size) continue;
             if (g_cb_ww && cb_guest_wrote(k)) { cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
+            if (g_ngcp) gcp_src_changes(k);        /* [witchtime] the GPU writes it again: copies from it settle first */
             k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
             if (addr < g_live_lo) g_live_lo = addr;
@@ -2725,7 +2945,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         VkMemoryRequirements rq;
         c->cap = (size + 4095) & ~(uint64_t)4095;
-        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VKC(vkCreateBuffer(V.device, &bi, NULL, &c->buf));
         vkGetBufferMemoryRequirements(V.device, c->buf, &rq);
         VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | (g_cb_cached ? VK_MEMORY_PROPERTY_HOST_CACHED_BIT : 0);
@@ -2750,6 +2970,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
     if ((int)(c - g_cb) + 1 > g_cb_hi) g_cb_hi = (int)(c - g_cb) + 1;
     if (g_cb_merge < 0) g_cb_merge = !(getenv("WT_VK_CBMERGE") && !atoi(getenv("WT_VK_CBMERGE")));
     if (g_cb_ww < 0) g_cb_ww = !(getenv("WT_VK_CBWW") && !atoi(getenv("WT_VK_CBWW")));
+    if (g_ngcp) gcp_touch(addr, size);             /* [witchtime] a GPU copy into the range gets there first */
     if (g_cb_keep > 0 && g_cb_ww) c->ww = cb_ww_query(c);      /* BEFORE the copy: a write between this question and the copy is in the copy and is also seen at the next question (the buffer is then filled once more) */
     if (g_cb_merge) {                              /* the snapshot the copy-back is compared with (cb_land) */
         if (c->snap_cap < size) { free(c->snap); c->snap_cap = (size + 4095) & ~(uint64_t)4095; c->snap = malloc((size_t)c->snap_cap); }
@@ -2959,6 +3180,7 @@ static int vrc_use(void) {
  * the kept vertex buffers serve it also while compute buffers are live (B3 dispatches every frame: before, every stream
  * went through the ring then, about 64 MB a frame in Tokyo). */
 static int vrc_cb_touch(uint64_t addr, uint64_t size) {
+    for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, addr, size)) return 1;      /* [witchtime] a GPU copy goes there: the ring, patched */
     if (g_cb_live && addr < g_live_hi && addr + size > g_live_lo && cb_overlap(addr, size)) return 1;
     if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
         for (int n = 0; n < g_kept_n; n++) {
@@ -3184,10 +3406,11 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     if (v->images) storage_barrier();              /* [witchtime] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | (gpucount_on() ? VK_ACCESS_INDIRECT_COMMAND_READ_BIT : 0);      /* [witchtime] gpucount_on: indirect draws read records and counts a dispatch wrote */
         vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
         CDisp *d = &g_cdisp[g_ncdisp++];
         d->wm_off = wm_off; d->written = v->ssbo_w; memcpy(d->cb, wcb, sizeof wcb);
+        for (int k = 0; k < 16; k++) if (wcb[k] >= 0) g_cb[wcb[k]].wserial = R.serial + 1;      /* the command buffer being recorded */
     }
 }
 /* Everything of a draw up to the draw call. topo: NVN primitive. Returns 0 when the draw cannot be done (counted as skipped). */
@@ -3270,7 +3493,7 @@ static int draw_prepare(unsigned prim) {
     if (tess) { sv[nsv] = tcs; sx[nsv++] = 3; sv[nsv] = tes; sx[nsv++] = 4; }
 
     PT(0);
-    fsr_draw(fs);                                  /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass) */
+    if (!g_dp_potential) fsr_draw(fs);             /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass); not from a draw the GPU may cull (g_dp_potential) */
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
     g_movie_y = 0; g_fs_screen = g_fs_small = 0;
@@ -3309,7 +3532,7 @@ static int draw_prepare(unsigned prim) {
                 CB *c = g_cb_live ? cb_inside(r.addr, r.size) : NULL;
                 if (c && (r.addr - c->addr) % sal) c = NULL;
                 if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
-                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1;
+                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1; c->wserial = ~0ull;      /* the draw may land in a later submission (a ring wrap in its preparation): cb_batch_end clamps it */
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
@@ -3892,7 +4115,7 @@ int nvn_vk_sync_done(const SyncObj *o) {          /* any thread: the fence's sub
     if (!want) return 0;
     /* compute copy-back buffers in flight or kept (B2 dispatches none): they land in cb_poll / cb_sync, which the job runs
      * around its wait; the game's thread does not answer then (the job does) */
-    if (*(volatile int *)&g_cb_live || *(volatile int *)&g_cb_pending || *(volatile int *)&g_cb_nkept) return 0;
+    if (*(volatile int *)&g_cb_live || *(volatile int *)&g_cb_pending || *(volatile int *)&g_cb_nkept || *(volatile int *)&g_ngcp) return 0;
     int done = want - 1 <= *(volatile uint64_t *)&R.done;
     MemoryBarrier();                               /* what the game reads next was landed before R.done moved */
     return done;
@@ -4012,11 +4235,11 @@ static void exec(const Cmd *m, int depth) {
             if (in_pass) oq_begin();                                            /* counting goes on in this pass */
             break;
         }
-        if (m->op == OP_COUNTER_REPORT && a[1]) { uint64_t d[2] = {0, vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; }
+        if (m->op == OP_COUNTER_REPORT && a[1]) { uint64_t d[2] = {0, vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); R.gen++; }
         break;
     }
     case OP_REPORT_VALUE: if (drawlog_on()) printf("DLW f%lld report %llx\n", nvn_front_frame_next(), (unsigned long long)a[1]);      /* [witchtime] TEST ONLY */
-        if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; } break;
+        if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); R.gen++; } break;
     case OP_CONSRASTER: if (a[0] & 1) nvn_vk_missing("conservative rasterisation (nvnCommandBufferSetConservativeRasterEnable)"); break;
     case OP_DEPTHBOUNDS: {                         /* [witchtime] a0 bit 0 enable, a1 = near, far (two floats): fragments pass where the stored depth is inside */
         float v[2]; memcpy(v, &a[1], 8);
@@ -4038,14 +4261,19 @@ static void exec(const Cmd *m, int depth) {
         break;
     }
     case OP_COPY_BUF_BUF: if (drawlog_on()) printf("DLW f%lld copy %llx -> %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2]);      /* [witchtime] TEST ONLY */
+        if (g_ngcp) gcp_touch(a[0], a[2]);         /* [witchtime] a source another GPU copy wrote */
+        if (a[0] && a[1] && gcp_add(a[0], a[1], a[2])) break;      /* [witchtime] issues 132, 133: from a buffer the GPU has not finished: a GPU copy */
+        if (g_ngcp) gcp_overwritten(a[1], a[2]);
         if (cb_sync_needed(a[0], a[2]) || cb_sync_needed(a[1], a[2])) cb_sync();      /* guest memory is read / written: what compute wrote there must be there (as OpenGL's compute_flush) */
-        if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;
+        if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); if (a[0] && a[1]) cb_kept_discard(a[1], a[2]); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;
     case OP_UPDATE_UBO: if (drawlog_on()) printf("DLW f%lld update %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)(a[0] + a[2]), (unsigned long long)a[3]);      /* [witchtime] TEST ONLY */
+        if (g_ngcp && a[0]) gcp_overwritten(a[0] + a[2], a[3]);
         if (cb_sync_needed(a[0] + a[2], a[3])) cb_sync();
-        if (g_cb_nkept) cb_kept_range(a[0] + a[2], a[3], 3); if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
+        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0] + a[2], a[3]); cb_kept_range(a[0] + a[2], a[3], 3); } if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
     case OP_CLEAR_BUF: if (drawlog_on()) printf("DLW f%lld clear %llx +%llx = %08x\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned)a[2]);      /* [witchtime] TEST ONLY */
+        if (g_ngcp && a[0]) gcp_overwritten(a[0], a[1] & ~(uint64_t)3);      /* the loop below writes whole words */
         if (cb_sync_needed(a[0], a[1])) cb_sync();
-        if (g_cb_nkept) cb_kept_range(a[0], a[1], 3); if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
+        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0], a[1] & ~(uint64_t)3); cb_kept_range(a[0], a[1], 3); } if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
     case OP_CLEARCOLOR: {
         unsigned i = (unsigned)a[0] & 7, mask = (unsigned)a[2] & 15;
         if (!R.have_targets || R.render_off || (int)i >= R.ncol || !R.col[i].tex) break;
@@ -4118,28 +4346,71 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_DRAW_INDIRECT: {                   /* [witchtime] a0 mode, a1 index type, a2 index buffer, a3 records, a4 draws (or the maximum), a5 stride,
                                                 * a6 bit 0 elements, bit 1 count read from memory (blob = its address). The records are read on the CPU
-                                                * once the compute work that wrote them has landed (cpu_read_sync), one Vulkan draw each, as nvn_gl.c. */
+                                                * once the compute work that wrote them has landed (cpu_read_sync), one Vulkan draw each, as nvn_gl.c.
+                                                * A count or records compute wrote in this batch are read by the GPU itself (gpucount_on). */
         unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1, n = (unsigned)a[4], stride = (unsigned)a[5], elements = (unsigned)(a[6] & 1), sz = elements ? 20 : 16;
-        if (a[6] & 2) { uint64_t param; memcpy(&param, blob, 8); uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; }
+        uint64_t param = 0;
         if (!stride) stride = sz;
-        const uint8_t *rec = a[3] && n ? indirect_src(a[3], (uint64_t)(n - 1) * stride + sz) : NULL;
+        if (a[6] & 2) memcpy(&param, blob, 8);
         if (!a[3] || !n || (elements && !a[2])) break;
         if (elements && t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
+        uint64_t span = (uint64_t)(n - 1) * stride + sz, ext = 0;
+        int gcount = (a[6] & 2) && param && gpu_written(param, 4);       /* the count compute (or a storing draw) wrote: the GPU reads it */
+        int grecs = gpu_written(a[3], span) && (n == 1 || (D.f2.features.multiDrawIndirect && !(stride & 3) && stride >= sz)) && (!elements || index_extent(a[2], &ext));      /* the records compute wrote: the GPU reads them, the whole index buffer bound */
+        if (gpu_written(a[3], span) && !grecs) g_gr_noext++;
+        if (gcount && !grecs && (n != 1 || cb_overlap(a[3], span))) gcount = 0;      /* records past the count may be anything, or compute wrote them and the CPU reads them (it waits): the count with them */
+        if ((a[6] & 2) && !gcount) { uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
+        const uint8_t *rec = grecs ? NULL : indirect_src(a[3], span);
         uint64_t lo = ~0ull, hi = 0;
-        for (unsigned k = 0; k < n && elements; k++) {          /* the index range all records use */
+        if (grecs) { lo = 0; hi = ext >> t; }      /* firstIndex is relative to the index address: the buffer from there on */
+        else for (unsigned k = 0; k < n && elements; k++) {          /* the index range all records use (with the count on the GPU: all n of them) */
             uint32_t d[5]; memcpy(d, rec + (uint64_t)k * stride, sz);
             if (d[0] && d[1]) { if (d[2] < lo) lo = d[2]; if ((uint64_t)d[2] + d[0] > hi) hi = (uint64_t)d[2] + d[0]; }
         }
+        if (drawlog_on()) printf("DLI f%lld draw indirect mode %u elements %u type %u ib %llx recs %llx max %u n %u stride %u count %s, records %s, idx %llu..%llu (%llu bytes)\n", nvn_front_frame_next(), (unsigned)a[0], elements, t, (unsigned long long)a[2], (unsigned long long)a[3], (unsigned)a[4], n, stride, gcount ? "ON THE GPU" : (a[6] & 2) ? "from memory" : "fixed", grecs ? "ON THE GPU" : "on the CPU", (unsigned long long)lo, (unsigned long long)hi, (unsigned long long)((hi - lo) << t));
         if (elements && hi <= lo) break;
+        if (!elements && !grecs) { int any = 0; for (unsigned k = 0; k < n && !any; k++) { uint32_t d[4]; memcpy(d, rec + (uint64_t)k * stride, 16); any = d[0] && d[1]; } if (!any && gcount) break; }
         BufRef ib;
         if (elements) buf_ref(a[2] + (lo << t), (hi - lo) << t, (uint64_t)1 << t, &ib);      /* before the draw is prepared: a ring wrap submits */
+        uint64_t roff = 0;
+        if (gcount && !grecs) {                    /* the records as Vulkan reads them, first index relative to the bound range, empty ones zeroed */
+            roff = ring_raw(NULL, (uint64_t)n * sz);
+            uint8_t *dst = (uint8_t *)R.ring_mem.map + roff;
+            for (unsigned k = 0; k < n; k++) {
+                uint32_t d[5]; memcpy(d, rec + (uint64_t)k * stride, sz);
+                if (!d[0] || !d[1]) memset(d, 0, sizeof d);
+                else if (elements) d[2] -= (uint32_t)lo;
+                memcpy(dst + (uint64_t)k * sz, d, sz);
+            }
+        }
+        if ((gcount || grecs) && R.pass_stores) pass_end();      /* a store earlier in this pass may be what the GPU reads: storage_barrier covers INDIRECT_COMMAND_READ */
+        g_dp_potential = gcount || grecs;
         LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0;
+        g_dp_potential = 0;
         if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
         if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        CB *pc = gcount && g_cb_live ? cb_inside(param, 4) : NULL, *rc = grecs && g_cb_live ? cb_inside(a[3], span) : NULL;      /* still live: draw_prepare may have landed them (cb_sync); then guest memory has the bytes */
+        if ((!gcount || pc) && (!grecs || rc) && (gcount || grecs)) {
+            VkBuffer rb = grecs ? rc->buf : R.ring;
+            uint64_t ro = grecs ? a[3] - rc->addr : roff, rs = grecs ? stride : sz;
+            if (gcount) { if (elements) vkCmdDrawIndexedIndirectCount_(R.cmd, rb, ro, pc->buf, param - pc->addr, n, (uint32_t)rs); else vkCmdDrawIndirectCount_(R.cmd, rb, ro, pc->buf, param - pc->addr, n, (uint32_t)rs); }
+            else if (elements) vkCmdDrawIndexedIndirect(R.cmd, rb, ro, n, (uint32_t)rs);
+            else vkCmdDrawIndirect(R.cmd, rb, ro, n, (uint32_t)rs);
+            if (grecs) g_gr_calls++; else g_gc_calls++;
+            g_gc_draws += n; R.frame_draws += n; g_cmd_draws += n; nvn_front_count(0, n);
+            ckpt(2, NULL, NULL, NULL);
+            break;
+        }
+        if (gcount || grecs) {                     /* landed meanwhile: from guest memory after all */
+            g_gc_fallback++;
+            if (gcount) { uint32_t cnt = 0; memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; }
+            if (grecs) rec = n ? indirect_src(a[3], (uint64_t)(n - 1) * stride + sz) : NULL;
+        }
         for (unsigned k = 0; k < n; k++) {
             uint32_t d[5];                     /* arrays: count, instances, first, base instance; elements: count, instances, first index, base vertex, base instance */
             memcpy(d, rec + (uint64_t)k * stride, sz);
             if (!d[0] || !d[1]) continue;
+            if (elements && (d[2] < lo || (uint64_t)d[2] + d[0] > hi)) continue;      /* outside the bound range (only after a fallback of the whole-buffer binding) */
             if (elements) vkCmdDrawIndexed(R.cmd, d[0], d[1], (uint32_t)(d[2] - lo), (int32_t)d[3], d[4]);
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
             R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
@@ -4147,7 +4418,7 @@ static void exec(const Cmd *m, int depth) {
         ckpt(2, NULL, NULL, NULL);                 /* [issue 26] the end of the indirect draws (one "before" marker for all of them) */
         break;
     }
-    case OP_COPY_BUF_TEX: cb_sync(); if (g_cb_nkept) cb_kept_all(3); copy_buf_tex(m); break;
+    case OP_COPY_BUF_TEX: cb_sync(); if (g_cb_nkept) cb_kept_all(3); if (g_ngcp) gcp_settle_upto(g_ngcp - 1, 1); copy_buf_tex(m); break;      /* [witchtime] reads guest memory: every GPU copy there first */
     case OP_COPY_TEX_BUF: {                        /* a0 texture, a3 buffer address, a5 / a6 the strides of its command buffer; blob: view, region (as nvn_gl.c) */
         Tex *t = P(a[0]);
         View v;
@@ -4156,6 +4427,7 @@ static void exec(const Cmd *m, int depth) {
         memcpy(&v, blob, sizeof v); memcpy(r, blob + 24, 24);
         cb_sync();
         if (g_cb_nkept) cb_kept_all(3);
+        if (g_ngcp) gcp_settle_upto(g_ngcp - 1, 1);      /* [witchtime] writes guest memory: every GPU copy there first */
         read_region(t, &v, r, P(a[3]), (int64_t)a[5], (int64_t)a[6]);     /* PR #14 (xtlg511): the strides of its own command buffer */
         R.gen++;                                  /* guest memory changed: ranges are streamed again */
         break;
@@ -4229,7 +4501,8 @@ static void vk_submit(void *arg) {
     if (!V.alive) return;                          /* after the shutdown at exit: the device is gone */
     prewarm_wait();
     LONG64 t0 = tk();
-    cb_sync();                                     /* what the last batch's dispatches wrote is in guest memory before this batch reads it */
+    if (!cb_defer_pending()) cb_sync();            /* what the last batch's dispatches wrote is in guest memory before this batch reads it (keep mode: cb_defer_pending) */
+    gcp_settle_done();
     g_cb_batch++;
     if (g_cb_nkept) cb_kept_age();
     else oq_poll();                                /* [Recomps#1] finding 118: finished read-backs (and counter reports) land at every batch start too, not only when kept compute buffers age */
@@ -4258,6 +4531,7 @@ static void vk_sync_wait(void *arg) {
     uint64_t want = (uint64_t)(uintptr_t)j->o->s;
     if (!want || !V.alive) { j->result = 3; return; }       /* never fenced */
     want--;
+    gcp_settle_done();                             /* [witchtime] the game reads what GPU copies wrote once its fence is signalled */
     if (want <= R.done) { j->result = 0; return; }
     for (int i = 0; i < NSLOT; i++) {
         Slot *s = &R.slot[i];
@@ -5190,6 +5464,14 @@ swap: ;
                    g_cb_keep, (long long)g_cg_reads, (long long)g_cg_writes, (long long)g_cg_render, (long long)g_ck_guard_fail);
             lh = g_ck_hits; lf = g_ck_fills; lfb = g_ck_fill_bytes; memcpy(ll, g_ck_land, sizeof ll); llb = g_ck_land_bytes;
         }
+        if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
+            static LONG64 lc, ld, lf;
+            static LONG64 lz, lr, lx, lom, lop, low, lod;
+            static LONG64 lg, ln;
+            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
+                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0);
+            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped;
+        }
         {   /* Round 16: the long report every 3000 frames cost the present job 17.5-18.4 ms (runs p16t_bf_g, p16t_zt_g,
              * and the owner's logged sessions: frame 3001 late each time): it now waits for a frame without fighters.
              * WT_VK_REPORT_FIGHT=1: at the frame, as before. */
@@ -5376,6 +5658,10 @@ static void vkd_init(void) {
     VKD(X)
 #undef X
     vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(V.device, "vkCmdSetVertexInputEXT");
+    if (D.f12.drawIndirectCount) {                 /* [witchtime] issues 132, 133: indirect draws whose count compute writes (g_gpucount) */
+        vkCmdDrawIndexedIndirectCount_ = (PFN_vkCmdDrawIndexedIndirectCount)vkGetDeviceProcAddr(V.device, "vkCmdDrawIndexedIndirectCount");
+        vkCmdDrawIndirectCount_ = (PFN_vkCmdDrawIndirectCount)vkGetDeviceProcAddr(V.device, "vkCmdDrawIndirectCount");
+    }
     if (g_ck_on) { vkCmdSetCheckpointNV_ = (PFN_vkCmdSetCheckpointNV)vkGetDeviceProcAddr(V.device, "vkCmdSetCheckpointNV"); vkGetQueueCheckpointDataNV_ = (PFN_vkGetQueueCheckpointDataNV)vkGetDeviceProcAddr(V.device, "vkGetQueueCheckpointDataNV"); }      /* [issue 26] */
     if (D.has_push) { vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(V.device, "vkCmdPushDescriptorSetKHR"); if (!vkCmdPushDescriptorSetKHR) D.has_push = 0; }
     if (D.has_eds3) {
@@ -5395,7 +5681,7 @@ static void vkd_init(void) {
         VKC(vkCreateFence(V.device, &fi, NULL, &R.slot[i].fence));
     }
     R.ring_size = 256ull << 20;
-    R.ring = vbuf_new(R.ring_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &R.ring_mem);
+    R.ring = vbuf_new(R.ring_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &R.ring_mem);      /* [witchtime] indirect: records (gpucount_on); transfer dst: GPU copies (gcp_patch) */
     R.zero = vbuf_new(65536 + 64, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &R.zero_mem);
     memset(R.zero_mem.map, 0, 65536 + 64);
     { float f1 = 1.0f; uint32_t i1 = 1; memcpy((uint8_t *)R.zero_mem.map + 65536 + 12, &f1, 4); memcpy((uint8_t *)R.zero_mem.map + 65536 + 28, &i1, 4); }
