@@ -144,9 +144,10 @@ static const char *vk_result_name(VkResult r) {
     return buf;
 }
 static void ckpt_dump(void);                       /* nvn_vk_draw.c, issue 26: WT_VK_CHECKPOINTS */
+static void fault_dump(void);                      /* nvn_vk_draw.c, issue 140: VK_EXT_device_fault */
 static void vk_fatal(const char *what, VkResult r) {
     printf("nvn_vk: %s failed: %s\n", what, vk_result_name(r));
-    if (r == VK_ERROR_DEVICE_LOST) ckpt_dump();
+    if (r == VK_ERROR_DEVICE_LOST) { fault_dump(); ckpt_dump(); }
     fflush(stdout);
     ExitProcess(5);
 }

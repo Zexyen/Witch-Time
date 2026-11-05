@@ -841,8 +841,15 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
   Each change of the game's dynamic-resolution level (8 sets, 1600x896 .. 640x360;
   10 in 3.5 minutes of the route, mostly around the cutscene) makes the resources again and resets the history; making every
   report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was taken
-  out. Upscaling: the next section. Not run on Windows, the Deck,
-  Android, NVIDIA or Intel.
+  out. Upscaling: the next section. Not run on the Deck, Android or Intel.
+- **NVIDIA (issue 140, 2026-11-05)**: on an RTX 4090 (Windows, driver 621.14, Quality at 2.4, a fresh save's title screen)
+  v0.8.0 lost the device (`vkQueueSubmit`: VK_ERROR_DEVICE_LOST, exit code 5) after about 1100 FSR frames, with no hang
+  first. Not reproduced on the RX 9070 XT (RADV; core, sync and GPU-assisted validation clean over 18,000 FSR frames). The
+  suspect: AMD's samplers `s_PointClamp` / `s_LinearClamp` (bindings 1000 / 1001) were immutable samplers in push layouts
+  that were never pushed; the spec makes them undefined until pushed, RADV inlines them and the validation layer counts them
+  as written. They are now plain sampler bindings pushed with every pass. Also: AMD's `ComputeMinimumDifference` read
+  `fSamples[5]` of a 5-element array (clamped, no result changes); a lost device prints the driver's `VK_EXT_device_fault`
+  report (`nvn_vk_fault:`), and `WT_VK_CHECKPOINTS=1` names FSR's pass. Not confirmed on NVIDIA yet.
 - **FSR 4 and frame generation**: FSR 4.1.2 on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000
   and newer); Adrenalin does not upgrade a Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping
   them: at most a DLL the player adds. AMD's frame-generation swapchain wants four queues and its own present thread, against

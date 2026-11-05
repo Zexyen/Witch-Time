@@ -106,7 +106,7 @@ FfxFloat32 ComputeMinimumDifference(FfxInt32x2 iPxPos, SampleSet fSet0, SampleSe
                 fMinDiff = (abs(fDiff) < abs(fMinDiff)) ? fDiff : fMinDiff;
 
                 a += FfxInt32(fSet0.fSamples[a] < fSet1.fSamples[b]);
-                b += FfxInt32(fSet0.fSamples[a] >= fSet1.fSamples[b]);
+                b += FfxInt32(fSet0.fSamples[min(a, SHADING_CHANGE_SET_SIZE - 1)] >= fSet1.fSamples[b]);      // [witchtime] issue 140: a reaches 5 on the last step (a read past the array, undefined behaviour); b is not used after it, so the clamp changes no result
             }
             else
             {

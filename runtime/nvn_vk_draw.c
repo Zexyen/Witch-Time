@@ -45,8 +45,9 @@ static struct {
     VkPhysicalDeviceIndexTypeUint8FeaturesEXT iu8; VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT plr; VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vad;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
+    VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
     const char *exts[16]; uint32_t next;
-    int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, debug;
+    int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so;
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
@@ -89,6 +90,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
      * without the pass formats, a draw only LINKS. WT_VK_GPL=1 turns it on (needs extended dynamic state 3 as well). */
     D.ext_gpl = has_name(dext, ndext, "VK_EXT_graphics_pipeline_library") && has_name(dext, ndext, "VK_KHR_pipeline_library"); D.ext_so = has_name(dext, ndext, "VK_EXT_shader_object");
     if (D.ext_gpl && vk_gpl_mode()) { D.exts[D.next++] = "VK_KHR_pipeline_library"; EXT(has_gpl, "VK_EXT_graphics_pipeline_library", gpl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT) }
+    EXT(has_fault, "VK_EXT_device_fault", fault, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT)      /* [issue 140] a lost device says what faulted (fault_dump) */
 #undef EXT
     {   /* [issue 26] WT_VK_CHECKPOINTS=1: NVIDIA's diagnostic checkpoints (ckpt) */
         const char *e = getenv("WT_VK_CHECKPOINTS");
@@ -100,6 +102,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
     D.has_vids = D.has_vids && D.vids.vertexInputDynamicState; D.has_cbc = D.has_cbc && D.cbc.customBorderColors && D.cbc.customBorderColorWithoutFormat;
     D.has_pv = D.has_pv && D.pv.provokingVertexLast; D.has_iu8 = D.has_iu8 && D.iu8.indexTypeUint8; D.has_plr = D.has_plr && D.plr.primitiveTopologyListRestart;
+    D.has_fault = D.has_fault && D.fault.deviceFault; D.fault.deviceFaultVendorBinary = VK_FALSE;      /* (the binary dump is not read: not asked for) */
     /* session 4: blend / mask / polygon / multisample state out of the pipeline key, only when the GPU has ALL of these (else all stay in the key) */
     D.has_eds3 = D.has_eds3 && D.eds3.extendedDynamicState3ColorBlendEnable && D.eds3.extendedDynamicState3ColorBlendEquation && D.eds3.extendedDynamicState3ColorWriteMask && D.eds3.extendedDynamicState3PolygonMode &&
                  D.eds3.extendedDynamicState3AlphaToCoverageEnable && D.eds3.extendedDynamicState3SampleMask && (D.eds3.extendedDynamicState3DepthClampEnable || !D.f2.features.depthClamp);
@@ -498,7 +501,7 @@ static void slot_wait(Slot *s) {
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) { ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
+    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* WT_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
@@ -1449,6 +1452,7 @@ static void ckpt_print(const char *what, uint32_t m) {
     if (!m || m > g_ckn || g_ckn - m >= CK_N) { printf("  %s: marker %u (no record)\n", what, m); return; }
     const CkRec *k = &g_ck[(m - 1) % CK_N];
     printf("  %s: marker %u of %u: frame %lld, draw %u of the frame, %s, stages hb %016llx %016llx %016llx\n", what, m, g_ckn, k->frame, k->draw,
+           k->kind == 3 ? "before an FSR pass (stages hb = the pass: 0 motion vectors, 1 prepare inputs, 2 luma pyramid, 3 shading change pyramid, 4 shading change, 5 reactivity, 6 luma instability, 7 accumulate, then its blit)" :
            k->kind == 2 ? "END of that draw or dispatch" : k->kind ? "before a compute dispatch" : k->hb[2] ? "before a draw (vertex, fragment, tessellation evaluation)" : "before a draw (vertex, fragment)", (unsigned long long)k->hb[0], (unsigned long long)k->hb[1], (unsigned long long)k->hb[2]);
 }
 static void ckpt_dump(void) {
@@ -1474,6 +1478,28 @@ static void ckpt_dump(void) {
         if (g_ck[(lo - 1) % CK_N].kind != 2) ckpt_print("STOPPED IN this draw or dispatch (the oldest marker passed is the one before it)", lo);
         else { ckpt_print("STOPPED AFTER the end of this draw or dispatch, in the commands that follow it, before", lo); ckpt_print("the next marker", lo + 1); }
     }
+    fflush(stdout);
+}
+/* [issue 140] vk_fatal on VK_ERROR_DEVICE_LOST: the driver's own account (VK_EXT_device_fault: NVIDIA since 552.93, RADV),
+ * the kind of fault and the GPU address, with no switch to set first. */
+static void fault_dump(void) {
+    if (!V.device) return;
+    PFN_vkGetDeviceFaultInfoEXT get = D.has_fault ? (PFN_vkGetDeviceFaultInfoEXT)vkGetDeviceProcAddr(V.device, "vkGetDeviceFaultInfoEXT") : NULL;
+    VkDeviceFaultCountsEXT n = {VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
+    if (!get || get(V.device, &n, NULL) != VK_SUCCESS) { printf("nvn_vk_fault: no fault report (%s)\n", D.has_fault ? "the driver gave none" : "the driver has no VK_EXT_device_fault"); fflush(stdout); return; }
+    VkDeviceFaultAddressInfoEXT a[16]; VkDeviceFaultVendorInfoEXT v[16];
+    VkDeviceFaultInfoEXT fi = {VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
+    if (n.addressInfoCount > 16) n.addressInfoCount = 16;
+    if (n.vendorInfoCount > 16) n.vendorInfoCount = 16;
+    n.vendorBinarySize = 0; fi.pAddressInfos = a; fi.pVendorInfos = v;
+    VkResult r = get(V.device, &n, &fi);
+    if (r != VK_SUCCESS && r != VK_INCOMPLETE) { printf("nvn_vk_fault: no fault report (%s)\n", vk_result_name(r)); fflush(stdout); return; }
+    static const char *k[7] = {"none", "READ of an invalid address", "WRITE to an invalid address", "EXECUTE of an invalid address", "instruction pointer unknown", "instruction pointer invalid", "instruction pointer of the fault"};
+    printf("nvn_vk_fault: the driver's report of the lost device: \"%s\", %u address(es), %u vendor record(s)\n", fi.description, n.addressInfoCount, n.vendorInfoCount);
+    for (uint32_t i = 0; i < n.addressInfoCount; i++)
+        printf("  %s: GPU address 0x%llx (within 0x%llx)\n", (unsigned)a[i].addressType < 7 ? k[a[i].addressType] : "?", (unsigned long long)a[i].reportedAddress, (unsigned long long)a[i].addressPrecision);
+    for (uint32_t i = 0; i < n.vendorInfoCount; i++)
+        printf("  vendor: \"%s\", code 0x%llx, data 0x%llx\n", v[i].description, (unsigned long long)v[i].vendorFaultCode, (unsigned long long)v[i].vendorFaultData);
     fflush(stdout);
 }
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
