@@ -467,7 +467,8 @@ int App::run()
 				handle(ev);
 		}
 		tick();
-		if (want_play)
+		std::string tag, message;    // --play waits up to 5 s for the update check: an update keeps the launcher open (play())
+		if (want_play && (!play_only || after_switch || SDL_GetTicks() >= 5000 || update::state(tag, message) != update::State::checking))
 		{
 			want_play = false;
 			play();
@@ -817,6 +818,11 @@ void App::refresh_title()
 		status_bad = true;
 		status_title = "THE GAME STOPPED";
 		status_line = "The game stopped with exit code " + std::to_string(returned_code) + ". Its log is in build/run.";
+	}
+	else if (built && us == update::State::available)
+	{
+		status_title = "UPDATE AVAILABLE";
+		status_line = tag + " is out. Update installs it; Play starts this version.";
 	}
 	else if (built)
 	{
@@ -1200,11 +1206,12 @@ void App::tick()
 	{
 		std::string tag, message;
 		const update::State us = update::state(tag, message);
+		const int seen = int(us == update::State::checking ? update::State::none : us);   // a check that finds nothing keeps the band (play()'s reason)
 		if (us == update::State::done)
 			running = false;               // run() then starts the new launcher
-		else if (int(us) != update_seen || message != update_message)
+		else if (seen != update_seen || message != update_message)
 		{
-			update_seen = int(us);
+			update_seen = seen;
 			update_message = message;
 			refresh_title();
 		}
@@ -1317,6 +1324,12 @@ void App::play()
 	{                                            // the textures: optional, and Settings goes on with them; stopped, then tick() plays
 		play_after_stop = true;
 		runner.stop();
+		return;
+	}
+	std::string tag, message;
+	if (play_only && !after_switch && update::state(tag, message) == update::State::available)
+	{
+		play_only = false;                       // --play with a newer release out: the title offers it (issue 143)
 		return;
 	}
 	if (stale)
