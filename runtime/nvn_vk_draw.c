@@ -1774,6 +1774,7 @@ static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
 static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
+static int g_dp_fs_stores;                         /* [witchtime] issue 147: the draw just prepared has a fragment stage that stores into images */
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -3434,6 +3435,7 @@ static uint64_t c2_ref(int s) {
 }
 static LONG64 g_tess_draws, g_tess_pipes;          /* [witchtime] */
 static int draw_prepare(unsigned prim) {
+    g_dp_fs_stores = 0;
     if (g_ptm_on < 0) g_ptm_on = getenv("WT_VK_PREPTIME") && atoi(getenv("WT_VK_PREPTIME"));
     if (g_ptm_on > 0) { g_ptm_t = tk(); g_ptm_n++; }
     static const int8_t topo[7] = {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, -1, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN};
@@ -3730,6 +3732,7 @@ static int draw_prepare(unsigned prim) {
         printf("\n");
     }
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
+    g_dp_fs_stores = fs && fs->images && !fs->ssbo_w;      /* [witchtime] issue 147 (rs_store_low): a stage that also writes buffers would write them twice */
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
     return 1;
 }
@@ -4120,6 +4123,31 @@ int nvn_vk_sync_done(const SyncObj *o) {          /* any thread: the fence's sub
     MemoryBarrier();                               /* what the game reads next was landed before R.done moved */
     return done;
 }
+/* [witchtime] issue 147: below a scale of 1.0 a scaled pass has fewer pixels than the game's. fs5548 (the 1/2 min/max depth
+ * level) and fs1693 (a half-size colour) store into images kept at the game's size, each at the game pixel its fragment
+ * rounds to, so whole columns and rows are never stored: every fifth one at 0.8, a fixed grid of zeros that the tile light
+ * culling (fs2263) and a blur chain read. Such a draw runs once more in a pass without attachments as large as its viewport,
+ * in the game's pixels (mx_fcs 1): every texel gets its store; its colour outputs go nowhere, the first draw wrote them.
+ * Not for a stage that writes buffers too; a sample counter running is paused for it. WT_VK_STOREFULL=0: off. */
+static TargetRef g_sf_col[8], g_sf_dep;
+static int g_sf_ncol, g_sf_have, g_sf_oq, g_sf_on = -1;
+static LONG64 g_sf_draws;
+static int rs_store_low(void) {
+    if (!g_dp_fs_stores || !RS_ON || !R.in_pass || !R.pass_rs || (R.pass_sx >= 1.0f && R.pass_sy >= 1.0f)) return 0;
+    if (g_sf_on < 0) g_sf_on = !(getenv("WT_VK_STOREFULL") && !atoi(getenv("WT_VK_STOREFULL")));
+    if (!g_sf_on) return 0;
+    pass_end();
+    memcpy(g_sf_col, R.col, sizeof g_sf_col); g_sf_dep = R.depth; g_sf_ncol = R.ncol; g_sf_have = R.have_targets;
+    memset(R.col, 0, sizeof R.col); memset(&R.depth, 0, sizeof R.depth); R.ncol = 0; R.have_targets = 0; R.dyn_dirty = 1;
+    g_sf_oq = g_oq_on; g_oq_on = 0;
+    return 1;
+}
+static void rs_store_done(int drawn) {             /* the targets of the game's pass again; its next draw begins it anew */
+    pass_end();
+    memcpy(R.col, g_sf_col, sizeof R.col); R.depth = g_sf_dep; R.ncol = g_sf_ncol; R.have_targets = g_sf_have; R.dyn_dirty = 1;
+    g_oq_on = g_sf_oq;
+    g_sf_draws += drawn;
+}
 static void exec(const Cmd *m, int depth) {
     const uint8_t *blob = BLOB(m);
     const uint64_t *a = m->a;
@@ -4328,6 +4356,7 @@ static void exec(const Cmd *m, int depth) {
         ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
+        if (rs_store_low()) { int ok = draw_prepare((unsigned)a[0]); if (ok) vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]); rs_store_done(ok); }      /* [witchtime] issue 147 */
         break;
     case OP_DRAW_ELEMENTS: {
         unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1;
@@ -4342,6 +4371,12 @@ static void exec(const Cmd *m, int depth) {
         ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
+        if (rs_store_low()) {                      /* [witchtime] issue 147; the indices again: the draw's preparation may have wrapped the ring */
+            buf_ref(a[3], (uint64_t)count << t, (uint64_t)1 << t, &ib);
+            int ok = draw_prepare((unsigned)a[0]);
+            if (ok) { vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]); }
+            rs_store_done(ok);
+        }
         break;
     }
     case OP_DRAW_INDIRECT: {                   /* [witchtime] a0 mode, a1 index type, a2 index buffer, a3 records, a4 draws (or the maximum), a5 stride,
@@ -5774,6 +5809,7 @@ static void vkd_shutdown(void) {
     if (g_rs_twoscale) printf("nvn_vk_scale: %lld passes had attachments of both scales (the scene's %.3f, the picture's %.3f): each drawn in the area all of them hold\n", (long long)g_rs_twoscale, (double)rs_render_scale(), (double)rs_scale());
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: WT_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
     if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
+    if (RS_ON && g_sf_draws) printf("nvn_vk_scale: %lld draws below 1.0 that store into kept images drawn again at the game's size (issue 147; WT_VK_STOREFULL=0 off)\n", (long long)g_sf_draws);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
     if (RS_ON) printf("nvn_vk_scale: the scaled images made took %.0f MB of device memory in all\n", (double)g_rs_bytes / 1048576.0);      /* PR #8 review */
