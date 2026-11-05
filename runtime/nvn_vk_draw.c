@@ -495,6 +495,8 @@ static LONG64 g_fu_frames, g_fu_total, g_fu_linked, g_fu_made, g_fu_newsig, g_fu
 #define VK_SPLIT_DEFAULT 0
 static LONG64 g_tl_t0, g_tl_first, g_tl_last, g_tl_sum[8], g_tl_n;      /* sums: 0 first submission, 1 last submission, 2 present job, 3 fence waits (count), 4 fence wait ticks, 5 end of a fence wait after the batch start */
 void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.done moved, a game thread may wait for it */
+static void dt_land(int si, uint64_t t_begin);
+static void dt_begin(VkCommandBuffer cb, int si);
 static void slot_wait(Slot *s) {
     if (!s->pending) return;
     for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial < s->serial) slot_wait(&R.slot[i]);   /* [Recomps#1] in submission order (oq_land) */
@@ -517,6 +519,7 @@ static void slot_wait(Slot *s) {
                 }
             g_pt_slot[si].n = 0;
         }
+        dt_land(si, ts[0]);
     }
     oq_land((int)(s - R.slot));                    /* [Recomps#1] counter reports of this command buffer */
     lr_land((int)(s - R.slot));                    /* [Recomps#1] finding 118: texels the game reads on the CPU */
@@ -563,23 +566,78 @@ static void cmd_begin(void) {
     }
     oq_slot_reset(R.cur);                                 /* [Recomps#1] occlusion queries of this slot */
     if (g_ts_on < 0) {
-        g_ts_on = getenv("WT_VK_GPUTIME") && atoi(getenv("WT_VK_GPUTIME")) && V.props.limits.timestampComputeAndGraphics;
+        g_ts_on = !(getenv("WT_VK_GPUTIME") && !atoi(getenv("WT_VK_GPUTIME"))) && V.props.limits.timestampComputeAndGraphics;      /* TEST BUILD (issue 144): on unless =0 */
         if (g_ts_on) { VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO}; qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = NSLOT * 2; VKC(vkCreateQueryPool(V.device, &qi, NULL, &g_ts_pool)); }
     }
     s->ts_frame = g_cur_frame;
     if (g_ts_on > 0) { vkCmdResetQueryPool(s->cmd, g_ts_pool, (uint32_t)R.cur * 2, 2); vkCmdWriteTimestamp(s->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_ts_pool, (uint32_t)R.cur * 2); }
     if (g_pt_on < 0) {
-        g_pt_on = g_ts_on > 0 && getenv("WT_VK_PASSTIME") && atoi(getenv("WT_VK_PASSTIME"));
+        g_pt_on = g_ts_on > 0 && !(getenv("WT_VK_PASSTIME") && !atoi(getenv("WT_VK_PASSTIME")));      /* TEST BUILD (issue 144): on unless =0 */
         if (g_pt_on) { VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO}; qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = NSLOT * PT_MAX; VKC(vkCreateQueryPool(V.device, &qi, NULL, &g_pt_pool)); }
     }
     if (g_pt_on > 0) { vkCmdResetQueryPool(s->cmd, g_pt_pool, (uint32_t)R.cur * PT_MAX, PT_MAX); g_pt_slot[R.cur].n = 0; g_pt_slot[R.cur].last_what = -1; }
+    dt_begin(s->cmd, R.cur);
     g_cmd_draws = 0;
     garbage_collect();
 }
 static volatile LONG g_in_fight;
+/* issue 144, TEST ONLY: WT_VK_DRAWTIME=<file> (with WT_VK_GPUTIME=1 WT_VK_PASSTIME=1): a bottom-of-pipe timestamp after every draw,
+ * dispatch and pass start; the time since the mark before is that record's. Summed per (vs, fs, variant hashes, pass size) and per
+ * 30 frames: lines "DT <first frame> <vs> <fs> <vh> <fh> <w>x<h> <us> <records>" for sums of 200 us and more. */
+#define DT_MAX 6144
+typedef struct { int vs, fs, w, h; uint64_t vh, fh; long long fr; } DtRec;
+static VkQueryPool g_dt_pool; static int g_dt_on = -1; static FILE *g_dt_f;
+static DtRec g_dt_rec[NSLOT][DT_MAX]; static int g_dt_n[NSLOT];
+static uint64_t g_dt_vh, g_dt_fh;
+typedef struct { int vs, fs, w, h; uint64_t vh, fh; double us; long long n; } DtSum;
+#define DT_SUMS 4096
+static DtSum g_dt_sum[DT_SUMS]; static int g_dt_nsum; static long long g_dt_bucket = -1;
+static void dt_flush(void) {
+    if (!g_dt_f) return;
+    for (int i = 0; i < g_dt_nsum; i++) if (g_dt_sum[i].us >= 200.0)
+        fprintf(g_dt_f, "DT %lld %d %d %016llx %016llx %dx%d %.0f %lld\n", g_dt_bucket * 30, g_dt_sum[i].vs, g_dt_sum[i].fs, (unsigned long long)g_dt_sum[i].vh, (unsigned long long)g_dt_sum[i].fh, g_dt_sum[i].w, g_dt_sum[i].h, g_dt_sum[i].us, g_dt_sum[i].n);
+    fflush(g_dt_f); g_dt_nsum = 0;
+}
+static void dt_add(const DtRec *q, double us) {
+    long long b = q->fr / 30;
+    if (b != g_dt_bucket) { if (g_dt_bucket >= 0 && b > g_dt_bucket) dt_flush(); if (b > g_dt_bucket) g_dt_bucket = b; }
+    int j; for (j = 0; j < g_dt_nsum; j++) { DtSum *d = &g_dt_sum[j]; if (d->vs == q->vs && d->fs == q->fs && d->vh == q->vh && d->fh == q->fh && d->w == q->w && d->h == q->h) break; }
+    if (j == g_dt_nsum) { if (j == DT_SUMS) return; DtSum d = {q->vs, q->fs, q->w, q->h, q->vh, q->fh, 0, 0}; g_dt_sum[j] = d; g_dt_nsum++; }
+    g_dt_sum[j].us += us; g_dt_sum[j].n++;
+}
+static void dt_begin(VkCommandBuffer cb, int si) {          /* cmd_begin, outside any pass */
+    if (g_dt_on < 0) {      /* TEST BUILD (issue 144): on unless WT_VK_DRAWTIME=0; the file is WT_VK_DRAWTIME or <exe>_draws.txt next to the exe */
+        const char *e = getenv("WT_VK_DRAWTIME"); char path[MAX_PATH + 16];
+        g_dt_on = !(e && !strcmp(e, "0")) && g_pt_on > 0;
+        if (g_dt_on && !e) { DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH); if (n > 4 && !_stricmp(path + n - 4, ".exe")) n -= 4; snprintf(path + n, sizeof path - n, "_draws.txt"); e = path; }
+        if (g_dt_on) { VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO}; qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = NSLOT * DT_MAX; VKC(vkCreateQueryPool(V.device, &qi, NULL, &g_dt_pool)); g_dt_f = fopen(e, "w");
+            printf("nvn_vk_dt: TEST BUILD (issue 144): GPU time of every draw summed per 30 frames into %s (%s)\n", e, g_dt_f ? "open" : "COULD NOT BE OPENED"); } }
+    if (g_dt_on > 0) { vkCmdResetQueryPool(cb, g_dt_pool, (uint32_t)si * DT_MAX, DT_MAX); g_dt_n[si] = 0; }
+}
+static void dt_mark(int vs, int fs) {
+    if (g_dt_on <= 0 || !R.recording) return;
+    int si = R.cur;
+    if (g_dt_n[si] >= DT_MAX) return;
+    int i = g_dt_n[si]++;
+    DtRec q = {vs, fs, R.pass_w, R.pass_h, vs >= 0 ? g_dt_vh : 0, vs >= 0 ? g_dt_fh : 0, (long long)g_cur_frame}; g_dt_rec[si][i] = q;
+    vkCmdWriteTimestamp(R.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_dt_pool, (uint32_t)(si * DT_MAX + i));
+}
+static void dt_land(int si, uint64_t t_begin) {
+    if (g_dt_on <= 0 || g_dt_n[si] <= 0) return;
+    static uint64_t dt[DT_MAX];
+    int n = g_dt_n[si];
+    if (vkGetQueryPoolResults(V.device, g_dt_pool, (uint32_t)si * DT_MAX, (uint32_t)n, sizeof dt[0] * (size_t)n, dt, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+        for (int i = 0; i < n; i++) {
+            uint64_t prev = i ? dt[i - 1] : t_begin;
+            if (!prev || dt[i] < prev) continue;
+            dt_add(&g_dt_rec[si][i], (double)(dt[i] - prev) * (double)V.props.limits.timestampPeriod / 1e3);
+        }
+    g_dt_n[si] = 0;
+}
 /* WT_VK_PASSTIME: a mark in the command buffer being recorded (see the comment at PT_MAX). */
 static void pt_mark(int w, int h, int ncol, int cf, int depth, int win, int what) {
     if (g_pt_on <= 0 || !R.recording) return;
+    dt_mark(-1 - what, -1);
     int si = R.cur, k;
     if (g_pt_slot[si].n) g_pt_draws[g_pt_slot[si].kind[g_pt_slot[si].n - 1]] += g_cmd_draws - g_pt_slot[si].d0;
     g_pt_slot[si].d0 = g_cmd_draws;
@@ -3532,6 +3590,7 @@ static int draw_prepare(unsigned prim) {
     }
     VStage *vnext = tess ? tcs : fs;               /* what reads the vertex stage's outputs */
     if (vs) { uint32_t need = vnext ? vnext->in_attr & ~(vs->out_attr & ~vs->fo) : 0; if (need != vs->fo) vs = vstage_get(R.prog[0], 0, key0, need); }
+    g_dt_vh = vs ? vs->h : 0; g_dt_fh = fs ? fs->h : 0;
     if (g_skip_flag) { g_skip_flag = 0; if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) return 0; }      /* shader_wait = skip: the draw is left out (counted in vstage_get) */
     if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) { nvn_vk_missing("a draw whose vertex, fragment or tessellation stage could not be translated or compiled (the log names the stage)"); return 0; }
     VStage *sv[4]; int sx[4], nsv = 0;             /* [witchtime] the draw's stages and their NVN stage numbers, in one order for every list below */
@@ -4326,11 +4385,11 @@ static void exec(const Cmd *m, int depth) {
     case OP_ROWSTRIDE: R.row_stride = (int64_t)a[0]; break;      /* PR #14 (xtlg511): no longer read by the copies (they carry their own strides); kept as state */
     case OP_IMAGESTRIDE: R.image_stride = (int64_t)a[0]; break;
     case OP_BARRIER: if (a[0] & 0x10) nvn_front_barrier_texmem(); break;      /* ordering bits: every draw is recorded in order; feedback is handled at the draw */
-    case OP_DISPATCH: { LONG64 t0 = tk(); compute_dispatch((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2]); g_tm[2] += tk() - t0; break; }
+    case OP_DISPATCH: { LONG64 t0 = tk(); compute_dispatch((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2]); g_tm[2] += tk() - t0; dt_mark(-20, R.prog[5] ? R.prog[5]->serial : -9); break; }
     case OP_DISPATCH_INDIRECT: {               /* [witchtime] a0 = address of three group counts, read once compute output there has landed (cpu_read_sync) */
         uint32_t g[3] = {0, 0, 0};
         if (a[0]) memcpy(g, indirect_src(a[0], 12), 12);
-        LONG64 t0 = tk(); compute_dispatch(g[0], g[1], g[2]); g_tm[2] += tk() - t0;
+        LONG64 t0 = tk(); compute_dispatch(g[0], g[1], g[2]); g_tm[2] += tk() - t0; dt_mark(-20, R.prog[5] ? R.prog[5]->serial : -9);
         break;
     }
     case OP_COPY_BUF_BUF: if (drawlog_on()) printf("DLW f%lld copy %llx -> %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2]);      /* [witchtime] TEST ONLY */
@@ -4399,7 +4458,7 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
         ckpt(2, NULL, NULL, NULL);
-        primlog_add(0, a[2] * (a[4] ? a[4] : 1));
+        primlog_add(0, a[2] * (a[4] ? a[4] : 1)); dt_mark(R.prog[0] ? R.prog[0]->serial : -9, R.prog[1] ? R.prog[1]->serial : -9);
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         if (rs_store_low()) { int ok = draw_prepare((unsigned)a[0]); if (ok) vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]); rs_store_done(ok); }      /* [witchtime] issue 147 */
         break;
@@ -4414,7 +4473,7 @@ static void exec(const Cmd *m, int depth) {
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         ckpt(2, NULL, NULL, NULL);
-        primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
+        primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1)); dt_mark(R.prog[0] ? R.prog[0]->serial : -9, R.prog[1] ? R.prog[1]->serial : -9);
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         if (rs_store_low()) {                      /* [witchtime] issue 147; the indices again: the draw's preparation may have wrapped the ring */
             buf_ref(a[3], (uint64_t)count << t, (uint64_t)1 << t, &ib);
@@ -4477,7 +4536,7 @@ static void exec(const Cmd *m, int depth) {
             else if (elements) vkCmdDrawIndexedIndirect(R.cmd, rb, ro, n, (uint32_t)rs);
             else vkCmdDrawIndirect(R.cmd, rb, ro, n, (uint32_t)rs);
             if (grecs) g_gr_calls++; else g_gc_calls++;
-            g_gc_draws += n; R.frame_draws += n; g_cmd_draws += n; nvn_front_count(0, n);
+            g_gc_draws += n; R.frame_draws += n; g_cmd_draws += n; nvn_front_count(0, n); dt_mark(R.prog[0] ? R.prog[0]->serial : -9, R.prog[1] ? R.prog[1]->serial : -9);
             ckpt(2, NULL, NULL, NULL);
             break;
         }
@@ -4495,6 +4554,7 @@ static void exec(const Cmd *m, int depth) {
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
             R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         }
+        dt_mark(R.prog[0] ? R.prog[0]->serial : -9, R.prog[1] ? R.prog[1]->serial : -9);
         ckpt(2, NULL, NULL, NULL);                 /* [issue 26] the end of the indirect draws (one "before" marker for all of them) */
         break;
     }
@@ -5810,7 +5870,7 @@ static void gputimes_dump(void) {
     fclose(f);
 }
 static void frstat_report(void) {
-    gputimes_dump(); passwhy_report();
+    gputimes_dump(); passwhy_report(); dt_flush();
     static float g[FRSTAT_N], w[FRSTAT_N];
     int n = 0, seen = 0, slow = 0;
     double wsum = 0, gsum = 0;
