@@ -1634,6 +1634,39 @@ sampler showed it each time); only all four parts together free the render threa
 Not checked: Windows, NVIDIA and AMD's Windows driver (the paths were run on RADV only), the Steam Deck, other chapters
 (indirect dispatches whose group counts compute writes still wait on the CPU; none in Shibuya), the OpenGL renderer (unchanged).
 
+## Cutscenes on a slow disk (2026-11-05; issue 136)
+
+Issue 136 (Windows, RX 6600, v0.7.0): a cutscene's first viewing freezes for 1-4 s, less the second time. **Cause**: the
+game was installed on a slow disk, most likely a hard disk. Its pack reads took 25 ms per texture, where other logs show
+0.2-3 ms, and the pipeline cache loaded at 146 MB/s. In each of the three watchdog reports the whole process used under
+100 ms of CPU in 300 ms. The game's main thread sat at the first instruction of one lifted function after another, so
+Windows was paging `game.dll`'s code in from that disk. Meanwhile, the three texture-prep workers were reading the BC7 pack
+and FileContentsRead (the game's only reader) its archives.
+
+**Change**: after the guest image is read, `runtime_init` starts a thread (`hostrt.c` `code_prefetch`) that reads the whole
+game library in large I/O: `PrefetchVirtualMemory` over `game.dll`'s image, or `posix_fadvise(WILLNEED)` over `game.so` in
+128 KB steps (one call reads at most the readahead size). The thread then touches one byte of every page of the lifted
+functions and logs `code prefetch: ... s`, which measures the disk. `WT_CODE_PREFETCH=0`: off. The cost is about 150 MB
+read once at start and about 119 MB of code resident.
+
+**Emulated** on Linux:
+- Setup: game files dropped from the page cache, and the game's reads capped at 150 MB/s and 300 IOPS (a user scope's
+  `io.max`) from 24 s. The route is the issue-72 save's Chapter 2 start, an 83 s real-time cutscene that starts at 38 s
+  when warm.
+- Windows-style faults: page by page (`MADV_RANDOM`), locked once read (`MLOCK_ONFAULT`). Without the lock, MGLRU's
+  reclaim under memory pressure faults the same pages again.
+- The prefetch: samples of the game's threads waiting on a fault in `game.so` went 4-9 -> 0-1. Frame times did not
+  change; this model charges a request, not a seek.
+- The pack: the three workers read about 4.5 GB, the game's own loader 1.2 GB. With `bc7_textures = off` the cutscene
+  started at 58 s (three runs) instead of 114-149 s. Two of those runs had no frame over 160 ms, and the third had two
+  over 1 s (worst 1.4 s). With the pack, up to 9 frames went over 1 s, the worst 4.7 s.
+- `WT_VK_RS_PREP=0`: no measurable difference.
+
+On a hard disk `bc7_textures = off` is therefore the faster choice. The pack stays the default; issue 136's reporter was
+asked to try it.
+
+Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), a real hard disk.
+
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
 `aspect_ratio = 16:9 | auto | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own

@@ -605,6 +605,38 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
 }
 #endif
 
+/* #136: the lifted code (game.dll / game.so, about 150 MB) is paged in from disk the first time each path runs. On a hard
+ * disk a first cutscene stopped for seconds: the game's thread used no CPU and sat at the first instruction of one function
+ * after another. A thread reads the whole library ahead at start in large I/O, then touches the lifted functions' pages
+ * (that waits for the reads, so the log line measures the disk). WT_CODE_PREFETCH=0: off. */
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <fcntl.h>
+#endif
+static DWORD WINAPI code_prefetch(LPVOID arg) {
+    (void)arg;
+    const uint8_t *lo = (const uint8_t *)(uintptr_t)g_by_host[0].fn, *hi = (const uint8_t *)(uintptr_t)g_by_host[fn_table_count - 1].fn;
+    ULONGLONG t0 = GetTickCount64();
+#ifdef _WIN32
+    HMODULE m = NULL;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)lo, &m)) {
+        const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)m + ((const IMAGE_DOS_HEADER *)m)->e_lfanew);
+        WIN32_MEMORY_RANGE_ENTRY r = {m, nt->OptionalHeader.SizeOfImage};
+        PrefetchVirtualMemory(GetCurrentProcess(), 1, &r, 0);
+    }
+#else
+    Dl_info di;
+    int fd = dladdr((const void *)lo, &di) && di.dli_fname ? open(di.dli_fname, O_RDONLY) : -1;
+    off_t n = fd >= 0 ? lseek(fd, 0, SEEK_END) : 0;
+    for (off_t o = 0; o < n; o += 128 << 10) posix_fadvise(fd, o, 128 << 10, POSIX_FADV_WILLNEED);     /* a call reads at most the readahead size */
+    if (fd >= 0) close(fd);
+#endif
+    unsigned sum = 0;
+    for (const uint8_t *p = lo; p < hi; p += 4096) sum += *(const volatile uint8_t *)p;
+    printf("code prefetch: %.0f MB of lifted code in memory %.1f s after the read began\n", (double)(hi - lo) / 1048576.0, (double)(GetTickCount64() - t0) / 1000.0);
+    return sum;
+}
+
 /* ---------------------------------------------------------------- loader */
 void runtime_init(const char *elf, const char *trace_path) {
     g_handlers = calloc((size_t)dyn_sym_count, sizeof *g_handlers);
@@ -672,6 +704,9 @@ void runtime_init(const char *elf, const char *trace_path) {
         if (!plat_protect((void *)GUEST_BASE, GUEST_RO_END, PLAT_RO)) { fprintf(stderr, "cannot protect the image's text and read-only data\n"); exit(1); }
         printf("image protection: 0x%llx..0x%llx read-only (text, read-only data), data and bss read-write\n", GUEST_BASE, GUEST_BASE + GUEST_RO_END);
     }
+    {   const char *e = getenv("WT_CODE_PREFETCH");      /* after the image read: on a hard disk the two would take turns */
+        HANDLE t = fn_table_count && !(e && !atoi(e)) ? CreateThread(NULL, 0, code_prefetch, NULL, 0, NULL) : NULL;
+        if (t) CloseHandle(t); }
 }
 
 /* ---------------------------------------------------------------- fake audit (plan\FAKE_AUDIT.md)
