@@ -749,6 +749,24 @@ at 2.4. An edge outside those texels is left out of the tile's range, so the til
 - **Not measured**: NVIDIA and Windows, where it was reported. The square steps in the title's colours (issues 66, 89) fit this
   grid, but that frame did not come up here (the title's scenes are random), so the fix is untested on them.
 
+## Stores below a scale of 1.0 (issue 147, 2026-11-05)
+
+Below 1.0 the scene is drawn at `resolution_scale` itself (the never-below-1.0 rule covers only FSR's ratio). fs5548 (the 1/2
+min/max depth level) and fs1693 (a half-size colour) store into images kept at the game's size, at the game pixel their
+fragment rounds to, when that pixel's x and y are even: on a raster smaller than the game's, whole columns and rows are never
+stored. At 0.8, every fifth one: a fixed grid of zeros (the image's clear), so 64 % of the 1/4 level had a minimum of 0.
+- **Fix** (`rs_store_low`, `nvn_vk_draw.c`): such a draw (a fragment stage with images and no buffer writes, in a scaled pass
+  below 1.0) runs once more in a pass without attachments as large as its viewport, in the game's pixels (mx_fcs 1), so every
+  texel gets its store and the stage's quad is the game's 2x2. Its colour outputs go nowhere (the first draw wrote them); a
+  sample counter is paused for it. `WT_VK_STOREFULL=0` turns it off.
+- **Measured** (Linux, RX 9070 XT, 0.8): the 1/4 level of the title's frame 1500 has no zero minimum and a median min/max
+  spread of 0, as at 1.0 (off: 64 % zeros, median spread 1.0). The Chapter Select glove, matched by pose to a 1.0 run frame by
+  frame: mean error 2.19 off, 1.36 on, better in all 11 frames compared. 0 Vulkan call failures, the same three validation
+  warnings as without it (unused fragment outputs), no holds. Cost: 0.15-0.33 ms of GPU a frame at the title (two passes of
+  the game's size and their barriers), only below 1.0.
+- **Not shown**: the reporter's squares on shadows and water (RX 560, RADV) did not come up here; a fight gives no same-pose
+  pair. Not run on Windows.
+
 ## Level of detail (2026-10-25)
 
 - **`texture_lod_bias`** (graphics.ini; `WT_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
