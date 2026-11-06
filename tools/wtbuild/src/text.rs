@@ -454,7 +454,7 @@ fn add_msgs(d: &[u8], msgs: &[(&str, &[(&str, &[&str])])], lang: &str, font_of: 
 pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dyn Fn(&mut Command), log: &mut dyn FnMut(String)) -> R<()> {
     let arc = romfs.join("ui_000.pkz");
     let out = mods.join(MOD).join("romfs").join("ui_000.pkz");
-    let (fsize, entries) = read_pkz(&arc)?;
+    let (_, entries) = read_pkz(&arc)?;
     let mut names = Vec::new();
     for l in LANGS {
         for k in ["menu", "core"] {
@@ -509,7 +509,7 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dy
     fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
     let mut f = a.clone();
     let up = |x: u64| x.div_ceil(align) * align;
-    let mut pos = up(fsize);
+    let mut pos = up(a.len() as u64); // #146: after the file's real end; pkz repack tools write the header's size short
     for (i, e) in entries.iter().enumerate() {
         if let Some(d) = new.get(&e.0) {
             let no = u32_at(&table, i * 0x20);
@@ -834,7 +834,8 @@ mod tests {
     /// what the game needs of the new archive, and what must stay the dump's
     fn check_archive(old: &Path, new: &Path) {
         let (a, b) = (fs::read(old).unwrap(), fs::read(new).unwrap());
-        let ((old_size, es), (size, ns)) = (read_pkz(old).unwrap(), read_pkz(new).unwrap());
+        let ((_, es), (size, ns)) = (read_pkz(old).unwrap(), read_pkz(new).unwrap());
+        let old_size = a.len() as u64; // the real end: the header's may be short (#146)
         let align = u32_at(&a, 0x1c) as u64;
         assert!(size == b.len() as u64 && size % align == 0);
         assert!(a[..8] == b[..8] && a[0x10..0x20] == b[0x10..0x20]);
@@ -898,6 +899,23 @@ mod tests {
         }
         // out.display() writes '\\' on Windows
         crate::golden::check("text_banks.txt", &g.replace('\\', "/"));
+    }
+
+    /// #146: a ui_000.pkz whose header says less than the file holds (pkz repack tools) keeps all of its data
+    #[test]
+    fn short_header_size() {
+        let d = std::env::temp_dir().join(format!("wt_text_short_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let (romfs, dump, mods) = (d.join("romfs"), d.join("dump"), d.join("mods"));
+        make_case(&mut Rng(7), &romfs, &dump);
+        let arc = romfs.join("ui_000.pkz");
+        let mut a = fs::read(&arc).unwrap();
+        let data_at = a[0x30..0x38].to_vec(); // entry 0's data offset: the start of the data
+        a[8..16].copy_from_slice(&data_at);
+        fs::write(&arc, a).unwrap();
+        run(&d, &romfs, Some(&dump), &mods, &|_| {}, &mut |_| {}).unwrap();
+        check_archive(&arc, &mods.join(MOD).join("romfs").join("ui_000.pkz"));
+        let _ = fs::remove_dir_all(&d);
     }
 }
 

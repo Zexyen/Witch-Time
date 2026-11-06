@@ -132,9 +132,11 @@ static int read_archive(int arc, char **filters, int nfilters) {
         return 1;
     }
     uint32_t count = *(uint32_t *)(h + 0x10), toff = *(uint32_t *)(h + 0x14), nsize = *(uint32_t *)(h + 0x18);
-    uint64_t fsize = *(uint64_t *)(h + 8);
+    /* #146: data is bounded by the file's own size, as the game bounds it (nn::fs GetFileSize). The game never reads the
+     * header's u64 at 0x08, and pkz repack tools write it short */
+    long long fsize = fseek64(f, 0, SEEK_END) ? -1 : _ftelli64(f);
     uint8_t *t = malloc((size_t)count * 0x20 + nsize + 1);
-    int bad = !t || fseek64(f, toff, SEEK_SET) || fread(t, 1, (size_t)count * 0x20 + nsize, f) != (size_t)count * 0x20 + nsize;
+    int bad = fsize < 0 || !t || fseek64(f, toff, SEEK_SET) || fread(t, 1, (size_t)count * 0x20 + nsize, f) != (size_t)count * 0x20 + nsize;
     fclose(f);
     if (bad) { printf("pkz-dump: %s: cannot read its entry table\n", path); free(t); return 1; }
     char *names = (char *)t + (size_t)count * 0x20;
@@ -148,8 +150,9 @@ static int read_archive(int arc, char **filters, int nfilters) {
         int kr = !strcmp(codec, "OodleKraken");
         /* the archive is untrusted input: names must stay inside the out folder, data inside the file */
         if (!name[0] || name[0] == '/' || strchr(name, '\\') || strstr(name, "..") || strchr(name, ':') ||
-            (!kr && (strcmp(codec, "None") || size != csize)) || off + csize > fsize || off + csize < off) {
-            printf("pkz-dump: %s: entry %u (%s, codec %s) refused\n", g_arcs[arc], i, name, codec);
+            (!kr && (strcmp(codec, "None") || size != csize)) || off + csize > (uint64_t)fsize || off + csize < off) {
+            printf("pkz-dump: %s: entry %u (%s, codec %s, data at %llu, %llu bytes, file %lld bytes) refused\n", g_arcs[arc], i, name,
+                   codec, (unsigned long long)off, (unsigned long long)csize, fsize);
             g_fail++;
             continue;
         }
