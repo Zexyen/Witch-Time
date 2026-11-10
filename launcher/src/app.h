@@ -92,6 +92,7 @@ private:
 	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
 	Rml::String tex_note, tex_action, tex_switch;  // settings: the converted textures (#54); tex_switch: "Turn off"/"Turn on" (#136)
 	bool tex_remove = false;
+	Rml::String shortcut_note = "Starts the game without the launcher";   // settings: the desktop shortcut (#143), then where it is
 
 	// work for the main loop
 	BuildRunner runner;

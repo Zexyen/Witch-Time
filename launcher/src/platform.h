@@ -26,6 +26,11 @@ void unset_env(const char* name);
 bool change_dir(const std::string& path);
 // a program file that can be started (on Windows: that exists)
 bool is_program(const std::string& path);
+// A shortcut that starts `program --play` (#143): on Windows "Witch Time.lnk" in `desktop`; on Linux witchtime.desktop
+// in the application menu and, when there is one, in `desktop` (a folder ending in a separator, or empty). `icon` is
+// the Linux entry's picture; the Windows one shows the program's own. Made again, it replaces the old one. *said: where
+// it is now, or why not.
+bool create_shortcut(const std::string& desktop, const std::string& program, const std::string& icon, std::string* said);
 
 #ifdef _WIN32
 std::wstring widen(const std::string& s);

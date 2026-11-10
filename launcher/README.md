@@ -68,7 +68,10 @@ driver ("Build (Windows)" in the main README).
   waits for the update check (up to 5 s): when a newer release is out, the launcher stays open and offers it, and Play
   there still ends with the game. It also stays when the game is not built yet, or was built by another release (the
   build screen). On Windows the top-level `witch-time.exe` waits for `build\witch-time.exe` and ends with it, so those
-  launchers see the game running (#143).
+  launchers see the game running (#143). Settings, Display, Desktop shortcut writes a shortcut that does this
+  (`create_shortcut` in `src/platform.cpp`): `Witch Time.lnk` on the Windows desktop, `witchtime.desktop` in the Linux
+  application menu and on the desktop. Its icon (`win32/witch-time.ico`, `ui/img/icon.png`) is the wheel's dark layers
+  inside the lettered ring, with the hands, on the indigo ground.
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 
