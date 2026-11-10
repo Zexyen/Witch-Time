@@ -34,6 +34,11 @@ jobs:
           clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
           "$RUNNER_TEMP/plat_hash_test"
 
+      - name: The fmaf of a CPU without FMA3 (runtime/soft_fmaf.h) against the instruction
+        run: |
+          clang -O1 -DSOFT_FMAF_TEST -x c runtime/soft_fmaf.h -o "$RUNNER_TEMP/soft_fmaf_test"
+          "$RUNNER_TEMP/soft_fmaf_test"
+
       - name: The BC7 pack's reader and the fallback encoder (runtime/tex_pack.c, tex_decode.c, issue 54)
         run: |
           clang -O2 -Wall -I runtime tests/tex_pack_test.c runtime/tex_pack.c -o "$RUNNER_TEMP/tex_pack_test"

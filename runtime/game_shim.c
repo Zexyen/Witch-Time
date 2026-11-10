@@ -49,6 +49,18 @@ int __stdcall DllMainCRTStartup(void *module, unsigned long reason, void *reserv
 }
 #endif
 
+#if defined(__x86_64__)
+#include "soft_fmaf.h"
+#include <stdlib.h>
+/* [witchtime] every fmaf call of the lifted code (soft_fmaf.h). Hidden: on ELF a call from inside game.so would otherwise go to the C
+ * library's. WT_NO_FMA3=1 (test): the path of a CPU without FMA3 on one that has it. */
+__attribute__((visibility("hidden"))) float fmaf(float x, float y, float z) {
+    static int hw = -1;     /* whichever thread comes first sets it, each to the same value */
+    if (hw < 0) hw = wt_has_fma3() && !getenv("WT_NO_FMA3");
+    return hw ? wt_fmaf_hw(x, y, z) : wt_fmaf_soft(x, y, z);
+}
+#endif
+
 __declspec(dllexport) void game_bind(const GameHost *h, GameTables *t) {
     host = *h;
     t->fn_table = fn_table;
