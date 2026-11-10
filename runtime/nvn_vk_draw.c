@@ -2900,6 +2900,25 @@ static int gpu_written(uint64_t addr, uint64_t size) {       /* a CB of this bat
     CB *c = cb_inside(addr, size);
     return c && !((addr - c->addr) & 3);           /* Vulkan reads records and counts at offsets that are multiples of 4 */
 }
+/* [witchtime] issues 120, 156: an indirect draw of up to n > 1 records the game wrote, with a count compute wrote (the title, cutscenes
+ * and the demon rides have one a frame): the GPU reads the count as for n == 1, so the render thread no longer waits for the
+ * GPU there (that wait put the whole GPU frame inside the replay: frame time = replay + GPU). The records past the count are never
+ * drawn but their indices are bound, so each must lie inside the index buffer. WT_VK_GPUCOUNT_MULTI=0: off. */
+static const uint8_t *indirect_src(uint64_t addr, uint64_t size); static int index_extent(uint64_t ib, uint64_t *size);
+static int recs_bounded(uint64_t recs, unsigned n, unsigned stride, unsigned sz, unsigned elements, uint64_t ib, unsigned t) {
+    static int on = -1;
+    if (on < 0) on = getenv("WT_VK_GPUCOUNT_MULTI") ? atoi(getenv("WT_VK_GPUCOUNT_MULTI")) : 1;
+    if (!on || !D.f2.features.multiDrawIndirect) return 0;      /* a maximum above 1 needs the feature */
+    if (!elements) return 1;
+    uint64_t ext = 0;
+    if (!index_extent(ib, &ext)) return 0;
+    const uint8_t *rec = indirect_src(recs, (uint64_t)(n - 1) * stride + sz);
+    for (unsigned k = 0; k < n; k++) {
+        uint32_t d[5]; memcpy(d, rec + (uint64_t)k * stride, sz);
+        if (d[0] && d[1] && (((uint64_t)d[2] + d[0]) << t) > ext) return 0;
+    }
+    return 1;
+}
 /* The bound of an index buffer whose indices compute chooses: the NVN buffer the index address is in (nvn_stub.c), from it to
  * the buffer's end. A few addresses a frame; each answer is kept and checked against the buffer object (lock-free). */
 int nvn_stub_buffer_of(uint64_t addr, uint64_t *key, uint64_t *base, uint64_t *size); int nvn_stub_buffer_still(uint64_t key, uint64_t base, uint64_t size);
@@ -4419,7 +4438,7 @@ static void exec(const Cmd *m, int depth) {
         int gcount = (a[6] & 2) && param && gpu_written(param, 4);       /* the count compute (or a storing draw) wrote: the GPU reads it */
         int grecs = gpu_written(a[3], span) && (n == 1 || (D.f2.features.multiDrawIndirect && !(stride & 3) && stride >= sz)) && (!elements || index_extent(a[2], &ext));      /* the records compute wrote: the GPU reads them, the whole index buffer bound */
         if (gpu_written(a[3], span) && !grecs) g_gr_noext++;
-        if (gcount && !grecs && (n != 1 || cb_overlap(a[3], span))) gcount = 0;      /* records past the count may be anything, or compute wrote them and the CPU reads them (it waits): the count with them */
+        if (gcount && !grecs && (cb_overlap(a[3], span) || (n != 1 && !recs_bounded(a[3], n, stride, sz, elements, a[2], t)))) gcount = 0;      /* compute wrote the records and the CPU reads them (it waits): the count with them; or a record past the count names indices outside the buffer */
         if ((a[6] & 2) && !gcount) { uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
         const uint8_t *rec = grecs ? NULL : indirect_src(a[3], span);
         uint64_t lo = ~0ull, hi = 0;

@@ -1634,6 +1634,16 @@ sampler showed it each time); only all four parts together free the render threa
 Not checked: Windows, NVIDIA and AMD's Windows driver (the paths were run on RADV only), the Steam Deck, other chapters
 (indirect dispatches whose group counts compute writes still wait on the CPU; none in Shibuya), the OpenGL renderer (unchanged).
 
+**Counts with more than one record (2026-11-09; issues 120, 156).** The demon rides, cutscenes and the title draw a few
+objects with `maxDrawCount` 2: the count is compute's, the records are the game's. Those counts were still read on the CPU,
+so in every such frame the render thread submitted and waited for the GPU once (`indirect_src` from the count read, found
+with a test-only histogram of `slot_wait` callers), and the frame again cost replay plus GPU: a Windows RX 6600 log has the
+Chapter 1 Gomorrah ride at 16 fps with 39 ms of GPU wait in a 54.5 ms replay. Now the GPU reads those counts too
+(`recs_bounded`: every record's indices must lie inside the index buffer, since the ones past the count are bound though
+never drawn; `WT_VK_GPUCOUNT_MULTI=0`: off). Measured in that ride on the RX 9070 XT at 1080p, scale 1.0: wait for the GPU
+3.7-6.7 ms to 0.2-0.3 ms a frame, batch replay 19-25 ms to 15.6-16.9 ms, 4.1 to 3.1 submissions, GPU time the same
+(4.4-7.8 ms). Not measured: Windows, AMD's and NVIDIA's own drivers, and whether the reporters' GPUs alone fit the frame.
+
 ## Cutscenes on a slow disk (2026-11-05; issue 136)
 
 Issue 136 (Windows, RX 6600, v0.7.0): a cutscene's first viewing freezes for 1-4 s, less the second time. **Cause**: the
@@ -1907,8 +1917,8 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
   (`shortcut:` in `nnmovie_mf.c`).
 - Indirect draws are read on the CPU (one Vulkan draw per record) unless compute wrote their count or records in this batch
-  (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count with more than one record read on the CPU,
-  and indirect dispatches, still cost a submit and a wait.
+  (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count whose records past it name indices outside
+  the index buffer, and indirect dispatches, still cost a submit and a wait.
 - Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
   same pass (as on NVN without an explicit barrier).
 - Tessellation: a tessellated pipeline is made on the render thread at its first draw (one hitch; the driver's pipeline
