@@ -1352,7 +1352,10 @@ Runs (muted, hidden window, copies of the save and of the user's graphics.ini; s
   "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto"), de (Randlos)
   and ko (전체 화면) again on the last build. **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
   no digits, so our values are partly blank there too; pt has the same files (not run). WT_LANGUAGE=en-GB showed the
-  Japanese text (the game's choice; gb not tested).
+  Japanese text: the game's defaults for a new save send en-GB, fr-CA and es-419 to Japanese (table at 0x71018541e4), so
+  since issue #160 `nn::oe::GetDesiredLanguage` answers en-US, fr and es for them (`runtime/language_pick.h`,
+  `tests/language_test.c`; empty save through the launcher on Linux: en-GB English, fr-CA French, es-MX Spanish). The
+  `_gb` layouts are no longer reached.
 - Without the mod (WT_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
 - Tests: pcmenu self-test (the new key API: set / get by key, a value none of the row's refused, the file's lines), pad
   self-test 61/61, lifter check 382 + 25 words and 200 words / 4,000 cases: all pass.
