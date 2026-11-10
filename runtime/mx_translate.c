@@ -40,6 +40,7 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
+    int nbar;                                 /* [issue 163] compute: BAR sites that leave the dispatcher (see MXOP_BAR) */
     int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
     int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
     uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
@@ -1338,7 +1339,15 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if ((i & 0x0000009b00000000ull) != 0x0000008000000000ull || !MXB(i, 43, 1) || !MXB(i, 44, 1) || MXB(i, 8, 8) || MXB(i, 20, 12) || e->in->stage != MX_COMPUTE) {
             fail(e, "BAR", "BAR form %016llx", (unsigned long long)i); break;
         }
-        emit(e, "memoryBarrierShared(); memoryBarrierBuffer(); barrier();");
+        /* [issue 163] barrier() must be in uniform control flow: every thread of the work group at the same dynamic instance. In the
+         * dispatcher the threads reach a BAR in different trips of the loop (7839: its second BAR after 2 or 3 cases), which is
+         * undefined; an Arc A770 and a UHD 620 never finished the first frame with such stages (Intel's barrier is a real wait for the
+         * group's other threads), AMD and NVIDIA got through. A BAR now parks its thread at the next case and leaves the dispatcher;
+         * the barrier itself stands in a loop of a fixed count around it (the header in mx_translate), a thread that has exited
+         * passes the remaining ones idle.
+         * shortcut: a stage that also steps back keeps the old text (a BAR in a loop has no fixed count), 3 of the game's 15; give those a count when one hangs. */
+        if (e->nbar && !e->has_back) { unsigned nx = pc + 1; if ((nx & 3) == 0) nx++; emit(e, "{ mx_bar = true; pc = %uu; continue; }", nx); }
+        else emit(e, "memoryBarrierShared(); memoryBarrierBuffer(); barrier();");
         break;
     }
     case MXOP_ATOM: case MXOP_RED: {            /* [witchtime] global atomics (suyu's fields): ATOM d 0..7, b 20..27, size 49..51, op 52..55; RED b 0..7, size
@@ -1726,6 +1735,11 @@ static void analyze(Mx *e) {
                 if (always && ft == 15) break;
                 continue;
             }
+            if (op == MXOP_BAR && e->in->stage == MX_COMPUTE && e->in->target == 1) {      /* [issue 163] the thread resumes at a case of its own */
+                unsigned nx = pc + 1; if ((nx & 3) == 0) nx++;
+                if (nx < e->words) { e->leader[nx] = 1; e->any_jump = 1; e->nbar++; }
+                continue;
+            }
             if (op == MXOP_EXIT) { if (always && ft == 15) break; continue; }
             if (op == MXOP_CAL || op == MXOP_JCAL || op == MXOP_RET || op == MXOP_JMP || op == MXOP_JMX || op == MXOP_LONGJMP || op == MXOP_PRET) {
                 fail(e, mx_op_name[op], "subroutine / absolute jump %s", mx_op_name[op]);
@@ -2027,13 +2041,15 @@ int mx_translate(const MxIn *in, MxOut *out) {
             }
             emit(&h, "  switch (pc) {\n");
         }
+        else if (e->nbar && !e->has_back)         /* [issue 163] see MXOP_BAR */
+            emit(&h, " uint pc = 1u; bool mx_bar = false;\n for (uint mx_b = 0u; mx_b <= %uu; mx_b++) {\n  if (mx_b != 0u) { memoryBarrierShared(); memoryBarrierBuffer(); barrier(); }\n  mx_bar = false;\n  while (pc != 0u && !mx_bar) { switch (pc) {\n", (unsigned)e->nbar);
         else if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 512;
         res = malloc(need);
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? " pc = 0u; } while (false);" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
+        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? " pc = 0u; } while (false);" : e->nbar && !e->has_back ? " default: pc = 0u; continue;\n } } }" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
                                               e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
         else n += (size_t)sprintf(res + n, "%s %s%s\n}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "", e->exitcode, e->uses_kill ? " }" : "");
         res[n] = 0;

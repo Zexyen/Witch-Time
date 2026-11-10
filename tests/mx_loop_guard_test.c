@@ -72,6 +72,18 @@ int main(void) {
     ok = ok && n && strstr(n, "if (p1) { if (true) discard; }") && !strstr(n, "mx_kill = true") && !strstr(n, "while (");
     if (!ok && k) puts(k);
     if (!ok && n) puts(n);
+    /* [issue 163] a compute BAR leaves the dispatcher: barrier() stands once, in a loop of a fixed count, never inside the switch;
+     * with a step back in the stage the old text stays */
+    uint64_t bar = 0xf0a8000000000000ull | 1ull << 39 | 1ull << 43 | 1ull << 44 | 7ull << 16;
+    uint64_t b1[4] = {0, bar, 0x50b0000000000f00ull | 7ull << 16, 0xe30000000000000full | 7ull << 16};                          /* BAR, NOP, EXIT */
+    uint64_t b2[4] = {0, bar, 0xe24000000000000full | (uint64_t)(-16 & 0xffffff) << 20, 0xe30000000000000full | 7ull << 16};    /* BAR, @P0 BRA to it, EXIT */
+    char *cb = translate(5, (const uint8_t *)b1, sizeof b1, 0), *cl = translate(5, (const uint8_t *)b2, sizeof b2, 0);
+    const char *sw = cb ? strstr(cb, "switch (pc)") : NULL, *first = cb ? strstr(cb, "barrier();") : NULL;
+    int bok = sw && first && first < sw && !strstr(first + 1, "barrier();") && strstr(cb, "for (uint mx_b = 0u; mx_b <= 1u; mx_b++) {") &&
+              strstr(cb, "{ mx_bar = true; pc = 2u; continue; }") && strstr(cb, "case 2u:") && strstr(cb, "while (pc != 0u && !mx_bar)") &&
+              cl && !strstr(cl, "mx_bar") && strstr(cl, "barrier();");
+    if (!bok && cb) puts(cb);
+    ok = ok && bok;
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }

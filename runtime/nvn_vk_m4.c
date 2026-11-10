@@ -140,6 +140,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
+    if (o->stage == 5) h = fnv(h, "cs2", 3);      /* [issue 163] the compute stages' own version (BAR outside the dispatcher), as tess2 below */
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
