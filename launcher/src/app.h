@@ -108,6 +108,9 @@ private:
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
 	bool picked = false;
+	SDL_AudioStream* sound_stream = nullptr;   // navigation sounds (issue 141): open from the first one until Play
+	bool sound_failed = false;
+	Rml::Element* last_focus = nullptr;        // the control the focus was in at the last frame
 	int update_seen = 0;               // the update's state and line as the title last showed them
 	Rml::String update_message;
 
@@ -141,4 +144,6 @@ private:
 	void browse();
 	void play();
 	void release_window();
+	void sound(int which);
+	void close_sound();
 };

@@ -74,6 +74,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0},
 		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
+		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
+		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
 		{"cutscene_fps", "Cutscene frame rate", "Title, menus and cutscenes; movies keep theirs", {{"30", "30 fps"}, {"60", "60 fps"}}, 0},
 		{"frame_rate", "Frame rate (experimental)", "Above 60 some effects may run fast; next start", {{"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
 		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
@@ -497,14 +499,29 @@ int App::run()
 	return 0;
 }
 
+// the control an element is in or is (a row around its arrows, a button), or none
+static Rml::Element* control_of(Rml::Element* e)
+{
+	while (e && e->GetComputedValues().tab_index() != Rml::Style::TabIndex::Auto)
+		e = e->GetParentNode();
+	return e;
+}
+
 void App::draw()
 {
 	ctx->Update();
+	const bool placed = want_focus;              // a screen or a tab opened: its own sound, not a move's
 	if (want_focus)
 	{
 		want_focus = false;
 		focus_first();
 		ctx->Update();
+	}
+	if (Rml::Element* f = control_of(ctx->GetFocusElement()); f != last_focus)
+	{                                            // keys, d-pad and hover all move the focus: one tick for each (issue 141)
+		if (f && !placed)
+			sound(0);
+		last_focus = f;                          // compared only, never used: the element may be gone by then
 	}
 	SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu);
 	if (!cmd)
@@ -667,13 +684,8 @@ void App::handle(SDL_Event& ev)
 // the one the keys left, and the keys go on from where the mouse is. Not once the dump folder's box is in use (typed).
 void App::hover_focus()
 {
-	auto control = [](Rml::Element* e) {
-		while (e && e->GetComputedValues().tab_index() != Rml::Style::TabIndex::Auto)
-			e = e->GetParentNode();
-		return e;
-	};
-	Rml::Element* h = control(ctx->GetHoverElement());
-	Rml::Element* f = control(ctx->GetFocusElement());
+	Rml::Element* h = control_of(ctx->GetHoverElement());
+	Rml::Element* f = control_of(ctx->GetFocusElement());
 	if (h && h != f && h->IsVisible(true) && h->GetTagName() != "input" && !(typed && f && f->GetTagName() == "input"))
 		h->Focus(false);
 }
@@ -757,6 +769,8 @@ void App::go(const Rml::String& to)
 	if (to != screen && !screen.empty() && !std::getenv("WITCHTIME_SCREEN"))
 	{                                      // the screen on show leaves first (its animations); tick() opens the next one
 		next_screen = to;
+		if (!leaving)
+			sound(to == "title" ? 2 : 1);
 		if (!leaving) { leaving = true; leave_at = system->GetElapsedTime(); model.DirtyVariable("leaving"); }
 		return;
 	}
@@ -1025,6 +1039,7 @@ void App::toggle_mod(int index)
 	if (m.code)
 		mods_rebuild = true;
 	refresh_mods();
+	sound(0);
 }
 
 void App::refresh_settings()
@@ -1086,6 +1101,7 @@ void App::set_tab(int t)
 	tab = (t + 3) % 3;
 	refresh_settings();
 	want_focus = true;
+	sound(0);
 }
 
 void App::step_setting(int index, int dir)
@@ -1099,6 +1115,52 @@ void App::step_setting(int index, int dir)
 		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
 	refresh_settings();
 	prompts_read();
+	sound(0);                              // (after the write: switching the sounds on ticks, off does not)
+}
+
+// ---------------------------------------------------------------------------------------------------- sounds
+// Navigation sounds (issue 141), made here: nothing of the game's, no file. One or two sine notes that die away,
+// f2 (0: none) 60 ms after f1; 48 kHz mono.
+static std::vector<float> blip(float f1, float f2)
+{
+	const int rate = 48000, n = rate * (f2 > 0 ? 220 : 90) / 1000;
+	std::vector<float> s(static_cast<size_t>(n));
+	auto note = [](float f, float t) {           // 2 ms in (no click), then the decay
+		return t <= 0 ? 0 : 0.14f * std::sin(6.2831853f * f * t) * std::exp(-t * 45) * std::min(1.f, t * 500);
+	};
+	for (int i = 0; i < n; i++)
+		s[static_cast<size_t>(i)] = note(f1, float(i) / rate) + (f2 > 0 ? note(f2, float(i) / rate - 0.06f) : 0);
+	return s;
+}
+// which: 0 a move or a change, 1 a screen opens, 2 back to the title
+void App::sound(int which)
+{
+	if (ini_get(paths.config + "/launcher.ini", "", "sounds", "on") != "on" || sound_failed)
+		return;
+	if (!sound_stream)
+	{                                            // opened at the first sound: a launcher that only starts the game opens none
+		const SDL_AudioSpec spec = {SDL_AUDIO_F32, 1, 48000};
+		if (!SDL_InitSubSystem(SDL_INIT_AUDIO) || !(sound_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr)))
+		{
+			sound_failed = true;                 // no audio device: silent, and not tried at every move
+			return;
+		}
+		SDL_ResumeAudioStreamDevice(sound_stream);
+	}
+	static const std::vector<float> sounds[3] = {blip(1320, 0), blip(880, 1320), blip(1320, 880)};
+	const std::vector<float>& s = sounds[which];
+	SDL_ClearAudioStream(sound_stream);          // the newest replaces the last: a sweep over the menu does not pile up
+	SDL_PutAudioStreamData(sound_stream, s.data(), int(s.size() * sizeof(float)));
+	SDL_FlushAudioStream(sound_stream);
+}
+// before the game: its audio starts from the state it always did (Linux: this process; Windows: no device held behind it)
+void App::close_sound()
+{
+	if (!sound_stream)
+		return;
+	SDL_DestroyAudioStream(sound_stream);
+	sound_stream = nullptr;
+	SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
 void App::convert_textures()
@@ -1381,6 +1443,7 @@ void App::play()
 			model.DirtyVariable(v);
 		return;
 	}
+	close_sound();
 	if (g.in_process)
 	{
 		release_window();
