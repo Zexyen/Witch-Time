@@ -90,7 +90,7 @@ private:
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
 	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
-	Rml::String tex_note, tex_action;  // settings: the converted textures (#54)
+	Rml::String tex_note, tex_action, tex_switch;  // settings: the converted textures (#54); tex_switch: "Turn off"/"Turn on" (#136)
 	bool tex_remove = false;
 
 	// work for the main loop
@@ -133,6 +133,7 @@ private:
 	void step_setting(int index, int dir);
 	void convert_textures();
 	void remove_textures();
+	void switch_textures();
 	void toggle_mod(int index);
 	void check_dump();
 	void start_build();

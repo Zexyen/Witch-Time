@@ -48,6 +48,7 @@ driver ("Build (Windows)" in the main README).
 - **Converted textures.** After a build that succeeds, `wtbuild textures` (#54) runs on the build screen unless `bc7_textures`
   is off or the drive lacks the room, which the screen says. It can be stopped; Settings shows its size and continues it.
   Remove sets `bc7_textures = off`, which later builds respect, and deletes `build/cache/bc7`.
+  Turn off / Turn on (#136) only writes the key and keeps the folder: on a hard disk the pack's reads starve the game's own loading.
 - **Play in the same window.** The runtime link step also makes `build/libwitchtime.so`. The launcher loads it, hands its
   SDL window over (SDL global property `witchtime.window`, which `runtime/display.c` adopts) and calls `wt_host_main`.
   When the game exits through `ExitProcess`, `plat_exit_hook` starts the launcher again (`witch-time --returned

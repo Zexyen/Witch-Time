@@ -380,6 +380,7 @@ void App::bind_model()
 	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
+	c.Bind("tex_switch", &tex_switch);
 	c.Bind("tex_remove", &tex_remove);
 	// footer hints: by the label on the button, as confirm and back in handle() go
 	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
@@ -420,6 +421,7 @@ void App::bind_model()
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
 	c.BindEventCallback("tab", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) { set_tab(arg_int(a, 0)); });
 	c.BindEventCallback("convert_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { convert_textures(); });
+	c.BindEventCallback("switch_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { switch_textures(); });
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
@@ -1049,9 +1051,13 @@ void App::refresh_settings()
 	const double used = folder_bytes(dir), need = TEX_NEED;
 	const double room = double(fs::space(paths.build, ec).available);
 	const bool complete = file_exists(dir + "/complete");
+	// #136: off keeps the folder (on a hard disk its reads starve the game's own loading); the game reads the key at its start
+	const bool on = ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on";
 	char note[320];
-	if (complete)
-		std::snprintf(note, sizeof note, "In use: %.1f GB in build/cache/bc7. Remove them to get the space back; the game then decodes textures as it comes to them.", used / 1e9);
+	if (complete && !on)
+		std::snprintf(note, sizeof note, "Turned off: %.1f GB kept in build/cache/bc7, and the game decodes textures as it comes to them. Turn them on for a sharper picture and less CPU work.", used / 1e9);
+	else if (complete)
+		std::snprintf(note, sizeof note, "In use: %.1f GB in build/cache/bc7. On a hard disk they can freeze cutscenes: turn them off there. Remove them to get the space back.", used / 1e9);
 	else if (room + used < need)
 		std::snprintf(note, sizeof note, "Needs about %.0f GB free on this drive, and it has %.1f GB.", need / 1e9, room / 1e9);
 	else if (used > 0)
@@ -1061,7 +1067,8 @@ void App::refresh_settings()
 	tex_note = note;
 	tex_action = !built || complete || room + used < need ? "" : used > 0 ? "CONTINUE" : "CONVERT";
 	tex_remove = used > 0;
-	for (const char* v : {"tex_note", "tex_action", "tex_remove"})
+	tex_switch = !complete ? "" : on ? "Turn off" : "Turn on";
+	for (const char* v : {"tex_note", "tex_action", "tex_remove", "tex_switch"})
 		model.DirtyVariable(v);
 }
 
@@ -1096,6 +1103,13 @@ void App::convert_textures()
 	else
 		build_error = start_error(paths.repo);
 	go("build");
+}
+
+void App::switch_textures()
+{
+	const std::string ini = paths.config + "/graphics.ini";
+	ini_set(ini, "", "bc7_textures", ini_get(ini, "", "bc7_textures", "on") == "on" ? "off" : "on");
+	refresh_settings();
 }
 
 void App::remove_textures()
