@@ -1,10 +1,13 @@
 #include "platform.h"
 #include <cstdlib>
+#include <cstring>
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#include <algorithm>
 #include <direct.h>
 #include <windows.h>
+#include <shlobj.h>
 
 std::wstring widen(const std::string& s)
 {
@@ -168,7 +171,37 @@ void ChildProcess::stop()
 		TerminateProcess(process, 1);
 }
 
+bool create_shortcut(const std::string& desktop, const std::string& program, const std::string&, std::string* said)
+{
+	std::wstring exe = widen(program), lnk = widen(desktop + "Witch Time.lnk");
+	std::replace(exe.begin(), exe.end(), L'/', L'\\');
+	std::replace(lnk.begin(), lnk.end(), L'/', L'\\');
+	HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);    // S_FALSE where SDL already did; both are undone below
+	IShellLinkW* link = nullptr;
+	IPersistFile* file = nullptr;
+	HRESULT hr = desktop.empty() ? E_FAIL : CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (void**)&link);
+	if (SUCCEEDED(hr))
+	{
+		link->SetPath(exe.c_str());
+		link->SetArguments(L"--play");
+		link->SetWorkingDirectory(exe.substr(0, exe.find_last_of(L'\\')).c_str());
+		link->SetDescription(L"Starts the game without the launcher's screens");
+		hr = link->QueryInterface(IID_IPersistFile, (void**)&file);
+	}
+	if (SUCCEEDED(hr))
+		hr = file->Save(lnk.c_str(), TRUE);
+	if (file)
+		file->Release();
+	if (link)
+		link->Release();
+	if (SUCCEEDED(com))
+		CoUninitialize();
+	*said = SUCCEEDED(hr) ? "On your desktop now" : desktop.empty() ? "Windows names no desktop folder" : "Could not write to the desktop folder";
+	return SUCCEEDED(hr);
+}
+
 #else
+#include <cstdio>
 #include <unistd.h>
 
 bool make_dir(const std::string& path) { return mkdir(path.c_str(), 0755) == 0; }
@@ -180,4 +213,44 @@ void unset_env(const char* name) { unsetenv(name); }
 bool change_dir(const std::string& path) { return chdir(path.c_str()) == 0; }
 
 bool is_program(const std::string& path) { return access(path.c_str(), X_OK) == 0; }
+
+bool create_shortcut(const std::string& desktop, const std::string& program, const std::string& icon, std::string* said)
+{
+	// Desktop Entry Specification: a string value doubles its backslashes; Exec's quoted program also takes one before
+	// " ` $ and \ (so two in the file), and % is doubled
+	// shortcut: GLib (GNOME, gio launch) looks for the program before it undoubles %, so a game folder with % in its name
+	// gets an entry that does not start there; write a wrapper script if anyone reports it
+	auto value = [](const std::string& s, bool exec) {
+		std::string o;
+		for (char c : s)
+		{
+			if (exec && std::strchr("\"`$\\", c))
+				o += "\\\\";
+			if (c == '\\' || (exec && c == '%'))
+				o += c;
+			o += c;
+		}
+		return o;
+	};
+	const std::string entry = "[Desktop Entry]\nType=Application\nName=Witch Time\nComment=Bayonetta 3, without the launcher's screens\n"
+		"Exec=\"" + value(program, true) + "\" --play\nPath=" + value(program.substr(0, program.find_last_of('/')), false) +
+		"\nIcon=" + value(icon, false) + "\nTerminal=false\nCategories=Game;\nStartupWMClass=witchtime\n";   // witchtime: the windows' app id
+	auto write = [&entry](const std::string& path) {
+		FILE* f = std::fopen(path.c_str(), "w");
+		if (!f)
+			return false;
+		bool ok = std::fputs(entry.c_str(), f) >= 0;
+		return std::fclose(f) == 0 && ok && chmod(path.c_str(), 0755) == 0;   // executable: Plasma starts it from the desktop unasked
+	};
+	const char *data = std::getenv("XDG_DATA_HOME"), *home = std::getenv("HOME");
+	std::string share = data && data[0] == '/' ? data : std::string(home ? home : "") + "/.local/share";
+	if (program.find('\n') != std::string::npos)
+		return *said = "The game folder's name has a line break", false;
+	for (const std::string& dir : {share.substr(0, share.find_last_of('/')), share, share + "/applications"})    // ~/.local first
+		make_dir(dir);
+	bool menu = write(share + "/applications/witchtime.desktop"), desk = !desktop.empty() && write(desktop + "witchtime.desktop");
+	*said = menu && desk ? "In your app menu and on your desktop now" : menu ? "In your app menu now" :
+		desk ? "On your desktop now" : "Could not write to the app menu's folder";
+	return menu || desk;
+}
 #endif

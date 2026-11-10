@@ -382,6 +382,7 @@ void App::bind_model()
 	c.Bind("tex_action", &tex_action);
 	c.Bind("tex_switch", &tex_switch);
 	c.Bind("tex_remove", &tex_remove);
+	c.Bind("shortcut_note", &shortcut_note);
 	// footer hints: by the label on the button, as confirm and back in handle() go
 	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
 	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=26222f" : prompts == 2 ? "gen:glyph?n=circle&c=26222f" : "gen:glyph?n=b&c=26222f"); });
@@ -423,6 +424,14 @@ void App::bind_model()
 	c.BindEventCallback("convert_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { convert_textures(); });
 	c.BindEventCallback("switch_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { switch_textures(); });
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
+	c.BindEventCallback("create_shortcut", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		// the release's own witch-time(.exe) at the top, which an update keeps in place; a checkout without one: this program
+		std::string top = paths.repo + "/witch-time" WT_EXE, said;
+		const char* desktop = SDL_GetUserFolder(SDL_FOLDER_DESKTOP);
+		create_shortcut(desktop ? desktop : "", is_program(top) ? top : paths.self, paths.ui + "/img/icon.png", &said);
+		shortcut_note = said;
+		model.DirtyVariable("shortcut_note");
+	});
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
 	c.BindEventCallback("toggle_move", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
@@ -1036,7 +1045,7 @@ void App::refresh_settings()
 	// the staircase (rows 500 dp wide from 620 dp) ends 20 dp inside the 1280 dp stage, however many rows a section has.
 	// Rows that step less than the diagonal (22.6 dp a 56 dp row) close in on its rule, 40 dp from the first row's corner:
 	// they come closer together too, so the last stays 12 dp clear (Graphics' nine, the converted textures' row too)
-	const float rows = float(settings.size() + (tab == 1 ? 1 : 0)), tan22 = 0.4040f;
+	const float rows = float(settings.size() + (tab <= 1 ? 1 : 0)), tan22 = 0.4040f;   // Display: the desktop shortcut's row
 	row_step = rows > 1 ? std::min(26.f, 140.f / (rows - 1)) : 26.f;
 	row_pitch = rows > 1 ? std::clamp((row_step + 28.f / (rows - 1)) / tan22, 50.f, 56.f) : 56.f;
 	model.DirtyVariable("settings");
