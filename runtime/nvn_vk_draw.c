@@ -495,13 +495,20 @@ static LONG64 g_fu_frames, g_fu_total, g_fu_linked, g_fu_made, g_fu_newsig, g_fu
 #define VK_SPLIT_DEFAULT 0
 static LONG64 g_tl_t0, g_tl_first, g_tl_last, g_tl_sum[8], g_tl_n;      /* sums: 0 first submission, 1 last submission, 2 present job, 3 fence waits (count), 4 fence wait ticks, 5 end of a fence wait after the batch start */
 void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.done moved, a game thread may wait for it */
+/* [issue 55] WT_VK_STEP=1, TEST ONLY: a GPU that stops (the 20 s fence wait below) on a driver with no checkpoints and no fault
+ * report (Intel: a UHD 620 and an Arc A770 at the first frame after the loading clock). The GPU finishes every command of the
+ * game before the next is recorded (exec), so the one it never finishes is the last one handed over, and the failure names it.
+ * Very slow. Program numbers are the same on every PC. */
+static char g_step[256];
+static int g_step_busy;
+static int vk_step(void) { static int v = -1; if (v < 0) { v = getenv("WT_VK_STEP") && atoi(getenv("WT_VK_STEP")); if (v) printf("nvn_vk: WT_VK_STEP=1 (a test): the GPU finishes every command of the game before the next one; very slow\n"); } return v; }
 static void slot_wait(Slot *s) {
     if (!s->pending) return;
     for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial < s->serial) slot_wait(&R.slot[i]);   /* [Recomps#1] in submission order (oq_land) */
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
+    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); if (g_step[0]) { printf("nvn_vk_step: %s %s\n", g_step_busy ? "THE GPU STOPPED IN:" : "the GPU stopped outside the game's commands (an upload, a copy of ours, the present); the last command it finished:", g_step); fflush(stdout); } vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* WT_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
@@ -4541,6 +4548,11 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_CALL: for (int i = 0; i < (int)a[0]; i++) { uint64_t h; memcpy(&h, blob + i * 8, 8); if (depth < 8) replay(h, depth + 1); } break;
     default: { static char msg[OP_COUNT][64]; snprintf(msg[m->op % OP_COUNT], 64, "nvnCommandBuffer%s", nvn_front_op_name(m->op)); nvn_vk_missing(msg[m->op % OP_COUNT]); break; }
+    }
+    if (vk_step() && m->op != OP_CALL && R.recording) {      /* [issue 55] */
+        snprintf(g_step, sizeof g_step, "nvnCommandBuffer%s, frame %lld, after %lld draws of the frame; programs bound: vertex #%d, fragment #%d, compute #%d", nvn_front_op_name(m->op), (long long)nvn_front_frame_next(),
+                 (long long)R.frame_draws, R.prog[0] ? R.prog[0]->serial : 0, R.prog[1] ? R.prog[1]->serial : 0, R.prog[5] ? R.prog[5]->serial : 0);
+        g_step_busy = 1; cmd_wait_all(); g_step_busy = 0;
     }
 }
 static void replay(uint64_t handle, int depth) {
