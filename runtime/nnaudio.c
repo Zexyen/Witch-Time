@@ -22,6 +22,7 @@
  *                                       then does its own mix-down, as on a console set to stereo output)
  *              WT_AUDIO_LOG=1         print the statistics every second instead of every 10 s
  *              WT_AUDIO_MUTE=1        no host device (clock-driven)
+ *              WT_AUDIO_LEAD=<n>      the most buffers the host lead may grow to (default 16, 0 = never; see g_lead)
  *              WT_AUDIO_TONE=1        add a quiet 440 Hz test tone to the first second (checks the host path)
  *              WT_OPUS_DLL=<file>     libopus DLL for the Opus decoder (default libopus-0.dll, then MSYS2's)
  *
@@ -97,6 +98,14 @@ static unsigned g_queue_max;
  * reached the end of everything handed to it: the output really ran out of samples (waveOut marks a buffer "done" when
  * its own pipeline has taken it, which can be earlier than the moment it is heard). */
 static unsigned long long g_frames_submitted, g_starved;
+/* Host lead (issue 157). The game owns 4 buffers of 512 frames (42.7 ms) and normally gets one back when the device
+ * reports it done. One PC's device reported them four at a time, only after all had played: silence until the game had
+ * mixed again, 4 buffers every 60 ms instead of every 42.7 (slow, crackling sound). When the queue empties although the
+ * game answers at once, g_lead grows (6, 8 .. 16 buffers): then a buffer also goes back as soon as it is copied, while the
+ * device has fewer than g_lead buffers ahead of its own play position. 0 (every healthy device): nothing changes.
+ * shortcut: the lead never shrinks again in a run, add that if a device is found that only misbehaves for a while. */
+static unsigned g_relc;                               /* slots before this one have had their guest buffer released */
+static unsigned g_lead, g_out;                        /* g_out: released buffers the game has not appended again yet */
 static FILE *g_wav;
 static int g_tone_left, g_heard;
 static unsigned long long g_tone_phase;
@@ -169,7 +178,7 @@ static unsigned add_tone(int16_t *pcm, unsigned frames, unsigned peak) {
 
 /* Moves the buffers that have finished playing to the released list. Returns how many. Caller holds g_lock. */
 static int collect_finished(int everything) {
-    int n = 0;
+    int n = 0, done = 0;
     LONGLONG now = now_ticks();
     while (g_head != g_tail) {
         Slot *s = &g_slots[g_head % SLOTS];
@@ -178,13 +187,27 @@ static int collect_finished(int everything) {
             else if (!g_started || now < s->due) break;
         }
         if (s->prepared) { waveOutUnprepareHeader(g_wave, &s->hdr, sizeof s->hdr); s->prepared = 0; }
-        g_released[g_rel_tail++ % SLOTS] = s->guest;
         g_head++;
+        done++;
+    }
+    int ahead = 1 << 30;                              /* frames the device has ahead of its play position; unknown = plenty */
+    if (g_lead && g_wave && g_started && g_relc != g_tail && g_tail - g_head < SLOTS / 2) {   /* half the slots full: the device gives nothing back, wait for it */
+        MMTIME mt;
+        memset(&mt, 0, sizeof mt);
+        mt.wType = TIME_SAMPLES;
+        if (waveOutGetPosition(g_wave, &mt, sizeof mt) == MMSYSERR_NOERROR && mt.wType == TIME_SAMPLES) ahead = (int)((DWORD)g_frames_submitted - mt.u.sample);
+    }
+    while (g_relc != g_tail) {
+        Slot *s = &g_slots[g_relc % SLOTS];
+        if (!everything && (int)(g_relc - g_head) >= 0 && ahead + (int)(g_out * s->frames) >= (int)(g_lead * s->frames)) break;
+        g_released[g_rel_tail++ % SLOTS] = s->guest;
+        g_relc++;
+        g_out++;
         g_total_released++;
         g_sec_released++;
         n++;
     }
-    if (n && !everything && g_head == g_tail && g_started && g_heard && !g_empty_since) { g_underruns++; g_empty_since = now; }
+    if (done && !everything && g_head == g_tail && g_started && g_heard && !g_empty_since) { g_underruns++; g_empty_since = now; }
     return n;
 }
 
@@ -237,7 +260,7 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     g_rate = want_rate ? (int)want_rate : 48000;
     const char *env = getenv("WT_AUDIO_CHANNELS");
     g_channels = want_channels == 6 && env && atoi(env) == 6 ? 6 : 2;
-    g_head = g_tail = g_rel_head = g_rel_tail = 0;
+    g_head = g_tail = g_rel_head = g_rel_tail = g_relc = g_out = 0;
     g_frames_submitted = 0;
     g_started = 0;
     g_clock_due = 0;
@@ -359,10 +382,17 @@ static void audio_AppendAudioOutBuffer(Ctx *c) {      /* (AudioOut *, AudioOutBu
             s->due = g_clock_due;
         }
         g_tail++;
+        if (g_out) g_out--;
         if (g_empty_since) {
             unsigned long long gap = (unsigned long long)(now_ticks() - g_empty_since);
             g_underrun_ticks += gap; if (gap > g_underrun_longest) g_underrun_longest = gap;
             g_empty_since = 0;
+            static int lead_max = -1;
+            if (lead_max < 0) { const char *e = getenv("WT_AUDIO_LEAD"); lead_max = e ? atoi(e) : 16; }
+            if (g_wave && gap * 100 < (unsigned long long)g_freq.QuadPart && (int)g_lead < lead_max) {   /* answered within 10 ms: the game was on time */
+                g_lead = g_lead ? g_lead + 2 : 6;
+                printf("nn::audio: the device played everything it had while the game was on time (underrun %llu): host lead now %u buffers\n", g_underruns, g_lead);
+            }
         }
         if (g_tail - g_head > g_queue_max) g_queue_max = g_tail - g_head;
         g_total_appended++;
@@ -381,9 +411,9 @@ void audio_report(FILE *out) {
     if (!g_total_appended) return;
     double f = g_freq.QuadPart ? (double)g_freq.QuadPart : 1.0;
     fprintf(out, "nn::audio: %d Hz, %d channels granted, 16-bit; %llu buffers appended, %llu released, %llu refused; deepest queue %u buffers; "
-                 "underruns (device ran dry while started, after the first sound): %llu, %.1f ms in all, longest %.1f ms; %llu s with sound\n",
+                 "underruns (device ran dry while started, after the first sound): %llu, %.1f ms in all, longest %.1f ms; host lead %u buffers; %llu s with sound\n",
             g_rate, g_channels, g_total_appended, g_total_released, g_total_dropped, g_queue_max,
-            g_underruns, (double)g_underrun_ticks * 1000.0 / f, (double)g_underrun_longest * 1000.0 / f, g_nonsilent_seconds);
+            g_underruns, (double)g_underrun_ticks * 1000.0 / f, (double)g_underrun_longest * 1000.0 / f, g_lead, g_nonsilent_seconds);
     fprintf(out, "nn::audio: appends that found the device's own play position at the end of everything submitted (the output had no samples left): %llu of %llu\n", g_starved, g_total_appended);
 }
 
