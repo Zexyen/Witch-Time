@@ -1662,10 +1662,20 @@ read once at start and about 119 MB of code resident.
   over 1 s (worst 1.4 s). With the pack, up to 9 frames went over 1 s, the worst 4.7 s.
 - `WT_VK_RS_PREP=0`: no measurable difference.
 
-On a hard disk `bc7_textures = off` is therefore the faster choice. The pack stays the default; issue 136's reporter was
-asked to try it.
+On a hard disk `bc7_textures = off` is therefore the faster choice. The pack stays the default.
 
-Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), a real hard disk.
+**The reporter's hard disk** (2026-11-05, a version before v0.8.1: no `code prefetch` line): with `bc7_textures = off` the log has no
+watchdog report (three before), and the worst frame after loading is 0.8 s, at the cutscene's start (before: 3.7, 1.8 and
+2.5 s). The three decode threads kept up on their 4-core i3-12100F: 17 of 3500 textures were not ready at their use.
+
+**Decision**: the game does not turn the pack off by itself. A drive's seek-penalty flag is cheap to read, but USB
+enclosures and RAID report it wrongly, and timing the reads depends on what the page cache holds, so the picture would
+change from run to run. What off costs depends on the CPU, and this is one machine. Instead the launcher's Converted
+textures row has **Turn off / Turn on**, which only writes `bc7_textures` and keeps the folder, and its note names hard
+disks. Checked headless on Linux: the button flips the key both ways and the row keeps the focus.
+
+Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), the prefetch on
+a real hard disk.
 
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
