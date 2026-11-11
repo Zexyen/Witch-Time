@@ -1939,7 +1939,7 @@ was Windows only. Now:
   changes its format. A first version made the window textures 16-bit floating point instead: FXAA writes NaN where its
   four corners are black (0 in 8 bits, kept in floating point), and the HUD's additive parts summed to 2.2 times white.
 - **Rows**: HDR, HDR white, HDR peak in the PC panel (the two brightness rows only while the picture goes out as HDR) and
-  in the launcher's Graphics section; HDR in the Options screen's PC Settings tab. All three apply while the game runs.
+  in the launcher's Graphics section, and all three in the Options screen's PC Settings tab. All three apply while the game runs.
 - **Measured** (RX 9070 XT, RADV, KDE Wayland with the desktop's HDR off, `hdr = on`, white 200, peak 1000, Shibuya, the
   presented HDR10 image read back with `WT_HDR_SHOT=<frame>` and decoded): white is 199 nits as before; in two frames 0.24 %
   and 0.75 % of the pixels are above 205 nits, 0.12 % and 0.34 % above 400, the brightest 777 and 835 nits (930 with
@@ -1991,8 +1991,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
   (`shortcut:` in `nnmovie_mf.c`).
 - HDR (`nvn_vk_draw.c`): Windows is not asked for the monitor's peak (`hdr_peak = auto` is 1000 there); the values above
-  white pass through the game's R11G11B10F target (6 bits of mantissa); the PC panel has the HDR rows, the Options screen
-  only HDR itself.
+  white pass through the game's R11G11B10F target (6 bits of mantissa).
 - Indirect draws are read on the CPU (one Vulkan draw per record) unless compute wrote their count or records in this batch
   (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count whose records past it name indices outside
   the index buffer, and indirect dispatches, still cost a submit and a wait.
