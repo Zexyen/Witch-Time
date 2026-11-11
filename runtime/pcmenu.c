@@ -11,12 +11,12 @@
  * Controls: up / down choose a row, left / right (or A / Enter, B / Escape closes) change it; the mouse: point at a row,
  * click on the value (on '‹' for the one before). A change is written to graphics.ini at once (gfx_option_set: comments and
  * other keys kept) and applied while the game runs where the runtime can: cutscene_fps (the game library's switch), vsync
- * (present mode and pacing), the window (Linux), anisotropic filtering and texture detail (new samplers from then on), model detail, film grain, aspect,
+ * (present mode and pacing), the window (Linux), model detail, film grain, aspect,
  * resolution_scale (when the panel closes, so that going past 3.0 does not make its images; from the game's Options rows at
  * once: nvn_vk_draw.c rs_apply). The rest (frame_rate) is marked "applies at the next start". A key set by an environment
  * variable is shown and locked.
  * Rows with `optional` appear only when graphics.ini has their key (for keys of later builds; a frame-rate cap: one more row,
- * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
+ * and its live field in gfx_option_set). Anisotropic filtering and the mip bias are fixed (16, -1; gfx_options.c) and have no rows since 2026-11-10.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
  * subsets of Marcellus and Source Sans 3 (SIL OFL 1.1, third_party/OFL-*.txt), embedded with #embed, the pictures from
  * runtime/art the same way; opaque, the whole window: the launcher's look (launcher/ui/witch.rcss). The same drawing
@@ -76,7 +76,7 @@ int nnpad_bind_set(int ch, const unsigned char *b);
 int options_control_type(int ch);                          /* options_row.c */
 
 /* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; from A_CHAR on its rows */
-enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_CHAR, A_PRESET, A_BIND };
+enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_CHAR, A_PRESET, A_BIND };
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -99,10 +99,6 @@ static const Row k_rows[] = {
     {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"360p", "450p", "540p", "675p", "720p", "900p", "1080p", "1440p", "1800p", "2160p", "2700p"}},
-    {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
-     {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
-    {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "WT_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 0,
-     {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
     {"model_lod", "Model detail", "Highest: models keep their finest detail at any distance and far ones stay drawn. Weaker GPUs may lose frame rate.", "WT_MODEL_LOD", "game", A_MODEL, 0,
      {"game", "highest"}, {"Game", "Highest"}},
     {"film_grain", "Film grain", "The game's moving noise over the picture. Off: a clean picture; the vignette stays.", NULL, "on", A_LIVE, 0,
@@ -207,7 +203,7 @@ static void menu_init(void) {                              /* the first opening:
         g_shown[i] = !r->optional || have;
         if ((g_cur[i] = find_val(i, v)) < 0) snprintf(g_raw[i], sizeof g_raw[i], "%s", v);
         g_start[i] = g_cur[i];
-        g_lock_why[i] = g_env_set[i] ? 1 : o->profile == 1 && (!strcmp(r->key, "vsync") || !strcmp(r->key, "resolution_scale") || !strcmp(r->key, "anisotropic_filtering")) ? 2 : 0;
+        g_lock_why[i] = g_env_set[i] ? 1 : o->profile == 1 && (!strcmp(r->key, "vsync") || !strcmp(r->key, "resolution_scale")) ? 2 : 0;
     }
     if (!g_shown[g_sel]) g_sel = 0;
     g_inited = 1;
@@ -1045,7 +1041,6 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     case A_HUD: game_hud_centre = !strcmp(r->val[k], "16:9"); break;
     case A_VSYNC: display_vsync_apply(); add_work(2); break;
     case A_WINDOW: case A_SIZE: if (!display_window_apply()) g_nowin = 1; break;
-    case A_SAMPLER: add_work(1); break;
     case A_SCALE: if (!g_open) add_work(4); break;         /* (the panel: when it closes) */
     default: break;
     }

@@ -20,6 +20,7 @@ use std::path::Path;
 /// 115-130 ms a frame in it in trains of frames in Tokyo. 0x7100d02de0: the main loop's frame-rate mode setter (one
 /// caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame
 /// clock, whose fixed step is then halved (real time).
+/// The last five are the Options screen's fifth tab (docs/RE_NOTES.md section 8, "The fifth tab").
 pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100b382c0, "morton_split32"),
     (0x7100d02de0, "fps_mode_set"),
@@ -52,6 +53,11 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100d02db0, "target_h"),
     (0x7100bd563c, "model_lod"),
     (0x7100cb9440, "cam_upload"),
+    (0x7100c0f6d0, "ui_file"),
+    (0x7100aa4c64, "tabs_ctor"),
+    (0x7100aa4de4, "tabs_dtor"),
+    (0x7100aa5718, "tabs_select"),
+    (0x7100a32390, "options_list"),
 ];
 
 /// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as

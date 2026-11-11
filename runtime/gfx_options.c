@@ -85,11 +85,6 @@ static const char *const k_default_ini =
 ";   for about two minutes once, while the shaders are translated for it.\r\n"
 "resolution_scale = 1.0\r\n"
 "\r\n"
-"; anisotropic_filtering = game | 2 | 4 | 8 | 16      (Vulkan)\r\n"
-";   game: each texture sampler keeps the value the game gave it. A number: at least that much on every sampler that\r\n"
-";   filters between mip levels (sharper textures at flat angles; changes the picture, costs little on any GPU).\r\n"
-"anisotropic_filtering = game\r\n"
-"\r\n"
 "; shader_wait = hold | skip      (Vulkan)\r\n"
 ";   What happens when a draw needs a shader or pipeline that is not ready yet (mostly the first time something is shown\r\n"
 ";   on this PC). hold: the frame waits for it (a late frame, a correct picture). skip: in and around a fight the draw is\r\n"
@@ -104,8 +99,8 @@ static const char *const k_default_ini =
 "\r\n"
 "; profile = custom | low\r\n"
 ";   custom: every key of this file as written. low: the set measured for a weak or integrated GPU (2026-10-12, Intel\r\n"
-";   integrated: 4.2 ms of GPU time per fight frame instead of 9.0): resolution_scale = 0.5, anisotropic_filtering = game,\r\n"
-";   vsync = clock; those three keys of the file are then not used. The log says which profile is active.\r\n"
+";   integrated: 4.2 ms of GPU time per fight frame instead of 9.0): resolution_scale = 0.5, the game's own texture\r\n"
+";   filtering, vsync = clock; those keys of the file are then not used. The log says which profile is active.\r\n"
 "profile = custom\r\n"
 "\r\n"
 "; aspect = keep | stretch      (Vulkan)\r\n"
@@ -146,11 +141,6 @@ static const char *const k_default_ini =
 ";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
 ";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
 "cutscene_fps = 30\r\n"
-"\r\n"
-"; texture_lod_bias = 0      (-3 .. 3; Vulkan)\r\n"
-";   0: textures as the game samples them. Below 0: finer mip levels, sharper textures in the distance (-0.5 .. -1;\r\n"
-";   lower can shimmer); added to every sampler that uses mip maps. Above 0: blurrier, a little less GPU time.\r\n"
-"texture_lod_bias = 0\r\n"
 "\r\n"
 "; model_lod = game | highest\r\n"
 ";   game: models lose detail with distance and far ones disappear, as on the console. highest: every model with detail\r\n"
@@ -243,6 +233,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
     o->bc7_textures = 1;                       /* #54: a graphics.ini from before the key */
+    o->aniso = 16; o->texture_lod_bias = -1.0f;      /* [witchtime] fixed at the sharpest since 2026-11-10: no keys, no menu rows (profile = low and WT_TEXTURE_LOD_BIAS still change them) */
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
     opt_path(o->path);
     if (!arg && !getenv("WT_GRAPHICS_CONFIG") && !getenv("WT_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
@@ -269,7 +260,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "gpu")) { if (_stricmp(val, "auto")) snprintf(o->gpu, sizeof o->gpu, "%s", val); }
         else if (!_stricmp(key, "console_mode")) o->handheld = !_stricmp(val, "handheld");
         else if (!_stricmp(key, "resolution_scale")) { float v = (float)atof(val); if (v > 0) o->scale = v; }
-        else if (!_stricmp(key, "anisotropic_filtering")) { int v = atoi(val); o->aniso = v == 2 || v == 4 || v == 8 || v == 16 ? v : 0; }
+        else if (!_stricmp(key, "anisotropic_filtering") || !_stricmp(key, "texture_lod_bias")) { }      /* [witchtime] keys of older files: not used any more */
         else if (!_stricmp(key, "frame_time_overlay")) o->overlay = !_stricmp(val, "on") || !strcmp(val, "1");
         else if (!_stricmp(key, "profile")) o->profile = !_stricmp(val, "low");
         else if (!_stricmp(key, "shader_wait")) o->shader_skip = !_stricmp(val, "skip");
@@ -285,7 +276,6 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
-        else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
         else if (!_stricmp(key, "discord_presence")) {}      /* [witchtime] read by presence.c */
@@ -296,7 +286,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
     if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
-    {   /* [witchtime] texture_lod_bias: WT_TEXTURE_LOD_BIAS wins; -3 .. 3 */
+    {   /* [witchtime] the mip bias: -1, or WT_TEXTURE_LOD_BIAS (-3 .. 3) */
         const char *e = getenv("WT_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
         if (o->texture_lod_bias < -3.0f) o->texture_lod_bias = -3.0f;
@@ -334,9 +324,9 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
                paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (WT_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
     }
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
-        o->scale = GFX_LOW_SCALE; o->aniso = 0; o->present = 0;
+        o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
     }
-    printf("graphics profile: %s\n", o->profile == 1 ? "low (weak or integrated GPU): resolution_scale=" GFX_LOW_SCALE_TEXT ", anisotropic_filtering=game, vsync=clock; these three keys of the file are not used"
+    printf("graphics profile: %s\n", o->profile == 1 ? "low (weak or integrated GPU): resolution_scale=" GFX_LOW_SCALE_TEXT ", the game's own texture filtering, vsync=clock; these keys of the file are not used"
                                                      : "custom (every key of graphics.ini as written; 'profile = low' is the set for a weak or integrated GPU)");
     static const char *const k_win[3] = {"windowed", "borderless", "fullscreen"}, *const k_vs[6] = {"clock", "on", "off", "mailbox", "display", "auto"};
     printf("graphics options: %s (%s): renderer=%s window=%s %dx%d vsync=%s gpu=%s console_mode=%s resolution_scale=%.2f anisotropic_filtering=%d frame_time_overlay=%s aspect=%s%s\n", o->path,
