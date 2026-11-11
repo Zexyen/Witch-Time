@@ -590,7 +590,11 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
     for (int depth = 0, shown = 0; depth < 400 && shown < 40; depth++) {
         uint64_t g = guest_function_of(ctx.Rip);
         if (g && g != last) { printf("  f_%llx\n", (unsigned long long)g); shown++; last = g; }
-        if (!g && depth < 16) printf("  host %llx\n", (unsigned long long)ctx.Rip);   /* [Recomps#1] for llvm-symbolizer (exe has a PDB, base 0x140000000) */
+        if (!g && depth < 16) {                                                         /* [Recomps#1] for llvm-symbolizer (exe has a PDB, base 0x140000000) */
+            HMODULE m = NULL; char mod[MAX_PATH] = "?";                                 /* [issue 55] whose code it is: a driver, a layer, ours */
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)ctx.Rip, &m) && m) GetModuleFileNameA(m, mod, sizeof mod);
+            printf("  host %llx  %s+0x%llx\n", (unsigned long long)ctx.Rip, strrchr(mod, '\\') ? strrchr(mod, '\\') + 1 : mod, (unsigned long long)(ctx.Rip - (DWORD64)(uintptr_t)m));
+        }
         DWORD64 image_base;
         RUNTIME_FUNCTION *rf = RtlLookupFunctionEntry(ctx.Rip, &image_base, NULL);
         if (!rf && depth == 0) { ctx.Rip = *(DWORD64 *)(uintptr_t)ctx.Rsp; ctx.Rsp += 8; continue; }   /* [Recomps#1] leaf (no unwind data): return address on top */
