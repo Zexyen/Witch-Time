@@ -13,12 +13,18 @@ typedef struct {
     DWORD offset;                      /* bytes of queue[head] already pulled */
     uint64_t frames;                   /* pulled since open / the last reset */
     unsigned block;                    /* bytes per frame */
+    unsigned told;                     /* WT_AUDIO_STEP_MS: headers before this one have been reported done */
+    Uint64 next_step;
 } WaveOut;
+
+/* TEST ONLY, WT_AUDIO_STEP_MS=<n> (issue 157): a device that plays at once but reports its finished headers only every
+ * n ms, all together. 60 gives that report's figures: 667 buffers in 10 s instead of 937, an underrun every 4 buffers. */
+static int step_ms(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_AUDIO_STEP_MS"); v = e ? atoi(e) : 0; } return v; }
 
 static void SDLCALL pull(void *user, SDL_AudioStream *stream, int need, int total) {
     (void)total;
     WaveOut *w = user;
-    int done = 0;
+    int done = 0, step = step_ms();
     SDL_LockMutex(w->lock);
     while (need > 0 && w->head != w->tail) {
         WAVEHDR *h = w->queue[w->head % 256];
@@ -27,7 +33,11 @@ static void SDLCALL pull(void *user, SDL_AudioStream *stream, int need, int tota
         SDL_PutAudioStreamData(stream, h->lpData + w->offset, n);
         w->offset += (DWORD)n; need -= n;
         w->frames += (uint64_t)n / w->block;
-        if (w->offset == h->dwBufferLength) { h->dwFlags |= WHDR_DONE; w->head++; w->offset = 0; done = 1; }
+        if (w->offset == h->dwBufferLength) { w->head++; w->offset = 0; }
+    }
+    if (!step || SDL_GetTicks() >= w->next_step) {
+        w->next_step = SDL_GetTicks() + (Uint64)step;
+        for (; w->told != w->head; w->told++, done = 1) w->queue[w->told % 256]->dwFlags |= WHDR_DONE;
     }
     SDL_UnlockMutex(w->lock);
     if (done && w->event) SetEvent(w->event);
@@ -68,7 +78,9 @@ MMRESULT waveOutRestart(HWAVEOUT h) { return SDL_ResumeAudioStreamDevice(((WaveO
 MMRESULT waveOutReset(HWAVEOUT h) {                    /* every queued header becomes done, the position goes back to 0 */
     WaveOut *w = h;
     SDL_LockMutex(w->lock);
+    for (; w->told != w->head; w->told++) w->queue[w->told % 256]->dwFlags |= WHDR_DONE;
     for (; w->head != w->tail; w->head++) w->queue[w->head % 256]->dwFlags |= WHDR_DONE;
+    w->told = w->head;
     w->offset = 0; w->frames = 0;
     SDL_ClearAudioStream(w->stream);
     SDL_UnlockMutex(w->lock);
