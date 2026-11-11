@@ -36,6 +36,7 @@ typedef struct {
                              * handed on as RECOMPS_HUD_CENTRE=1 (game_shim_eh.c h_ui_element) */
     int upscaler;           /* [witchtime] issue 118: upscaler = off (0) | fsr3 (1: FSR 3.1 as anti-aliasing, nvn_vk_fsr.c) | fsr3_quality (2) | fsr3_balanced (3)
                                | fsr3_performance (4) | fsr3_ultra_performance (5): FSR 3.1 upscaling to the internal resolution; env WT_UPSCALER wins */
+    float hdr_peak;         /* [witchtime] hdr_peak: the scene's brightest parts in nits with HDR on (80 .. 10000); 0 = auto (nvn_vk_draw.c hdr_var) */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (WT_PACE_120=0: 60 and the lifted limiter) */

@@ -1915,6 +1915,41 @@ What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints 
 
 Next: a run on a 21:9 monitor.
 
+## HDR: Linux, and the scene's lights above white (2026-11-11; issue 180)
+
+The HDR output of finding 147 (an HDR10 or scRGB swapchain, the game's 8-bit picture turned into light by one pass,
+`nvn_vk_draw.c` `hdr_*`) showed the SDR picture inside an HDR signal: nothing was brighter than `hdr_paper_white`. And it
+was Windows only. Now:
+
+- **Linux** (`hdr = auto | on`): the same swapchains on Wayland. Whether the desktop's HDR is on for the window, its white
+  and the monitor's peak are SDL's window properties, read at every present (`hdr_query`). The surface's format list was
+  read into 64 entries and Mesa lists 81 on Wayland (9 formats in 9 colour spaces), so the HDR ones were cut off: 256 now.
+  X11 offers no HDR swapchain. With `hdr = on` and the desktop's HDR off the white is 203 nits (BT.2408).
+- **The scene above white** (`hdr_peak`, auto = the monitor's peak on Linux, 1000 on Windows). The four tone map stages
+  (`stage_fx` FX_GRAIN) get another translation while HDR is on (`nvn_vk_m4.c` `hdr_stage_text`, a part of the stage's
+  hash per peak / white): the game's curve is a toe, a straight part and from `c4[20]` a shoulder that ends at `c4[16]`
+  (in Shibuya the shoulder's size `c4[21]` is 0: a cut at white). The translation leaves it alone and multiplies the
+  finished colour by one gain per pixel, from the largest channel: the shoulder with the same start and slope that ends
+  at peak / white instead of at white, over the game's own value. So up to where the game's curve bends nothing changes,
+  and the hue the grading gave a pixel is kept.
+- **Where it goes**: the tone map's target is R11G11B10F, so it holds those values as it is. FXAA then draws it into the
+  8-bit window texture (cut at white), the HUD goes on top, the present is as before. The HDR pass reads that frame's
+  tone map target next to the 8-bit picture and adds what it holds above white, where the picture still shows the scene
+  (where the two differ by more than 0.06 .. 0.25 it adds nothing: the HUD, a menu, the PC panel). No image of the game
+  changes its format. A first version made the window textures 16-bit floating point instead: FXAA writes NaN where its
+  four corners are black (0 in 8 bits, kept in floating point), and the HUD's additive parts summed to 2.2 times white.
+- **Rows**: HDR, HDR white, HDR peak in the PC panel (the two brightness rows only while the picture goes out as HDR) and
+  in the launcher's Graphics section; HDR in the Options screen's PC Settings tab. All three apply while the game runs.
+- **Measured** (RX 9070 XT, RADV, KDE Wayland with the desktop's HDR off, `hdr = on`, white 200, peak 1000, Shibuya, the
+  presented HDR10 image read back with `WT_HDR_SHOT=<frame>` and decoded): white is 199 nits as before; in two frames 0.24 %
+  and 0.75 % of the pixels are above 205 nits, 0.12 % and 0.34 % above 400, the brightest 777 and 835 nits (930 with
+  `hdr_gamma = srgb`): fires, muzzle flashes, the magic circle and its sparks. The HUD stays at white. A 1250x1000 window (bars above and below): the same
+  places. Validation layer, 3,700 frames: no message from the pass.
+- **Not done or not seen**: nobody has looked at it on an HDR monitor (the numbers above are a read-back). `hdr = auto`
+  with the desktop's HDR on was not run. Windows was not built or run here (no SDK on this PC). Cutscenes, other chapters
+  and FSR were not run with it. `WT_VK_CACHE=<an empty folder>` crashes in a preparation worker (`stagelib_ensure`) on
+  this PC, also on the commit before this work: not looked into.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
@@ -1955,6 +1990,9 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
   same texel size as the shader's typed format (else logged as missing).
 - Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
   (`shortcut:` in `nnmovie_mf.c`).
+- HDR (`nvn_vk_draw.c`): Windows is not asked for the monitor's peak (`hdr_peak = auto` is 1000 there); the values above
+  white pass through the game's R11G11B10F target (6 bits of mantissa); the PC panel has the HDR rows, the Options screen
+  only HDR itself.
 - Indirect draws are read on the CPU (one Vulkan draw per record) unless compute wrote their count or records in this batch
   (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count whose records past it name indices outside
   the index buffer, and indirect dispatches, still cost a submit and a wait.

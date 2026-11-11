@@ -458,8 +458,8 @@ int nvn_vk_init(void *hwnd) {
     vkGetDeviceQueue(V.device, V.family, 0, &V.queue);
 
     /* surface format: 8-bit BGRA / RGBA UNORM, sRGB colour space (the window texture's values are shown as they are, as the OpenGL blit does) */
-    VkSurfaceFormatKHR fmts[64];
-    uint32_t nfmt = 64;
+    VkSurfaceFormatKHR fmts[256];                         /* [witchtime] Mesa on Wayland lists 81 (9 formats in 9 colour spaces): 64 cut the HDR ones off */
+    uint32_t nfmt = 256;
     r = vkGetPhysicalDeviceSurfaceFormatsKHR(V.gpu, V.surface, &nfmt, fmts);
     if ((r != VK_SUCCESS && r != VK_INCOMPLETE) || !nfmt) vk_fatal("vkGetPhysicalDeviceSurfaceFormatsKHR", r);
     V.format.format = 0;
@@ -641,6 +641,7 @@ void nvn_vk_selftest_hook(void) {
     ExitProcess(g_vk_errors || g_vk_skipped ? 1 : 0);
 }
 
+int nvn_vk_hdr_on(void) { return V.hdr != 0; }             /* [witchtime] pcmenu.c: the rows of HDR's brightness */
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
 #include "nvn_vk_pcmenu.c"                                 /* [witchtime] the PC settings menu on the screen */
 #include "nvn_vk_fsr.c"                                    /* [witchtime] issue 118: FSR 3.1 as anti-aliasing */

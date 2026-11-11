@@ -169,9 +169,10 @@ static const char *const k_default_ini =
 "bc7_textures = on\r\n"
 "\r\n"
 /* [Recomps#1] finding 147 */
-"; hdr = auto | off | on      (Vulkan, Windows)\r\n"
-";   auto: while Windows HDR is on for the monitor the game is on, the picture goes out as HDR (the game's colours at\r\n"
-";   the brightness below, as Windows shows other programs); otherwise as before. on: always. off: never.\r\n"
+"; hdr = auto | off | on      (Vulkan)\r\n"
+";   auto: while HDR is on for the monitor the game is on (Windows' HDR switch; on Linux a Wayland desktop with HDR on),\r\n"
+";   the picture goes out as HDR: the game's colours at the brightness below, and the bright parts of the scene (lights,\r\n"
+";   fire, the sky) up to hdr_peak. Menus, the HUD and movies stay at hdr_paper_white. on: always. off: never.\r\n"
 "hdr = auto\r\n"
 "\r\n"
 "; hdr_format = hdr10 | scrgb\r\n"
@@ -179,9 +180,16 @@ static const char *const k_default_ini =
 "hdr_format = hdr10\r\n"
 "\r\n"
 "; hdr_paper_white = auto | 80 .. 1000\r\n"
-";   How bright the game's white is with HDR on, in nits. auto: Windows' 'SDR content brightness' of that monitor\r\n"
-";   (Settings > System > Display > HDR), followed while the game runs.\r\n"
+";   How bright the game's white is with HDR on, in nits. auto: the desktop's brightness of SDR programs on that monitor\r\n"
+";   (Windows: Settings > System > Display > HDR, 'SDR content brightness'), followed while the game runs.\r\n"
 "hdr_paper_white = auto\r\n"
+"\r\n"
+"; hdr_peak = auto | 80 .. 10000\r\n"
+";   How bright the brightest parts of the scene get with HDR on, in nits: your monitor's peak brightness. The game's own\r\n"
+";   tone curve is kept up to where it starts to flatten, and from there it rises to this value instead of to white.\r\n"
+";   At or below hdr_paper_white: nothing is brighter than white, as before 2026-11. auto: what the desktop says the monitor\r\n"
+";   does (Linux), 1000 on Windows.\r\n"
+"hdr_peak = auto\r\n"
 "\r\n"
 "; hdr_gamma = 2.2 | srgb\r\n"
 ";   How the game's colours are read with HDR on. 2.2: as an SDR monitor shows them (deep blacks). srgb: as Windows\r\n"
@@ -275,6 +283,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
+        else if (!_stricmp(key, "hdr_peak")) { float v = (float)atof(val); o->hdr_peak = v >= 80.0f && v <= 10000.0f ? v : 0.0f; }      /* [witchtime] auto, or a value out of range */
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
@@ -334,7 +343,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
            o->gpu[0] ? o->gpu : "auto", o->handheld ? "handheld" : "docked", o->scale, o->aniso, o->overlay ? "on" : "off", o->aspect_stretch ? "stretch" : "keep", unknown ? " (lines with an unknown key were ignored)" : "");
     {   char pw[16]; static const char *const k_hdr[3] = {"auto", "off", "on"};      /* [Recomps#1] finding 147 */
         if (o->hdr_paper_white > 0) snprintf(pw, sizeof pw, "%.0f", o->hdr_paper_white); else snprintf(pw, sizeof pw, "auto");
-        printf("graphics options: hdr=%s hdr_format=%s hdr_paper_white=%s hdr_gamma=%s\n", k_hdr[o->hdr], o->hdr_scrgb ? "scrgb" : "hdr10", pw, o->hdr_srgb ? "srgb" : "2.2"); }
+        printf("graphics options: hdr=%s hdr_format=%s hdr_paper_white=%s hdr_gamma=%s hdr_peak=%.0f (0 = auto)\n", k_hdr[o->hdr], o->hdr_scrgb ? "scrgb" : "hdr10", pw, o->hdr_srgb ? "srgb" : "2.2", o->hdr_peak); }
     if (o->scale != 1.0f && o->renderer) printf("graphics options: resolution_scale=%.2f is ignored by the OpenGL renderer (Vulkan only)\n", o->scale);
     if (o->scale != 1.0f && (o->scale < 0.25f || o->scale > 3.0f)) printf("graphics options: resolution_scale=%.2f is outside 0.25 .. 3.0: the nearest of the two is used\n", o->scale);      /* PR #8 (stephenjayakar): above 1.0 allowed (nvn_vk_draw.c RS_MAX = 2.0) */
     fflush(stdout);
@@ -501,6 +510,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
+    g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);
     return 1;

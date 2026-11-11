@@ -801,6 +801,9 @@ static void vin_describe(int nattr, const uint32_t *vattr, const uint32_t *vstre
 }
 
 /* ---------------------------------------------------------------- images */
+static volatile LONG g_hdr_var;                    /* [witchtime] HDR with the scene's bright parts above white: peak / white in eighths, bit 30 = hdr_gamma srgb; 0 = none (hdr_var) */
+static Tex *g_hdr_tm;                              /* the target of the frame's tone map draw (draw_prepare), whose values above white the HDR pass adds (hdr_tm_view) */
+static LONG64 g_hdr_tm_frame;
 typedef struct VView { EView e; int vtype, attach; VkImageView view; struct VView *next; } VView;
 struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
@@ -983,6 +986,7 @@ static void vk_drop(int kind, void *host) {
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
     if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [witchtime] finalized: a later texture at this address starts over */
     if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
+    if (g_hdr_tm == t && !g_rs_demoting) g_hdr_tm = NULL;
     VTex *vt = t->vk;
     if (!vt) return;
     t->vk = NULL;
@@ -3583,6 +3587,8 @@ static int draw_prepare(unsigned prim) {
     if (tess) { sv[nsv] = tcs; sx[nsv++] = 3; sv[nsv] = tes; sx[nsv++] = 4; }
 
     PT(0);
+    if (g_hdr_var && R.ncol && R.prog[1] && stage_fx(&R.prog[1]->st[1]) == FX_GRAIN && R.col[0].tex &&
+        (g_hdr_tm_frame != nvn_front_frame_next() || !g_hdr_tm || R.col[0].tex->b.width >= g_hdr_tm->b.width)) { g_hdr_tm = R.col[0].tex; g_hdr_tm_frame = nvn_front_frame_next(); }      /* [witchtime] HDR: hdr_tm_view; the widest of the frame (not a screen inside the scene) */
     if (!g_dp_potential) fsr_draw(fs);             /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass); not from a draw the GPU may cull (g_dp_potential) */
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
@@ -4931,14 +4937,38 @@ static void overlay_draw(VkImage dst) {                /* dst: the swapchain ima
  * light (gamma 2.2, or the sRGB curve with hdr_gamma = srgb) times the game's white (hdr_paper_white; auto = Windows' SDR
  * content brightness of that monitor), then BT.2020 + PQ (HDR10) or as they are (scRGB: 1.0 = 80 nits). The monitor is
  * asked once a second on a thread of its own (QueryDisplayConfig): a change of Windows' HDR switch, or a move to a monitor
- * where it differs, makes the swapchain again; a change of the brightness slider reaches the next frame. Linux: SDR. */
+ * where it differs, makes the swapchain again; a change of the brightness slider reaches the next frame.
+ * [witchtime] Linux: the same swapchains on Wayland; whether HDR is on, the desktop's white and the monitor's peak are SDL's
+ * window properties (the colour management protocol), read at every present. X11 offers no HDR swapchain: SDR.
+ * [witchtime] The scene's bright parts above white (hdr_peak above the white): the four tone map stages write them
+ * (nvn_vk_m4.c hdr_stage_text) into the game's own R11G11B10F target. Everything after it is as it was: FXAA draws that
+ * target into the 8-bit window texture, which cuts it off at white, the HUD goes over it, and the present blits it into the
+ * 8-bit picture. The pass below then reads the tone map's target of this frame next to the picture and adds what it holds
+ * above white, where the picture still shows the scene: where the two differ (the HUD, a menu, the PC panel) nothing is
+ * added. So menus, the HUD and movies stay at or below white, and no image of the game changes its format.
+ * shortcut: R11G11B10F has 6 bits of mantissa (5 for blue): steps of 1.5 % above white. A floating-point target of the
+ * tone map (as rs_promote remakes it) if a glow shows bands. */
 static struct {
-    VkImage img; VMem mem; VkImageView view, set_view; VkFormat fmt; uint32_t w, h;          /* the 8-bit picture */
-    VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkDescriptorSet set;
+    VkImage img; VMem mem; VkImageView view; VkFormat fmt; uint32_t w, h;          /* the 8-bit picture */
+    VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkDescriptorSet set[8]; unsigned iset;      /* a set per present, 8 in turn: the frames in flight read theirs */
+    LONG64 frame; float rect[4];                   /* [witchtime] the present's frame and where its blit put the game's picture in the window (w 0: nowhere) */
     VkShaderModule vs, fs; VkPipeline pipe; VkFormat pipe_fmt;
-    int broken, said_none, mode_said; float white_said;
+    int broken, said_none, mode_said; float white_said, peak_said;
 } g_hdr = {.mode_said = -1};
 static volatile LONG g_hdr_on = -1, g_hdr_white_mn = 80000;      /* the window's monitor: Windows HDR on 1 / off 0 / not asked yet -1; its SDR white in thousandths of a nit */
+static volatile LONG g_hdr_peak_mn;                /* [witchtime] its peak brightness in thousandths of a nit; 0 = not known */
+static float hdr_white(void) { float w = gfx_options()->hdr_paper_white; return w > 0 ? w : (float)g_hdr_white_mn / 1000.0f; }
+static float hdr_peak(void) {                      /* never below the white */
+    float w = hdr_white(), p = gfx_options()->hdr_peak > 0 ? gfx_options()->hdr_peak : g_hdr_peak_mn > 0 ? (float)g_hdr_peak_mn / 1000.0f : 1000.0f;      /* shortcut: Windows is not asked for the monitor's peak (IDXGIOutput6::GetDesc1), hdr_peak says it */
+    return p > w ? p : w;
+}
+/* What the tone map stages are made for (g_hdr_var; render thread, at a present): 0 = nothing above white (SDR, or a peak
+ * within an eighth of the white). */
+static LONG hdr_var(void) {
+    if (!V.hdr) return 0;
+    LONG e = (LONG)(hdr_peak() / hdr_white() * 8.0f + 0.5f);
+    return e <= 8 ? 0 : (e > 1000 ? 1000 : e) | (gfx_options()->hdr_srgb ? 1 << 30 : 0);
+}
 #ifdef _WIN32
 typedef struct { UINT32 type, size; LUID adapter; UINT32 id; } HdrDcHead;      /* DISPLAYCONFIG_DEVICE_INFO_HEADER and the answers used (wingdi.h; declared here for any SDK) */
 typedef struct { HdrDcHead h; WCHAR gdi[32]; } HdrDcSource;                                                    /* type 1: the source's GDI name (\\.\DISPLAY1) */
@@ -4993,6 +5023,22 @@ static void hdr_query(void) {                      /* the render thread the firs
     }
 }
 static DWORD WINAPI hdr_watch(LPVOID arg) { (void)arg; for (;;) { Sleep(1000); hdr_query(); } return 0; }
+#else
+static void hdr_query(void) {                      /* [witchtime] Linux, the render thread at every present: SDL's window properties */
+    SDL_PropertiesID p = SDL_GetWindowProperties((SDL_Window *)V.hwnd);
+    LONG on = SDL_GetBooleanProperty(p, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
+    /* 1.0 = 80 nits (scRGB). With the desktop's HDR off (hdr = on) nothing is said: 203 nits, the white the desktop gives an HDR picture (BT.2408) */
+    LONG white = on ? (LONG)(SDL_GetFloatProperty(p, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) * 80000.0f) : 203000;
+    LONG peak = on ? (LONG)((float)white * SDL_GetFloatProperty(p, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 0;
+    if (white < 40000 || white > 2000000) white = 203000;
+    LONG was = InterlockedExchange(&g_hdr_on, on), was_w = InterlockedExchange(&g_hdr_white_mn, white);
+    InterlockedExchange(&g_hdr_peak_mn, peak);
+    if (was != on || (on && (was_w - white > 500 || white - was_w > 500))) {
+        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: white %.0f nits, peak %.0f nits\n", (double)white / 1000.0, (double)peak / 1000.0);
+        else printf("nvn_vk_hdr: the desktop's HDR is off for the window (or the session is not Wayland)\n");
+        fflush(stdout);
+    }
+}
 #endif
 /* What the next swapchain is: 0 SDR, 1 HDR10, 2 scRGB (render thread). */
 static int hdr_mode_want(void) {
@@ -5012,8 +5058,8 @@ static int hdr_mode_want(void) {
     }
     return o->hdr == 2 || g_hdr_on == 1 ? mode : 0;
 #else
-    if (o->hdr == 2 && !g_hdr.said_none) { g_hdr.said_none = 1; printf("nvn_vk_hdr: hdr = on is not done on Linux yet: the picture goes out as SDR\n"); fflush(stdout); }
-    return 0;
+    hdr_query();
+    return o->hdr == 2 || g_hdr_on == 1 ? mode : 0;
 #endif
 }
 /* swapchain_create (make = 1): says what the new swapchain is (its images' views are made by hdr_pass at their first use:
@@ -5023,7 +5069,6 @@ static void hdr_views(int make) {
     for (int i = 0; i < 16; i++) if (V.views[i]) { vkDestroyImageView(V.device, V.views[i], NULL); V.views[i] = NULL; }
     if (!make) {
         if (g_hdr.img) { vkDestroyImageView(V.device, g_hdr.view, NULL); vkDestroyImage(V.device, g_hdr.img, NULL); vmem_free(g_hdr.mem); g_hdr.img = NULL; g_hdr.view = NULL; }
-        g_hdr.set_view = NULL;                     /* a new view may get the same handle: the set is written again */
         return;
     }
     if (V.hdr != g_hdr.mode_said) {
@@ -5037,7 +5082,7 @@ static void hdr_views(int make) {
 static VkImage hdr_picture(VkFormat fmt) {
     if (g_hdr.img && (g_hdr.fmt != fmt || g_hdr.w != V.extent.width || g_hdr.h != V.extent.height)) {      /* not expected: those changes make the swapchain again */
         vkDeviceWaitIdle(V.device);
-        vkDestroyImageView(V.device, g_hdr.view, NULL); vkDestroyImage(V.device, g_hdr.img, NULL); vmem_free(g_hdr.mem); g_hdr.img = NULL; g_hdr.view = g_hdr.set_view = NULL;
+        vkDestroyImageView(V.device, g_hdr.view, NULL); vkDestroyImage(V.device, g_hdr.img, NULL); vmem_free(g_hdr.mem); g_hdr.img = NULL; g_hdr.view = NULL;
     }
     if (!g_hdr.img) {
         VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -5062,12 +5107,19 @@ static const char k_hdr_vs[] = "#version 460\nvoid main() { gl_Position = vec4(v
 static const char k_hdr_fs[] =
     "#version 460\n"
     "layout(set = 0, binding = 0) uniform sampler2D u_pic;\n"
-    "layout(push_constant) uniform PC { float scale; int pq; int srgb; int pad; } pc;\n"
+    "layout(set = 0, binding = 1) uniform sampler2D u_tm;\n"      /* [witchtime] the tone map's target (hdr_tm_view); rect.z 0: none */
+    "layout(push_constant) uniform PC { float scale; int pq; int srgb; float top; vec4 rect; } pc;\n"
     "layout(location = 0) out vec4 o_col;\n"
     "void main() {\n"
     "    vec3 c = texelFetch(u_pic, ivec2(gl_FragCoord.xy), 0).rgb;\n"
+    "    vec2 uv = (gl_FragCoord.xy - pc.rect.xy) / max(pc.rect.zw, vec2(1.0));\n"
+    "    if (pc.rect.z > 0.0 && uv == clamp(uv, 0.0, 1.0)) {\n"
+    "        vec3 t = min(textureLod(u_tm, uv, 0.0).rgb, 64.0);\n"      /* (an infinity of the 11-bit format) */
+    "        vec3 d = abs(c - min(t, 1.0));\n"                         /* the picture against the scene the tone map drew */
+    "        c += max(t - 1.0, 0.0) * (1.0 - smoothstep(0.06, 0.25, max(d.r, max(d.g, d.b))));\n"
+    "    }\n"
     "    vec3 l = pc.srgb != 0 ? mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045))) : pow(c, vec3(2.2));\n"
-    "    l *= pc.scale;\n"                         /* HDR10: nits / 10000; scRGB: nits / 80 */
+    "    l = min(l * pc.scale, vec3(pc.top));\n"   /* HDR10: nits / 10000; scRGB: nits / 80; top: the peak (what the HUD adds over a bright scene ends there) */
     "    if (pc.pq != 0) {\n"                      /* BT.709 -> BT.2020, then the PQ curve (SMPTE ST 2084) */
     "        l = mat3(0.6274040, 0.0690970, 0.0163916, 0.3292820, 0.9195400, 0.0880132, 0.0433136, 0.0113612, 0.8955950) * l;\n"
     "        vec3 p = pow(clamp(l, 0.0, 1.0), vec3(0.1593017578125));\n"
@@ -5082,24 +5134,26 @@ static VkPipeline hdr_pipeline(VkFormat cf) {
         g_hdr.fs = module_from_glsl(1, k_hdr_fs, "HDR output, fragment stage", &g_spv_unused);
         if (!g_hdr.vs || !g_hdr.fs) return NULL;
         VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        si.magFilter = si.minFilter = VK_FILTER_NEAREST; si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.magFilter = si.minFilter = VK_FILTER_LINEAR; si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;      /* (the picture is fetched by texel; the tone map's target is of another size) */
         si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         VKC(vkCreateSampler(V.device, &si, NULL, &g_hdr.smp));
-        VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
+        VkDescriptorSetLayoutBinding b[2] = {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL}, {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL}};
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        li.bindingCount = 1; li.pBindings = &b;
+        li.bindingCount = 2; li.pBindings = b;
         VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &g_hdr.dl));
-        VkPushConstantRange pr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16};
+        VkPushConstantRange pr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32};
         VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pli.setLayoutCount = 1; pli.pSetLayouts = &g_hdr.dl; pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pr;
         VKC(vkCreatePipelineLayout(V.device, &pli, NULL, &g_hdr.pl));
-        VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16};
         VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        dpi.maxSets = 1; dpi.poolSizeCount = 1; dpi.pPoolSizes = &ps;
+        dpi.maxSets = 8; dpi.poolSizeCount = 1; dpi.pPoolSizes = &ps;
         VKC(vkCreateDescriptorPool(V.device, &dpi, NULL, &g_hdr.dp));
+        VkDescriptorSetLayout dls[8];
+        for (int i = 0; i < 8; i++) dls[i] = g_hdr.dl;
         VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        ai.descriptorPool = g_hdr.dp; ai.descriptorSetCount = 1; ai.pSetLayouts = &g_hdr.dl;
-        VKC(vkAllocateDescriptorSets(V.device, &ai, &g_hdr.set));
+        ai.descriptorPool = g_hdr.dp; ai.descriptorSetCount = 8; ai.pSetLayouts = dls;
+        VKC(vkAllocateDescriptorSets(V.device, &ai, g_hdr.set));
     }
     if (g_hdr.pipe) { vkDestroyPipeline(V.device, g_hdr.pipe, NULL); g_hdr.pipe = NULL; }      /* another swapchain format: the device was idle (swapchain_destroy) */
     VkPipelineShaderStageCreateInfo st[2];
@@ -5133,9 +5187,47 @@ static VkPipeline hdr_pipeline(VkFormat cf) {
     g_hdr.pipe_fmt = cf;
     return g_hdr.pipe;
 }
+/* [witchtime] The tone map's target of the frame being presented as a sampled image; NULL: none (no tone map draw in this
+ * frame, the game's picture is not in the window, or the target cannot hold more than white). No pass is open. */
+static VkImageView hdr_tm_view(void) {
+    Tex *t = g_hdr_tm;
+    VTex *vt = t && !t->dead ? t->vk : NULL;
+    EView e;
+    if (!g_hdr_var || !vt || g_hdr_tm_frame != g_hdr.frame || g_hdr.rect[2] <= 0 || vt->samples != 1 || (vt->fmt != VK_FORMAT_B10G11R11_UFLOAT_PACK32 && vt->fmt != VK_FORMAT_R16G16B16A16_SFLOAT)) return NULL;
+    eview_of(t, vt, NULL, &e); e.lvl0 = 0; e.nlvl = 1; e.dsmode = 0; e.swz[0] = 2; e.swz[1] = 3; e.swz[2] = 4; e.swz[3] = 5;
+    vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    return vt_view(vt, &e, DIM_2D, 0);
+}
+/* TEST ONLY: WT_HDR_SHOT=<frame>: the swapchain image of that presented frame, as the HDR pass wrote it, into
+ * <WT_SHOT_DIR>/hdr_<frame>_<w>x<h>_<VkFormat>.raw (rows top first). Needs a swapchain that can be read (g_sc_src). */
+static struct { VkBuffer buf; VMem mem; uint64_t size; char path[300]; } g_hdr_shot;
+static void hdr_shot_copy(uint32_t index) {        /* the swapchain image is in COLOR_ATTACHMENT_OPTIMAL, and is again after */
+    static LONG64 want = -2;
+    if (want == -2) want = getenv("WT_HDR_SHOT") ? atoll(getenv("WT_HDR_SHOT")) : -1;
+    if (g_hdr.frame != want || !g_sc_src || g_hdr_shot.buf) return;
+    VkBufferImageCopy c;
+    const char *dir = getenv("WT_SHOT_DIR");
+    int bpp = V.hdr == 2 ? 8 : 4;
+    memset(&c, 0, sizeof c);
+    c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.imageSubresource.layerCount = 1; c.imageExtent.width = V.extent.width; c.imageExtent.height = V.extent.height; c.imageExtent.depth = 1;
+    g_hdr_shot.size = (uint64_t)V.extent.width * V.extent.height * (uint64_t)bpp;
+    g_hdr_shot.buf = vbuf_new(g_hdr_shot.size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_hdr_shot.mem);
+    snprintf(g_hdr_shot.path, sizeof g_hdr_shot.path, "%s%shdr_%lld_%ux%u_%d.raw", dir ? dir : "", dir ? "/" : "", (long long)want, V.extent.width, V.extent.height, (int)(V.hdr == 2 ? V.scrgb.format : V.hdr10.format));
+    image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vkCmdCopyImageToBuffer(R.cmd, V.images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_hdr_shot.buf, 1, &c);
+    image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+}
+static void hdr_shot_write(void) {                 /* at the next present */
+    if (!g_hdr_shot.buf) return;
+    cmd_wait_all();
+    FILE *f = fopen(g_hdr_shot.path, "wb");
+    if (f) { fwrite(g_hdr_shot.mem.map, 1, (size_t)g_hdr_shot.size, f); fclose(f); printf("nvn_vk_hdr: TEST: %s written\n", g_hdr_shot.path); }
+    vkDestroyBuffer(V.device, g_hdr_shot.buf, NULL); vmem_free(g_hdr_shot.mem); g_hdr_shot.buf = NULL; g_hdr_shot.size = 0;
+}
 /* vk_present2 in HDR: the 8-bit picture (TRANSFER_DST, written this frame) into the swapchain image, left in PRESENT_SRC. */
 static void hdr_pass(uint32_t index, VkImage pic) {
     const GfxOptions *o = gfx_options();
+    VkImageView tm = hdr_tm_view();
     image_barrier(pic, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkFormat sf = V.hdr == 2 ? V.scrgb.format : V.hdr10.format;
@@ -5147,21 +5239,22 @@ static void hdr_pass(uint32_t index, VkImage pic) {
         VKC(vkCreateImageView(V.device, &vi, NULL, &V.views[index]));
     }
     if (p && index < 16 && V.views[index]) {
-        if (g_hdr.set_view != g_hdr.view) {        /* a new picture: made after the device was idle, so the set is not in use */
-            VkDescriptorImageInfo ii = {g_hdr.smp, g_hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            w.dstSet = g_hdr.set; w.dstBinding = 0; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w.pImageInfo = &ii;
-            vkUpdateDescriptorSets(V.device, 1, &w, 0, NULL);
-            g_hdr.set_view = g_hdr.view;
+        VkDescriptorSet set = g_hdr.set[g_hdr.iset++ & 7];
+        {   VkDescriptorImageInfo ii[2] = {{g_hdr.smp, g_hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}, {g_hdr.smp, tm ? tm : g_hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+            VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            for (int i = 0; i < 2; i++) { w[i].dstSet = set; w[i].dstBinding = (uint32_t)i; w[i].descriptorCount = 1; w[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[i].pImageInfo = &ii[i]; }
+            vkUpdateDescriptorSets(V.device, 2, w, 0, NULL);
         }
-        float white = o->hdr_paper_white > 0 ? o->hdr_paper_white : (float)g_hdr_white_mn / 1000.0f;
-        if (white != g_hdr.white_said) {
-            g_hdr.white_said = white;
-            printf("nvn_vk_hdr: the game's white is %.0f nits (%s), its values read with %s\n", (double)white, o->hdr_paper_white > 0 ? "hdr_paper_white" : "auto: Windows' SDR content brightness",
-                   o->hdr_srgb ? "the sRGB curve" : "gamma 2.2");
+        float white = hdr_white(), peak = hdr_peak();
+        if (white != g_hdr.white_said || peak != g_hdr.peak_said) {
+            g_hdr.white_said = white; g_hdr.peak_said = peak;
+            printf("nvn_vk_hdr: the game's white is %.0f nits (%s), its values read with %s; the scene's bright parts go up to %.0f nits (%s)\n", (double)white,
+                   o->hdr_paper_white > 0 ? "hdr_paper_white" : "auto: the desktop's brightness of SDR programs", o->hdr_srgb ? "the sRGB curve" : "gamma 2.2",
+                   (double)peak, o->hdr_peak > 0 ? "hdr_peak" : g_hdr_peak_mn > 0 ? "auto: the monitor's peak" : "auto: 1000");
             fflush(stdout);
         }
-        struct { float scale; int32_t pq, srgb, pad; } pc = {V.hdr == 2 ? white / 80.0f : white / 10000.0f, V.hdr != 2, o->hdr_srgb, 0};
+        struct { float scale; int32_t pq, srgb; float top, rect[4]; } pc = {V.hdr == 2 ? white / 80.0f : white / 10000.0f, V.hdr != 2, o->hdr_srgb, V.hdr == 2 ? peak / 80.0f : peak / 10000.0f,
+                                                                           {g_hdr.rect[0], g_hdr.rect[1], tm ? g_hdr.rect[2] : 0.0f, g_hdr.rect[3]}};
         VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         ca.imageView = V.views[index]; ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; ca.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -5171,12 +5264,13 @@ static void hdr_pass(uint32_t index, VkImage pic) {
         vkCmdBeginRendering(R.cmd, &ri);
         vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
         vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
-        vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_hdr.pl, 0, 1, &g_hdr.set, 0, NULL);
+        vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_hdr.pl, 0, 1, &set, 0, NULL);
         vkCmdPushConstants(R.cmd, g_hdr.pl, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 3, 1, 0, 0);
         vkCmdEndRendering(R.cmd);
         R.pipe_bound = NULL; R.dyn_dirty = 1; R.dyn3_dirty = 1;
         dsh_forget();
+        hdr_shot_copy(index);
     } else {                                       /* no pipeline: this frame black, the next swapchain SDR (hdr_mode_want) */
         VkClearColorValue z;
         VkImageSubresourceRange sr = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -5378,6 +5472,7 @@ swap: ;
      * path blits with FRAMEBUFFER_SRGB off). */
     VkFormat want = vt && (vt->fmt == VK_FORMAT_R8G8B8A8_SRGB || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB) ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
     if (want != V.format.format) { cmd_wait_all(); swapchain_destroy(); V.format.format = want; printf("nvn_vk: swapchain format %d (the window texture's colour class)\n", (int)want); }
+    hdr_shot_write();                              /* TEST ONLY: WT_HDR_SHOT */
     if (V.swapchain && hdr_mode_want() != V.hdr) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* [Recomps#1] finding 147: Windows' HDR switch changed for this monitor */
     uint32_t index = 0;
     VkResult r = VK_SUCCESS;
@@ -5411,6 +5506,7 @@ swap: ;
         int fl_layout = vt ? (int)vt->layout : -1, fl_s4[4] = {0, 0, vt ? vt->w : 0, vt ? vt->h : 0};
         if (vt) vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         cmd_begin();
+        g_hdr.frame = frame; g_hdr.rect[2] = 0;
         VkImage tgt = V.hdr ? hdr_picture(want) : V.images[index];      /* [Recomps#1] finding 147: in HDR the 8-bit picture, which hdr_pass writes into the swapchain image */
         image_barrier(tgt, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         if (vt && vt->samples == 1 && !(progress && g_ovl.screen)) {      /* the first-run screen is ours: a dark picture, not the game's frame */
@@ -5445,6 +5541,7 @@ swap: ;
                     }
                 }
             }
+            g_hdr.rect[0] = (float)b.dstOffsets[0].x; g_hdr.rect[1] = (float)b.dstOffsets[0].y; g_hdr.rect[2] = (float)(b.dstOffsets[1].x - b.dstOffsets[0].x); g_hdr.rect[3] = (float)(b.dstOffsets[1].y - b.dstOffsets[0].y);
             if (g_pt_on > 0) pt_mark((int)V.extent.width, (int)V.extent.height, 0, 0, 0, 1, 2);
             vkCmdBlitImage(R.cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);      /* PR #8: src = vt, or the last reduction step */
         } else { VkClearColorValue z; memset(&z, 0, sizeof z); z.float32[3] = 1.0f; vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr); }
@@ -5453,6 +5550,7 @@ swap: ;
         pcm_vk_draw(tgt);                             /* [witchtime] the PC menu's panel (nvn_vk_pcmenu.c); nothing while it is closed */
         if (V.hdr) hdr_pass(index, tgt);              /* [Recomps#1] finding 147: leaves the swapchain image in PRESENT_SRC */
         else image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        InterlockedExchange(&g_hdr_var, hdr_var());   /* [witchtime] the tone map stages of the next frame */
         tp[3] = tk();
         cmd_submit(acq, rend);
         tp[4] = tk();

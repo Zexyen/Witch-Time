@@ -164,6 +164,24 @@ pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
         ],
     ),
     (
+        "MENU_OPTION_LIST_PC_HDR",
+        &[
+            ("", &["HDR"]),
+            ("de", &["HDR"]),
+            ("fr", &["HDR"]),
+            ("es", &["HDR"]),
+            ("it", &["HDR"]),
+            ("ru", &["HDR"]),
+            ("cn", &["HDR"]),
+            ("tw", &["HDR"]),
+            ("kr", &["HDR"]),
+            ("us", &["HDR"]),
+            ("gb", &["HDR"]),
+            ("nl", &["HDR"]),
+            ("pt", &["HDR"]),
+        ],
+    ),
+    (
         "MENU_OPTION_LIST_PC_GRAIN",
         &[
             ("", &["フィルムグレイン", "Film Grain"]),

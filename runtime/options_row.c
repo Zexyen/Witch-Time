@@ -68,7 +68,7 @@ typedef struct {
     const char *key, *label, *val[PC_VALUES], *text[PC_VALUES];      /* text: the value's message */
     int dflt;
 } PcRow;
-static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_rows) but Controls, in its order */
+static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_rows) but Controls and HDR's brightness, in its order */
     {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
     {"size", "MENU_OPTION_LIST_PC_SIZE", {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"CORE_PC_WIN_720", "CORE_PC_WIN_900", "CORE_PC_WIN_1080", "CORE_PC_WIN_1440", "CORE_PC_WIN_2160"}, 0},
     {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},      /* mailbox: "Custom" (few languages can spell it) */
@@ -80,6 +80,7 @@ static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_r
     {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
     {"upscaler", "MENU_OPTION_LIST_PC_FSR", {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"},
      {"CORE_SETTING_004", "CORE_PC_FSR_AA", "CORE_PC_FSR_Q", "CORE_PC_FSR_B", "CORE_PC_FSR_P", "CORE_PC_FSR_UP"}, 0},
+    {"hdr", "MENU_OPTION_LIST_PC_HDR", {"auto", "off", "on"}, {"CORE_PC_AUTO", "CORE_SETTING_004", "CORE_SETTING_003"}, 0},      /* (its two brightness rows: the panel and the launcher) */
     {"aspect", "MENU_OPTION_LIST_PC_FIT", {"keep", "stretch"}, {"CORE_PC_FIT_KEEP", "CORE_PC_FIT_STRETCH"}, 0},
     {"aspect_ratio", "MENU_OPTION_LIST_PC_ASPECT", {"16:9", "auto"}, {"CORE_PC_FIXED", "CORE_PC_UNLOCKED"}, 0},      /* [witchtime] aspect ratios: Fixed / Unlocked */
     {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */

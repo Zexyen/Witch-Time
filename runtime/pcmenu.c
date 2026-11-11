@@ -58,6 +58,7 @@ __declspec(dllimport) extern volatile int game_hud_centre;        /* [witchtime]
 int nnhid_menu_key(int vk);
 uint32_t nnhid_menu_pad(void);
 int nvn_front_post_pcmenu(void);                           /* nvn_gl.c: 0 = not the Vulkan renderer */
+int nvn_vk_hdr_on(void);                                   /* nvn_vk.c: the picture goes out as HDR now */
 void display_vsync_apply(void);                            /* display.c */
 int display_window_apply(void);
 void display_mouse_want(int on);
@@ -105,6 +106,12 @@ static const Row k_rows[] = {
      {"on", "off"}, {"On", "Off"}},
     {"upscaler", "FSR 3.1", "Experimental. Native AA smooths jagged edges, shimmer and fading objects over frames. Quality to Ultra Performance draw the scene smaller and upscale it (above 900p). Moving characters can leave trails. Applies when this panel closes.", "WT_UPSCALER", "off", A_SCALE, 0,
      {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"}, {"Off", "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance"}},
+    {"hdr", "HDR", "Auto: HDR output while the desktop's HDR is on for this monitor. The scene's lights go above white, up to HDR peak; menus and the HUD stay at white.", NULL, "auto", A_LIVE, 0,
+     {"auto", "off", "on"}, {"Auto", "Off", "On"}},
+    {"hdr_paper_white", "HDR white", "How bright the game's white is with HDR on. Auto: the desktop's brightness of SDR programs.", NULL, "auto", A_LIVE, 0,
+     {"auto", "100", "150", "200", "250", "300", "400"}, {"Auto", "100 nits", "150 nits", "200 nits", "250 nits", "300 nits", "400 nits"}},
+    {"hdr_peak", "HDR peak", "How bright the scene's brightest parts get with HDR on: your monitor's peak brightness. Auto: what the desktop says (Linux), 1000 on Windows.", NULL, "auto", A_LIVE, 0,
+     {"auto", "400", "600", "800", "1000", "1500", "2000", "4000"}, {"Auto", "400 nits", "600 nits", "800 nits", "1000 nits", "1500 nits", "2000 nits", "4000 nits"}},
     {"aspect", "Picture fit", "Keep shape: the picture keeps its shape, with black bars on a window of another shape. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep shape", "Stretch"}},
     {"aspect_ratio", "Aspect ratio", "Fixed: the game's 16:9. Unlocked: the window's shape at the start (borderless and fullscreen: the monitor's); wider shows more at the sides, narrower more above and below.", "RECOMPS_ASPECT", "16:9", A_RESTART, 0,
@@ -149,7 +156,7 @@ static int g_b_on[2];                                      /* saved */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
-static int row_on(int i) { return g_shown[i] && g_page == (k_rows[i].apply >= A_CHAR); }
+static int row_on(int i) { return g_shown[i] && g_page == (k_rows[i].apply >= A_CHAR) && (strncmp(k_rows[i].key, "hdr_", 4) || nvn_vk_hdr_on()); }      /* HDR's two brightness rows: while the picture goes out as HDR */
 static int row_count(int i) { if (k_rows[i].apply == A_BIND) return 16; int n = 0; while (n < ROW_VALUES && k_rows[i].val[n]) n++; return n; }
 static int find_val(int i, const char *v) {
     for (int k = 0; k < row_count(i); k++) {

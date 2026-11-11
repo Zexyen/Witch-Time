@@ -13,6 +13,7 @@ static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int swap_ab) { (void)swap_ab; *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
 int nvn_front_post_pcmenu(void) { return 1; }
+int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) { g_vsync_applied++; }
 int display_window_apply(void) { g_win_applied++; return 1; }
 void display_mouse_want(int on) { (void)on; }
