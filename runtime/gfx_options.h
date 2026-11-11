@@ -26,7 +26,7 @@ typedef struct {
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
     int cutscene_fps;       /* [witchtime] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
                              * env WT_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
-    float texture_lod_bias; /* [witchtime] texture_lod_bias = 0 (the game's own) .. -3 (sharper: finer mip levels) .. +3; added to every sampler that uses
+    float texture_lod_bias; /* [witchtime] the mip bias, -1 (0 = the game's own; no key since 2026-11-10); added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env WT_TEXTURE_LOD_BIAS wins */
     int model_lod_high;     /* [witchtime] model_lod = game (0) | highest (1); game_shim_eh.c h_model_lod through WT_MODEL_LOD */
     int no_film_grain;      /* [witchtime] film_grain = on (the game's own) | off; nvn_vk_m4.c stage_fx */

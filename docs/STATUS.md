@@ -787,6 +787,13 @@ stored. At 0.8, every fifth one: a fixed grid of zeros (the image's clear), so 6
   registration, in the two tables of `0x7102632810` and `0x71026329d0`); stages are told by a hash of their code because
   12.9898 is also in glass, fog and sky. The game sets it per scene: 0 in Chapter 2 gameplay, 0.078-0.2 on frames 575-1248,
   0.5 on the opening book (2218-2423 of the test route). There the noise floor is 0.633 with grain, 0.180 without.
+- **Texture filtering fixed, every setting on the Options tab** (2026-11-10): anisotropic filtering is 16 and the mip bias -1
+  for everyone (`gfx_options.c`; `profile = low` keeps the game's own, `WT_TEXTURE_LOD_BIAS` still wins); the two keys are
+  read and ignored, and their rows are gone from the panel, the Options screen and the launcher. The Options screen's
+  "PC Settings" tab (`docs/RE_NOTES.md` section 8, "The fifth tab") has every row of the panel but Controls: window size,
+  FSR 3.1, picture fit, button prompts, Swap Confirm and face buttons are new there, and Internal Resolution has all 11
+  sizes. Texts: `text_strings.rs`, with shorter second spellings where a language's file lacks letters (Xbox is "MS" in
+  the Chinese and Korean files, which have no X). Checked on Linux in English only; the launcher was not rebuilt.
 - **Options screen rows** (`runtime/options_row.c`, rows 34 and 35): Model Detail (Default / Highest) and Film Grain (ON /
   OFF, the game's own words), after Texture Detail; their text in `tools/wtbuild/src/text_strings.rs`.
   "Highest" is spelled with each file's glyphs: Highest (en, ja, ko), Maximal, Maximum, Massimo, Максимум, Ultra (es, zh-Hans,

@@ -326,7 +326,7 @@ the page's count and the cursor of the category, screen + 0x40e0 + 4 * category)
 position, up to 24 before the next object (screen + 0x3238). The cursor wrap (0x7100a31fe8) and the list build
 (0x7100a32430) take the page's count as an immediate (Camera 9, Sound 5, Screen Display 7; Controller from + 0x40dc).
 
-**The tab strip** (why a fifth tab was not made): screen + 0x130 is the layout object (vtable 0x7101c31d80); in it, at
+**The tab strip** (why there is no fifth category): screen + 0x130 is the layout object (vtable 0x7101c31d80); in it, at
 screen + 0x1d0, the tab strip (vtable 0x7101c31f30, constructor 0x7100aa4c64), which loads `option0011.uid` ("option",
 0x11: four anchors at x = -250, -80, 80, 250, the L / R icons at +-380) and embeds four tab objects of 0xb0 bytes
 (screen + 0x270, 0x320, 0x3d0, 0x480; vtable 0x7101c320e0, each an `option0012.uid`) that it attaches to the anchors 3..6.
@@ -334,6 +334,28 @@ Its methods (ready 0x7100aa5118, draw 0x7100aa519c, attach 0x7100aa5240, select 
 four. The screen sets the four labels (0x7100aa6148, MENU_OPTION_CATEGORY_001-004) and the selected tab at entry
 (0x7100a305b0: (category + 4) mod 4 by `& ~3`); L / R move the category with the same arithmetic (7 places in all) and
 every per-category choice (row table, count, Controller's own table) is a 4-case jump table (about 17 in the screen's code).
+
+**The fifth tab** (2026-11-10, "PC Settings"; `runtime/game_shim_eh.c` `h_tabs_select`, `runtime/options_row.c` `strip_method`).
+The game keeps its four categories; the fifth tab is category 3 with another row list.
+- A tab is not a layout of its own: element 3..6 of `option0011.uid` each name the sub-layout ("option", 0x12), and a tab
+  object binds itself to one by its number (tab method +0xb0 = 0x7100abbc00 -> 0x7100c14b44). Once bound, the layout
+  updates and draws it. So a fifth tab needs an eighth element.
+- UID, as the set-up reads it (0x7100c10c14, 0x7100c117dc): elements of 0x1b4 bytes at header +0x0c (x, y at +0, +4, parent
+  element at +0x44, number at +0x48, offset of the sub-layout's name at +0x1a4); at header +0x10 a table `{u32 number, u32
+  element}` sorted by number (count at +0x04), numbers 1..0x63. Everything is reached through the header's offsets, so a
+  copy of the file with both tables again at its end, one entry longer, is a valid file. The file comes from 0x7100c0f6d0
+  (group, number; one caller), which is where the copy is handed out, only for the known file (FNV-1a of its 4636 bytes).
+- The strip (0x3a0 bytes with its four tabs of 0xb0 at +0xa0) names the four one by one in its methods: +0x28 init,
+  +0x30 end, +0x38 show (the tabs come in one after the other: tab +0xa4 = its place), +0x40 hide, +0xb8 loaded (binds
+  the tabs to 3..6), +0xc0 release. Constructor 0x7100aa4c64 and destructor 0x7100aa4de4 are called directly. A tab is
+  made by the widget constructor 0x7100b27ea4 plus constants.
+- Select 0x7100aa5718 (strip, tab, at once) has 7 callers, all in the screen, each just after storing the category and
+  before reading it again: the override counts five positions there and stores 3 for 3 and 4. The screen opens at
+  Controller with every cursor at the top (0x7100a2f938). The list build 0x7100a32390 (5 direct callers) may come some
+  frames after the select, so the row list is swapped there, not at the select.
+- Checked on Linux (RADV) from the title's Options with scripted keys: L / R round both ways, the cursor of each page kept,
+  the panel row, leaving and coming back, and four tabs as before without the rows' text. Not run: the pause menu's
+  Options, other languages (longer names at 160 apart), wider aspect ratios, Windows.
 
 **Glyphs**: messmenu.mcd has no 0 and 5-9 in any language (its texts use 1-4 only); messcore.mcd has all digits in 11 of
 the 13 files (font 7, or the CJK font in cn / tw / kr). nl and pt messcore are stubs (40 / 44 symbols; CORE_SETTING_003

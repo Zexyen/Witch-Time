@@ -1,18 +1,23 @@
-/* [witchtime] PC settings in the game's own Options screen (page Screen Display): eleven rows of the game's own kind that show
+/* [witchtime] PC settings in the game's own Options screen (a fifth tab, "PC Settings"; page Screen Display without the rows' text): fifteen rows of the game's own kind that show
  * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
  * Screen Display the 7 of a table in main's read-only data. The lift (tools/wtbuild/src/lifter/eh.rs, options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
- *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 36, 25, Restore Defaults (24); +0xffc their count
- *   +0x100  the row table: the game's 25, row 25, rows 26 .. 36
+ *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 40, 25, Restore Defaults (24); +0xffc their count
+ *   +0x100  the row table: the game's 25, row 25, rows 26 .. 40
  *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
  *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
  *           which opens the panel where the Brightness row opens its screen
- *   +0x360  rows 26 .. 36's method table: the Display Language row's (a list row: left / right go round its values, with
+ *   +0x360  rows 26 .. 40's method table: the Display Language row's (a list row: left / right go round its values, with
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
+ *   +0x900  the fifth tabs, one for each of up to four tab strips: +0 the strip, +0x10 the tab object (0xb0 bytes)
+ *   +0xc00  three row lists (u32 count, the numbers; 0x80 bytes each): Screen Display as above (0), the game's own 7 (1) and
+ *           the tab "PC Settings" (2: rows 26 .. 40 and 25). With the rows' text there, the screen has that fifth tab and
+ *           Screen Display is the game's again: game_shim_eh.c (h_tabs_select, h_options_list; docs/RE_NOTES.md section 8,
+ *           "The fifth tab") copies list 1 or 2 to +0x000 before the list is built
  *   +0x510  rows 1 and 2's method table, Controls (Bayonetta, Viola): the Brightness row's again, the label the game's own,
  *           and "decide" opens the panel's Controls page. Their objects follow row 35's. The list they were is the game's four
  *           control types, which that page has as presets. The page's picture of the pad is kept, and shows the layout (labels_tick)
@@ -32,6 +37,7 @@
 
 __declspec(dllimport) extern uint8_t game_rebind[2][16], game_rebind_on[2];      /* game_shim_eh.c (the game library) */
 __declspec(dllimport) extern volatile int game_rebind_live;
+__declspec(dllimport) extern volatile int game_opt_five;                         /* 1: a fifth tab is wanted; 2: its layout is there */
 
 #define OPTX_BASE   0x7105a00000ULL      /* tools/wtbuild/src/lifter/eh.rs OPTX_PAGE */
 #define ROWS        0x7101c2b1a8ULL      /* the Options screen's row objects */
@@ -57,25 +63,32 @@ const char *pcmenu_key_get(const char *key, int *pending);
 void pcmenu_key_set(const char *key, const char *val);
 int fs_rom_mod_serves(const char *rel, const char *mod);      /* nnfs.c */
 
+#define PC_VALUES 11
 typedef struct {
-    const char *key, *label, *val[6], *text[6];      /* text: the value's message */
+    const char *key, *label, *val[PC_VALUES], *text[PC_VALUES];      /* text: the value's message */
     int dflt;
 } PcRow;
-static const PcRow k_pc[] = {
-    {"resolution_scale", "MENU_OPTION_LIST_PC_RES", {"1.0", "1.2", "1.6", "2.4"}, {"CORE_PC_RES_10", "CORE_PC_RES_12", "CORE_PC_RES_16", "CORE_PC_RES_24"}, 0},
+static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_rows) but Controls, in its order */
+    {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
+    {"size", "MENU_OPTION_LIST_PC_SIZE", {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"CORE_PC_WIN_720", "CORE_PC_WIN_900", "CORE_PC_WIN_1080", "CORE_PC_WIN_1440", "CORE_PC_WIN_2160"}, 0},
+    {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},      /* mailbox: "Custom" (few languages can spell it) */
     {"cutscene_fps", "MENU_OPTION_LIST_PC_CUTSCENE", {"30", "60"}, {"CORE_PC_FPS_30", "CORE_PC_FPS_60"}, 0},
     {"frame_rate", "MENU_OPTION_LIST_PC_FPS", {"60", "90", "120"}, {"CORE_PC_FPS_60", "CORE_PC_FPS_90", "CORE_PC_FPS_120"}, 0},
-    {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},
-    {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
-    {"anisotropic_filtering", "MENU_OPTION_LIST_PC_ANISO", {"game", "2", "4", "8", "16"}, {"CORE_PC_DEFAULT", "CORE_PC_AF_2", "CORE_PC_AF_4", "CORE_PC_AF_8", "CORE_PC_AF_16"}, 0},
-    {"texture_lod_bias", "MENU_OPTION_LIST_PC_TEXTURE", {"-1", "-0.5", "0", "0.5", "1"}, {"CORE_PC_LOD_M1", "CORE_PC_LOD_M05", "CORE_PC_LOD_0", "CORE_PC_LOD_P05", "CORE_PC_LOD_P1"}, 2},
+    {"resolution_scale", "MENU_OPTION_LIST_PC_RES", {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
+     {"CORE_PC_RES_04", "CORE_PC_RES_05", "CORE_PC_RES_06", "CORE_PC_RES_075", "CORE_PC_RES_08", "CORE_PC_RES_10", "CORE_PC_RES_12", "CORE_PC_RES_16", "CORE_PC_RES_20", "CORE_PC_RES_24", "CORE_PC_RES_30"}, 5},
     {"model_lod", "MENU_OPTION_LIST_PC_MODEL", {"game", "highest"}, {"CORE_PC_DEFAULT", "CORE_PC_HIGHEST"}, 0},
     {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
+    {"upscaler", "MENU_OPTION_LIST_PC_FSR", {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"},
+     {"CORE_SETTING_004", "CORE_PC_FSR_AA", "CORE_PC_FSR_Q", "CORE_PC_FSR_B", "CORE_PC_FSR_P", "CORE_PC_FSR_UP"}, 0},
+    {"aspect", "MENU_OPTION_LIST_PC_FIT", {"keep", "stretch"}, {"CORE_PC_FIT_KEEP", "CORE_PC_FIT_STRETCH"}, 0},
     {"aspect_ratio", "MENU_OPTION_LIST_PC_ASPECT", {"16:9", "auto"}, {"CORE_PC_FIXED", "CORE_PC_UNLOCKED"}, 0},      /* [witchtime] aspect ratios: Fixed / Unlocked */
     {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */
+    {"button_prompts", "MENU_OPTION_LIST_PC_PROMPTS", {"auto", "playstation", "xbox", "switch", "keyboard"}, {"CORE_PC_AUTO", "CORE_PC_PS", "CORE_PC_XBOX", "CORE_PC_SWITCH", "CORE_PC_KEYBOARD"}, 0},
+    {"swap_confirm", "MENU_OPTION_LIST_PC_SWAP", {"off", "on"}, {"CORE_SETTING_004", "CORE_SETTING_003"}, 0},
+    {"layout", "MENU_OPTION_LIST_PC_FACE", {"auto", "positional", "labels"}, {"CORE_PC_AUTO", "CORE_PC_FACE_POS", "CORE_PC_FACE_LETTER"}, 0},
 };
 #define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
-static uint32_t g_label[NPC], g_text[NPC][6], g_custom;
+static uint32_t g_label[NPC], g_text[NPC][PC_VALUES], g_custom;
 static int g_text_mod;
 static uint64_t g_obj0;                  /* the guest address of row 26's object */
 
@@ -156,7 +169,7 @@ static void pc_row_decide(Ctx *c) {
 }
 
 /* the list rows' value methods; x0 = the row object */
-static int nval(int r) { int n = 0; while (n < 6 && k_pc[r].val[n]) n++; return n; }
+static int nval(int r) { int n = 0; while (n < PC_VALUES && k_pc[r].val[n]) n++; return n; }
 static int row_of(Ctx *c) { return (int)((c->x[0] - g_obj0) / 8); }
 static int cur_val(int r) {                              /* the value's index; nval(r) = "Custom" */
     const char *v = pcmenu_key_get(k_pc[r].key, NULL);
@@ -174,6 +187,64 @@ static void pc_list_bank(Ctx *c) { c->x[0] = BANK_CORE; }                       
 static void pc_list_text(Ctx *c) { int r = row_of(c), k = (int)(uint32_t)c->x[1]; c->x[0] = k >= 0 && k < nval(r) ? g_text[r][k] : g_custom; }      /* +0x58 (w1 value) */
 static void pc_list_count(Ctx *c) { int r = row_of(c); c->x[0] = (uint32_t)(nval(r) + (cur_val(r) == nval(r))); }      /* +0x60 */
 static void pc_list_reset(Ctx *c) { int r = row_of(c); pcmenu_key_set(k_pc[r].key, k_pc[r].val[k_pc[r].dflt]); }        /* +0x68 */
+
+/* The fifth tab. The strip's methods name its four tabs one by one (init, end, show, hide, loaded, release); these call the
+ * game's and then do the same for the strip's fifth, which game_shim_eh.c makes (h_tabs_ctor). A tab bound to its anchor is
+ * updated and drawn by the layout it is part of, like the four. */
+#define STRIP_VT    0x7101c31f40ULL      /* the tab strip's method table */
+#define OPT_SLOT(i) (OPTX_BASE + 0x900 + 0xc0ULL * (i))
+#define OPT_LIST(k) ((uint32_t *)(uintptr_t)(OPTX_BASE + 0xc00 + 0x80ULL * (k)))
+static const struct { int at; uint64_t fn; } k_strip[6] = {{0x28, 0xaa5118}, {0x30, 0xaa519c}, {0x38, 0xaa54a8}, {0x40, 0xaa5698}, {0xb8, 0xaa5240}, {0xc0, 0xaa52dc}};
+static uint64_t tab5_of(uint64_t strip) {
+    for (int i = 0; i < 4; i++) if (rd64(OPT_SLOT(i)) == strip) return OPT_SLOT(i) + 0x10;
+    return 0;
+}
+static void tab5_call(Ctx *c, uint64_t tab, int method) { c->x[0] = tab; call_guest(c, rd64(rd64(tab) + (uint64_t)method)); }
+static void strip_method(Ctx *c, int k) {
+    uint64_t strip = c->x[0], lr = c->x[30], tab = tab5_of(strip);
+    uint32_t arg = (uint32_t)c->x[1], shown = rd32(strip + 0x360) & 2;      /* show and hide reach the tabs only then */
+    if (tab && (k == 1 || k == 5)) { tab5_call(c, tab, k == 1 ? 0x30 : 0xc0); c->x[0] = strip; }      /* end, release: the tabs first */
+    call_guest(c, GUEST_BASE + k_strip[k].fn);
+    uint64_t r = c->x[0];
+    if (!tab) { c->x[30] = lr; return; }
+    switch (k) {
+    case 0: if ((uint32_t)r) { tab5_call(c, tab, 0x28); r = c->x[0]; } break;
+    case 2:                                  /* show: the tabs come in one after the other, the fifth last */
+        if (!shown) break;
+        tab5_call(c, tab, 0x88);
+        if (!(uint32_t)c->x[0]) { wr32(tab + 0xa4, arg ? 0 : 4); wr32(tab + 0xa8, !arg); wr32(tab + 0x1c, 1); wr32(tab + 0x20, 1); }
+        break;
+    case 3: if (shown) { c->x[1] = arg; tab5_call(c, tab, 0x40); } break;
+    case 4:                                  /* loaded: the tabs are bound to the anchors 3 .. 6, the fifth to 7 */
+        if (!(uint32_t)r || game_opt_five != 2) break;
+        c->x[1] = 7; c->x[2] = strip + 8; tab5_call(c, tab, 0xb0);
+        if (!(uint32_t)c->x[0]) printf("options tabs: the fifth tab found no anchor\n");
+        break;
+    }
+    c->x[0] = r;
+    c->x[30] = lr;
+}
+static void strip_init(Ctx *c) { strip_method(c, 0); }
+static void strip_end(Ctx *c) { strip_method(c, 1); }
+static void strip_show(Ctx *c) { strip_method(c, 2); }
+static void strip_hide(Ctx *c) { strip_method(c, 3); }
+static void strip_loaded(Ctx *c) { strip_method(c, 4); }
+static void strip_release(Ctx *c) { strip_method(c, 5); }
+static void tabs_install(const uint32_t *rows, int n) {
+    static void (*const fn[6])(Ctx *) = {strip_init, strip_end, strip_show, strip_hide, strip_loaded, strip_release};
+    static const char *const what[6] = {"init", "end", "show", "hide", "loaded", "release"};
+    for (int k = 0; k < 6; k++) if (rd64(STRIP_VT + (uint64_t)k_strip[k].at) != GUEST_BASE + k_strip[k].fn) {
+        printf("options row: the tab strip's methods are not the ones known: no fifth tab, the PC rows are on Screen Display\n");
+        return;
+    }
+    uint32_t *all = OPT_LIST(0), *game = OPT_LIST(1), *pc = OPT_LIST(2);
+    all[0] = (uint32_t)n; memcpy(all + 1, rows, 4 * (size_t)n);
+    game[0] = 7; for (int i = 0; i < 7; i++) game[1 + i] = (uint32_t)(BRIGHTNESS + i);
+    pc[0] = NPC + 1; for (int r = 0; r < NPC; r++) pc[1 + r] = (uint32_t)(FIRST + r);
+    pc[1 + NPC] = PC_ROW;
+    for (int k = 0; k < 6; k++) { char nm[64]; snprintf(nm, sizeof nm, "options tabs: strip, %s", what[k]); wr64(STRIP_VT + (uint64_t)k_strip[k].at, hostfn_address(_strdup(nm), fn[k])); }
+    game_opt_five = 1;
+}
 
 void options_row_install(void) {
     g_swap_known = rd32(GUIDE_PICS) == PIC_A && rd32(GUIDE_PICS + 4) == PIC_B;
@@ -233,4 +304,5 @@ void options_row_install(void) {
     rows[n++] = PC_ROW;
     rows[n++] = BRIGHTNESS + 6;              /* Restore Defaults */
     rows[0x3ff] = (uint32_t)n;
+    if (g_text_mod) tabs_install(rows, n);
 }
