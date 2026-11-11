@@ -691,6 +691,12 @@ fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
     ))
 }
 
+/// what a finished convert left in targets/ is not all there (deleted by hand, issue 142): the step has to run again
+fn convert_lost(targets: &Path) -> bool {
+    let exefs = targets.join("exefs");
+    ["main", "main.elf", "sdk.elf", "subsdk0.elf"].iter().any(|f| !exefs.join(f).is_file()) || !targets.join("romfs").join("root_000.pkz").is_file()
+}
+
 fn remove_empty_dirs(d: &Path) {
     if let Ok(rd) = fs::read_dir(d) {
         rd.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).for_each(|e| remove_empty_dirs(&e.path()));
@@ -1177,6 +1183,10 @@ pub fn main(args: &[String]) -> i32 {
             done.remove(*s);
         }
     }
+    // a convert marked done whose files are gone converts again; what the later steps made from them still stands
+    if cx.done().contains_key("convert") && convert_lost(&cx.targets) {
+        cx.done().remove("convert");
+    }
     // a link marked done whose files are gone (deleted, or made by an older Witch Time under other names) links again
     if cx.done().contains_key("link") && link_outputs(Target::host()).iter().any(|f| !cx.build.join(f).is_file()) {
         let i = STEPS.iter().position(|s| *s == "link").unwrap();
@@ -1270,6 +1280,25 @@ mod tests {
         assert_eq!(fs::read(dst.join("movie").join("b.webm")).unwrap(), b"b");
         assert_eq!(fs::read(dst.join("a.pkz")).unwrap(), b"aa");
         assert!(place_folder(&dst, &src, true).is_ok()); // moved before: in place
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn convert_runs_again_when_its_files_are_gone() {
+        let t = std::env::temp_dir().join(format!("wtbuild_lost_{}", std::process::id()));
+        let (exefs, romfs) = (t.join("exefs"), t.join("romfs"));
+        fs::create_dir_all(&exefs).unwrap();
+        fs::create_dir_all(&romfs).unwrap();
+        for f in ["main", "main.elf", "sdk.elf", "subsdk0.elf"] {
+            fs::write(exefs.join(f), b"x").unwrap();
+        }
+        fs::write(romfs.join("root_000.pkz"), b"x").unwrap();
+        assert!(!convert_lost(&t));
+        fs::remove_file(exefs.join("main.elf")).unwrap();
+        assert!(convert_lost(&t));
+        fs::write(exefs.join("main.elf"), b"x").unwrap();
+        fs::remove_dir_all(&romfs).unwrap();
+        assert!(convert_lost(&t));
         fs::remove_dir_all(&t).unwrap();
     }
 

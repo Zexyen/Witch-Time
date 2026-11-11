@@ -233,11 +233,17 @@
 	</div>
 	<div class="srow tex" data-if="tab == 1" data-style-left="(620 + row_step * settings.size) + 'dp'" data-style-top="(110 + row_pitch * settings.size) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * settings.size) + 's cubic-out stair-in-r' + tab">
 		<div class="fill"></div>
-		<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_remove ? 'In use' : 'Not available' }}</div></div>
+		<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_switch == 'Turn on' ? 'Off, kept on disk' : tex_remove ? 'In use' : 'Not available' }}</div></div>
 		<span class="v">
+			<div class="btn light side" data-if="tex_switch != ''" data-event-click="switch_textures()"><div class="fill"></div><span>{{ tex_switch }}</span></div>
 			<div class="btn light side" data-if="tex_action != ''" data-event-click="convert_textures()"><div class="fill"></div><span>{{ tex_action }}</span></div>
 			<div class="btn light side" data-if="tex_remove" data-event-click="remove_textures()"><div class="fill"></div><span>Remove</span></div>
 		</span>
+	</div>
+	<div class="srow tex" data-if="tab == 0" data-style-left="(620 + row_step * settings.size) + 'dp'" data-style-top="(110 + row_pitch * settings.size) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * settings.size) + 's cubic-out stair-in-r' + tab">
+		<div class="fill"></div>
+		<div class="k"><div>Desktop shortcut</div><div class="note">{{ shortcut_note }}</div></div>
+		<span class="v" style="width: 90dp; justify-content: flex-end;"><div class="btn light side" data-event-click="create_shortcut()"><div class="fill"></div><span>CREATE</span></div></span>
 	</div>
 	<div class="band">Changes are saved as you make them.</div>
 	<div class="foot">

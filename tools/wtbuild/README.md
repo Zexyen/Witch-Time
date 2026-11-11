@@ -111,6 +111,11 @@ the drive lacks the room (#54); a build from the command line runs it by hand. I
 about 16 minutes on 4 cores. It stops and resumes by family of archives (`src/texpack.rs`). `runtime/tex_pack.c`
 reads the result when `bc7_textures = on`; `docs/STATUS.md`, "Converted textures" has the choice of format and the numbers.
 
+An archive entry that does not decode (a damaged or altered `.pkz`) is left out with a `left out:` line and a closing
+`warning:` line, which the launcher shows; the pack is made from the rest, and the game decodes those files itself, if it
+can (#158). A disk that cannot be read or written still fails the step. `build/logs/textures.log` keeps every run's lines.
+A family is not made again once its shard exists: after the archive is replaced, remove the converted textures first.
+
 ASTC is decoded by the runtime's own `tex_decode.c` (`build.rs` compiles it in, through `src/tex_shim.c`), BC7 encoded by
 Intel's ISPC encoder (`intel_tex_2`). That crate packs its encoder for MSVC only: on `x86_64-pc-windows-gnullvm`, what
 release.yml builds, it needs the archives under other names (the wtbuild step there) and three symbols (`msvc_shim`).

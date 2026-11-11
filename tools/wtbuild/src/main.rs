@@ -174,7 +174,19 @@ fn main() {
             let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(PathBuf::from);
             let romfs = opt("--romfs").unwrap_or_else(|| repo.join("targets").join("romfs"));
             let jobs = opt("--jobs").and_then(|j| j.to_str()?.parse().ok()).unwrap_or_else(util::default_jobs);
-            texpack::run(&repo, &romfs, opt("--dump").as_deref(), jobs, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+            // build/logs/textures.log too (#158): the launcher shows only the last lines
+            let logs = repo.join("build").join("logs");
+            let mut file = std::fs::create_dir_all(&logs).and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(logs.join("textures.log"))).ok();
+            let mut keep = |l: &str| file.as_mut().map(|f| writeln!(f, "{}", l).ok());
+            keep("\n$ wtbuild textures");
+            let r = texpack::run(&repo, &romfs, opt("--dump").as_deref(), jobs, &setup::child_env, &mut |l| {
+                keep(&l);
+                println!("{}", l)
+            });
+            r.unwrap_or_else(|e| {
+                keep(&e);
+                die(e)
+            });
         }
         Some("fake-nso") => fake::main(&args[1..]).unwrap_or_else(|e| die(e)),
         Some("nvn-procs") => {

@@ -267,11 +267,8 @@ static void oe_GetCurrentFocusState(Ctx *c) { oe_track_focus(); RET(g_oe_focus_s
 static void oe_SetFocusHandlingMode(Ctx *c) { g_oe_focus_mode = (int)(uint32_t)A0; g_oe_focus_recheck = 1; oe_track_focus(); }               /* 0 SuspendHomeSleep, 1 NoSuspend, 2 SuspendHomeSleepNotify, 3 AlwaysSuspend */
 static void oe_SetOperationModeChangedNotificationEnabled(Ctx *c) { g_oe_opmode_notify = (int)(A0 & 1); }
 
-/* ---------------------------------------------------------------- nn::settings
- * [doc] nn::settings::Language values and their codes (switchbrew "Settings services"); the
- * order agrees with what nnsdk.c already uses (4 = "it"). LanguageCode is 8 chars, returned in x0. */
-static const char *const g_language_codes[] = {"ja", "en-US", "fr", "de", "it", "es", "zh-CN", "ko", "nl", "pt", "ru",
-                                               "zh-TW", "en-GB", "fr-CA", "es-419", "zh-Hans", "zh-Hant", "pt-BR"};
+/* ---------------------------------------------------------------- nn::settings */
+#include "language_pick.h"      /* g_language_codes, language_pick */
 static uint64_t language_code(uint32_t lang) {
     uint64_t v = 0;
     if (lang < sizeof g_language_codes / sizeof g_language_codes[0]) memcpy(&v, g_language_codes[lang], strlen(g_language_codes[lang]));
@@ -292,17 +289,12 @@ static void settings_CodeEqualsLanguage(Ctx *c) {         /* operator==(const La
     settings_LanguageEqualsCode(c);
 }
 /* nn::oe::GetDesiredLanguage: the language the application should use = the system language when the application
- * supports it, otherwise the system's choice among the supported ones. The system language here is the Windows
- * display language of the user. Languages this game ships (its message files): ja, en-US, en-GB, fr, fr-CA, de, it,
- * es, es-419, zh-Hans, zh-Hant, ko, ru; anything else gives en-US (NOT VERIFIED: the console decides from the
- * supported-language mask of the application's control data, which was not read here). nl and pt have message files
- * but their text is empty (no subtitles, blank menus: issue #16), so they give en-US too.
- * WT_LANGUAGE=<code> overrides (for example WT_LANGUAGE=en-US). */
+ * supports it, otherwise the system's choice among the supported ones (language_pick.h). The system language here is
+ * the Windows display language of the user. WT_LANGUAGE=<code> overrides (for example WT_LANGUAGE=en-US). */
 static uint64_t desired_language(void) {
     static uint64_t cached;
-    static const char *const supported[] = {"ja", "en-US", "en-GB", "fr", "fr-CA", "de", "it", "es", "es-419", "zh-Hans", "zh-Hant", "ko", "ru"};
     if (cached) return cached;
-    char name[LOCALE_NAME_MAX_LENGTH * 3] = "", pick[16] = "en-US";
+    char name[LOCALE_NAME_MAX_LENGTH * 3] = "", pick[16];
     const char *env = getenv("WT_LANGUAGE");
     wchar_t wname[LOCALE_NAME_MAX_LENGTH] = L"";
     ULONG count = 0, size = 0;
@@ -315,18 +307,7 @@ static uint64_t desired_language(void) {
         else GetUserDefaultLocaleName(wname, LOCALE_NAME_MAX_LENGTH);
         WideCharToMultiByte(CP_UTF8, 0, wname, -1, name, sizeof name, NULL, NULL);
     }
-    int exact = 0;
-    for (size_t i = 0; i < sizeof supported / sizeof supported[0]; i++) if (!_stricmp(name, supported[i])) { strcpy(pick, supported[i]); exact = 1; }
-    if (!exact) {
-        if (!_strnicmp(name, "zh", 2)) strcpy(pick, strstr(name, "TW") || strstr(name, "HK") || strstr(name, "MO") || strstr(name, "Hant") ? "zh-Hant" : "zh-Hans");
-        else if (!_strnicmp(name, "en", 2)) strcpy(pick, !_stricmp(name, "en-US") || !_stricmp(name, "en-CA") ? "en-US" : "en-GB");
-        else if (!_strnicmp(name, "fr", 2)) strcpy(pick, !_stricmp(name, "fr-CA") ? "fr-CA" : "fr");
-        else if (!_strnicmp(name, "es", 2)) strcpy(pick, !_stricmp(name, "es-ES") || !_stricmp(name, "es") ? "es" : "es-419");
-        else {
-            char two[3] = {name[0], name[1], 0};
-            for (size_t i = 0; i < sizeof supported / sizeof supported[0]; i++) if (!_stricmp(two, supported[i])) strcpy(pick, supported[i]);
-        }
-    }
+    language_pick(name, pick);
     uint64_t v = 0;
     memcpy(&v, pick, strlen(pick));
     printf("nn::oe::GetDesiredLanguage: Windows display language \"%s\" -> \"%s\"\n", name, pick);

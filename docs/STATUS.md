@@ -1352,7 +1352,10 @@ Runs (muted, hidden window, copies of the save and of the user's graphics.ini; s
   "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto"), de (Randlos)
   and ko (전체 화면) again on the last build. **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
   no digits, so our values are partly blank there too; pt has the same files (not run). WT_LANGUAGE=en-GB showed the
-  Japanese text (the game's choice; gb not tested).
+  Japanese text: the game's defaults for a new save send en-GB, fr-CA and es-419 to Japanese (table at 0x71018541e4), so
+  since issue #160 `nn::oe::GetDesiredLanguage` answers en-US, fr and es for them (`runtime/language_pick.h`,
+  `tests/language_test.c`; empty save through the launcher on Linux: en-GB English, fr-CA French, es-MX Spanish). The
+  `_gb` layouts are no longer reached.
 - Without the mod (WT_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
 - Tests: pcmenu self-test (the new key API: set / get by key, a value none of the row's refused, the file's lines), pad
   self-test 61/61, lifter check 382 + 25 words and 200 words / 4,000 cases: all pass.
@@ -1634,6 +1637,16 @@ sampler showed it each time); only all four parts together free the render threa
 Not checked: Windows, NVIDIA and AMD's Windows driver (the paths were run on RADV only), the Steam Deck, other chapters
 (indirect dispatches whose group counts compute writes still wait on the CPU; none in Shibuya), the OpenGL renderer (unchanged).
 
+**Counts with more than one record (2026-11-09; issues 120, 156).** The demon rides, cutscenes and the title draw a few
+objects with `maxDrawCount` 2: the count is compute's, the records are the game's. Those counts were still read on the CPU,
+so in every such frame the render thread submitted and waited for the GPU once (`indirect_src` from the count read, found
+with a test-only histogram of `slot_wait` callers), and the frame again cost replay plus GPU: a Windows RX 6600 log has the
+Chapter 1 Gomorrah ride at 16 fps with 39 ms of GPU wait in a 54.5 ms replay. Now the GPU reads those counts too
+(`recs_bounded`: every record's indices must lie inside the index buffer, since the ones past the count are bound though
+never drawn; `WT_VK_GPUCOUNT_MULTI=0`: off). Measured in that ride on the RX 9070 XT at 1080p, scale 1.0: wait for the GPU
+3.7-6.7 ms to 0.2-0.3 ms a frame, batch replay 19-25 ms to 15.6-16.9 ms, 4.1 to 3.1 submissions, GPU time the same
+(4.4-7.8 ms). Not measured: Windows, AMD's and NVIDIA's own drivers, and whether the reporters' GPUs alone fit the frame.
+
 ## Cutscenes on a slow disk (2026-11-05; issue 136)
 
 Issue 136 (Windows, RX 6600, v0.7.0): a cutscene's first viewing freezes for 1-4 s, less the second time. **Cause**: the
@@ -1662,10 +1675,49 @@ read once at start and about 119 MB of code resident.
   over 1 s (worst 1.4 s). With the pack, up to 9 frames went over 1 s, the worst 4.7 s.
 - `WT_VK_RS_PREP=0`: no measurable difference.
 
-On a hard disk `bc7_textures = off` is therefore the faster choice. The pack stays the default; issue 136's reporter was
-asked to try it.
+On a hard disk `bc7_textures = off` is therefore the faster choice. The pack stays the default.
 
-Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), a real hard disk.
+**The reporter's hard disk** (2026-11-05, a version before v0.8.1: no `code prefetch` line): with `bc7_textures = off` the log has no
+watchdog report (three before), and the worst frame after loading is 0.8 s, at the cutscene's start (before: 3.7, 1.8 and
+2.5 s). The three decode threads kept up on their 4-core i3-12100F: 17 of 3500 textures were not ready at their use.
+
+**Decision**: the game does not turn the pack off by itself. A drive's seek-penalty flag is cheap to read, but USB
+enclosures and RAID report it wrongly, and timing the reads depends on what the page cache holds, so the picture would
+change from run to run. What off costs depends on the CPU, and this is one machine. Instead the launcher's Converted
+textures row has **Turn off / Turn on**, which only writes `bc7_textures` and keeps the folder, and its note names hard
+disks. Checked headless on Linux: the button flips the key both ways and the row keeps the focus.
+
+Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), the prefetch on
+a real hard disk.
+
+## Video memory over a session (2026-11-10; issue 153)
+
+A GTX 1050 Ti (4 GB) log showed "device memory" climbing from 1425 MB to 3810 MB in 37 minutes. Measured on an RX 9070 XT
+(RADV), 1280x720, scale 1.0, `upscaler = fsr3`, with the `nvn_vk_mem:` line added for it (every 600 frames: MB in blocks,
+MB handed out, per class, and the driver's VK_EXT_memory_budget numbers):
+
+| point of a 40 minute session | MB in blocks | MB handed out |
+|---|---|---|
+| title | 1472 | 1149 |
+| Chapter 1, fight | 2688 | 2273 |
+| back at Chapter Select | 2688 | 1496 |
+| Chapter 3, fight | 3136 | 2730 |
+| back at Chapter Select | 3136 | 1500 |
+| Chapter 2, fight | 3456 | 3004 |
+
+- **Not a leak**: what is handed out returns to 1500 MB at every Chapter Select. The climb is each chapter's own need plus
+  the pool keeping its 64 MB blocks (`vmem_free` gives back only allocations above 16 MB): after a chapter 1.3 GB of the
+  image blocks is free, but only 7 of 39 blocks are empty; the next chapter fills the free ranges first (5 % free at a peak).
+  Nothing was lost to full free lists.
+- **Chapter 2 alone needs 3.3 GB** in blocks (2.9 GB handed out) straight from the title. `bc7_textures = off` changes
+  nothing: BC3 and BC7 are both 8 bits a texel, where the console's ASTC 8x8 is 2.
+- **The budget was not acted on.** New blocks went to system memory only when the driver refused one (issue 22); a 4 GB
+  card on Windows did not refuse at 3810 MB. Now a new block that would pass the driver's budget for its heap is treated
+  as refused (`vmem_over_budget`; `WT_VK_BUDGET=0` turns it off, `WT_VK_BUDGET=N` is a test budget of N MB). Chapter 2
+  with `WT_VK_BUDGET=2800`: 448 MB in system memory, the driver's count 2861 MB (its count trails the allocations),
+  57.7 fps against 60.0 here. Not run on Windows, on NVIDIA or on a 4 GB card.
+
+Left: a half-size option for the textures whose ASTC blocks are 8x8 or larger (the only thing that lowers the need).
 
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
@@ -1897,8 +1949,8 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 - Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
   (`shortcut:` in `nnmovie_mf.c`).
 - Indirect draws are read on the CPU (one Vulkan draw per record) unless compute wrote their count or records in this batch
-  (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count with more than one record read on the CPU,
-  and indirect dispatches, still cost a submit and a wait.
+  (then `vkCmdDraw*Indirect*`, "The render thread and the GPU overlap"); a count whose records past it name indices outside
+  the index buffer, and indirect dispatches, still cost a submit and a wait.
 - Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
   same pass (as on NVN without an explicit barrier).
 - Tessellation: a tessellated pipeline is made on the render thread at its first draw (one hitch; the driver's pipeline

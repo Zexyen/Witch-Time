@@ -90,8 +90,9 @@ private:
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
 	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
-	Rml::String tex_note, tex_action;  // settings: the converted textures (#54)
+	Rml::String tex_note, tex_action, tex_switch;  // settings: the converted textures (#54); tex_switch: "Turn off"/"Turn on" (#136)
 	bool tex_remove = false;
+	Rml::String shortcut_note = "Starts the game without the launcher";   // settings: the desktop shortcut (#143), then where it is
 
 	// work for the main loop
 	BuildRunner runner;
@@ -107,6 +108,9 @@ private:
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
 	bool picked = false;
+	SDL_AudioStream* sound_stream = nullptr;   // navigation sounds (issue 141): open from the first one until Play
+	bool sound_failed = false;
+	Rml::Element* last_focus = nullptr;        // the control the focus was in at the last frame
 	int update_seen = 0;               // the update's state and line as the title last showed them
 	Rml::String update_message;
 
@@ -133,10 +137,13 @@ private:
 	void step_setting(int index, int dir);
 	void convert_textures();
 	void remove_textures();
+	void switch_textures();
 	void toggle_mod(int index);
 	void check_dump();
 	void start_build();
 	void browse();
 	void play();
 	void release_window();
+	void sound(int which);
+	void close_sound();
 };

@@ -87,6 +87,10 @@ when the game does. Use it for a Steam shortcut (launch options `--play`), Playn
 or a desktop entry. The launcher still opens when it has something to show: a newer release (it waits up to 5 s for
 the check; Play there still closes with the game), a game that is not built yet, or one built by an older release.
 
+The launcher makes such a shortcut itself: Settings, Display, **Desktop shortcut**. On Windows that is `Witch Time.lnk`
+on the desktop; on Linux and the Steam Deck an entry in the application menu and on the desktop (for the Deck's game
+mode, add it to Steam with "Add a Non-Steam Game"). If you move the game folder, create it again from there.
+
 ## The picture book
 
 The Old Picture Book (Rodin's Treasures, then the shelf of the chapter-select room) opens a second program of the game:
