@@ -36,6 +36,7 @@ static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
 static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
 static PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties;
 static PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties;
+static PFN_vkGetPhysicalDeviceMemoryProperties2 vkGetPhysicalDeviceMemoryProperties2;
 static PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr;
 #define VKC(call) do { VkResult r_ = (call); if (r_ != VK_SUCCESS) vk_fatal(#call, r_); } while (0)
 
@@ -48,7 +49,7 @@ static struct {
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
-    int has_gpl, ext_gpl, ext_so;
+    int has_gpl, ext_gpl, ext_so, has_budget;
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
     VkPhysicalDeviceMemoryProperties mp;
@@ -72,6 +73,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     vkGetPhysicalDeviceProperties2 = vk_sym("vkGetPhysicalDeviceProperties2");
     vkGetPhysicalDeviceFormatProperties = vk_sym("vkGetPhysicalDeviceFormatProperties");
     vkGetPhysicalDeviceMemoryProperties = vk_sym("vkGetPhysicalDeviceMemoryProperties");
+    vkGetPhysicalDeviceMemoryProperties2 = vk_sym("vkGetPhysicalDeviceMemoryProperties2");
     vkGetDeviceProcAddr = vk_sym("vkGetDeviceProcAddr");
     D.debug = getenv("WT_VK_DEBUG") && atoi(getenv("WT_VK_DEBUG"));
     D.f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2; D.f11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
@@ -98,6 +100,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
         if (g_ck_on) D.exts[D.next++] = "VK_NV_device_diagnostic_checkpoints";
         if (e && atoi(e)) printf("nvn_vk: WT_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
     }
+    if (has_name(dext, ndext, "VK_EXT_memory_budget")) { D.has_budget = 1; D.exts[D.next++] = "VK_EXT_memory_budget"; }      /* [issue 153] vmem_report */
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("WT_VK_PUSH") && !atoi(getenv("WT_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
     D.has_vids = D.has_vids && D.vids.vertexInputDynamicState; D.has_cbc = D.has_cbc && D.cbc.customBorderColors && D.cbc.customBorderColorWithoutFormat;
@@ -147,8 +150,22 @@ typedef struct { int block; uint64_t off, size; void *map; VkDeviceMemory mem; }
 typedef struct { VkDeviceMemory mem; uint64_t size; void *map; uint32_t type; int cls, nfree, used, sys; struct { uint64_t off, size; } fr[512]; } VBlock;
 static VBlock *g_blk[2048];
 static int g_nblk;
-static LONG64 g_mem_total, g_mem_leak, g_mem_sys;
+static LONG64 g_mem_total, g_mem_leak, g_mem_sys, g_mem_used;      /* allocated in blocks; lost to full free lists; of the total in system memory; handed out */
 static uint32_t g_vram_full;      /* [issue 22] bit per memory type: a new block of it failed with VK_ERROR_OUT_OF_DEVICE_MEMORY; cleared when a block is freed */
+/* [issue 153] a new block of `size` would pass the driver's budget for this type's heap (VK_EXT_memory_budget). Windows
+ * drivers refuse nothing there: a 4 GB card went on to 3810 MB without one failed call, and Windows moved memory by itself.
+ * WT_VK_BUDGET=0: not looked at; WT_VK_BUDGET=N, TEST: a budget of N MB. */
+static int vmem_over_budget(uint32_t type, uint64_t size) {
+    static LONG64 test = -1;
+    if (test < 0) { const char *e = getenv("WT_VK_BUDGET"); test = e ? (LONG64)atoi(e) << 20 : 1; }
+    if (!test || !D.has_budget) return 0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT bu = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 m2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &bu};
+    vkGetPhysicalDeviceMemoryProperties2(V.gpu, &m2);
+    uint32_t h = D.mp.memoryTypes[type].heapIndex;
+    uint64_t budget = test > 1 ? (uint64_t)test : bu.heapBudget[h];
+    return budget && bu.heapUsage[h] + size > budget;      /* (a driver that reports no budget: 0) */
+}
 static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
     VMem m = {-1, 0, 0, NULL, NULL};
     uint32_t type = 32, t0, alt = 32;
@@ -173,7 +190,7 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
                 else if (head) k->fr[i].size = head;
                 else if (tail) { k->fr[i].off = start + rq.size; k->fr[i].size = tail; }
                 else { memmove(&k->fr[i], &k->fr[i + 1], sizeof k->fr[0] * (size_t)(k->nfree - i - 1)); k->nfree--; }
-                m.block = b; m.off = start; m.size = rq.size; m.mem = k->mem; m.map = k->map ? (uint8_t *)k->map + start : NULL; k->used++;
+                m.block = b; m.off = start; m.size = rq.size; m.mem = k->mem; m.map = k->map ? (uint8_t *)k->map + start : NULL; k->used++; g_mem_used += (LONG64)rq.size;
                 return m;
             }
         }
@@ -187,11 +204,13 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
         ai.allocationSize = k->size; ai.memoryTypeIndex = type;
         static LONG64 cap = -1;      /* WT_VK_VRAM_MB=N, TEST: video memory as full past N MB (a smaller card) */
         if (cap < 0) { const char *e = getenv("WT_VK_VRAM_MB"); cap = e ? (LONG64)atoi(e) << 20 : 0; }
-        VkResult r = alt != 32 && (g_vram_full >> type & 1 || (cap && g_mem_total - g_mem_sys + (LONG64)k->size > cap)) ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+        int over = alt != 32 && !(g_vram_full >> type & 1) && vmem_over_budget(type, k->size);      /* [issue 153] */
+        VkResult r = alt != 32 && (over || g_vram_full >> type & 1 || (cap && g_mem_total - g_mem_sys + (LONG64)k->size > cap)) ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(V.device, &ai, NULL, &k->mem);
         if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY && alt != 32) {
-            if (!(g_vram_full >> type & 1))
-                printf("nvn_vk: video memory full (a %llu MB block of memory type %u failed; %lld MB allocated, %lld MB of it in system memory): new blocks go to memory type %u in system memory until a block is freed\n",
-                       (unsigned long long)(k->size >> 20), type, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20), alt);
+            static int said;      /* (a freed block clears the state: not a line for every turn) */
+            if (!(g_vram_full >> type & 1) && said++ < 20)
+                printf("nvn_vk: video memory full (a %llu MB block of memory type %u %s; %lld MB allocated, %lld MB of it in system memory): new blocks go to memory type %u in system memory until a block is freed\n",
+                       (unsigned long long)(k->size >> 20), type, over ? "would pass the driver's budget (WT_VK_BUDGET=0: not looked at)" : "failed", (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20), alt);
             g_vram_full |= 1u << type;
             type = k->type = ai.memoryTypeIndex = alt;
             r = vkAllocateMemory(V.device, &ai, NULL, &k->mem);
@@ -210,6 +229,7 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
 static void vmem_free(VMem m) {
     if (m.block < 0) return;
     VBlock *k = g_blk[m.block];
+    g_mem_used -= (LONG64)m.size;
     if (--k->used == 0 && k->cls >= 100) { vkFreeMemory(V.device, k->mem, NULL); g_mem_total -= (LONG64)k->size; g_vram_full = 0; if (k->sys) g_mem_sys -= (LONG64)k->size; free(k); g_blk[m.block] = NULL; return; }
     int i = 0;
     while (i < k->nfree && k->fr[i].off < m.off) i++;
@@ -218,6 +238,29 @@ static void vmem_free(VMem m) {
     if (k->nfree == 512) { g_mem_leak += (LONG64)m.size; return; }
     memmove(&k->fr[i + 1], &k->fr[i], sizeof k->fr[0] * (size_t)(k->nfree - i)); k->nfree++;
     k->fr[i].off = m.off; k->fr[i].size = m.size;
+}
+/* [issue 153] what the blocks hold, per class (0 images, 1-4 buffers, "own" = one allocation above 16 MB each), and what the
+ * driver says of the video memory heap (VK_EXT_memory_budget: every process's use counts against the budget) */
+static void vmem_report(long long frame) {
+    static const char *nm[6] = {"images", "buffers", "staging", "copies", "kept vertex", "own"};
+    LONG64 tot[6] = {0}, fre[6] = {0}; int n[6] = {0}, empty[6] = {0};
+    for (int b = 0; b < g_nblk; b++) {
+        VBlock *k = g_blk[b]; if (!k) continue;
+        int c = k->cls >= 100 ? 5 : k->cls > 4 ? 4 : k->cls;
+        n[c]++; tot[c] += (LONG64)k->size; empty[c] += !k->used;
+        for (int i = 0; i < k->nfree; i++) fre[c] += (LONG64)k->fr[i].size;
+    }
+    printf("nvn_vk_mem: frame %lld: %lld MB in blocks, %lld MB handed out, %lld KB lost to full free lists |", frame, (long long)(g_mem_total >> 20), (long long)(g_mem_used >> 20), (long long)(g_mem_leak >> 10));
+    for (int c = 0; c < 6; c++) if (n[c]) printf(" %s: %d blocks %lld MB (%lld MB free, %d empty)", nm[c], n[c], (long long)(tot[c] >> 20), (long long)(fre[c] >> 20), empty[c]);
+    if (D.has_budget) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT bu = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 m2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &bu};
+        vkGetPhysicalDeviceMemoryProperties2(V.gpu, &m2);
+        for (uint32_t i = 0; i < m2.memoryProperties.memoryHeapCount; i++)
+            printf(" | heap %u (%s, %llu MB): this process %llu MB of a budget of %llu MB", (unsigned)i, m2.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? "video" : "system",
+                   (unsigned long long)(m2.memoryProperties.memoryHeaps[i].size >> 20), (unsigned long long)(bu.heapUsage[i] >> 20), (unsigned long long)(bu.heapBudget[i] >> 20));
+    } else printf(" | the driver has no VK_EXT_memory_budget");
+    printf("\n");
 }
 static VkBuffer vbuf_new(uint64_t size, VkFlags usage, VMem *mem) {
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -5566,6 +5609,7 @@ swap: ;
         printf("nvn_vk: totals at frame %lld: %lld images made (%lld live, %lld views), %lld uploads (%lld MB), %lld shader modules, %lld pipelines, %lld descriptor sets, %lld command buffers, %lld ring wraps, %lld feedback passes, %lld MB device memory (%lld MB of it in system memory)\n",
                (long long)frame, (long long)R.images, (long long)R.images_live, (long long)R.views, (long long)R.uploads, (long long)(R.upload_bytes >> 20), (long long)R.modules, (long long)R.pipelines, (long long)R.sets,
                (long long)R.flushes, (long long)R.ring_wraps, (long long)R.feedback, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20));
+    if (frame % 600 == 0) vmem_report((long long)frame);
     if (frame % 600 == 0 && R.dispatches) {
         LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
         printf("nvn_vk: compute at frame %lld: %lld dispatches, %lld KB copied back to guest memory, draws using a vertex buffer written by compute in the same batch: %lld, copy-backs forced inside a batch: %lld, waits for the GPU before a copy-back: %lld (%.1f ms in all), %lld buffers made; words the guest wrote into a range pending copy-back: %lld (also written by compute: %lld)\n",
