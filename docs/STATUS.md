@@ -1690,6 +1690,35 @@ disks. Checked headless on Linux: the button flips the key both ways and the row
 Not checked: Windows (the prefetch only compiled there, and Wine reads the whole image at load anyway), the prefetch on
 a real hard disk.
 
+## Video memory over a session (2026-11-10; issue 153)
+
+A GTX 1050 Ti (4 GB) log showed "device memory" climbing from 1425 MB to 3810 MB in 37 minutes. Measured on an RX 9070 XT
+(RADV), 1280x720, scale 1.0, `upscaler = fsr3`, with the `nvn_vk_mem:` line added for it (every 600 frames: MB in blocks,
+MB handed out, per class, and the driver's VK_EXT_memory_budget numbers):
+
+| point of a 40 minute session | MB in blocks | MB handed out |
+|---|---|---|
+| title | 1472 | 1149 |
+| Chapter 1, fight | 2688 | 2273 |
+| back at Chapter Select | 2688 | 1496 |
+| Chapter 3, fight | 3136 | 2730 |
+| back at Chapter Select | 3136 | 1500 |
+| Chapter 2, fight | 3456 | 3004 |
+
+- **Not a leak**: what is handed out returns to 1500 MB at every Chapter Select. The climb is each chapter's own need plus
+  the pool keeping its 64 MB blocks (`vmem_free` gives back only allocations above 16 MB): after a chapter 1.3 GB of the
+  image blocks is free, but only 7 of 39 blocks are empty; the next chapter fills the free ranges first (5 % free at a peak).
+  Nothing was lost to full free lists.
+- **Chapter 2 alone needs 3.3 GB** in blocks (2.9 GB handed out) straight from the title. `bc7_textures = off` changes
+  nothing: BC3 and BC7 are both 8 bits a texel, where the console's ASTC 8x8 is 2.
+- **The budget was not acted on.** New blocks went to system memory only when the driver refused one (issue 22); a 4 GB
+  card on Windows did not refuse at 3810 MB. Now a new block that would pass the driver's budget for its heap is treated
+  as refused (`vmem_over_budget`; `WT_VK_BUDGET=0` turns it off, `WT_VK_BUDGET=N` is a test budget of N MB). Chapter 2
+  with `WT_VK_BUDGET=2800`: 448 MB in system memory, the driver's count 2861 MB (its count trails the allocations),
+  57.7 fps against 60.0 here. Not run on Windows, on NVIDIA or on a 4 GB card.
+
+Left: a half-size option for the textures whose ASTC blocks are 8x8 or larger (the only thing that lowers the need).
+
 ## Aspect ratios: 21:9, 32:9, 9:10 ... (2026-10-28; experimental)
 
 `aspect_ratio = 16:9 | auto | <w>:<h>` (graphics.ini, at the next start; `RECOMPS_ASPECT=<w/h>` wins): the game's own
