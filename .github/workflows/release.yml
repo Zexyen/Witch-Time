@@ -63,6 +63,7 @@ jobs:
 
       - name: Packages
         run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build patchelf nasm libfreetype-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
@@ -235,6 +236,7 @@ jobs:
 
       - name: Packages
         run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build nasm zip
 
