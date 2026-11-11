@@ -544,7 +544,7 @@ static void slot_wait(Slot *s) {
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
+    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); vkd_fail(r == VK_TIMEOUT ? "a submitted command buffer did not finish within 20 s (%s): the GPU is stuck" : "the wait for a submitted command buffer ended with %s (no 20 s passed): the GPU hung or faulted and the driver or the system reset it", vk_result_name(r)); }      /* [issue 163] a lost device ends the wait at once: "within 20 s" was read as a 20 s wait */
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* WT_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
