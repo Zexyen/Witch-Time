@@ -431,7 +431,20 @@ fn families(romfs: &Path) -> R<BTreeMap<String, (Vec<String>, Vec<String>)>> {
     Ok(fam)
 }
 
-fn dump_family(repo: &Path, romfs: &Path, archives: &[String], tmp: &Path, env: &dyn Fn(&mut Command)) -> R<()> {
+/// #158: what a `--pkz-dump` that left with an error could not give, when that is only entries whose data does not decode
+/// (a damaged or altered archive: its lines, without "FAILED", which the launcher takes for a failed step). Trying again
+/// cannot help those, so the pack is made without them. None for anything else: a crash, a disk that cannot be read or
+/// written.
+fn undecodable(out: &str) -> Option<Vec<String>> {
+    let own: Vec<&str> = out.lines().filter_map(|l| l.strip_prefix("pkz-dump: ")).collect(); // the game prints lines of its own
+    let finished = own.iter().any(|l| l.contains(" entries ok, ")) && !own.iter().any(|l| l.contains("cannot "));
+    let lines: Vec<String> =
+        own.iter().filter(|l| l.contains("FAILED") || l.contains("refused")).map(|l| format!("left out: {}", l.trim_start_matches("FAILED "))).collect();
+    (finished && !lines.is_empty()).then_some(lines)
+}
+
+/// The family's entries into `tmp`; the lines of those left out (undecodable())
+fn dump_family(repo: &Path, romfs: &Path, archives: &[String], tmp: &Path, env: &dyn Fn(&mut Command)) -> R<Vec<String>> {
     let _ = fs::remove_dir_all(tmp);
     fs::create_dir_all(tmp).map_err(|e| format!("{}: {}", tmp.display(), e))?;
     let exe = repo.join("build").join(crate::target::Target::host().game_exe());
@@ -440,11 +453,11 @@ fn dump_family(repo: &Path, romfs: &Path, archives: &[String], tmp: &Path, env: 
     c.arg(repo.join("targets").join("exefs").join("main.elf")).arg("--pkz-dump").arg(tmp).args(archives);
     c.current_dir(repo.join("build")).env("WT_ROMFS", romfs);
     let r = c.output().map_err(|e| format!("{}: {}", exe.display(), e))?;
-    if !r.status.success() {
-        let s = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
-        return Err(format!("witch-time-game --pkz-dump failed: {}", s.chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect::<String>()));
+    if r.status.success() {
+        return Ok(Vec::new());
     }
-    Ok(())
+    let s = String::from_utf8_lossy(&r.stdout).into_owned() + &String::from_utf8_lossy(&r.stderr);
+    undecodable(&s).ok_or_else(|| format!("witch-time-game --pkz-dump failed: {}", s.chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect::<String>()))
 }
 
 /// Lines "[i/n] textures <family> ..." and "[n/n] textures: ok": the launcher follows them as it follows the build's steps.
@@ -464,7 +477,7 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, jobs: usize, env: &dy
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build().map_err(|e| e.to_string())?;
     let tmp = dir.join("tmp");
     let t0 = Instant::now();
-    let n = fam.len();
+    let (n, mut left_out) = (fam.len(), 0);
     for (i, (f, (archives, entries))) in fam.iter().enumerate() {
         let name = format!("{}.wtx", f);
         if shards.iter().any(|s| s.0 == name) {
@@ -472,7 +485,10 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, jobs: usize, env: &dy
         }
         log(format!("[{}/{}] textures {} ...", i + 1, n, f));
         if dump.is_none() {
-            dump_family(repo, romfs, archives, &tmp, env)?;
+            for l in dump_family(repo, romfs, archives, &tmp, env)? {
+                log(format!("  {}", l));
+                left_out += 1;
+            }
         }
         let root = dump.unwrap_or(&tmp);
         let files: BTreeMap<String, FileIndex> = pool.install(|| entries.par_iter().map(|e| (e.clone(), index_file(&root.join(e), e))).collect());
@@ -491,6 +507,10 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, jobs: usize, env: &dy
     fs::write(dir.join("complete"), b"").map_err(|e| e.to_string())?;
     let (count, bytes) = (shards.iter().map(|s| s.1.len()).sum::<usize>(), shards.iter().flat_map(|s| s.1.iter()).map(|e| e.stored as u64).sum::<u64>());
     log(format!("  {} textures, {:.1} GB in {} ({} s)", count, bytes as f64 / 1e9, dir.display(), t0.elapsed().as_secs()));
+    if left_out > 0 {
+        // the launcher shows this line when the step ends
+        log(format!("  warning: {} files of the game's data do not decode and have no converted textures (build/logs/textures.log names them). Their archive is damaged or altered: the game may stop where it loads them.", left_out));
+    }
     log(format!("[{}/{}] textures: ok", n, n));
     Ok(())
 }
@@ -572,6 +592,19 @@ mod tests {
         let p = Entry::parse(&b);
         assert_eq!((p.key, p.offset, p.stored, p.raw), (key, e.offset, 100, 200));
         assert_eq!(u16::from_le_bytes([b[48], b[49]]), 3);
+    }
+
+    #[test]
+    fn only_entries_that_do_not_decode_are_left_out() {
+        // #158's output
+        let ok = "sdklift: cannot open sdk.elf\n\
+            pkz-dump: 72 archives, 588 entries (545 Kraken, 43 stored) -> tmp, 8 threads\n\
+            pkz-dump: FAILED bg_000.pkz bg/bg300a.dtt: DecodeSome failed at 0 of 312832 bytes (compressed 0 of 270479)\n\
+            pkz-dump: 587 of 588 entries ok, 1 failed; 1061 MB out in 0.7 s (1616 MB/s)\n";
+        assert_eq!(undecodable(ok).unwrap(), ["left out: bg_000.pkz bg/bg300a.dtt: DecodeSome failed at 0 of 312832 bytes (compressed 0 of 270479)"]);
+        assert!(undecodable(&ok.replace("DecodeSome failed at 0", "cannot write it")).is_none()); // a full disk: try again
+        assert!(undecodable(ok.rsplit_once("pkz-dump: 587").unwrap().0).is_none()); // died before its last line
+        assert!(undecodable("pkz-dump: main's Oodle decoder is not at the expected address (another build of the game?)\n").is_none());
     }
 
     #[test]

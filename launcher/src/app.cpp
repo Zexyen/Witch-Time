@@ -1360,6 +1360,10 @@ void App::tick()
 		}
 		else if (built_game)
 			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
+		else                                         // #158: made, but without the files that do not decode: wtbuild's warning
+			for (const std::string& l : runner.lines)
+				if (const size_t at = l.find("warning: "); at != std::string::npos)
+					build_error = l.substr(at + 9);
 		refresh_title();
 		if (screen == "build")
 			want_focus = true;                   // Stop is gone: the focus to Play, or Build
