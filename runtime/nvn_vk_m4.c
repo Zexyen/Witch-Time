@@ -149,7 +149,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
-    if (o->rs) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
+    if (o->rs) h = fnv(h, "rs3", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
 static VkShaderModule module_from_spv(uint64_t h) {              /* any thread; NULL when the file is not there */
@@ -2928,7 +2928,7 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 3 : 0 /* s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (WT_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 4 : 0 /* s4: issue 126, "rs3" (the dither's fetch in mx_tf); s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (WT_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
         printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (WT_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;

@@ -767,6 +767,31 @@ stored. At 0.8, every fifth one: a fixed grid of zeros (the image's clear), so 6
 - **Not shown**: the reporter's squares on shadows and water (RX 560, RADV) did not come up here; a fight gives no same-pose
   pair. Not run on Windows.
 
+## Mist and fog walls at a scale (issue 126, 2026-11-12)
+
+Blocky dots and steps in the fog walls and the mist at 2160p, much less at 900p. Two things, both the game's own look drawn
+in the game's pixels while the rest of the picture is finer:
+- **The fog wall's dither.** Its fragment stages (fs6354, fs6384) fade through the 64 x 64 pattern,
+  `texelFetch(t14, uint(gl_FragCoord) & 63)`, and also read the mist's layers (520x360x3, a scaled image), so the own-pixels
+  rule of `resolve_sampler` left them at the game's pixels: dots of one game pixel on a grid of two, 2.8 and 5.6 pixels of a
+  2160p picture at the lower dynamic size (period measured: 5.626). **Fix** (`mx_translate.c`, the scaled translation's
+  `mx_tf`): a fetch from an image of the game's own size, a power of two, at exactly the game's pixel position masked by that
+  size takes the image's pixel. The scaled fragment stages are another text: key `rs3`, marker `_s4_`, so a PC at a scale or
+  another aspect ratio prepares once more (165 s here, 14 workers); 1.0 keeps its cache.
+- **The mist's cut-out.** Its patches (fs3856, fs3857, fs5332 ...) multiply their alpha by a fade against the minimum of
+  fs5548's half-size depth, kept at the game's size: steps of 2 game pixels. **Fix** (`g_rs_fine_*`, `nvn_vk_draw.c`): in a
+  pass of the 520x360 class those reads get fs5548's colour target (the same linear depth for every pixel of the scaled scene)
+  through a sampler that returns the minimum of its 2x2 texels; a plain linear read lets the depth of a dithered object
+  through as a grid. Needs samplerFilterMinmax and the format's support, else the game's image. `WT_VK_MISTDEPTH=0` off,
+  `=alt` on in odd frames.
+- **Measured** (Linux, RX 9070 XT, 2.4, the Shibuya fight by `WT_PRESS=Z,30,3`): the mist layer of two consecutive frames
+  (`WT_VK_MISTDEPTH=alt`, `WT_VK_DUMPTEX`), off and on: the cut-out's steps are gone; the fog wall's fade in the same fight
+  frame before and after: a stipple of the picture's pixels. 0 Vulkan call failures; under validation only the 10
+  unused-output warnings. 1.0: no preparation, neither path runs.
+- **Not done**: the Chapter 1 wave of the report was not reached; no Windows, NVIDIA or Intel run; FSR and other aspect
+  ratios not run with it. fs5548 still takes 2x2 texels of the scaled depth for each kept texel (the light tiles and the fog
+  march read that). A scene copy of a third by a half (453x384) stays at the game's size.
+
 ## Level of detail (2026-10-25)
 
 - **`texture_lod_bias`** (graphics.ini; `WT_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
