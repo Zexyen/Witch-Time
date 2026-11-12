@@ -223,8 +223,10 @@ static struct {
 static int fsr_want(void) { rs_scale(); return g_rs_mode >= 1 && F.ok >= 0; }      /* the mode as latched with the scales (rs_scale) */
 /* the scene's scale is the picture's / this (AMD's ratios); 1 where FSR cannot run, so the scene is never left small without it */
 static const char *fsr_unable(void);
+static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset); static void dlss_present(void); static void dlss_shutdown(void);      /* nvn_vk_dlss.c (issue 190) */
 static float fsr_ratio(int mode) {
     static const float k[6] = {1.0f, 1.0f, 1.5f, 1.7f, 2.0f, 3.0f};
+    if (mode > 5) mode -= 5;                        /* [witchtime] issue 190: dlaa .. dlss_ultra_performance (6 .. 10) draw at the scale of the FSR mode of the same rank, which runs in their place where DLSS cannot */
     if (mode < 2 || mode > 5 || F.ok < 0) return 1.0f;      /* (FSR failing after this was latched: fsr_run applies the scales again) */
     if (V.device && fsr_unable()) return 1.0f;      /* fsr_setup's checks, once the device is made */
     return k[mode];
@@ -531,6 +533,7 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     uint32_t spd_x = (uint32_t)(w - 1) / 64 + 1, spd_y = (uint32_t)(h - 1) / 64 + 1;
     fsr_dispatch(P_MV, src_x, src_y);
     if (!reset) fsr_mv_dump(depth, vd, w, h);      /* motion vectors, step 3: the objects' own over the camera's (fsr_mv_pass) */
+    if (g_rs_mode < 6 || !dlss_run(vc, vd, w, h, uw, uh, reset)) {      /* [witchtime] issue 190: DLSS writes FI_OUT from the same inputs (nvn_vk_dlss.c) */
     fsr_dispatch(P_PREP, src_x, src_y);
     fsr_dispatch(P_LUMA, spd_x, spd_y);
     fsr_dispatch(P_SCPYR, spd_x, spd_y);
@@ -539,6 +542,7 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     fsr_dispatch(P_INST, src_x, src_y);
     fsr_dispatch(P_ACC, (uint32_t)(uw + 7) / 8, (uint32_t)(uh + 7) / 8);      /* at the output's size (AMD: dispatchDst) */
     F.res_index = (F.res_index + 1) % 16;
+    }
 
     /* the result into the scene's colour: the bloom reads it there (a 2 x 2 gather that needs the scene's size); at another size
      * the tonemap reads FI_OUT itself (fsr_up_view) and this is a linear reduction */
@@ -1005,6 +1009,7 @@ static void fsr_mv_dump(Tex *depth, VTex *vd, int w, int h) {
 static void fsr_mv_streams(int from_cb, VStage *vs) { if (g_mvlog.on > 0 && !R.ncol && fsr_scene_depth()) { g_mvlog.cb_draws += from_cb != 0; g_mvlog.ssbo_draws += vs->ssbos != 0; } }
 /* nvn_vk_draw.c, at shutdown (the GPU is idle; the images went with the others) */
 static void fsr_shutdown(void) {
+    dlss_shutdown();
     for (int i = 0; i < 2; i++) { free(g_mv.s[i].b); free(g_mv.s[i].d); }
     memset(&g_mv, 0, sizeof g_mv);
     if (g_mvj_thread) {                            /* the pipeline thread first: it uses the device */
@@ -1038,6 +1043,7 @@ static void fsr_present(void) {
                                        (long long)F.frame, g_mvlog.draws, g_mvlog.blocks, g_mvlog.paired, g_mvlog.moved, g_mvlog.unnamed, g_mvlog.gone, g_mvlog.cb_draws, g_mvlog.ssbo_draws, g_mvlog.replayed, g_mvd.pipes, g_mvd.pipe_ms, g_mvd.bad);
         g_mvlog.draws = g_mvlog.blocks = g_mvlog.paired = g_mvlog.unnamed = g_mvlog.gone = g_mvlog.moved = g_mvlog.cb_draws = g_mvlog.ssbo_draws = g_mvlog.replayed = 0;
     }
+    dlss_present();
     mv_flip(&g_mv);
     F.frame++;
 }

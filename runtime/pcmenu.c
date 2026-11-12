@@ -104,8 +104,9 @@ static const Row k_rows[] = {
      {"game", "highest"}, {"Game", "Highest"}},
     {"film_grain", "Film grain", "The game's moving noise over the picture. Off: a clean picture; the vignette stays.", NULL, "on", A_LIVE, 0,
      {"on", "off"}, {"On", "Off"}},
-    {"upscaler", "FSR 3.1", "Experimental. Native AA smooths jagged edges, shimmer and fading objects over frames. Quality to Ultra Performance draw the scene smaller and upscale it (above 900p). Moving characters can leave trails. Applies when this panel closes.", "WT_UPSCALER", "off", A_SCALE, 0,
-     {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"}, {"Off", "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance"}},
+    {"upscaler", "FSR 3.1 / DLSS", "Experimental. Native AA smooths jagged edges, shimmer and fading objects over frames. Quality to Ultra Performance draw the scene smaller and upscale it (above 900p). DLAA and DLSS: NVIDIA RTX with your own nvngx_dlss.dll beside witch-time.exe, else FSR runs. Applies when this panel closes.", "WT_UPSCALER", "off", A_SCALE, 0,
+     {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance", "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance"},
+     {"Off", "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance", "DLAA", "DLSS Quality", "DLSS Balanced", "DLSS Performance", "DLSS Ultra Performance"}},      /* [witchtime] issue 190: the DLSS values need an NVIDIA RTX GPU and the player's nvngx_dlss.dll; else FSR runs */
     {"hdr", "HDR", "Auto: HDR output while the desktop's HDR is on for this monitor. The scene's lights go above white, up to HDR peak; menus and the HUD stay at white.", NULL, "auto", A_LIVE, 0,
      {"auto", "off", "on"}, {"Auto", "Off", "On"}},
     {"hdr_paper_white", "HDR white", "How bright the game's white is with HDR on. Auto: the desktop's brightness of SDR programs.", NULL, "auto", A_LIVE, 0,
