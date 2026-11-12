@@ -275,6 +275,21 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
         f.wBitsPerSample = 16;
         f.nBlockAlign = 4;
         f.nAvgBytesPerSec = (DWORD)g_rate * 4;
+#ifdef _WIN32
+        {   /* [issue 182] the devices and the one Windows prefers: a game silent on one PC shows nothing else in the log */
+            DWORD id = (DWORD)-1, flags = 0;
+            UINT count = waveOutGetNumDevs();
+            waveOutMessage((HWAVEOUT)(UINT_PTR)WAVE_MAPPER, 0x2015 /* DRVM_MAPPER_PREFERRED_GET (mmddk.h) */, (DWORD_PTR)&id, (DWORD_PTR)&flags);
+            printf("nn::audio: %u output devices, Windows prefers %d:", count, (int)id);
+            for (UINT i = 0; i < count && i < 16; i++) {
+                WAVEOUTCAPSA caps;
+                memset(&caps, 0, sizeof caps);
+                waveOutGetDevCapsA(i, &caps, sizeof caps);
+                printf(" %u \"%s\"", i, caps.szPname);
+            }
+            printf("\n");
+        }
+#endif
         MMRESULT r = waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
         if (r != MMSYSERR_NOERROR) { g_wave = NULL; printf("nn::audio: waveOutOpen failed (%u): no sound, buffers are released by the clock\n", (unsigned)r); }
         else {
@@ -370,10 +385,13 @@ static void audio_AppendAudioOutBuffer(Ctx *c) {      /* (AudioOut *, AudioOutBu
             memset(&s->hdr, 0, sizeof s->hdr);
             s->hdr.lpData = (LPSTR)s->pcm;
             s->hdr.dwBufferLength = frames * 4;
-            if (waveOutPrepareHeader(g_wave, &s->hdr, sizeof s->hdr) == MMSYSERR_NOERROR) {
-                if (waveOutWrite(g_wave, &s->hdr, sizeof s->hdr) == MMSYSERR_NOERROR) s->prepared = 1;
+            MMRESULT wr = waveOutPrepareHeader(g_wave, &s->hdr, sizeof s->hdr);
+            if (wr == MMSYSERR_NOERROR) {
+                if ((wr = waveOutWrite(g_wave, &s->hdr, sizeof s->hdr)) == MMSYSERR_NOERROR) s->prepared = 1;
                 else waveOutUnprepareHeader(g_wave, &s->hdr, sizeof s->hdr);
             }
+            static int write_failed;                  /* [issue 182] once: an open device that takes no buffers is silent too */
+            if (wr != MMSYSERR_NOERROR && !write_failed) { write_failed = 1; printf("nn::audio: the device refused buffer %llu (%u): no sound for it, released by the clock\n", g_total_appended, (unsigned)wr); }
         }
         if (!s->prepared) {                           /* clock-driven: one buffer after the other in real time */
             LONGLONG now = now_ticks();
