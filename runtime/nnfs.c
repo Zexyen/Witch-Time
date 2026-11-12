@@ -95,6 +95,7 @@ static void fs_roots(void) {
     rom_mods_init();
 }
 
+static void join(char *out, const char *root, const char *rel) { if (rel[0]) snprintf(out, MAX_PATH, "%s\\%s", root, rel); else snprintf(out, MAX_PATH, "%s", root); }
 static int is_dir(const char *p) { DWORD a = GetFileAttributesA(p); return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY); }
 static int exists(const char *p) { return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES; }
 static void make_parents(const char *path) {             /* creates every missing folder above `path` */
@@ -128,7 +129,8 @@ static void remove_tree(const char *dir) {
  * prompt mods (else guessed from the folder name: a word starting ds4, ds5, dualshock, dualsense, playstation, ps4, ps5 /
  * xbox, or the word ps; so DS4Prompts / XBOXPrompts of the GameBanana prompt mod 360121 need no [prompts] line). Prompt
  * mods are layered only when chosen: controllers.ini [general] button_prompts (nnpad_button_prompts), above all others.
- * Read once, at the first file access: changes apply at the next start, no rebuild. */
+ * Read once, at the first file access: changes apply at the next start, no rebuild.
+ * [witchtime] #181: a file of one of the game's .pkz archives is layered by entry, below ("a mod's single files"). */
 #include "nnpad.h"
 #define ROM_MOD_MAX 16
 #define FS_DIR_ROOTS (ROM_MOD_MAX + 2)
@@ -218,7 +220,245 @@ static int find_romfs(const char *mod, char *out) {      /* <mod>\romfs or <mod>
     FindClose(h);
     return found;
 }
-static void mod_report(const char *dir, const char *rel, int *files, int *repl, int depth) {   /* counts, and lists replacements in the trace */
+/* ---- [witchtime] #181, #46: a mod's single files inside the game's archives.
+ * The game's data is in the entries of the .pkz archives (docs/RE_NOTES.md section 4): at boot the game opens every
+ * archive of rom:/ and reads its header and entry table, and from then on reads an entry's data at the offset the
+ * table gave, through the archive's handle. Mods layered file for file (above) therefore had to ship whole archives:
+ * one holding only the changed entries hid all the others, and a single file was never read. So an archive the mods
+ * touch is served to the game as a VIEW: a table made here of the game's entries with the mods' entries put in by
+ * name (replaced, or added at the end), and each file they come from mapped whole at an offset of its own, so that
+ * an entry's data offset is its file's place in the view plus its offset in that file. The data is never copied.
+ * What a mod can ship, for the game's archive pl_000.pkz and its entry pl/pl0100.dat:
+ *   <mod>\romfs\pl_000.pkz              an archive with only the entries it changes or adds (a whole one works as before)
+ *   <mod>\romfs\pl_000\pl\pl0100.dat    a single file in a folder named like its archive (replaces; a new name is added)
+ *   <mod>\romfs\pl\pl0100.dat           a single file at its entry's path (replaces only: no archive is named for a new
+ *                                       one; the game's 18,732 entry names are each in one archive)
+ * A single file is a stored entry (codec "None"; the game keeps the codec per entry). Order as for whole files: the
+ * mod that sorts later wins, and inside one mod a single file wins over its archive.
+ * #46, the game's name pool: its walk of rom:/ at boot (0x7100cbd9c0) gives every file and folder a node and a copy of
+ * its name in the fixed pools that also hold the archives' entries. The name pool is 372 blocks of 1 KB and the game's
+ * own files fill 341: a mod of 4,442 single files used it up, the walk stopped, and the last 19 archives were never
+ * entered. So the single files are not listed to the game (fs_rom_hidden: at the root, a name that is an archive's
+ * or the first folder of an entry). A replaced entry costs the pool nothing; an added one costs its name. */
+typedef struct { const char *name, *codec; uint64_t size, off, csize; int part; } PkzEnt;
+typedef struct { char *path; uint64_t voff, size; } PkzPart;      /* a host file, whole, at voff of the view */
+typedef struct { char rel[64]; uint8_t *head; uint64_t head_len, vsize; PkzPart *part; int nparts; } PkzView;
+typedef struct { char rel[64]; PkzEnt *ent; int n; uint64_t fsize; char *blob; } PkzArc;      /* an archive of the game, until the views are made */
+typedef struct { char **f; char *used; int n; } ModFiles;          /* a mod's single files, '/' separators, relative to its romfs\ */
+static PkzView *g_pkz_view;
+static void pkz_open_close(HANDLE h);
+static int g_pkz_views;
+static PkzArc *g_pkz_arc;
+static int g_pkz_arcs;
+static char **g_pkz_top;                                 /* names hidden at the root of rom:/ (fs_rom_hidden) */
+static int g_pkz_tops, g_pkz_new_bytes;
+static ModFiles g_mod_files[ROM_MOD_MAX];
+/* entries of the archive `path` (names point into *blob); 0 = not an archive this code can layer */
+static int pkz_table(const char *path, PkzEnt **ent, int *n, uint64_t *fsize, char **blob) {
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    uint8_t h[0x20];
+    uint32_t count = 0, toff = 0, nsize = 0;
+    char *t = NULL;
+    PkzEnt *e = NULL;
+    int ok = 0;
+    FILE *f = fopen(path, "rb");
+    if (f && GetFileAttributesExA(path, GetFileExInfoStandard, &fa) && fread(h, 1, 0x20, f) == 0x20 && !memcmp(h, "pkzl", 4) && h[4] == 0 && h[5] == 0 && h[6] == 2 && h[7] == 0) {
+        memcpy(&count, h + 0x10, 4); memcpy(&toff, h + 0x14, 4); memcpy(&nsize, h + 0x18, 4);
+        size_t tl = (size_t)count * 0x20 + nsize;
+        *fsize = ((uint64_t)fa.nFileSizeHigh << 32) | fa.nFileSizeLow;       /* #146: the file's real size, not the header's */
+        if (count && count < 100000 && nsize < (16u << 20) && toff < 0x7fffffff && (t = malloc(tl + 1)) && (e = malloc(sizeof *e * count)) &&
+            !fseek(f, (long)toff, SEEK_SET) && fread(t, 1, tl, f) == tl) {
+            const char *names = t + (size_t)count * 0x20;
+            t[tl] = 0;
+            ok = 1;
+            for (uint32_t i = 0; i < count && ok; i++) {  /* a mod's archive is untrusted: names inside the table, data inside the file */
+                uint32_t no, co;
+                memcpy(&no, t + i * 0x20, 4); memcpy(&co, t + i * 0x20 + 4, 4);
+                e[i].name = names + (no < nsize ? no : nsize); e[i].codec = names + (co < nsize ? co : nsize); e[i].part = 0;
+                memcpy(&e[i].size, t + i * 0x20 + 8, 8); memcpy(&e[i].off, t + i * 0x20 + 0x10, 8); memcpy(&e[i].csize, t + i * 0x20 + 0x18, 8);
+                ok = e[i].name[0] && e[i].codec[0] && e[i].off + e[i].csize >= e[i].off && e[i].off + e[i].csize <= *fsize;
+            }
+        }
+    }
+    if (f) fclose(f);
+    if (!ok) { free(t); free(e); return 0; }
+    *ent = e; *n = (int)count; *blob = t;
+    return 1;
+}
+static int pkz_top(const char *name) {
+    for (int i = 0; i < g_pkz_tops; i++) if (!_stricmp(g_pkz_top[i], name)) return 1;
+    return 0;
+}
+static void pkz_top_add(const char *name, size_t n) {
+    char tmp[MAX_PATH];
+    snprintf(tmp, sizeof tmp, "%.*s", (int)n, name);
+    if (pkz_top(tmp)) return;
+    g_pkz_top = realloc(g_pkz_top, sizeof *g_pkz_top * (size_t)(g_pkz_tops + 1));
+    g_pkz_top[g_pkz_tops++] = _strdup(tmp);
+}
+/* the game's archives and the names to hide; before the mods' files are walked */
+static void pkz_index(void) {
+    char pat[MAX_PATH], path[MAX_PATH];
+    WIN32_FIND_DATAA fd;
+    for (int i = 0; i < g_pkz_views; i++) { for (int k = 0; k < g_pkz_view[i].nparts; k++) free(g_pkz_view[i].part[k].path); free(g_pkz_view[i].part); free(g_pkz_view[i].head); }
+    for (int i = 0; i < g_pkz_tops; i++) free(g_pkz_top[i]);
+    g_pkz_views = g_pkz_tops = g_pkz_arcs = g_pkz_new_bytes = 0;
+    snprintf(pat, sizeof pat, "%s\\*.pkz", g_rom_root);
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        PkzArc a;
+        size_t l = strlen(fd.cFileName);
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || l < 5 || l >= sizeof a.rel || _stricmp(fd.cFileName + l - 4, ".pkz")) continue;
+        snprintf(a.rel, sizeof a.rel, "%s", fd.cFileName);
+        join(path, g_rom_root, a.rel);
+        if (!pkz_table(path, &a.ent, &a.n, &a.fsize, &a.blob)) continue;       /* damaged or unknown: served as the file it is */
+        pkz_top_add(a.rel, l - 4);
+        for (int i = 0; i < a.n; i++) pkz_top_add(a.ent[i].name, strcspn(a.ent[i].name, "/"));
+        g_pkz_arc = realloc(g_pkz_arc, sizeof *g_pkz_arc * (size_t)(g_pkz_arcs + 1));
+        g_pkz_arc[g_pkz_arcs++] = a;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+static PkzEnt *g_pe;                                     /* the archive being layered: the game's entries, then the added ones */
+static int g_pn, g_pbase, *g_pidx;
+static int pe_cmp(const void *a, const void *b) { return _stricmp(g_pe[*(const int *)a].name, g_pe[*(const int *)b].name); }
+static int pe_find(const char *name) {
+    for (int lo = 0, hi = g_pbase - 1; lo <= hi; ) {
+        int mid = (lo + hi) / 2, c = _stricmp(name, g_pe[g_pidx[mid]].name);
+        if (!c) return g_pidx[mid];
+        if (c < 0) hi = mid - 1; else lo = mid + 1;
+    }
+    for (int k = g_pbase; k < g_pn; k++) if (!_stricmp(name, g_pe[k].name)) return k;
+    return -1;
+}
+static void pe_put(PkzEnt e, int *repl, int *added) {     /* counts: the game's entries replaced, and the names added */
+    int k = pe_find(e.name);
+    if (k < 0) {
+        const char *leaf = strrchr(e.name, '/');
+        g_pe = realloc(g_pe, sizeof *g_pe * (size_t)(g_pn + 1));
+        k = g_pn++; (*added)++;
+        g_pkz_new_bytes += (int)strlen(leaf ? leaf + 1 : e.name) + 1;
+    } else {
+        if (k < g_pbase && g_pe[k].part == 0) (*repl)++;
+        e.name = g_pe[k].name;                            /* the game's spelling */
+    }
+    g_pe[k] = e;
+}
+static void put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+static void put64(uint8_t *p, uint64_t v) { memcpy(p, &v, 8); }
+/* the views, from the game's archives (pkz_index) and the mods' archives and single files (g_mod_files); `dir` = the mods folder, for the log */
+static void pkz_views_build(const char *dir) {
+    for (int a = 0; a < g_pkz_arcs; a++) {
+        PkzArc *arc = &g_pkz_arc[a];
+        char path[MAX_PATH], winner[MAX_PATH], from[256] = "", *blobs[ROM_MOD_MAX];
+        size_t sl = strlen(arc->rel) - 4;
+        int nblobs = 0, nparts = 1, repl = 0, added = 0;
+        PkzPart *part = calloc(1, sizeof *part);
+        join(path, g_rom_root, arc->rel);
+        snprintf(winner, sizeof winner, "%s", path);
+        part[0].path = _strdup(path); part[0].size = arc->fsize;
+        g_pe = arc->ent; g_pn = g_pbase = arc->n;
+        g_pidx = malloc(sizeof *g_pidx * (size_t)arc->n);
+        for (int i = 0; i < arc->n; i++) g_pidx[i] = i;
+        qsort(g_pidx, (size_t)arc->n, sizeof *g_pidx, pe_cmp);
+        for (int m = g_rom_mods - 1; m >= 0; m--) {       /* the mod that wins last */
+            int puts = 0;
+            join(path, g_rom_mod[m], arc->rel);
+            if (exists(path) && !is_dir(path)) {
+                PkzEnt *me; int mn; uint64_t msize; char *mblob;
+                snprintf(winner, sizeof winner, "%s", path);
+                if (!pkz_table(path, &me, &mn, &msize, &mblob))
+                    printf("romfs mods: %s: not a pkz archive this version reads, or an entry of it lies outside the file: left out\n", path + strlen(dir) + 1);
+                else {
+                    part = realloc(part, sizeof *part * (size_t)(nparts + 1));
+                    part[nparts].path = _strdup(path); part[nparts].size = msize;
+                    for (int i = 0; i < mn; i++) { me[i].part = nparts; pe_put(me[i], &repl, &added); }
+                    puts += mn;
+                    nparts++;
+                    blobs[nblobs++] = mblob;
+                    free(me);
+                }
+            }
+            ModFiles *mf = &g_mod_files[m];
+            for (int j = 0; j < mf->n; j++) {
+                const char *f = mf->f[j], *name = f;
+                WIN32_FILE_ATTRIBUTE_DATA fa;
+                if (!_strnicmp(f, arc->rel, sl) && f[sl] == '/') name = f + sl + 1;       /* in the archive's folder: replaces or adds */
+                else if (pe_find(f) < 0) continue;
+                snprintf(path, sizeof path, "%s\\%s", g_rom_mod[m], f);
+                for (char *p = path; *p; p++) if (*p == '/') *p = '\\';
+                if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) continue;
+                part = realloc(part, sizeof *part * (size_t)(nparts + 1));
+                part[nparts].path = _strdup(path); part[nparts].size = ((uint64_t)fa.nFileSizeHigh << 32) | fa.nFileSizeLow;
+                pe_put((PkzEnt){name, "None", part[nparts].size, 0, part[nparts].size, nparts}, &repl, &added);
+                trace_printf("     romfs mod: %s of %s <- %s\n", name, arc->rel, path);
+                nparts++; puts++;
+                mf->used[j] = 1;
+            }
+            if (puts && strlen(from) + strlen(g_rom_mod[m]) < sizeof from - 16)
+                snprintf(from + strlen(from), sizeof from - strlen(from), "%s%d from %s", from[0] ? ", " : "", puts, g_rom_mod[m] + strlen(dir) + 1);
+        }
+        int whole = 1;                                    /* one file holds every entry, and it is the file a whole-file layer gives: no view */
+        for (int i = 1; i < g_pn && whole; i++) whole = g_pe[i].part == g_pe[0].part;
+        if (!(whole && !strcmp(part[g_pe[0].part].path, winner))) {
+            /* the table: 0x20 header, 0x20 an entry, the names; the files follow, each at a multiple of 0x1000 (the
+             * game's own data offsets are multiples of 0x40 and stay so) */
+            const char *codec[8]; uint32_t codec_off[8], nsize = 0, at; int ncodec = 0, *live = calloc((size_t)nparts, sizeof *live), np = 0;
+            for (int i = 0; i < g_pn; i++) {              /* the codec names first, then the entries' names */
+                int c = 0;
+                while (c < ncodec && strcmp(codec[c], g_pe[i].codec)) c++;
+                if (c == ncodec && ncodec < 8) { codec[ncodec] = g_pe[i].codec; codec_off[ncodec++] = nsize; nsize += (uint32_t)strlen(g_pe[i].codec) + 1; }
+                live[g_pe[i].part] = 1;
+            }
+            at = nsize;
+            for (int i = 0; i < g_pn; i++) nsize += (uint32_t)strlen(g_pe[i].name) + 1;
+            live[0] = 1;                                  /* the game's archive: the handle the game holds */
+            PkzView v;
+            memset(&v, 0, sizeof v);
+            snprintf(v.rel, sizeof v.rel, "%s", arc->rel);
+            v.head_len = 0x20 + (uint64_t)g_pn * 0x20 + nsize;
+            v.head = calloc(1, (size_t)v.head_len);
+            v.vsize = (v.head_len + 0xfff) & ~0xfffull;
+            for (int k = 0; k < nparts; k++) {            /* a file no entry is left in is dropped */
+                if (!live[k]) { free(part[k].path); continue; }
+                part[k].voff = v.vsize; v.vsize = (v.vsize + part[k].size + 0xfff) & ~0xfffull;
+                live[k] = np; part[np++] = part[k];
+            }
+            char *names = (char *)v.head + 0x20 + (size_t)g_pn * 0x20;
+            for (int c = 0; c < ncodec; c++) strcpy(names + codec_off[c], codec[c]);
+            for (int i = 0; i < g_pn; i++) {
+                uint8_t *e = v.head + 0x20 + (size_t)i * 0x20;
+                int c = 0;
+                while (c < ncodec - 1 && strcmp(codec[c], g_pe[i].codec)) c++;      /* a ninth codec name: none exists, the game knows three */
+                strcpy(names + at, g_pe[i].name);
+                put32(e, at); put32(e + 4, codec_off[c]); put64(e + 8, g_pe[i].size);
+                put64(e + 0x10, part[live[g_pe[i].part]].voff + g_pe[i].off); put64(e + 0x18, g_pe[i].csize);
+                at += (uint32_t)strlen(g_pe[i].name) + 1;
+            }
+            memcpy(v.head, "pkzl", 4); put32(v.head + 4, 0x20000); put64(v.head + 8, v.vsize);
+            put32(v.head + 0x10, (uint32_t)g_pn); put32(v.head + 0x14, 0x20); put32(v.head + 0x18, nsize); put32(v.head + 0x1c, 0x1000);
+            v.part = part; v.nparts = np;
+            g_pkz_view = realloc(g_pkz_view, sizeof *g_pkz_view * (size_t)(g_pkz_views + 1));
+            g_pkz_view[g_pkz_views++] = v;
+            printf("romfs mods: %s: %d of the game's %d files replaced, %d added (%s; a later one wins)\n", arc->rel, repl, g_pbase, added,
+                   from[0] ? from : "a mod's archive was left out");
+            free(live);
+        } else { for (int k = 0; k < nparts; k++) free(part[k].path); free(part); }
+        for (int i = 0; i < nblobs; i++) free(blobs[i]);
+        free(g_pidx); free(g_pe); free(arc->blob);
+    }
+    g_pkz_arcs = 0;
+    if (g_pkz_new_bytes > 24000)
+        printf("romfs mods: the mods add %d bytes of file names to the game's archives; the game's name pool has room for about 31,000, "
+               "past that it stops reading its archives (textures and models go missing)\n", g_pkz_new_bytes);
+}
+static PkzView *pkz_view_for(const char *rel) {
+    for (int i = 0; i < g_pkz_views; i++) if (!_stricmp(g_pkz_view[i].rel, rel)) return &g_pkz_view[i];
+    return NULL;
+}
+static int g_mod_inside;
+static void mod_report(const char *dir, const char *rel, int *files, int *repl, int depth, ModFiles *mf) {   /* counts, and lists replacements in the trace */
     char pat[MAX_PATH], sub[MAX_PATH], subrel[MAX_PATH], base[MAX_PATH];
     WIN32_FIND_DATAA fd;
     snprintf(pat, sizeof pat, "%s\\*", dir);
@@ -228,7 +468,15 @@ static void mod_report(const char *dir, const char *rel, int *files, int *repl, 
         if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
         snprintf(sub, sizeof sub, "%s\\%s", dir, fd.cFileName);
         if (rel[0]) snprintf(subrel, sizeof subrel, "%s\\%s", rel, fd.cFileName); else snprintf(subrel, sizeof subrel, "%s", fd.cFileName);
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { mod_report(sub, subrel, files, repl, depth + 1); continue; }
+        int inside = depth == 0 && pkz_top(fd.cFileName);    /* #181: a single file of an archive, or a folder of them */
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { g_mod_inside += inside; mod_report(sub, subrel, files, repl, depth + 1, mf); g_mod_inside -= inside; continue; }
+        if (inside || g_mod_inside) {
+            mf->f = realloc(mf->f, sizeof *mf->f * (size_t)(mf->n + 1));
+            mf->f[mf->n] = _strdup(subrel);
+            for (char *p = mf->f[mf->n]; *p; p++) if (*p == '\\') *p = '/';
+            mf->n++;
+            continue;
+        }
         (*files)++;
         snprintf(base, sizeof base, "%s\\%s", g_rom_root, subrel);
         int r = exists(base);
@@ -257,6 +505,35 @@ static void prompt_places_by_letter(void) {
     memcpy(t, letter, sizeof letter);
     VirtualProtect(t, sizeof sw, old, &old);
     printf("romfs mods: the action prompt's button places follow the printed letters too (Y top, X left, B right, A bottom)\n");
+}
+/* what each mod's files do, and the views of the archives they touch; `dir` = the mods folder, `prompt` = the button prompt mod's romfs or "" */
+static void rom_mods_layers(const char *dir, const char *prompt) {
+    int files[ROM_MOD_MAX] = {0}, repl[ROM_MOD_MAX] = {0};
+    if (!g_rom_mods) return;
+    pkz_index();
+    for (int i = 0; i < g_rom_mods; i++) {
+        ModFiles *mf = &g_mod_files[i];
+        for (int j = 0; j < mf->n; j++) free(mf->f[j]);
+        free(mf->used);
+        mf->n = 0;
+        mod_report(g_rom_mod[i], "", &files[i], &repl[i], 0, mf);
+        mf->used = calloc((size_t)mf->n + 1, 1);
+    }
+    pkz_views_build(dir);
+    for (int i = 0; i < g_rom_mods; i++) {
+        ModFiles *mf = &g_mod_files[i];
+        const char *name = g_rom_mod[i] + strlen(dir) + 1, *first = NULL;
+        int unused = 0;
+        for (int j = 0; j < mf->n; j++) if (!mf->used[j]) { if (!first) first = mf->f[j]; unused++; }
+        printf("romfs mods: %s%s: %d files (%d replace the game's, %d added)", name, !strcmp(g_rom_mod[i], prompt) ? " (button prompts)" : "",
+               files[i], repl[i], files[i] - repl[i]);
+        if (mf->n) printf(", %d files inside the game's archives", mf->n - unused);
+        printf("\n");
+        if (unused)
+            printf("romfs mods: %s: %d files are NOT USED (the first: %s): no archive of the game has a file of that name. A new file goes in a "
+                   "folder named like its archive (romfs\\pl_000\\pl\\... for pl_000.pkz)\n", name, unused, first);
+        trace_printf("     romfs mod %d (first wins): %s, %d files, %d replace the game's, %d inside archives\n", i, g_rom_mod[i], files[i], repl[i], mf->n - unused);
+    }
 }
 static void rom_mods_init(void) {
     const char *env = getenv("WT_MODS");
@@ -327,13 +604,7 @@ static void rom_mods_init(void) {
     }
     for (int i = nroots - 1; i >= 0 && g_rom_mods < ROM_MOD_MAX; i--) snprintf(g_rom_mod[g_rom_mods++], MAX_PATH, "%s", roots[i]);
     if (nroots + (prompt[0] != 0) > ROM_MOD_MAX) printf("romfs mods: more than %d mods with a romfs\\, the first ones by name are left out\n", ROM_MOD_MAX);
-    for (int i = 0; i < g_rom_mods; i++) {
-        int files = 0, repl = 0;
-        mod_report(g_rom_mod[i], "", &files, &repl, 0);
-        printf("romfs mods: %s%s: %d files (%d replace the game's, %d added)\n", g_rom_mod[i] + strlen(dir) + 1,
-               !strcmp(g_rom_mod[i], prompt) ? " (button prompts)" : "", files, repl, files - repl);
-        trace_printf("     romfs mod %d (first wins): %s, %d files, %d replace the game's\n", i, g_rom_mod[i], files, repl);
-    }
+    rom_mods_layers(dir, prompt);
     if (g_rom_mods) printf("romfs mods: %d active from %s%s\n", g_rom_mods, dir, nprompt && !prompt[0] ? " (Switch button prompts)" : "");
     for (int i = 0; i < n; i++) free(names[i]);
     free(ini);
@@ -383,7 +654,6 @@ static uint32_t split_path(const char *guest, Mount **mount, char *rel) {
     *mount = m;
     return 0;
 }
-static void join(char *out, const char *root, const char *rel) { if (rel[0]) snprintf(out, MAX_PATH, "%s\\%s", root, rel); else snprintf(out, MAX_PATH, "%s", root); }
 /* The host path that currently holds `rel` in the mount's view; returns 0 when it does not exist in the view. */
 static int view_path(Mount *m, const char *rel, char *out) {
     if (m->kind == MK_ROM)                                /* [Recomps#1] RomFS mods first */
@@ -400,8 +670,19 @@ static int view_path(Mount *m, const char *rel, char *out) {
 int fs_rom_mod_serves(const char *rel, const char *mod) {
     char out[MAX_PATH];
     fs_roots();
+    PkzView *v = pkz_view_for(rel);                       /* #181: layered by entry: one of the files the view is made of */
+    for (int k = 0; v && k < v->nparts; k++) if (strstr(v->part[k].path, mod)) return 1;
+    if (v) return 0;
     for (int i = 0; i < g_rom_mods; i++) { join(out, g_rom_mod[i], rel); if (exists(out)) return strstr(g_rom_mod[i], mod) != NULL; }
     return 0;
+}
+/* Used by nnfsdir.c: 1 = `name` in this folder of rom:/ is a mod's single file of an archive, or a folder of them: not listed (#46) */
+int fs_rom_hidden(const char *guest_dir, const char *name) {
+    Mount *m; char rel[MAX_PATH];
+    fs_lock();
+    int r = !split_path(guest_dir, &m, rel) && m->kind == MK_ROM && !rel[0] && pkz_top(name);
+    fs_unlock();
+    return r;
 }
 static int view_parent_is_dir(Mount *m, const char *rel) {
     char parent[MAX_PATH], host[MAX_PATH];
@@ -628,7 +909,7 @@ static void fs_Unmount(Ctx *c) {                         /* (const char *name): 
     fs_lock();
     Mount *m = name ? mount_find(name, strlen(name)) : NULL;
     if (m) {
-        for (int i = 0; i < OPEN_MAX; i++) if (g_open[i].h && g_open[i].mount == m) { CloseHandle(g_open[i].h); g_open[i].h = NULL; }   /* [sdk 0x1f4870] the accessor closes what is left open */
+        for (int i = 0; i < OPEN_MAX; i++) if (g_open[i].h && g_open[i].mount == m) { pkz_open_close(g_open[i].h); CloseHandle(g_open[i].h); g_open[i].h = NULL; }   /* [sdk 0x1f4870] the accessor closes what is left open */
         if (m->work[0]) remove_tree(m->work);
         tomb_clear(m);
         trace_printf("     fs unmount \"%s\"\n", name);
@@ -792,6 +1073,85 @@ static void prompt_swap_close(HANDLE h) {
     ReleaseSRWLockExclusive(&g_pswap_lock);
 }
 
+/* [witchtime] #181: the open handles of layered archives (pkz_views_build). The game's handle is on the game's own
+ * archive (the view's first file); a read is answered from the table, from that handle, or from a mod's file, which
+ * stays open for the next read of the same entry. */
+typedef struct { HANDLE h; PkzView *v; HANDLE src; int src_part; } PkzOpen;
+static PkzOpen g_pkz_open[256];
+static SRWLOCK g_pkz_lock = SRWLOCK_INIT;
+static uint64_t read_host(HANDLE h, uint64_t pos, void *buf, uint64_t size) {
+    uint64_t total = 0;
+    while (total < size) {
+        OVERLAPPED ov = {0};
+        ov.Offset = (DWORD)(pos + total);
+        ov.OffsetHigh = (DWORD)((pos + total) >> 32);
+        DWORD chunk = size - total > 0x40000000 ? 0x40000000 : (DWORD)(size - total), got = 0;
+        if (!ReadFile(h, (char *)buf + total, chunk, &got, &ov) || got == 0) break;
+        total += got;
+    }
+    return total;
+}
+static int pkz_open_add(HANDLE h, PkzView *v) {
+    int ok = 0;
+    AcquireSRWLockExclusive(&g_pkz_lock);
+    for (int i = 0; i < 256 && !ok; i++) if (!g_pkz_open[i].h) { g_pkz_open[i] = (PkzOpen){h, v, NULL, 0}; ok = 1; }
+    ReleaseSRWLockExclusive(&g_pkz_lock);
+    return ok;
+}
+static PkzOpen *pkz_open_of(HANDLE h) {
+    PkzOpen *o = NULL;
+    if (!g_pkz_views) return NULL;
+    AcquireSRWLockShared(&g_pkz_lock);
+    for (int i = 0; i < 256 && !o; i++) if (g_pkz_open[i].h == h) o = &g_pkz_open[i];
+    ReleaseSRWLockShared(&g_pkz_lock);
+    return o;
+}
+static void pkz_open_close(HANDLE h) {
+    PkzOpen *o = pkz_open_of(h);
+    if (!o) return;
+    AcquireSRWLockExclusive(&g_pkz_lock);
+    if (o->src) CloseHandle(o->src);
+    memset(o, 0, sizeof *o);
+    ReleaseSRWLockExclusive(&g_pkz_lock);
+}
+static uint64_t pkz_view_read(PkzOpen *o, uint64_t off, uint8_t *buf, uint64_t size) {
+    PkzView *v = o->v;
+    uint64_t total = 0;
+    while (total < size && off + total < v->vsize) {
+        uint64_t at = off + total, n = size - total;
+        if (at < v->head_len) { if (n > v->head_len - at) n = v->head_len - at; memcpy(buf + total, v->head + at, (size_t)n); total += n; continue; }
+        int k = -1;
+        for (int lo = 0, hi = v->nparts - 1; lo <= hi; ) { int mid = (lo + hi) / 2; if (v->part[mid].voff <= at) { k = mid; lo = mid + 1; } else hi = mid - 1; }
+        if (k < 0 || at >= v->part[k].voff + v->part[k].size) {      /* the padding between two files */
+            uint64_t end = k + 1 < v->nparts ? v->part[k + 1].voff : v->vsize;
+            if (n > end - at) n = end - at;
+            memset(buf + total, 0, (size_t)n); total += n;
+            continue;
+        }
+        PkzPart *p = &v->part[k];
+        HANDLE s = o->h;
+        if (n > p->voff + p->size - at) n = p->voff + p->size - at;
+        if (k) {                                          /* a mod's file: the one kept from the last read, or opened now */
+            AcquireSRWLockExclusive(&g_pkz_lock);
+            s = o->src && o->src_part == k ? o->src : NULL;
+            if (s) o->src = NULL;
+            ReleaseSRWLockExclusive(&g_pkz_lock);
+            if (!s) s = CreateFileA(p->path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (s == INVALID_HANDLE_VALUE) break;
+        }
+        uint64_t got = read_host(s, at - p->voff, buf + total, n);
+        if (k) {
+            HANDLE old;
+            AcquireSRWLockExclusive(&g_pkz_lock);
+            old = o->src; o->src = s; o->src_part = k;
+            ReleaseSRWLockExclusive(&g_pkz_lock);
+            if (old) CloseHandle(old);
+        }
+        total += got;
+        if (got != n) break;
+    }
+    return total;
+}
 /* [witchtime] The PC menu's hint (pcmenu.c): B3's pause menu reads ui/ui_photomode.dat from ui_000.pkz each time it opens (the
  * Options screen itself is loaded once at the start). The entry's offset is read from the archive's table at its first open
  * (format: docs/RE_NOTES.md section 4); a read at that offset through a handle of that archive shows the hint. */
@@ -799,18 +1159,18 @@ void pcmenu_hint(void);
 static HANDLE g_ui_h[4];
 static volatile LONG g_ui_n;
 static int64_t g_ph_off = -2;                          /* -2 not looked up yet, -1 not in the archive */
-static void ui_pkz_open(HANDLE h, const char *game_path, const char *host_path) {
+static void ui_pkz_open(HANDLE h, const char *game_path, PkzOpen *o) {
     size_t n = strlen(game_path);
     if (n < 11 || _stricmp(game_path + n - 11, "/ui_000.pkz")) return;
     if (g_ph_off == -2) {
-        FILE *f = fopen(host_path, "rb");
         uint8_t head[0x20], *t = NULL;
         uint32_t count = 0, toff = 0, nsize = 0;
         g_ph_off = -1;
-        if (f && fread(head, 1, 0x20, f) == 0x20 && !memcmp(head, "pkzl", 4)) {
+        #define UI_READ(pos, buf, len) ((o ? pkz_view_read(o, pos, buf, len) : read_host(h, pos, buf, len)) == (len))      /* #181: the table the game is given */
+        if (UI_READ(0, head, 0x20) && !memcmp(head, "pkzl", 4)) {
             memcpy(&count, head + 0x10, 4); memcpy(&toff, head + 0x14, 4); memcpy(&nsize, head + 0x18, 4);
             size_t tl = (size_t)count * 0x20 + nsize;
-            if (count < 100000 && nsize < (16u << 20) && (t = malloc(tl + 1)) && !fseek(f, toff, SEEK_SET) && fread(t, 1, tl, f) == tl) {
+            if (count < 100000 && nsize < (16u << 20) && (t = malloc(tl + 1)) && UI_READ(toff, t, tl)) {
                 t[tl] = 0;
                 for (uint32_t i = 0; i < count; i++) {
                     uint32_t no; uint64_t off;
@@ -820,7 +1180,6 @@ static void ui_pkz_open(HANDLE h, const char *game_path, const char *host_path) 
             }
         }
         free(t);
-        if (f) fclose(f);
         printf("pcmenu: the pause menu's ui/ui_photomode.dat %s\n", g_ph_off >= 0 ? "found in ui_000.pkz: the PC menu's hint is shown when the pause menu opens" : "NOT found in ui_000.pkz: no hint");
     }
     g_ui_h[InterlockedIncrement(&g_ui_n) & 3] = h;
@@ -834,11 +1193,13 @@ static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const
     Mount *m = NULL;
     HANDLE h = INVALID_HANDLE_VALUE;
     int write = (A2 & 2) != 0;
+    PkzView *view = NULL;
     fs_lock();
     uint32_t r = split_path(STR(1), &m, rel);
     if (!r && write && m->kind == MK_ROM) r = RESULT_PERMISSION_DENIED;
     if (!r) {
         int found = view_path(m, rel, path) && !is_dir(path);
+        if (found && m->kind == MK_ROM && (view = pkz_view_for(rel))) strcpy(path, view->part[0].path);      /* #181 */
         if (!found) r = RESULT_PATH_NOT_FOUND;
         else if (write && m->work[0]) {                    /* copy-on-write: the committed file is never opened for writing */
             char w[MAX_PATH];
@@ -851,6 +1212,7 @@ static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const
     if (!r) {
         h = CreateFileA(path, GENERIC_READ | (write ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) r = RESULT_PATH_NOT_FOUND;
+        else if (view && !pkz_open_add(h, view)) { CloseHandle(h); r = RESULT_GENERIC_FAILURE; }       /* 256 layered archives open at once: the game has 72 */
     }
     int modded = !r && m->kind == MK_ROM && g_rom_mods && _strnicmp(path, m->root, strlen(m->root)) != 0;   /* [Recomps#1] */
     if (InterlockedIncrement(&g_open_log) <= 200 || r || modded)     /* D2: every failed open is logged, not only the first 200 */
@@ -860,25 +1222,17 @@ static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const
         if (on) printf("fslog: open \"%s\" mode %d -> %s\n", STR(1), (int)A2, r ? "NOT FOUND" : "ok"); }
     if (r) { wr64(A0, 0); RET(r); return; }
     open_remember(h, (int)(A2 & 7), m);
-    ui_pkz_open(h, STR(1), path);
+    ui_pkz_open(h, STR(1), view ? pkz_open_of(h) : NULL);
     if (modded) prompt_swap_open(h, path);              /* [Recomps#1] finding 148 */
     wr64(A0, (uint64_t)h);
     RET(0);
 }
-static void fs_CloseFile(Ctx *c) { if (A0) { open_mode((HANDLE)A0, 1); prompt_swap_close((HANDLE)A0); CloseHandle((HANDLE)A0); } }
+static void fs_CloseFile(Ctx *c) { if (A0) { open_mode((HANDLE)A0, 1); prompt_swap_close((HANDLE)A0); pkz_open_close((HANDLE)A0); CloseHandle((HANDLE)A0); } }
 extern int g_hitch_ms; void hitch_note(const char *s);      /* hitch.c: WT_HITCH */
 static uint64_t read_at(HANDLE h, int64_t offset, void *buf, uint64_t size) {
-    uint64_t total = 0;
     if (g_hitch_ms) { char note[80]; snprintf(note, sizeof note, "read of %llu KB", (unsigned long long)(size >> 10)); hitch_note(note); }
-    while (total < size) {
-        OVERLAPPED ov = {0};
-        uint64_t pos = (uint64_t)offset + total;
-        ov.Offset = (DWORD)pos;
-        ov.OffsetHigh = (DWORD)(pos >> 32);
-        DWORD chunk = size - total > 0x40000000 ? 0x40000000 : (DWORD)(size - total), got = 0;
-        if (!ReadFile(h, (char *)buf + total, chunk, &got, &ov) || got == 0) break;
-        total += got;
-    }
+    PkzOpen *o = pkz_open_of(h);                         /* #181: an archive the mods layer by entry */
+    uint64_t total = o ? pkz_view_read(o, (uint64_t)offset, buf, size) : read_host(h, (uint64_t)offset, buf, size);
     prompt_swap_read(h, (uint64_t)offset, (uint8_t *)buf, total);      /* [Recomps#1] finding 148 */
     /* [Recomps#1] the heap is write-watched (r2_imports.c): one CPU write per page of what was read, so the renderer's
      * texture-change check (nvn_gl.c ww_newest) sees the pages whatever the kernel's copy into them counts as */
@@ -924,7 +1278,9 @@ static void fs_SetFileSize(Ctx *c) {                  /* [witchtime] (handle, si
 }
 static void fs_GetFileSize(Ctx *c) {                  /* (s64 *out, handle) */
     LARGE_INTEGER size;
+    PkzOpen *o = pkz_open_of((HANDLE)A1);
     if (!GetFileSizeEx((HANDLE)A1, &size)) { RET(RESULT_GENERIC_FAILURE); return; }
+    if (o) size.QuadPart = (LONGLONG)o->v->vsize;         /* #181: the game bounds an archive's data by this (#146) */
     wr64(A0, (uint64_t)size.QuadPart);
     RET(0);
 }
@@ -1029,6 +1385,58 @@ static int st_read_is(Ctx *c, const char *guest, const char *text) {
     buf[got] = 0;
     return text && strcmp(buf, text) == 0;
 }
+/* #181: a pkz archive of `n` entries (name, data; stored), data at multiples of 0x40 as in the game's */
+static void st_pkz(const char *path, int n, const char *const *name, const char *const *data) {
+    uint8_t head[0x20] = "pkzl", ent[0x20], pad[0x40] = {0};
+    uint32_t nsize = 5, v;
+    uint64_t off, q;
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    for (int i = 0; i < n; i++) nsize += (uint32_t)strlen(name[i]) + 1;
+    off = (0x20 + (uint64_t)n * 0x20 + nsize + 0x3f) & ~0x3full;
+    v = 0x20000; memcpy(head + 4, &v, 4); v = (uint32_t)n; memcpy(head + 0x10, &v, 4); v = 0x20; memcpy(head + 0x14, &v, 4);
+    memcpy(head + 0x18, &nsize, 4); v = 0x1000; memcpy(head + 0x1c, &v, 4);      /* the size at 0x08 stays 0: nothing may trust it (#146) */
+    fwrite(head, 1, 0x20, f);
+    v = 5;
+    for (int i = 0; i < n; i++) {
+        memset(ent, 0, sizeof ent);
+        memcpy(ent, &v, 4); q = strlen(data[i]); memcpy(ent + 8, &q, 8); memcpy(ent + 0x10, &off, 8); memcpy(ent + 0x18, &q, 8);
+        fwrite(ent, 1, 0x20, f);
+        v += (uint32_t)strlen(name[i]) + 1; off += 0x40;
+    }
+    fwrite("None", 1, 5, f);
+    for (int i = 0; i < n; i++) fwrite(name[i], 1, strlen(name[i]) + 1, f);
+    fwrite(pad, 1, (size_t)(0x40 - (0x20 + n * 0x20 + nsize) % 0x40) % 0x40, f);
+    for (int i = 0; i < n; i++) { fwrite(data[i], 1, strlen(data[i]), f); fwrite(pad, 1, 0x40 - strlen(data[i]), f); }
+    fclose(f);
+}
+static void st_file(const char *dir, const char *rel, const char *text) {
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%s\\%s", dir, rel);
+    make_parents(path);
+    FILE *f = fopen(path, "wb");
+    if (f) { fputs(text, f); fclose(f); }
+}
+/* the entry `name` of the open archive `h`, read the way the game does (size, header, table, data): 1 = its data is `text` (NULL: no such entry) */
+static int st_entry_is(Ctx *c, uint64_t h, const char *name, const char *text, int *count) {
+    uint8_t head[0x20], t[2048], data[64];
+    uint64_t got = 0, fsize = 0, off, csize;
+    uint32_t n, toff, nsize, no;
+    #define ST_READ(pos, buf, len) (c->x[0] = (uint64_t)(uintptr_t)&got, c->x[1] = h, c->x[2] = (pos), c->x[3] = (uint64_t)(uintptr_t)(buf), c->x[4] = (len), fs_ReadFileCount(c), got == (len))
+    c->x[0] = (uint64_t)(uintptr_t)&fsize; c->x[1] = h; fs_GetFileSize(c);
+    if (!ST_READ(0, head, 0x20) || memcmp(head, "pkzl", 4)) return 0;
+    memcpy(&n, head + 0x10, 4); memcpy(&toff, head + 0x14, 4); memcpy(&nsize, head + 0x18, 4);
+    if ((uint64_t)n * 0x20 + nsize > sizeof t || !ST_READ(toff, t, (uint64_t)n * 0x20 + nsize)) return 0;
+    if (count) *count = (int)n;
+    for (uint32_t i = 0; i < n; i++) {
+        memcpy(&no, t + i * 0x20, 4); memcpy(&off, t + i * 0x20 + 0x10, 8); memcpy(&csize, t + i * 0x20 + 0x18, 8);
+        if (strcmp((char *)t + n * 0x20 + no, name)) continue;
+        if (!text || csize != strlen(text) || csize > sizeof data || off + csize > fsize || (off & 0x3f) || !ST_READ(off, data, csize)) return 0;
+        return !memcmp(data, text, (size_t)csize);
+    }
+    #undef ST_READ
+    return text == NULL;
+}
 int nnfs_selftest(Ctx *c) {
     char saved_root[MAX_PATH], t[MAX_PATH], save[MAX_PATH], a[MAX_PATH], n[MAX_PATH], work[MAX_PATH], marker[MAX_PATH], journal[MAX_PATH];
     int bad = 0;
@@ -1101,6 +1509,56 @@ int nnfs_selftest(Ctx *c) {
         journal_recover(save);
         dead[strlen(dead) - 6] = 0;
         FSCHECK(!exists(dead) && st_host_is(a, "THIRD!!!!"), "the working folder of a dead process was not discarded");
+    }
+    /* #181: a mod's single files and partial archives inside the game's archives */
+    {
+        char rom[MAX_PATH], mods[MAX_PATH], path[MAX_PATH], saved_rom[MAX_PATH], saved_mod[2][MAX_PATH];
+        int saved_mods = g_rom_mods, count = 0;
+        static const char *const gn[] = {"x/a.bin", "x/b.bin", "x/c.bin", "x/d.bin"}, *const gd[] = {"AAAA", "BBBB", "CCCC", "DDDD"};
+        static const char *const mn[] = {"x/c.bin", "x/new.bin"}, *const md[] = {"c-m1", "new1"};
+        #define PKCHECK(cond, text) do { if (!(cond)) { printf("  FAIL fs archive layers: %s\n", text); bad++; } } while (0)
+        strcpy(saved_rom, g_rom_root); strcpy(saved_mod[0], g_rom_mod[0]); strcpy(saved_mod[1], g_rom_mod[1]);
+        snprintf(rom, sizeof rom, "%s\\rom", t); snprintf(mods, sizeof mods, "%s\\mods", t);
+        strcpy(g_rom_root, rom);
+        snprintf(g_rom_mod[0], MAX_PATH, "%s\\m2\\romfs", mods); snprintf(g_rom_mod[1], MAX_PATH, "%s\\m1\\romfs", mods);      /* m2 wins */
+        g_rom_mods = 2;
+        st_file(rom, "movie\\a.webm", "movie");
+        snprintf(path, sizeof path, "%s\\aa_000.pkz", rom); st_pkz(path, 4, gn, gd);
+        snprintf(path, sizeof path, "%s\\bb_000.pkz", rom); st_pkz(path, 4, gn, gd);
+        st_file(g_rom_mod[1], "x\\b.bin", "b-m1-single");                    /* at the entry's path */
+        st_file(g_rom_mod[1], "x\\zz.bin", "no such entry");
+        st_file(g_rom_mod[1], "movie\\b.webm", "a whole file, as before");
+        snprintf(path, sizeof path, "%s\\aa_000.pkz", g_rom_mod[1]); st_pkz(path, 2, mn, md);      /* an archive of two entries */
+        st_file(g_rom_mod[0], "aa_000\\x\\a.bin", "a-m2");                    /* in the archive's folder */
+        st_file(g_rom_mod[0], "aa_000\\x\\c.bin", "c-m2");
+        st_file(g_rom_mod[0], "aa_000\\y\\add.bin", "added");
+        snprintf(path, sizeof path, "%s\\bb_000.pkz", g_rom_mod[0]); st_pkz(path, 4, gn, gd);      /* a whole archive: no view */
+        rom_mods_layers(mods, "");
+        PKCHECK(g_pkz_views == 1 && pkz_view_for("aa_000.pkz"), "not exactly the archive with single files is layered");
+        PKCHECK(mount_add("strom", MK_ROM, rom) == 0, "the rom did not mount");
+        c->x[0] = (uint64_t)(uintptr_t)&h; c->x[1] = (uint64_t)(uintptr_t)"strom:/aa_000.pkz"; c->x[2] = 1; fs_OpenFile(c);
+        PKCHECK(c->x[0] == 0, "the layered archive did not open");
+        PKCHECK(st_entry_is(c, h, "x/a.bin", "a-m2", &count), "a single file in the archive's folder does not replace the entry");
+        PKCHECK(count == 6, "the table is not the game's 4 entries and the 2 added");
+        PKCHECK(st_entry_is(c, h, "x/b.bin", "b-m1-single", NULL), "a single file at the entry's path does not replace the entry");
+        PKCHECK(st_entry_is(c, h, "x/c.bin", "c-m2", NULL), "the mod that sorts later does not win an entry both change");
+        PKCHECK(st_entry_is(c, h, "x/d.bin", "DDDD", NULL), "an entry no mod has is not the game's");
+        PKCHECK(st_entry_is(c, h, "x/new.bin", "new1", NULL), "a new entry of a mod's archive is not added");
+        PKCHECK(st_entry_is(c, h, "y/add.bin", "added", NULL), "a new single file in the archive's folder is not added");
+        PKCHECK(st_entry_is(c, h, "x/zz.bin", NULL, NULL), "a single file no archive is named for was added");
+        c->x[0] = h; fs_CloseFile(c);
+        c->x[0] = (uint64_t)(uintptr_t)&h; c->x[1] = (uint64_t)(uintptr_t)"strom:/bb_000.pkz"; c->x[2] = 1; fs_OpenFile(c);
+        PKCHECK(c->x[0] == 0 && !pkz_open_of((HANDLE)h) && st_entry_is(c, h, "x/a.bin", "AAAA", &count) && count == 4, "a whole archive of a mod is not served as the file it is");
+        c->x[0] = h; fs_CloseFile(c);
+        PKCHECK(fs_rom_hidden("strom:/", "x") && fs_rom_hidden("strom:/", "aa_000") && !fs_rom_hidden("strom:/", "movie") && !fs_rom_hidden("strom:/", "aa_000.pkz") && !fs_rom_hidden("strom:/movie", "x"),
+                "the single files are listed to the game (its name pool, #46), or something else is hidden");
+        PKCHECK(st_read_is(c, "strom:/movie/b.webm", "a whole file, as before"), "a mod's whole file outside the archives is not read");
+        PKCHECK(g_mod_files[1].n == 2 && g_mod_files[1].used[0] + g_mod_files[1].used[1] == 1, "the single file with no entry is not reported as unused");
+        c->x[0] = (uint64_t)(uintptr_t)"strom"; fs_Unmount(c);
+        strcpy(g_rom_root, saved_rom); strcpy(g_rom_mod[0], saved_mod[0]); strcpy(g_rom_mod[1], saved_mod[1]);
+        g_rom_mods = saved_mods;
+        pkz_index();                                         /* drops the scratch views; the self-test ends the process */
+        #undef PKCHECK
     }
     c->x[0] = (uint64_t)(uintptr_t)"st"; fs_Unmount(c);
     remove_tree(t);
