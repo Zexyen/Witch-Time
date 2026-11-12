@@ -1752,6 +1752,18 @@ never drawn; `WT_VK_GPUCOUNT_MULTI=0`: off). Measured in that ride on the RX 907
 3.7-6.7 ms to 0.2-0.3 ms a frame, batch replay 19-25 ms to 15.6-16.9 ms, 4.1 to 3.1 submissions, GPU time the same
 (4.4-7.8 ms). Not measured: Windows, AMD's and NVIDIA's own drivers, and whether the reporters' GPUs alone fit the frame.
 
+**The exposure copies when the GPU is behind (2026-11-12; issue 156).** A v0.9.1 log from an RX 6800 XT (1440p, scale 2.4)
+still had the ride at 22-26 fps in its busiest stretch: "GPU copies: ... 0.3-0.84 settled with a wait" a frame, 10-22 ms of
+GPU wait in a 27-40 ms replay. The four exposure copies of a frame are overlays that read the kept luminance buffer
+(`gcp_add`), and compute writes that buffer again every frame; `cb_new` then settled the overlays first, which waits for the
+last frame whenever the GPU has not finished it. Now the slot's `up` command buffer, which runs before the dispatch, copies
+those bytes into a slot of a small side buffer and the overlay reads the slot from then on (`gcp_src_rewritten`;
+`WT_VK_GPUCOPY_SIDE=0`: off; the log line counts "moved to a side slot"). Reproduced on the RX 9070 XT only with the GPU
+loaded by other copies of the game (Shibuya, 1440p, scale 2.4, on and off side by side under the same load): settled with a
+wait 0.96-0.97 to 0.00 a frame, wait for the GPU 15.7-22.9 to 0.4-0.8 ms, batch replay 22-31 to 7-8 ms, 29-33 to 45 fps. A
+test-only compare of the slot's bytes with the ones the wait would have read: 14,000 of 14,000 equal. Not measured: the ride
+itself, Windows, AMD's and NVIDIA's own drivers.
+
 ## Cutscenes on a slow disk (2026-11-05; issue 136)
 
 Issue 136 (Windows, RX 6600, v0.7.0): a cutscene's first viewing freezes for 1-4 s, less the second time. **Cause**: the
