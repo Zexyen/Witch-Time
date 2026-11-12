@@ -86,6 +86,7 @@ private:
 	std::vector<SettingRow> settings;  // the rows of the tab shown
 	int tab = 0;
 	float row_step = 26;              // dp each settings row steps right of the one above (refresh_settings)
+	int row_count = 0;                // rows of the tab shown (the rows under them come in after these)
 	float row_pitch = 56;             // dp from one settings row's top to the next one's
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
@@ -132,7 +133,7 @@ private:
 	void refresh_title();
 	void refresh_build();
 	void refresh_mods();
-	void refresh_settings();
+	void refresh_settings(int bumped = -1);
 	void set_tab(int t);
 	void step_setting(int index, int dir);
 	void convert_textures();
