@@ -5066,14 +5066,16 @@ static DWORD WINAPI hdr_watch(LPVOID arg) { (void)arg; for (;;) { Sleep(1000); h
 static void hdr_query(void) {                      /* [witchtime] Linux, the render thread at every present: SDL's window properties */
     SDL_PropertiesID p = SDL_GetWindowProperties((SDL_Window *)V.hwnd);
     LONG on = SDL_GetBooleanProperty(p, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
-    /* 1.0 = 80 nits (scRGB). With the desktop's HDR off (hdr = on) nothing is said: 203 nits, the white the desktop gives an HDR picture (BT.2408) */
-    LONG white = on ? (LONG)(SDL_GetFloatProperty(p, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) * 80000.0f) : 203000;
+    /* [#180] The desktop shows 203 nits of a PQ or scRGB picture (their reference white, color-management-v1) at its own
+     * brightness of SDR programs, so that is the white, and the monitor's peak in the picture's nits is 203 x the headroom.
+     * SDL's SDR white is the reference of the desktop's preferred description (80 on KDE), not of ours: white at 80 was
+     * 0.39 of the desktop's white. */
+    LONG white = 203000;
     LONG peak = on ? (LONG)((float)white * SDL_GetFloatProperty(p, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 0;
-    if (white < 40000 || white > 2000000) white = 203000;
-    LONG was = InterlockedExchange(&g_hdr_on, on), was_w = InterlockedExchange(&g_hdr_white_mn, white);
-    InterlockedExchange(&g_hdr_peak_mn, peak);
-    if (was != on || (on && (was_w - white > 500 || white - was_w > 500))) {
-        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: white %.0f nits, peak %.0f nits\n", (double)white / 1000.0, (double)peak / 1000.0);
+    LONG was = InterlockedExchange(&g_hdr_on, on), was_p = InterlockedExchange(&g_hdr_peak_mn, peak);
+    InterlockedExchange(&g_hdr_white_mn, white);
+    if (was != on || (on && (was_p - peak > 500 || peak - was_p > 500))) {
+        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: the monitor's peak is %.2f times the desktop's white (white 203 nits in the picture, peak %.0f)\n", (double)peak / (double)white, (double)peak / 1000.0);
         else printf("nvn_vk_hdr: the desktop's HDR is off for the window (or the session is not Wayland)\n");
         fflush(stdout);
     }
