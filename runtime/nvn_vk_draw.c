@@ -545,6 +545,35 @@ void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.
 static char g_step[256];
 static int g_step_busy;
 static int vk_step(void) { static int v = -1; if (v < 0) { v = getenv("WT_VK_STEP") && atoi(getenv("WT_VK_STEP")); if (v) printf("nvn_vk: WT_VK_STEP=1 (a test): the GPU finishes every command of the game before the next one; very slow\n"); } return v; }
+/* [issue 55] TEST: an Intel GPU on Windows (a UHD 620, driver 101.2145): the driver faults in vkCmdBeginRendering when the pass
+ * follows compute dispatches in one command buffer (not when every command has its own: WT_VK_STEP), and skinned models come
+ * out as ribbons. Two guesses, both unproven: such a pass starts a new command buffer (pass_begin), and compute stages ask for
+ * 32 lanes, the width the lane emulation of the translator is written for (sg_required). WT_VK_INTEL=0 off, 1 on any GPU. */
+static int g_cmd_disp;
+static int vk_intel(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("WT_VK_INTEL");
+#ifdef _WIN32
+        v = e ? atoi(e) : V.props.vendorID == 0x8086;
+#else
+        v = e ? atoi(e) : 0;
+#endif
+    }
+    return v;
+}
+static uint32_t sg_required(void) {
+    static LONG done; static uint32_t req;
+    if (!vk_intel()) return 0;
+    VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
+    VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    p2.pNext = &p13;
+    vkGetPhysicalDeviceProperties2(V.gpu, &p2);
+    uint32_t r = D.f13.subgroupSizeControl && (p13.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) && p13.minSubgroupSize <= 32 && p13.maxSubgroupSize >= 32 ? 32 : 0;
+    if (!InterlockedExchange(&done, 1)) printf("nvn_vk_intel: on (WT_VK_INTEL): a pass after compute dispatches starts a new command buffer; compute stages: subgroups of %u to %u lanes offered, size control %d, stages 0x%x: %s\n", p13.minSubgroupSize, p13.maxSubgroupSize, (int)D.f13.subgroupSizeControl, (unsigned)p13.requiredSubgroupSizeStages, r ? "32 lanes required" : "NOT required (the driver cannot)");
+    req = r;
+    return req;
+}
 static void slot_wait(Slot *s) {
     if (!s->pending) return;
     for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial < s->serial) slot_wait(&R.slot[i]);   /* [Recomps#1] in submission order (oq_land) */
@@ -623,7 +652,7 @@ static void cmd_begin(void) {
         if (g_pt_on) { VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO}; qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = NSLOT * PT_MAX; VKC(vkCreateQueryPool(V.device, &qi, NULL, &g_pt_pool)); }
     }
     if (g_pt_on > 0) { vkCmdResetQueryPool(s->cmd, g_pt_pool, (uint32_t)R.cur * PT_MAX, PT_MAX); g_pt_slot[R.cur].n = 0; g_pt_slot[R.cur].last_what = -1; }
-    g_cmd_draws = 0;
+    g_cmd_draws = 0; g_cmd_disp = 0;
     garbage_collect();
 }
 static volatile LONG g_in_fight;
@@ -1857,7 +1886,8 @@ static int pass_begin(void) {
     int w = 0, h = 0;
     if (R.in_pass) return 1;
     if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : VK_SPLIT_DEFAULT; }
-    if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
+    if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }
+    else if (g_cmd_disp && R.recording && vk_intel()) { cmd_submit(NULL, NULL); g_splits++; }      /* [issue 55] TEST, see vk_intel */      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
     memset(ca, 0, sizeof ca); memset(&da, 0, sizeof da);
@@ -3416,6 +3446,8 @@ static void compute_pipe_make(VStage *v) {         /* any thread */
         VKC(vkCreatePipelineLayout(V.device, &pl, NULL, &v->cl));
         VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = v->mod; ci.stage.pName = "main"; ci.layout = v->cl;
+        VkPipelineShaderStageRequiredSubgroupSizeCreateInfo sg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO};      /* [issue 55] TEST, see vk_intel */
+        if ((sg.requiredSubgroupSize = sg_required())) ci.stage.pNext = &sg;
         VkPipeline cp = NULL;
         VkResult r = vkCreateComputePipelines(V.device, g_pcache, 1, &ci, NULL, &cp);
         if (r != VK_SUCCESS) vkd_fail("vkCreateComputePipelines (compute stage %u): %s", v->id, vk_result_name(r));
@@ -3507,6 +3539,7 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
     ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
+    g_cmd_disp++;
     ckpt(2, NULL, NULL, NULL);
     g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
     if (v->images) storage_barrier();              /* [witchtime] */
