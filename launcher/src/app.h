@@ -121,6 +121,7 @@ private:
 	void handle(SDL_Event& ev);
 	bool key(Rml::Input::KeyIdentifier k);
 	void hover_focus();
+	bool hint_click(float x);
 	void back();
 	void tick();
 	void tick_clock();
