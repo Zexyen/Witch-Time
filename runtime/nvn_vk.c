@@ -33,6 +33,9 @@
 #define VKF_WIN32(X) X(VkResult, vkCreateWin32SurfaceKHR, (VkInstance, const VkWin32SurfaceCreateInfoKHR *, const VkAllocationCallbacks *, VkSurfaceKHR *))
 #else
 #include <SDL3/SDL_vulkan.h>                              /* Linux: the window is SDL's (display.c), and so is its surface */
+#ifdef __APPLE__
+#include <SDL3/SDL_init.h>                                /* SDL_RunOnMainThread (vk_surface_on_main) */
+#endif
 #define VKF_WIN32(X)
 #endif
 #include "nvn_front.h"
@@ -114,6 +117,9 @@ static struct {
     VkDevice device;
     VkQueue queue;
     VkSurfaceKHR surface;
+#ifdef __APPLE__
+    char surface_error[256];                    /* macOS: SDL's message from the first thread (vk_surface_on_main) */
+#endif
     VkSwapchainKHR swapchain;
     VkSurfaceFormatKHR format;
     VkPresentModeKHR mode;
@@ -308,6 +314,11 @@ static void *vk_sym(const char *name) {
     return p;
 }
 
+#ifdef __APPLE__
+static void SDLCALL vk_surface_on_main(void *hwnd) {
+    if (!SDL_Vulkan_CreateSurface((SDL_Window *)hwnd, V.instance, NULL, &V.surface)) { V.surface = VK_NULL_HANDLE; snprintf(V.surface_error, sizeof V.surface_error, "%s", SDL_GetError()); }
+}
+#endif
 /* Render thread, once. Returns 1; any failure prints its cause and ends the process with code 5 (as the OpenGL path does). */
 int nvn_vk_init(void *hwnd) {
     static const char *const k_wanted[] = {"VK_KHR_swapchain", "VK_EXT_extended_dynamic_state3", "VK_EXT_vertex_input_dynamic_state", "VK_KHR_push_descriptor", "VK_EXT_custom_border_color",
@@ -345,6 +356,15 @@ int nvn_vk_init(void *hwnd) {
         if (!next) { printf("nvn_vk: SDL names no Vulkan surface extension: %s\n", SDL_GetError()); fflush(stdout); ExitProcess(5); }
     }
 #endif
+    int portability = 0;
+#ifdef __APPLE__
+    /* macOS: MoltenVK (Vulkan on Metal) is a "portability" driver, which the loader lists only when asked for */
+    if (has_name(iext, niext, "VK_KHR_portability_enumeration")) {
+        portability = 1;
+        for (uint32_t i = 0; i < next; i++) if (!strcmp(exts[i], "VK_KHR_portability_enumeration")) portability = 2;      /* SDL named it already */
+        if (portability == 1) exts[next++] = "VK_KHR_portability_enumeration";
+    }
+#endif
     if (has_name(iext, niext, "VK_EXT_swapchain_colorspace")) exts[next++] = "VK_EXT_swapchain_colorspace";      /* [Recomps#1] finding 147: the HDR colour spaces */
     { const char *e = getenv("WT_VK_VALIDATE"); V.validate = e && atoi(e) != 0; }
     if (V.validate) {
@@ -363,6 +383,7 @@ int nvn_vk_init(void *hwnd) {
     memset(&ici, 0, sizeof ici);
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO; ici.pApplicationInfo = &app;
     ici.enabledLayerCount = nlayers; ici.ppEnabledLayerNames = layers; ici.enabledExtensionCount = next; ici.ppEnabledExtensionNames = exts;
+    if (portability) ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     r = vkCreateInstance(&ici, NULL, &V.instance);
     if (r != VK_SUCCESS) vk_fatal("vkCreateInstance", r);
     if (V.validate) {
@@ -385,6 +406,10 @@ int nvn_vk_init(void *hwnd) {
     si.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR; si.hinstance = GetModuleHandleA(NULL); si.hwnd = hwnd;
     r = vkCreateWin32SurfaceKHR(V.instance, &si, NULL, &V.surface);
     if (r != VK_SUCCESS) vk_fatal("vkCreateWin32SurfaceKHR", r);
+#elif defined(__APPLE__)
+    /* macOS: SDL makes the surface's Metal view in the window, which AppKit allows on the program's first thread only;
+     * nvn_gl_start waits there for this thread and runs what is handed over */
+    if (!SDL_RunOnMainThread(vk_surface_on_main, hwnd, true) || !V.surface) { printf("nvn_vk: SDL_Vulkan_CreateSurface: %s\n", V.surface_error); fflush(stdout); ExitProcess(5); }
 #else
     if (!SDL_Vulkan_CreateSurface((SDL_Window *)hwnd, V.instance, NULL, &V.surface)) { printf("nvn_vk: SDL_Vulkan_CreateSurface: %s\n", SDL_GetError()); fflush(stdout); ExitProcess(5); }
 #endif
@@ -424,7 +449,16 @@ int nvn_vk_init(void *hwnd) {
         static const char *const k_type[5] = {"other", "integrated GPU", "discrete GPU", "virtual GPU", "CPU"};
         int type = p.deviceType >= 0 && p.deviceType <= 4 ? p.deviceType : 0;
         int usable = family >= 0 && p.apiVersion >= VK_API_VERSION_1_3;
-        int score = !usable ? -1 : type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : type == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? 1 : 0;
+        int score = !usable ? -1 : type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 6 : type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 4 : type == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? 2 : 0;
+#ifdef __APPLE__
+        if (usable) {   /* macOS: the same GPU can come twice, through MoltenVK and through Mesa's KosmicKrisp (Homebrew's mesa): MoltenVK,
+                         * the one this was tested and is faster with (docs/STATUS.md, "macOS"); gpu = <number> picks the other */
+            VkPhysicalDeviceDriverProperties drv = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+            VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &drv};
+            void (*props2)(VkPhysicalDevice, VkPhysicalDeviceProperties2 *) = (void *)GetProcAddress(V.loader, "vkGetPhysicalDeviceProperties2");
+            if (props2) { props2(gpus[i], &p2); if (drv.driverID == VK_DRIVER_ID_MOLTENVK) score++; }
+        }
+#endif
         printf("nvn_vk: device %u: %s (%s, vendor 0x%04x device 0x%04x), Vulkan %u.%u.%u, driver 0x%08x%s\n", (unsigned)i, p.deviceName, k_type[type], p.vendorID, p.deviceID,
                VK_API_VERSION_MAJOR(p.apiVersion), VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion), p.driverVersion,
                family < 0 ? " - cannot present to the window with a graphics + compute queue" : p.apiVersion < VK_API_VERSION_1_3 ? " - below Vulkan 1.3" : "");

@@ -2,7 +2,9 @@
 
 One window for setting up, building and playing: it checks your dump, runs the build with live progress, lists mods,
 edits `config/graphics.ini`, and then starts the game in the same window. C++17, SDL3 and
-[RmlUi](https://github.com/mikke89/RmlUi) on SDL's GPU API. Linux and Windows.
+[RmlUi](https://github.com/mikke89/RmlUi) on SDL's GPU API. Linux and Windows; on macOS it builds (Homebrew's `sdl3`
+and `freetype`), draws its screens with Metal, starts the game as `build/witch-time-game`, as on Windows, and is also
+put in a bundle, `build/Witch Time.app` (`macos/make_app.sh`); `--play` was run there, the screens were not tried by hand.
 
 ## Build
 

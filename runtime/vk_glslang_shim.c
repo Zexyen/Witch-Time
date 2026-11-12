@@ -14,6 +14,9 @@
 #include <windows.h>
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
+#ifdef __APPLE__
+#include <spirv-tools/libspirv.h>
+#endif
 
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 static BOOL CALLBACK init_once(PINIT_ONCE once, PVOID arg, PVOID *ctx) { (void)once; (void)arg; (void)ctx; return glslang_initialize_process() != 0; }
@@ -61,6 +64,31 @@ __declspec(dllexport) int wt_glsl_to_spirv(int stage, const char *src, uint32_t 
             *words = malloc(n * sizeof(uint32_t));
             if (*words) { glslang_program_SPIRV_get(pr, *words); *count = n; ok = 1; }
         }
+#ifdef __APPLE__
+        static long opt_from = -1;                 /* WT_VK_SPVOPT=<words>: modules of that many words or more (0 = every one, -1 = none) */
+        if (opt_from == -1) { const char *e = getenv("WT_VK_SPVOPT"); opt_from = e ? (atol(e) < 0 ? -2 : atol(e)) : 32768; }
+        if (ok && opt_from >= 0 && *count >= (size_t)opt_from) {
+            /* [witchtime] macOS: the large modules (128 KB and more: optimizing all 8,000 doubled the first-run
+             * preparation) go through SPIRV-Tools' optimizer (its performance passes, as `spirv-opt -O`). The translator
+             * keeps every register in a variable; MoltenVK turns the module into Metal source as it stands, and Apple's
+             * Metal compiler gave up on the largest fragment stages (535 KB of SPIR-V became 734,000 lines: "Shader
+             * library compile failed", XPC_ERROR_CONNECTION_INTERRUPTED): the lighting pass was refused and the world
+             * stayed black. With the variables turned into values the same stage is 38,000 lines and compiles in under a
+             * second (docs/STATUS.md, "macOS"). A module the optimizer cannot take stays as it was. */
+            spv_optimizer_t *opt = spvOptimizerCreate(SPV_ENV_VULKAN_1_3);
+            spv_optimizer_options oo = spvOptimizerOptionsCreate();
+            spv_binary out = NULL;
+            spvOptimizerOptionsSetRunValidator(oo, false);
+            spvOptimizerRegisterPerformancePasses(opt);
+            if (spvOptimizerRun(opt, *words, *count, &out, oo) == SPV_SUCCESS && out && out->wordCount) {
+                uint32_t *w = malloc(out->wordCount * sizeof(uint32_t));
+                if (w) { memcpy(w, out->code, out->wordCount * sizeof(uint32_t)); free(*words); *words = w; *count = out->wordCount; }
+            }
+            if (out) spvBinaryDestroy(out);
+            spvOptimizerOptionsDestroy(oo);
+            spvOptimizerDestroy(opt);
+        }
+#endif
     }
 done:
     if (pr) glslang_program_delete(pr);

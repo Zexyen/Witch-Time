@@ -18,3 +18,6 @@ On Windows (`_WIN32`, the MinGW target `wtbuild` gives clang there) the headers 
 `jmp_buf` is its 256-byte layout and `setjmp` expands as mingw-w64's does (the UCRT's `_setjmp` with the frame from
 `__builtin_sponentry`), and `ldexpf` / `frexpf`, which the UCRT lacks, are inline over the double versions as mingw-w64
 gives them. `wtbuild check-freestanding --target windows` checks those objects against mingw-w64's headers.
+
+On macOS (`__APPLE__`, Apple silicon) only `jmp_buf` differs: the system's 48 `int`s (192 bytes), with its `setjmp`. The
+other declarations are the same C functions in libSystem.

@@ -19,6 +19,8 @@ namespace {
 const char* const LATEST = "https://api.github.com/repos/Zexyen/Witch-Time/releases/latest";
 #ifdef _WIN32
 const char* const ASSET = "-windows-x86_64.zip";
+#elif defined(__APPLE__)
+const char* const ASSET = "-macos-arm64.tar.gz";     // no release has one yet: the check then finds no update
 #else
 const char* const ASSET = "-linux-x86_64.tar.gz";
 #endif

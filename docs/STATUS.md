@@ -2010,6 +2010,90 @@ was Windows only. Now:
   and FSR were not run with it. `WT_VK_CACHE=<an empty folder>` crashes in a preparation worker (`stagelib_ensure`) on
   this PC, also on the commit before this work: not looked into.
 
+## macOS (2026-11-11; experimental, Apple silicon)
+
+Built and run on a Mac mini (M5 Pro, macOS 27.2, Apple clang 21, MoltenVK 1.4.2 and SDL 3.4 from Homebrew), from a
+checkout: `wtbuild setup` passes every step (compile 409 files in 4 min with 14 jobs, `game.dylib` 94 MB; the picture
+book's program too), `wtbuild smoke` and `cargo test` pass. README, "Build (macOS)"; `tools/wtbuild/README.md`, "macOS".
+
+Runs with a hidden window (`WT_SHOW=0`) and scripted keys, pictures from `WT_SHOT_EVERY`: first-run shader preparation
+(8,024 stages, about 65 s), the title screen, the menus up to the story's start, the opening movie (FFmpeg) and the
+prologue's first cutscenes in the 3D world, 300 s without a stop: 0 Vulkan call failures, 0 operations not implemented.
+30 fps on the title and in the movie, as set; **60.0 fps in the prologue's scenes** (1 % low 54-56). MoltenVK has no
+`VK_EXT_graphics_pipeline_library`, no dynamic vertex input and not all of extended dynamic state 3, so the renderer
+takes its whole-pipeline path there (a first use can hold a frame, as on the GPUs of finding 116).
+
+What macOS needed (`__APPLE__` in the runtime, `Target::MacOS` in wtbuild):
+
+- **The window on the first thread.** AppKit works on the program's first thread only: `display_init` makes the window
+  there, `boot.c` reads its events while it waits for the game's thread (`display_main_wait`), the render thread has
+  its surface made there (`SDL_RunOnMainThread`), and the title is set there.
+- **The guest's addresses.** macOS's allocator reserves 12 GB at a place it picks for every process between
+  0x7000000000 and 0x8000000000, where the image (0x7100000000), the import area and the sdk (0x7500000000) go: about
+  every second start it was in the way. `plat_guest_space` reserves the whole range first thing and, when it is taken,
+  starts the program again in place (`execv`, some milliseconds a try).
+- **16 KB pages.** The guest's pages are 4 KB: `plat_mprotect` gives access to every host page a range touches and takes
+  it only from those it covers whole.
+- **Write watch.** No userfaultfd: a watched region (the game's heap) is read-only until written, and the fault handler
+  notes the page (`ww_signal` in `plat_posix.c`). Without it every texture was hashed on every use: 13-19 ms a frame
+  and 45 fps in the same scenes (`WT_WW=0` gives that state back).
+- **The largest shaders.** The translator keeps every register in a variable, MoltenVK writes the module out as Metal
+  source as it stands, and Apple's Metal compiler gave up on the two largest fragment stages (535 KB of SPIR-V, 734,000
+  lines of Metal: `XPC_ERROR_CONNECTION_INTERRUPTED`, "THE DRIVER REFUSED A WHOLE PIPELINE"). They are the scene's
+  lighting pass: 18,000 draws were left out in ten minutes and the world was black but for particles and light shafts,
+  which a side-by-side with the Linux build's pictures of the same scripted run showed (RX 9070 XT, RADV). Modules of
+  128 KB and more now go through SPIRV-Tools' optimizer first (`vk_glslang_shim.c`, macOS only; `WT_VK_SPVOPT`): the
+  same stage is 38,000 lines and compiles in 0.8 s, nothing is refused, and the pictures match.
+- **Portability features.** MoltenVK's `VK_KHR_portability_subset` features (view swizzles, comparison samplers set per
+  use, the samplers' LOD bias) are off unless asked for: asked for now, as every other supported feature is
+  (`vkd_device_info`). The validation layer (Homebrew's `vulkan-validationlayers`, `WT_VK_VALIDATE=1`) named them;
+  what it still names there: "Metal does not support disabling primitive restart" (a draw without restart whose
+  indices hold 0xFFFF would break), and `OpGroupNonUniformShuffle` in a tessellation evaluation stage, which Metal has
+  for fragment, compute and tessellation control stages only (tessellated objects were not looked at).
+- Fibers are a context switch of our own (ucontext is deprecated there); thread ids, timed waits, the memory map,
+  `/proc/self/exe`, random numbers, the library names and the system font stand-in (Arial Unicode) have their macOS forms.
+
+**A native Metal renderer: measured, not built.** The renderer speaks Vulkan (`nvn_vk*.c`, 1.2 MB of C, and the shader
+translator's GLSL to SPIR-V); a Metal back end would be a third renderer beside it. What it could win was measured
+instead, in the prologue's 3D scenes at 60 fps (`sample`, 8 s, every thread; the game's own thread is the busy one):
+
+| where the CPU time went | share of all busy time |
+|---|---|
+| the game's lifted code | 66 % (its main thread busy 93 % of the time) |
+| the runtime (ours) | 16 % |
+| Apple's Metal and GPU driver | 16 % |
+| MoltenVK's own code | 2 % |
+
+The render thread was busy 18 % of the time (runtime 8, Metal 6, MoltenVK 4). So the layer a native renderer would
+remove costs about 2 % of the CPU work and none of the frame time: the frame is bound by the game's thread, and the
+Metal driver's share stays whatever calls it. Shader and pipeline compilation (the first-run preparation, the holds of
+a first use: 30 holds, 4.0 s in all in a 560 s run) is Apple's Metal compiler either way. The same run on **Mesa's
+KosmicKrisp** (the other Vulkan driver on Metal, Homebrew's `mesa`, `VK_DRIVER_FILES=...kosmickrisp_mesa_icd...`) also
+ran 400 s with 0 failed calls, but slower: 50-54 fps in scenes MoltenVK holds at 60, and it has no pipeline libraries
+or dynamic vertex input either. With both installed the loader lists the GPU twice: `nvn_vk_init` takes MoltenVK
+(`gpu = <number>` in graphics.ini picks the other).
+
+**Launcher** (`launcher/`, 2026-11-11): builds with Homebrew's `sdl3` and `freetype`; its screens are drawn with Metal
+(SDL's GPU API has no Vulkan there), and Play starts the game as a program of its own, as on Windows.
+`witch-time --play` was run: it starts the game, writes `build/run/witch-time-game.log` and ends with it. The build
+also makes `build/Witch Time.app` (the same program in a bundle, with the icon) for Finder and the Dock. The texture
+conversion after a build is skipped there (the GPU reads ASTC). Its screens were not looked at: this session could not
+take pictures of the desktop.
+
+Open there:
+
+- **Not played by hand**: no visible window and no controller were tried. Sound goes out through SDL's CoreAudio
+  stream (252 of 300 s with sound in the log) but nobody listened to it. Controllers go through SDL's macOS drivers
+  from the game's own threads, untried.
+- Stopping a run while it loads crashed in two places, both fixed: `vkd_shutdown` read the vertex stream table before
+  its first use had made it (any system), and the panel's shutdown submitted commands recorded for images already
+  destroyed, which MoltenVK encodes at the submit (now submitted before the images go).
+- No release: no prebuilt runtime, no bundled compiler (Apple's linker wants the SDK for `game.dylib`), and the `.app`
+  only works inside `build/`. The launcher's screens, its Build button and its folder dialog were not tried by hand.
+- `shortcut:` a protection the guest sets inside the watched heap is lost at the first write there; `kill -USR1` stack
+  dumps, `WT_LPROF` and the per-thread CPU times of the frame-rate line are Linux only; converted BC7 textures
+  (`wtbuild textures`) were not made or measured (the GPU has ASTC).
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.

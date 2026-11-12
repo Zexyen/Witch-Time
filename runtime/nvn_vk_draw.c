@@ -47,6 +47,7 @@ static struct {
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
+    struct { VkStructureType sType; void *pNext; VkBool32 f[15]; } port;      /* [witchtime] VkPhysicalDevicePortabilitySubsetFeaturesKHR (vulkan_beta.h), macOS */
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
@@ -80,6 +81,12 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES; D.f13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     D.f2.pNext = &D.f11; D.f11.pNext = &D.f12; D.f12.pNext = &D.f13; tail = &D.f13.pNext;
     D.exts[D.next++] = "VK_KHR_swapchain";
+    if (has_name(dext, ndext, "VK_KHR_portability_subset")) {      /* macOS (MoltenVK): a device that has it must be given it */
+        /* its features are off unless asked for, like any other: view swizzles, comparison samplers set per use and the
+         * samplers' LOD bias among them (the validation layer named all three in the first scenes) */
+        D.exts[D.next++] = "VK_KHR_portability_subset";
+        D.port.sType = (VkStructureType)1000163000; *tail = &D.port; tail = &D.port.pNext;
+    }
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
     if (!(getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")))) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* WT_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
@@ -6018,7 +6025,8 @@ static void vkd_shutdown(void) {
     m4_stop();
     pcache_save();
     if (g_pcache) { vkDestroyPipelineCache(V.device, g_pcache, NULL); g_pcache = NULL; }
-    for (int i = 0; i < NSLOT; i++) slot_wait(&R.slot[i]);
+    cmd_wait_all();                                /* [witchtime] what is recorded and not submitted yet goes out while its images exist: MoltenVK encodes at
+                                                    * the submit and read a destroyed image when the panel's shutdown submitted it later (a stop while loading) */
     R.done = ~0ull; nvn_front_done_moved(); garbage_collect();
     while (g_vtex_all) { VTex *vt = g_vtex_all; if (vt->t) vt->t->vk = NULL; vt_destroy(vt); }
     for (int i = 0; i < 1024; i++) for (Pipe *p = g_pipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); if (p->p_fast) vkDestroyPipeline(V.device, p->p_fast, NULL); if (!p->libbed) { vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); } free(p); }
@@ -6039,7 +6047,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
-    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    for (int i = 0; g_vrc && i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);      /* (no table before the first stream: a stop while loading) */
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;

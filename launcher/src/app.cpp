@@ -236,14 +236,22 @@ bool App::create_window()
 		h = int(h * f);
 	}
 	// a Vulkan window: the game makes its own Vulkan surface on it after the launcher lets go (runtime/display.c)
-	window = SDL_CreateWindow("Witch Time", w, h, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+#ifdef __APPLE__
+	// macOS: the screens are drawn with Metal (SDL's GPU API has no Vulkan there), and the game makes a window of its own
+	const SDL_WindowFlags api = SDL_WINDOW_METAL;
+	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_MSL;
+#else
+	const SDL_WindowFlags api = SDL_WINDOW_VULKAN;
+	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_SPIRV;
+#endif
+	window = SDL_CreateWindow("Witch Time", w, h, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	if (!window)
 	{
 		std::fprintf(stderr, "witch-time: no window: %s\n", SDL_GetError());
 		return false;
 	}
 	SDL_SetWindowMinimumSize(window, 640, 400);
-	gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
+	gpu = SDL_CreateGPUDevice(shaders, false, nullptr);
 	if (!gpu || !SDL_ClaimWindowForGPUDevice(gpu, window))
 	{
 		std::fprintf(stderr, "witch-time: no Vulkan device for the launcher's screens: %s\n", SDL_GetError());
@@ -1374,7 +1382,12 @@ void App::tick()
 			play_after_stop = false;
 			want_play = true;
 		}
-		if (built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
+#ifdef __APPLE__
+		const bool gpu_has_astc = true;          // Apple's GPUs read the game's ASTC textures as they are: nothing to convert
+#else
+		const bool gpu_has_astc = false;         // not known here: the pack is made, and the game uses it where the GPU lacks ASTC
+#endif
+		if (!gpu_has_astc && built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
 		{
 			std::error_code ec;
 			if (double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED)

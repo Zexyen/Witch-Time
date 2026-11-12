@@ -508,10 +508,19 @@ void guest_svc(Ctx *c, uint32_t number) { (void)c; guest_trap("svc (direct kerne
 #ifndef _WIN32
 #include <execinfo.h>
 #include <signal.h>
+#include <dlfcn.h>
 /* Linux: the same report from a signal handler, on a stack of its own (a guest stack overflow lands here too) */
 static void crash_signal(int sig, siginfo_t *si, void *uc) {
     (void)uc;
     printf("\nHOST SIGNAL %d (%s) at address 0x%llx\n", sig, strsignal(sig), (unsigned long long)(uintptr_t)si->si_addr);
+#ifdef __APPLE__
+    {   /* macOS: the instruction that faulted (backtrace() from a handler starts at its caller) */
+        void *pc = (void *)(uintptr_t)((ucontext_t *)uc)->uc_mcontext->__ss.__pc;
+        Dl_info di;
+        if (dladdr(pc, &di) && di.dli_sname) printf("  at host %p %s+0x%lx\n", pc, di.dli_sname, (unsigned long)((uintptr_t)pc - (uintptr_t)di.dli_saddr));
+        else printf("  at host %p\n", pc);
+    }
+#endif
     dump_guest_registers();
     printf("guest call stack (innermost first):\n");
     void *pcs[400];
@@ -520,10 +529,15 @@ static void crash_signal(int sig, siginfo_t *si, void *uc) {
     for (int i = 0, shown = 0; i < n && shown < 40; i++) {
         uint64_t g = guest_function_of((uint64_t)(uintptr_t)pcs[i]);
         if (g && g != last) { printf("  f_%llx\n", (unsigned long long)g); shown++; last = g; }
+#ifdef __APPLE__
+        if (!g && i < 16) { Dl_info di; if (dladdr(pcs[i], &di) && di.dli_sname) printf("  host %p %s+0x%lx\n", pcs[i], di.dli_sname, (unsigned long)((uintptr_t)pcs[i] - (uintptr_t)di.dli_saddr)); else printf("  host %p\n", pcs[i]); }
+#else
         if (!g && i < 16) printf("  host %p\n", pcs[i]);   /* addr2line -e witch-time-game / game.so */
+#endif
     }
     report_and_exit(4);
 }
+#ifdef __linux__
 /* Test aid (Linux): `kill -USR1 <pid>` prints the guest call stack of every thread (a hang without ptrace rights).
  * The handler of SIGUSR1 sends SIGUSR2 to each thread in turn; each writes its own stack with write(2). */
 #include <dirent.h>
@@ -566,9 +580,12 @@ static void stacks_signal(int sig) {
     }
     if (d) closedir(d);
 }
+#endif
 static void install_crash_handler(void) {
+#ifdef __linux__
     signal(SIGUSR1, stacks_signal);
     signal(SIGUSR2, stack_signal);
+#endif
     static uint8_t alt[1 << 16];
     stack_t ss = { .ss_sp = alt, .ss_size = sizeof alt };
     sigaltstack(&ss, NULL);
@@ -628,7 +645,11 @@ static DWORD WINAPI code_prefetch(LPVOID arg) {
     Dl_info di;
     int fd = dladdr((const void *)lo, &di) && di.dli_fname ? open(di.dli_fname, O_RDONLY) : -1;
     off_t n = fd >= 0 ? lseek(fd, 0, SEEK_END) : 0;
+#ifdef __APPLE__
+    for (off_t o = 0; o < n; o += 128 << 10) { struct radvisory ra = { o, 128 << 10 }; fcntl(fd, F_RDADVISE, &ra); }
+#else
     for (off_t o = 0; o < n; o += 128 << 10) posix_fadvise(fd, o, 128 << 10, POSIX_FADV_WILLNEED);     /* a call reads at most the readahead size */
+#endif
     if (fd >= 0) close(fd);
 #endif
     unsigned sum = 0;

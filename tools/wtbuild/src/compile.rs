@@ -7,7 +7,7 @@
 //! Objects without a C file are deleted. Functions over OPTNONE statements get optnone; a file over the time limit is
 //! tried again with smaller thresholds, then at -O0. The code is compiled against runtime/freestanding instead of the
 //! system's C library headers (the same objects, without a libc development package: `wtbuild check-freestanding`).
-//! On Windows the objects are MinGW ones (target.rs), for game.dll.
+//! On Windows the objects are MinGW ones (target.rs), for game.dll; on macOS Mach-O ones, for game.dylib.
 
 use crate::target::{self, mtime_ns, Target};
 use crate::util::sha256_file;
@@ -394,7 +394,8 @@ fn compile_one(c: &Cfg, name: &str, env: &dyn Fn(&mut Command)) -> (Option<i32>,
 /// the lifted code's flags after `-c OPT`, without the target's and the header folders (check-freestanding uses them
 /// too). They are hashed into every player's object stamps: a change compiles every build again
 pub fn lifted_flags(t: Target) -> Vec<String> {
-    let mut flags: Vec<String> = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from).into();
+    let mut flags: Vec<String> = ["-ffp-contract=off", "-w", "-fno-strict-aliasing"].map(String::from).into();
+    flags.extend(t.cpu());
     flags.extend(t.pic());
     flags.push(FORCE_INLINE.into());
     flags
@@ -567,5 +568,6 @@ mod tests {
         let linux = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16", "-fPIC", "-Dinline=inline __attribute__((always_inline))"];
         assert_eq!(lifted_flags(Target::Linux), linux);
         assert_eq!(lifted_flags(Target::Windows), [&linux[..4], &linux[5..]].concat());
+        assert_eq!(lifted_flags(Target::MacOS), [&linux[..3], &linux[4..]].concat());
     }
 }
