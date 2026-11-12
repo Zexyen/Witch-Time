@@ -381,6 +381,7 @@ void App::bind_model()
 	c.Bind("tab", &tab);
 	c.Bind("row_step", &row_step);
 	c.Bind("row_pitch", &row_pitch);
+	c.Bind("row_count", &row_count);
 	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
@@ -1044,8 +1045,14 @@ void App::toggle_mod(int index)
 	sound(0);
 }
 
-void App::refresh_settings()
+// bumped: the row just changed, the only one whose value nudges. RmlUi starts an element's animations again whenever a
+// data view that names them is run (its "same value?" test never passes for 'animation'), so only what changed is
+// marked dirty here: the rows' way in names tab and row_count, and those are left alone when a value changes.
+void App::refresh_settings(int bumped)
 {
+	for (int n = 0; n < 64; n++)
+		if (n != bumped)
+			bump_count[n] = 0;
 	settings.clear();
 	const auto& defs = setting_defs();
 	for (size_t n = 0; n < defs.size(); n++)
@@ -1066,7 +1073,11 @@ void App::refresh_settings()
 	row_step = rows > 1 ? std::min(26.f, 140.f / (rows - 1)) : 26.f;
 	row_pitch = rows > 1 ? std::clamp((row_step + 28.f / (rows - 1)) / tan22, 50.f, 56.f) : 56.f;
 	model.DirtyVariable("settings");
-	model.DirtyVariable("tab");
+	if (row_count != int(settings.size()))
+	{
+		row_count = int(settings.size());
+		model.DirtyVariable("row_count");
+	}
 	model.DirtyVariable("row_step");
 	model.DirtyVariable("row_pitch");
 
@@ -1101,6 +1112,7 @@ void App::refresh_settings()
 void App::set_tab(int t)
 {
 	tab = (t + 3) % 3;
+	model.DirtyVariable("tab");
 	refresh_settings();
 	want_focus = true;
 	sound(0);
@@ -1115,7 +1127,7 @@ void App::step_setting(int index, int dir)
 	write_setting(paths.config, d, d.options[size_t(next_option(d, read_setting(paths.config, d), dir))].first);
 	if (index < 64)                        // the value nudges the way it went (the row's animation name changes with each count)
 		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
-	refresh_settings();
+	refresh_settings(index);
 	prompts_read();
 	sound(0);                              // (after the write: switching the sounds on ticks, off does not)
 }
