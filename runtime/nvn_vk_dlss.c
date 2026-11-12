@@ -30,7 +30,8 @@ static struct {
     int ok, ext;                                   /* ok: 0 not tried, 1 ready, -1 not available (logged once); ext: the device was made with what NGX needs */
     wchar_t dir[MAX_PATH], exe[MAX_PATH];          /* the folder of the player's nvngx_dlss.dll; this program's */
     HMODULE core;
-    NgxResult (*init)(const char *, int, const char *, const wchar_t *, VkInstance, VkPhysicalDevice, VkDevice, void *, void *, int, const NgxCommon *);
+    NgxResult (*init)(const char *, int, const char *, const wchar_t *, VkInstance, VkPhysicalDevice, VkDevice, void *, void *, int, const NgxCommon *);      /* Init_ProjectID_Ext */
+    NgxResult (*init9)(const char *, int, const char *, const wchar_t *, VkInstance, VkPhysicalDevice, VkDevice, int, const NgxCommon *);      /* Init_ProjectID: no loader functions */
     NgxResult (*shutdown1)(VkDevice, unsigned int *);
     NgxResult (*caps)(NgxParam **); NgxResult (*alloc)(NgxParam **); NgxResult (*destroy)(NgxParam *);
     NgxResult (*create1)(VkDevice, VkCommandBuffer, int, NgxParam *, NgxHandle **);
@@ -85,14 +86,20 @@ static int dlss_setup(void) {                      /* render thread, once */
     DL.core = dlss_core();
     if (!DL.core) { dlss_off("the NVIDIA driver's NGX runtime (_nvngx.dll) was not found", 0); return 0; }
 #define N_(f, name) DL.f = (void *)GetProcAddress(DL.core, "NVSDK_NGX_VULKAN_" name); if (!DL.f) { dlss_off("the driver's NGX runtime is too old (no NVSDK_NGX_VULKAN_" name ")", 0); return 0; }
-    N_(init, "Init_ProjectID") N_(shutdown1, "Shutdown1") N_(caps, "GetCapabilityParameters") N_(alloc, "AllocateParameters") N_(destroy, "DestroyParameters")
+    /* the core's Init_ProjectID takes NO loader functions (read in the driver's _nvngx.dll 620.70: 9 arguments, the version
+     * 8th); the form with them is Init_ProjectID_Ext. Calling the first with 11 crashed inside NGX (issue 190). */
+    DL.init = (void *)GetProcAddress(DL.core, "NVSDK_NGX_VULKAN_Init_ProjectID_Ext");
+    N_(init9, "Init_ProjectID") N_(shutdown1, "Shutdown1") N_(caps, "GetCapabilityParameters") N_(alloc, "AllocateParameters") N_(destroy, "DestroyParameters")
     N_(create1, "CreateFeature1") N_(release, "ReleaseFeature") N_(evaluate, "EvaluateFeature")
 #undef N_
     const wchar_t *paths[1] = {DL.dir};
     NgxCommon ci; memset(&ci, 0, sizeof ci);
     ci.path = paths; ci.n = 1;
     /* a project id of our own (any GUID), engine "custom"; this program's folder for NGX's own files; interface version 0x15 */
-    NgxResult r = DL.init("b3f1a0c4-7d2e-4c59-9a61-3e8f5d2c7b10", 0, "1.0", DL.exe, V.instance, V.gpu, V.device, (void *)vkGetInstanceProcAddr, (void *)vkGetDeviceProcAddr, 0x15, &ci);
+    static const char k_id[] = "b3f1a0c4-7d2e-4c59-9a61-3e8f5d2c7b10";
+    NgxResult r = DL.init ? DL.init(k_id, 0, "1.0", DL.exe, V.instance, V.gpu, V.device, (void *)vkGetInstanceProcAddr, (void *)vkGetDeviceProcAddr, 0x15, &ci)
+                          : DL.init9(k_id, 0, "1.0", DL.exe, V.instance, V.gpu, V.device, 0x15, &ci);
+    printf("nvn_vk_dlss: NGX started with %s: result 0x%08x\n", DL.init ? "Init_ProjectID_Ext" : "Init_ProjectID", r);
     if (r != 1) { dlss_off("NGX did not start", r); return 0; }
     NgxParam *cap = NULL; int have = 0, need_drv = 0, why = 0;
     r = DL.caps(&cap);
