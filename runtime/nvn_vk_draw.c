@@ -47,7 +47,7 @@ static struct {
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
-    const char *exts[16]; uint32_t next;
+    const char *exts[24]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
@@ -67,6 +67,7 @@ static void vkd_fail(const char *fmt, ...) {
 static int vk_gpl_mode(void) { static int m = -1; if (m < 0) { const char *e = getenv("WT_VK_GPL"); m = e && e[0] ? atoi(e) : VK_GPL_DEFAULT; } return m; }
 
 /* ---------------------------------------------------------------- device features */
+static void dlss_device_exts(const VkExtensionProperties *dext, uint32_t ndext);      /* nvn_vk_dlss.c */
 static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties *dext, uint32_t ndext) {
     void **tail;
     vkGetPhysicalDeviceFeatures2 = vk_sym("vkGetPhysicalDeviceFeatures2");
@@ -100,6 +101,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
         if (g_ck_on) D.exts[D.next++] = "VK_NV_device_diagnostic_checkpoints";
         if (e && atoi(e)) printf("nvn_vk: WT_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
     }
+    dlss_device_exts(dext, ndext);                 /* [witchtime] issue 190 (nvn_vk_dlss.c) */
     if (has_name(dext, ndext, "VK_EXT_memory_budget")) { D.has_budget = 1; D.exts[D.next++] = "VK_EXT_memory_budget"; }      /* [issue 153] vmem_report */
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("WT_VK_PUSH") && !atoi(getenv("WT_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */

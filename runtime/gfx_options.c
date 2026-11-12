@@ -158,6 +158,10 @@ static const char *const k_default_ini =
 ";   GPU time a frame, more at higher internal resolutions.\r\n"
 ";   fsr3_quality .. fsr3_ultra_performance: the scene is drawn smaller (1/1.5, 1/1.7, 1/2, 1/3 of the internal resolution\r\n"
 ";   across, never below 900p) and FSR 3.1 upscales it to the internal resolution: faster, a little softer. Above 900p only.\r\n"
+"; upscaler = ... | dlaa | dlss_quality | dlss_balanced | dlss_performance | dlss_ultra_performance      (experimental, untested)\r\n"
+";   NVIDIA DLSS in FSR's place at the same scales (dlaa: at the internal resolution). NVIDIA RTX on Windows only, and it\r\n"
+";   needs your own copy of nvngx_dlss.dll beside witch-time.exe (take it from a game that has DLSS; it is not shipped\r\n"
+";   here). Without it, or on another GPU, the FSR 3.1 mode of the same name runs instead.\r\n"
 ";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
 "\r\n"
@@ -231,8 +235,9 @@ static void opt_path(char *out) {
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
 static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
-    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"};
-    for (int i = 1; i < 6; i++) if (!_stricmp(v, k[i])) return i;
+    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance",
+                                    "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance"};      /* [witchtime] issue 190: 6 .. 10 (nvn_vk_dlss.c) */
+    for (int i = 1; i < 11; i++) if (!_stricmp(v, k[i])) return i;
     return 0;
 }
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {

@@ -930,6 +930,32 @@ resolution. `fsr3` stays native AA.
   or Intel.
 
 
+## DLSS / DLAA with the player's DLL (2026-11-12; issue 190; NOT RUN on an NVIDIA GPU yet)
+
+`upscaler = dlaa | dlss_quality | dlss_balanced | dlss_performance | dlss_ultra_performance` (graphics.ini, the PC settings
+row "FSR 3.1 / DLSS"; `WT_UPSCALER` wins). `runtime/nvn_vk_dlss.c`.
+
+- **Nothing of NVIDIA's is here or in a release**: no SDK header, no SDK library, no DLL. The player copies `nvngx_dlss.dll`
+  from a game that has DLSS to the folder of `witch-time.exe` (or beside `witch-time-game.exe`). The calls go to the NGX
+  runtime the NVIDIA driver installs (`_nvngx.dll` / `nvngx.dll` in System32, else the folder named by the registry value
+  `HKLM\System\CurrentControlSet\Services\nvlddmkm\NGXCore\NGXPath`), by its exported names
+  (`NVSDK_NGX_VULKAN_Init_ProjectID`, `GetCapabilityParameters`, `AllocateParameters`, `CreateFeature1`, `EvaluateFeature`,
+  `ReleaseFeature`, `Shutdown1`), with declarations of our own. The parameter object is a C++ interface: its functions are
+  called through the table in MSVC's order (each overload set reversed: `Set(void *)` is slot 0, `Set(int)` 3,
+  `Set(unsigned)` 4, `Set(float)` 6, `Get(int *)` 11).
+- **It takes FSR's place inside `fsr_run`**: the same scales as the FSR mode of the same rank (`fsr_ratio`), the same jitter,
+  motion vectors (`FI_MV`, camera and objects), dither phases and output image (`FI_OUT`). Only FSR's seven passes after the
+  motion vectors are left out. So where DLSS cannot run (not an NVIDIA GPU, no DLL, an old driver, a call that fails) FSR
+  3.1 runs in the same frame and the log says why, once (`nvn_vk_dlss: DLSS is off, FSR 3.1 takes its place: ...`).
+- **The device** gets `VK_NVX_binary_import` and `VK_NVX_image_view_handle` only on an NVIDIA GPU with the DLL in place, so
+  nobody else's device changes. Putting the DLL there needs a restart.
+- **Inputs**: HDR colour, depth 0 near, vectors at the scene's size without jitter in UV (scale = the scene's size), DLSS's
+  own exposure, no sharpening. A feature is made per size pair and mode; a replaced one is released four frames later.
+- **Not known**: whether any of it works. Written on an AMD machine, compiled for Windows only against Wine's headers. The
+  jitter's and the vectors' signs are FSR's (`WT_DLSS_JSIGN` bits 0 / 1 and `WT_DLSS_MVSIGN=1` flip them for a test build);
+  the output in the scene's R11G11B10 format may be refused; each dynamic-resolution level makes a new feature (a hitch).
+  Windows and Proton only; the in-game Options tab and the launcher do not list the values yet (they show "Custom").
+
 ## Object motion vectors (2026-11-11; with FSR, experimental)
 
 FSR gets the camera's motion only (above). For things that move on their own, the plan: the vertex stage also gives last
