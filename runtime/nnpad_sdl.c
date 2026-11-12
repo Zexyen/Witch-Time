@@ -1288,6 +1288,13 @@ int nnpad_selftest(const NnHidHooks *h) {
         ok = ok && st[0] == 0 && st[1] == 32767;
         check(ok, "pad + keyboard on player 1 together: pad A + Space = A + B; the pad's stick wins while pushed, W again once it is centred");
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); h->key('W', 0); h->key(VK_SPACE, 0); settle();
+        /* #178: the pad was used last (its A, above): a creeping mouse does not steer, a real move takes the camera back */
+        h->state(0, &btn, st, &attr); Sleep(20); h->mouse(0, -3); h->state(0, &btn, st, &attr);
+        ok = st[2] == 0 && st[3] == 0;
+        Sleep(20); h->mouse(0, -30); h->state(0, &btn, st, &attr);
+        ok = ok && st[3] > 8191;
+        Sleep(20); h->mouse(0, -3); h->state(0, &btn, st, &attr);
+        check(ok && st[3] > 0, "pad used last: a slow mouse (150 counts/s) leaves the right stick centred; a brisk move steers, and then slow moves do too");
         /* rebinding from the file, reloaded while running */
         Sleep(1100);
         write_text(path, "[keyboard]\r\nplayer = none\r\nX = U\r\nZR = MOUSE5, O\r\nWALK = none\r\nmouse_invert_y = on\r\nmouse_sensitivity = 2.0\r\n");
