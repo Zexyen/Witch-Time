@@ -2571,28 +2571,39 @@ static int cb_kept_wrote(CB *k);                  /* below cb_guest_wrote */
  * in the slot's `up` command buffer after a barrier; and the bytes reach guest memory once the source's writer has finished
  * (gcp_settle_upto, oldest first, only the bytes nobody changed since, as the copy-back merge). Any other CPU read or write of
  * the destination, any change of the source buffer and the game's fence waits settle first, waiting if they must. Kept
- * vertex buffers do not take an overlaid range (vrc_cb_touch). WT_VK_GPUCOPY=0: off. */
+ * vertex buffers do not take an overlaid range (vrc_cb_touch). WT_VK_GPUCOPY=0: off.
+ * Issue 156: B3 dispatches into that luminance buffer again every frame, and "the source changes" meant a wait for the last
+ * frame whenever the GPU was behind (a frame then cost replay plus GPU: 25 fps in the Chapter 1 ride on an RX 6800 XT). Now
+ * the bytes move on the GPU instead (gcp_src_rewritten): the slot's `up` buffer, which runs before the dispatch, copies them
+ * into a slot of a small side buffer, and the overlay reads that slot from this submission on. WT_VK_GPUCOPY_SIDE=0: off. */
 #define GCP_N 32
-typedef struct { uint64_t dst, size, soff, wserial; int src; uint8_t *snap; } GCopy;
+#define GCP_SIDE 4096                              /* bytes per side slot = the largest overlay (gcp_add) */
+typedef struct { uint64_t dst, size, soff, wserial, sserial; int src, side; uint8_t *snap; } GCopy;      /* side: slot of the side buffer, written by submission sserial; -1 none */
 static GCopy g_gcp[GCP_N];
-static int g_gpucopy = -1, g_gcp_busy;
-static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped;
+static int g_gpucopy = -1, g_gcp_busy, g_gcp_sideon = -1;
+static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped, g_gcp_sides;
+static VkBuffer g_gcp_sbuf;
+static VMem g_gcp_smem;
+static uint32_t g_gcp_sused;                       /* one bit per side slot */
 static VkCommandBuffer up_cmd(void);
 static int gcp_hits(int i, uint64_t addr, uint64_t size) { return addr < g_gcp[i].dst + g_gcp[i].size && g_gcp[i].dst < addr + size; }
-static void gcp_remove(int i) { free(g_gcp[i].snap); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
+static int gcp_sided(const GCopy *o) { return o->side >= 0 && R.serial >= o->sserial; }      /* the copy into its side slot was submitted: the source buffer no longer holds its bytes */
+static void gcp_remove(int i) { free(g_gcp[i].snap); if (g_gcp[i].side >= 0) g_gcp_sused &= ~(1u << g_gcp[i].side); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
 static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach guest memory, oldest first; wait 0: only while their source's writer has finished */
     if (g_gcp_busy) return;                        /* a wait below can come back here (slot_wait does not, cb_poll does) */
     g_gcp_busy = 1;
     for (; g_ngcp && last >= 0; last--) {
         GCopy *o = &g_gcp[0];
-        if (R.done < o->wserial) {
+        int sided = gcp_sided(o);                  /* else the source buffer still holds the bytes (a side copy not submitted yet has not run) */
+        uint64_t need = sided ? o->sserial : o->wserial;
+        if (R.done < need) {
             if (!wait) break;
-            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= o->wserial) slot_wait(&R.slot[i]);
-            if (R.done < o->wserial) R.done = o->wserial;      /* submitted (its batch has ended) and every slot up to it has finished */
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= need) slot_wait(&R.slot[i]);
+            if (R.done < need) R.done = need;      /* submitted (its batch has ended) and every slot up to it has finished */
             g_gcp_waits++;
         }
         uint8_t *g = P(o->dst);
-        const uint8_t *m = (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+        const uint8_t *m = sided ? (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE : (const uint8_t *)g_cb[o->src].mem.map + o->soff;
         for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
         R.gen++;                                   /* guest memory changed: ranges are streamed again */
         gcp_remove(0);
@@ -2611,8 +2622,41 @@ static void gcp_overwritten(uint64_t addr, uint64_t size) {      /* the CPU writ
 }
 static void gcp_src_changes(const CB *c) {         /* the source buffer is about to change or go: what was copied from it settles */
     int last = -1, idx = (int)(c - g_cb);
-    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx) last = i;
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && !gcp_sided(&g_gcp[i])) last = i;
     if (last >= 0) gcp_settle_upto(last, 1);
+}
+static void gcp_up_barrier(Slot *sl, VkCommandBuffer up) {      /* once per `up` buffer: the source's writer is in an earlier submission */
+    if (sl->up_ovl) return;
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    sl->up_ovl = 1;
+}
+/* Issue 156: compute is about to write a kept buffer again (cb_new). Overlays the GPU has not finished keep their bytes
+ * without a wait: copied into side slots by `up`, which runs before this command buffer's dispatch. What cannot move
+ * (switch off, no free slot, a writer not submitted) settles with the wait, as before. */
+static void gcp_src_rewritten(const CB *c) {
+    int idx = (int)(c - g_cb), n = 0;
+    gcp_settle_done();                             /* what the GPU has finished needs no slot */
+    if (g_gcp_sideon < 0) g_gcp_sideon = !(getenv("WT_VK_GPUCOPY_SIDE") && !atoi(getenv("WT_VK_GPUCOPY_SIDE")));
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && g_gcp[i].side < 0) n++;
+    if (!n) return;
+    if (!g_gcp_sideon || c->wserial > R.serial || n > GCP_N - __builtin_popcount(g_gcp_sused)) { gcp_src_changes(c); return; }
+    if (!g_gcp_sbuf) g_gcp_sbuf = vbuf_new((uint64_t)GCP_N * GCP_SIDE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_gcp_smem);
+    VkCommandBuffer up = up_cmd();
+    gcp_up_barrier(&R.slot[R.cur], up);
+    for (int i = 0; i < g_ngcp; i++) {
+        GCopy *o = &g_gcp[i];
+        if (o->src != idx || o->side >= 0) continue;
+        o->side = __builtin_ctz(~g_gcp_sused); g_gcp_sused |= 1u << o->side;
+        o->sserial = R.serial + 1;                 /* the number the command buffer being recorded gets at its submission */
+        VkBufferCopy r = {o->soff, (uint64_t)o->side * GCP_SIDE, o->size};
+        vkCmdCopyBuffer(up, c->buf, g_gcp_sbuf, 1, &r);
+        g_gcp_sides++;
+    }
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* gcp_patch reads the slots later in this `up` */
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the copy is an overlay (and nothing else is to be done) */
     if (g_gpucopy < 0) g_gpucopy = !(getenv("WT_VK_GPUCOPY") && !atoi(getenv("WT_VK_GPUCOPY")));
@@ -2626,7 +2670,7 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, src, size)) return 0;      /* the source is another copy's destination */
     GCopy *o = &g_gcp[g_ngcp++];
-    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial;
+    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial; o->side = -1; o->sserial = 0;
     o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
     g_gcp_made++;
     R.gen++;                                       /* the range is streamed again, now with the patch */
@@ -2639,11 +2683,12 @@ static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring
         uint64_t x0 = o->dst > addr ? o->dst : addr, x1 = o->dst + o->size < addr + size ? o->dst + o->size : addr + size;
         VkCommandBuffer up = up_cmd();
         Slot *sl = &R.slot[R.cur];
-        if (!sl->up_ovl) {                         /* the source's writer is in an earlier submission */
-            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-            vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
-            sl->up_ovl = 1;
+        gcp_up_barrier(sl, up);
+        if (o->side >= 0) {                        /* its bytes are in the side slot: written earlier in this `up` or by an earlier submission */
+            VkBufferCopy r = {(uint64_t)o->side * GCP_SIDE + (x0 - o->dst), off + (x0 - addr), x1 - x0};
+            vkCmdCopyBuffer(up, g_gcp_sbuf, R.ring, 1, &r);
+            g_gcp_patches++;
+            continue;
         }
         VkBufferCopy r = {o->soff + (x0 - o->dst), off + (x0 - addr), x1 - x0};
         vkCmdCopyBuffer(up, g_cb[o->src].buf, R.ring, 1, &r);
@@ -3020,7 +3065,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
             CB *k = &g_cb[i];
             if (k->state != 3 || k->addr != addr || k->size != size) continue;
             if (g_cb_ww && cb_guest_wrote(k)) { cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
-            if (g_ngcp) gcp_src_changes(k);        /* [witchtime] the GPU writes it again: copies from it settle first */
+            if (g_ngcp) gcp_src_rewritten(k);      /* [witchtime] the GPU writes it again: copies from it keep their bytes (issue 156: on the GPU, no wait) */
             k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
             if (addr < g_live_lo) g_live_lo = addr;
@@ -5728,11 +5773,11 @@ swap: ;
         }
         if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
             static LONG64 lc, ld, lf;
-            static LONG64 lz, lr, lx, lom, lop, low, lod;
+            static LONG64 lz, lr, lx, lom, lop, low, lod, los;
             static LONG64 lg, ln;
-            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
-                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0);
-            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped;
+            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten, %.2f moved to a side slot\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
+                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0, (double)(g_gcp_sides - los) / 300.0);
+            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped; los = g_gcp_sides;
         }
         {   /* Round 16: the long report every 3000 frames cost the present job 17.5-18.4 ms (runs p16t_bf_g, p16t_zt_g,
              * and the owner's logged sessions: frame 3001 late each time): it now waits for a frame without fighters.
@@ -6087,6 +6132,7 @@ static void vkd_shutdown(void) {
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }
     for (int i = 0; i < NSLOT; i++) { for (int k = 0; k < R.slot[i].npool; k++) vkDestroyDescriptorPool(V.device, R.slot[i].pool[k], NULL); vkDestroyFence(V.device, R.slot[i].fence, NULL); }
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
+    if (g_gcp_sbuf) { vkDestroyBuffer(V.device, g_gcp_sbuf, NULL); g_gcp_sbuf = NULL; }
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
     printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);
