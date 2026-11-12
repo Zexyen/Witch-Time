@@ -516,9 +516,22 @@ A GPU with ASTC never looks at the pack.
 The launcher's Remove, Continue, the chain after a build, and "off stays off" were run for real (a headless KWin, a stub for
 `setup`); so was a `graphics.ini` without the key. The branch for a drive without the room was not.
 
-#46: the mod's 4,442 paths each name an entry of the archive of that name, so "0 replace the game's" is expected: originals live
-in the `.pkz`. With all those paths in place, as unchanged copies of the game's files, the game opened none of them in a Shibuya
-run. That run's picture was broken, smaller parts of the tree were not; seen once, not repeated, not understood.
+#46 and #181 (2026-11-12): the mod's 4,442 paths each name an entry of the archive of that name (`romfs/ba_000/ba/ba0000.dat` =
+entry `ba/ba0000.dat` of `ba_000.pkz`): archives unpacked into folders. The game never opened such files, and its walk of
+`rom:/` at boot (0x7100cbd9c0) copies the name of every file and folder into a fixed pool it shares with the archives'
+entries: 372 blocks of 1 KB, 341 used by the game's own files. With the pool full the walk stopped after `sound_016.pkz` and
+the last 19 archives were never entered: the broken title screen of #46. Mods also replaced whole archives only, so one with
+just the changed entries hid the rest (#181). Now `nnfs.c` serves an archive the mods touch as a view: a table made in memory of
+the game's entries with the mods' put in by name, each source file mapped whole at an offset of its own; reads, the file's size
+and the pause menu's hint lookup go through it. A mod ships a partial `.pkz`, a file in a folder named like its archive, or a
+file at its entry's path (`tools/wtbuild/README.md`, "Data mods"); those single files are not listed to the game, so the pool
+stays as it was. Measured on the dump: 18,732 entry names in 72 archives, none twice; 12 archives have no `None` codec name and
+0 to 56 bytes after their table, which is why the view writes its own table instead of patching the game's.
+Run (Linux, RADV, headless): `Text_000` (394 of 394) and `core_000` (5 of 5, a 35 MB stored file in place of a Kraken one) from
+single files, half of `font_000` from a partial archive, 30 `ui/` files over the PC settings mod's whole `ui_000.pkz`: the
+title screen is the game's; with the partial archive's font textures damaged, its text turns to blocks. `WT_SDK_SELFTEST`
+checks the layers on made-up archives. **Not run**: Windows; a real mod; a level (only the title screen); a file added under a
+new name being asked for by the game (the game boots with some added).
 
 **Left**: no measurement on a Deck; Windows: `wtbuild.exe` cross-built and its tests run under Wine, not on Windows, and the MSVC
 `cargo test` of release.yml has not run. The launcher does not know the GPU, so one with ASTC (most Intel) gets a pack it never

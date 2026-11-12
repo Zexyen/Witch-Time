@@ -104,6 +104,21 @@ IPSwitch text patches (`.pchtxt`) and IPS / IPS32 patches (`.ips`), the formats 
 - **Build ID**: every file must name the build ID of your main (`@nsobid-<id>` / `<id>.ips`); a file for another build
   or module is refused.
 
+### Data mods
+
+A mod folder with a `romfs/` folder (`mods/<mod>/romfs/`, the emulators' layout) changes the game's data. It needs no
+build: the runtime reads it at the next start (`runtime/nnfs.c`), and the log's `romfs mods:` lines say what each mod's
+files did. A file replaces the game's file of the same path, or is added. The game's data is inside its `.pkz` archives,
+and those are layered file by file, so a mod ships only what it changes (#181). For `pl/pl0100.dat` of `pl_000.pkz`:
+
+- `romfs/pl_000.pkz` holding only the changed or new files (a whole repacked archive works too);
+- `romfs/pl_000/pl/pl0100.dat`: the file alone, in a folder named like its archive. A name the archive does not have is added;
+- `romfs/pl/pl0100.dat`: the file alone at its own path. It replaces only: a new name says nothing about its archive.
+
+Single files are read as they are (not compressed). A mod whose name sorts later wins, file by file; in one mod a
+single file wins over its archive. Added files take room in a fixed table of the game (about 31 KB of names in all);
+the log warns near it. Converted textures (below) are not made for a mod's textures: the game decodes those itself.
+
 ## Converted textures
 
 `wtbuild textures` is not a step of `setup`: the launcher runs it after a build that succeeds, unless `bc7_textures = off` or
