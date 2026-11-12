@@ -2023,6 +2023,10 @@ prologue's first cutscenes in the 3D world, 300 s without a stop: 0 Vulkan call 
 `VK_EXT_graphics_pipeline_library`, no dynamic vertex input and not all of extended dynamic state 3, so the renderer
 takes its whole-pipeline path there (a first use can hold a frame, as on the GPUs of finding 116).
 
+For every system, found there: `nvn_stub.c`'s object table hashed by the low 12 bits of a product, which only bits
+3..14 of an object's address reach, so the 40,000 buffers at a regular stride shared a few hundred of its 4,096
+chains; it has 65,536 chains picked by the high bits now (no measurable change in these scenes).
+
 What macOS needed (`__APPLE__` in the runtime, `Target::MacOS` in wtbuild):
 
 - **The window on the first thread.** AppKit works on the program's first thread only: `display_init` makes the window
@@ -2048,10 +2052,30 @@ What macOS needed (`__APPLE__` in the runtime, `Target::MacOS` in wtbuild):
   use, the samplers' LOD bias) are off unless asked for: asked for now, as every other supported feature is
   (`vkd_device_info`). The validation layer (Homebrew's `vulkan-validationlayers`, `WT_VK_VALIDATE=1`) named them;
   what it still names there: "Metal does not support disabling primitive restart" (a draw without restart whose
-  indices hold 0xFFFF would break), and `OpGroupNonUniformShuffle` in a tessellation evaluation stage, which Metal has
-  for fragment, compute and tessellation control stages only (tessellated objects were not looked at).
+  indices hold 0xFFFF would break).
+- **Shuffles in tessellation evaluation stages.** Metal has subgroup operations in fragment, compute and tessellation
+  control stages only; MoltenVK refused the evaluation stages whose code has a warp shuffle ("Subgroup builtins are
+  not available in this type of function"), two pipelines in Shibuya with 135,000 draws left out in 200 s. Where the
+  device's `subgroupSupportedStages` lacks a vertex or tessellation stage, the translator now writes it as a warp of
+  one lane (`MxIn.lone_lane`: a shuffle gives the lane's own value, a vote its own predicate; such stages hash apart,
+  every other stage's text and hash are unchanged). Nothing is refused in Shibuya now; the tessellated objects'
+  picture was not compared.
+- **App Nap.** A program with a hidden or covered window and no sound has its timers held back by macOS: the refresh
+  clock's thread woke up to 100 ms late (thousands of "refreshes slept through"), 24 fps in the Shibuya fight, in test
+  runs with `WT_SHOW=0 WT_AUDIO_MUTE=1`. `display.c` now holds a latency-critical activity for the whole run
+  (`no_app_nap`): 60.0 fps and 0 refreshes slept through in the same run.
 - Fibers are a context switch of our own (ucontext is deprecated there); thread ids, timed waits, the memory map,
   `/proc/self/exe`, random numbers, the library names and the system font stand-in (Arial Unicode) have their macOS forms.
+
+**Shibuya street fight** (the bench's scene and inputs, `tools/wtbuild/src/perf_bench.rs`, with a save copied from
+the Linux PC; 1600x900): 60.0 fps, 1 % low 51-53, p99 18.9-19.5 ms, render thread 7.6 ms a frame (3.4 of it waiting
+for the GPU; the Linux PC's RX 9070 XT run of the scene: 59.5 fps, 1 % low 48.8, 6.7 ms and 1.35). With
+`frame_rate = 120` it runs at 109 fps on average (the slowest 300 frames 83 fps; the Linux PC's 120 run: 104), and the
+prologue's scenes at 117: the Mac has about that much room at 60. What was tried against the render thread's GPU waits
+and for the game's threads, 150 s runs of the prologue scene at the 120 target, each within the runs' own spread
+(116.7-117.4 fps): `WT_OBJ_LOCKFREE=1` (the lock-free object look-up of `os_threads.c`),
+`MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0`, the wider `nobj` table below. MoltenVK lacks `drawIndirectCount`, so counts
+compute wrote are read on the CPU there (a wait each); KosmicKrisp has it and waited longer.
 
 **A native Metal renderer: measured, not built.** The renderer speaks Vulkan (`nvn_vk*.c`, 1.2 MB of C, and the shader
 translator's GLSL to SPIR-V); a Metal back end would be a third renderer beside it. What it could win was measured

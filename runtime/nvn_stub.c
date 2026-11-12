@@ -101,7 +101,11 @@ void print_devinfo_summary(FILE *out) {
 /* ---- memory pools and buffers: the game supplies the memory, so mapping must work for real.
  * Guest objects are opaque; what each one refers to is kept in a side table keyed by address. */
 typedef struct NvnObj { uint64_t key, memory, size, pool, offset, flags; struct NvnObj *next; } NvnObj;
-static NvnObj *g_objs[4096];
+/* [witchtime] 65536 chains, picked by the product's high bits (were 4096 by its low 12 bits, which only the key's own
+ * bits 3..14 reach: 40,000 buffers that lie at a regular stride shared a few hundred chains, and nobj walked them) */
+#define NOBJ_N 65536
+#define NOBJ_HASH(key) ((unsigned)((uint32_t)(((key) >> 3) * 2654435761u) >> 16))
+static NvnObj *g_objs[NOBJ_N];
 static SRWLOCK g_objs_lock = SRWLOCK_INIT;
 static NvnObj *g_objs_free;                                             /* [witchtime] dropped entries, reused (never freed: see nobj) */
 /* [witchtime] Lookups take no lock: B3's main thread and three job threads ask for buffers' pools, flags and addresses all the
@@ -111,7 +115,7 @@ static NvnObj *g_objs_free;                                             /* [witc
  * never touches freed memory. A reader that misses (a reused entry led it to another chain) takes the locked path, which
  * looks again before it inserts. */
 static NvnObj *nobj(uint64_t key) {
-    unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
+    unsigned h = NOBJ_HASH(key);
     int steps = 0;
     for (NvnObj *o = __atomic_load_n(&g_objs[h], __ATOMIC_ACQUIRE); o && steps < 256; o = __atomic_load_n(&o->next, __ATOMIC_ACQUIRE), steps++)      /* the bound: entries reused while this walks */
         if (__atomic_load_n(&o->key, __ATOMIC_RELAXED) == key) return o;
@@ -128,7 +132,7 @@ static NvnObj *nobj(uint64_t key) {
     return o;
 }
 static void nobj_drop(uint64_t key) {                                   /* the object is finalized: forget what it referred to */
-    unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
+    unsigned h = NOBJ_HASH(key);
     AcquireSRWLockExclusive(&g_objs_lock);
     for (NvnObj **pp = &g_objs[h]; *pp; pp = &(*pp)->next)
         if ((*pp)->key == key) { NvnObj *o = *pp; __atomic_store_n(pp, o->next, __ATOMIC_RELEASE); o->next = g_objs_free; g_objs_free = o; break; }
@@ -140,7 +144,7 @@ static void nobj_drop(uint64_t key) {                                   /* the o
 int nvn_stub_buffer_of(uint64_t addr, uint64_t *key, uint64_t *base, uint64_t *size) {
     NvnObj *best = NULL;
     AcquireSRWLockExclusive(&g_objs_lock);
-    for (int h = 0; h < 4096; h++)
+    for (int h = 0; h < NOBJ_N; h++)
         for (NvnObj *o = g_objs[h]; o; o = o->next)
             if (o->pool && o->size && addr >= o->memory && addr - o->memory < o->size && (!best || o->size < best->size)) best = o;      /* a buffer names its pool; the smallest that holds the address */
     if (best) { *key = best->key; *base = best->memory; *size = best->size; }
@@ -148,7 +152,7 @@ int nvn_stub_buffer_of(uint64_t addr, uint64_t *key, uint64_t *base, uint64_t *s
     return best != NULL;
 }
 int nvn_stub_buffer_still(uint64_t key, uint64_t base, uint64_t size) {      /* the buffer object still exists with this range (lock-free, as nobj, never inserts) */
-    unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
+    unsigned h = NOBJ_HASH(key);
     int steps = 0;
     for (NvnObj *o = __atomic_load_n(&g_objs[h], __ATOMIC_ACQUIRE); o && steps < 256; o = __atomic_load_n(&o->next, __ATOMIC_ACQUIRE), steps++)
         if (__atomic_load_n(&o->key, __ATOMIC_RELAXED) == key) return o->pool && o->memory == base && o->size == size;

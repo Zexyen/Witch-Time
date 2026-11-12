@@ -78,6 +78,11 @@ typedef struct {
      * gl_Position kept in the output "vec4 mx_prev" (location MxOut.prev_loc), then as always. 0 = the text exactly as before. */
     uint32_t prev_cbufs;
     unsigned prev_base;
+    /* [witchtime] target 1, a stage other than fragment and compute, on a GPU without subgroup operations in that stage
+     * (Metal has them in fragment, compute and tessellation control stages only: MoltenVK refuses a tessellation
+     * evaluation stage with a shuffle, and its draws were left out). The stage is then a warp of one lane, lane 0: a
+     * shuffle gives the lane's own value, a vote its own predicate. 0 = the text exactly as before. */
+    int lone_lane;
 } MxIn;
 
 typedef struct {

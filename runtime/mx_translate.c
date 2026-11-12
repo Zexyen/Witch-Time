@@ -122,6 +122,7 @@ static int c0_unbacked(const Mx *e) { return e->in->target == 1 && e->in->stage 
  * quad mode early and counts it over the live lanes, so one helper lane shifts every lane after it in the wave. The pixel says where it is. */
 static const char *vk_lane(Mx *e) {
     if (e->in->stage == MX_FRAGMENT) return "((uint(gl_FragCoord.x) & 1u) | (uint(gl_FragCoord.y) & 1u) << 1)";
+    if (e->in->lone_lane) return "0u";         /* [witchtime] MxIn.lone_lane */
     e->uses_sg = 1;
     return "gl_SubgroupInvocationID";
 }
@@ -807,11 +808,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         case 0x25: v = "gl_WorkGroupID.x"; break;
         case 0x26: v = "gl_WorkGroupID.y"; break;
         case 0x27: v = "gl_WorkGroupID.z"; break;
-        case 0x38: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupEqMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupEqMaskARB)"; break;
-        case 0x39: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLtMaskARB)"; break;
-        case 0x3a: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLeMaskARB)"; break;
-        case 0x3b: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGtMaskARB)"; break;
-        case 0x3c: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGeMaskARB)"; break;
+        case 0x38: v = e->in->target == 1 && e->in->lone_lane ? "1u" : e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupEqMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupEqMaskARB)"; break;
+        case 0x39: v = e->in->target == 1 && e->in->lone_lane ? "0u" : e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLtMaskARB)"; break;
+        case 0x3a: v = e->in->target == 1 && e->in->lone_lane ? "1u" : e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLeMaskARB)"; break;
+        case 0x3b: v = e->in->target == 1 && e->in->lone_lane ? "0xfffffffeu" : e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGtMaskARB)"; break;
+        case 0x3c: v = e->in->target == 1 && e->in->lone_lane ? "0xffffffffu" : e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGeMaskARB)"; break;
         case 0x50: case 0x52: v = "0u"; break;                   /* clocks */
         default: v = NULL; break;
         }
@@ -823,8 +824,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_VOTE:
         if (e->in->target == 1) {               /* [witchtime] Vulkan: over the 32 lanes of the Maxwell warp inside a subgroup of 32 or 64 */
             unsigned m = MXB(i, 48, 2);
-            e->uses_sg = 1;
-            emit(e, "uint vb = subgroupBallot(%s)[gl_SubgroupInvocationID >> 5], va = subgroupBallot(true)[gl_SubgroupInvocationID >> 5];", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)));
+            if (e->in->lone_lane) emit(e, "uint vb = %s ? 1u : 0u, va = 1u;", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)));
+            else { e->uses_sg = 1;
+            emit(e, "uint vb = subgroupBallot(%s)[gl_SubgroupInvocationID >> 5], va = subgroupBallot(true)[gl_SubgroupInvocationID >> 5];", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1))); }
             if (PD(e, MXB(i, 45, 3))) emit(e, " %s = %s;", PD(e, MXB(i, 45, 3)), m == 0 ? "vb == va" : m == 1 ? "vb != 0u" : "vb == 0u || vb == va");
             if (MXB(i, 0, 8) != 255) emit(e, " %s = vb;", DST);
             break;
@@ -849,7 +851,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             "mx = (tid & seg) | (cl & ~seg); src = tid + sa; ib = int(src) <= int(mx);",
             "mx = (tid & seg) | (cl & ~seg); src = tid ^ sa; ib = int(src) <= int(mx);"};
         if (e->in->target != 1) { fail(e, "SHFL", "warp shuffle (OpenGL target)"); break; }
-        if (e->in->stage == MX_FRAGMENT) e->uses_quad = 1; else e->uses_sg = 1;
+        if (e->in->stage == MX_FRAGMENT) e->uses_quad = 1; else if (!e->in->lone_lane) e->uses_sg = 1;
         b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
         c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
         emit(e, "uint sv = %s, sa = %s, sb = %s, tid = %s & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, vk_lane(e), range[MXB(i, 30, 2)]);
@@ -865,6 +867,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
                 emit(e, " uint m = (src ^ tid) & 3u, sh = m == 1u ? mq_r%u.x : m == 2u ? mq_r%u.y : m == 3u ? mq_r%u.z : sv; %s = ib ? sh : sv;", ra, ra, ra, DST);
             }
         }
+        else if (e->in->lone_lane) emit(e, " %s = sv;", DST);      /* no other lane to read: its own value */
         else emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
         if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
         break;

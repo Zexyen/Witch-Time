@@ -615,10 +615,30 @@ static void window_apply(SDL_Window *w) {
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
     printf("display: window %s, client %dx%d pixels now%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph, 10);
 }
+#ifdef __APPLE__
+/* [witchtime] macOS: App Nap. A program whose window is hidden or covered and that plays no sound gets its timers held
+ * back by the system: the refresh clock's thread (vsync_thread) then woke up to 100 ms late, 24 fps in a Shibuya fight
+ * that runs at 60 (a test run with WT_SHOW=0 and WT_AUDIO_MUTE=1; with the audio device open it did not happen). An
+ * activity of the "user initiated, latency critical" kind, held for the whole run, tells the system not to. Through the
+ * Objective-C runtime's C functions, declared here: its headers have a BOOL of their own. */
+extern void *objc_getClass(const char *name);
+extern void *sel_registerName(const char *name);
+extern void objc_msgSend(void);
+static void no_app_nap(void) {
+    void *pi_class = objc_getClass("NSProcessInfo"), *str_class = objc_getClass("NSString");
+    if (!pi_class || !str_class) return;
+    void *pi = ((void *(*)(void *, void *))objc_msgSend)(pi_class, sel_registerName("processInfo"));
+    void *reason = ((void *(*)(void *, void *, const char *))objc_msgSend)(str_class, sel_registerName("stringWithUTF8String:"), "the game is running");
+    const uint64_t user_initiated = 0x00FFFFFFull, latency_critical = 0xFF00000000ull;      /* NSActivityUserInitiated | NSActivityLatencyCritical */
+    void *activity = pi ? ((void *(*)(void *, void *, uint64_t, void *))objc_msgSend)(pi, sel_registerName("beginActivityWithOptions:reason:"), user_initiated | latency_critical, reason) : NULL;
+    if (activity) ((void *(*)(void *, void *))objc_msgSend)(activity, sel_registerName("retain"));      /* never ended */
+}
+#endif
 /* the window, made or taken over; then its events, one at a time (window_event). On Linux both on a thread of their own
  * (window_thread); on macOS on the program's first thread, the only one AppKit works on (display_init, display_main_wait) */
 static SDL_Window *window_open(void) {
 #ifdef __APPLE__
+    no_app_nap();
     {   /* macOS: SDL looks for the Vulkan loader in the system's folders only; Homebrew's is where plat_posix.c finds it too */
         const char *brew = getenv("HOMEBREW_PREFIX");
         const char *const dirs[] = { brew && *brew ? brew : "/opt/homebrew", "/usr/local" };

@@ -138,6 +138,11 @@ static unsigned vk_loopdebug(void) {
     if (v < 0) { const char *e = getenv("WT_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: WT_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
     return (unsigned)v;
 }
+/* [witchtime] MxIn.lone_lane: a vertex or tessellation stage on a GPU without subgroup operations in it (Metal) */
+static int vk_lone_lane(int stage) {
+    static const uint32_t bit[6] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, 0, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_COMPUTE_BIT};
+    return D.sg_known && stage >= 0 && stage < 6 && stage != 1 && stage != 5 && bit[stage] && !(D.sg_stages & bit[stage]);
+}
 static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
@@ -149,6 +154,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
+    if (vk_lone_lane(o->stage)) h = fnv(h, "ll1", 3);      /* [witchtime] MxIn.lone_lane is another translation; where the GPU has subgroups in the stage the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
@@ -388,6 +394,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
         in.screen_scale = src->rs;
         if (s != 5) in.loopdebug = vk_loopdebug();
+        in.lone_lane = vk_lone_lane(s);
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
             uint64_t spv_hash = 0;

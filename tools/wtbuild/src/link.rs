@@ -103,6 +103,9 @@ const MAC_LIBS: &[&str] = &[
     "-lSDL3",
     "-framework",
     "OpenGL",
+    "-framework",
+    "Foundation", // NSProcessInfo, through the Objective-C runtime (display.c no_app_nap)
+    "-lobjc",
     "-lavformat",
     "-lavcodec",
     "-lswscale",
