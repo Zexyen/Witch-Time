@@ -1985,7 +1985,7 @@ was Windows only. Now:
   and the monitor's peak are SDL's window properties, read at every present (`hdr_query`). The surface's format list was
   read into 64 entries and Mesa lists 81 on Wayland (9 formats in 9 colour spaces), so the HDR ones were cut off: 256 now.
   X11 offers no HDR swapchain. With `hdr = on` and the desktop's HDR off the white is 203 nits (BT.2408).
-- **The scene above white** (`hdr_peak`, auto = the monitor's peak on Linux, 1000 on Windows). The four tone map stages
+- **The scene above white** (`hdr_peak`, auto = 203 nits x the headroom the desktop says on Linux (issue 180: the white is 203 there, the reference the desktop shows at its SDR brightness), 1000 on Windows). The four tone map stages
   (`stage_fx` FX_GRAIN) get another translation while HDR is on (`nvn_vk_m4.c` `hdr_stage_text`, a part of the stage's
   hash per peak / white): the game's curve is a toe, a straight part and from `c4[20]` a shoulder that ends at `c4[16]`
   (in Shibuya the shoulder's size `c4[21]` is 0: a cut at white). The translation leaves it alone and multiplies the
