@@ -1839,7 +1839,7 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
     return vt_view(vt, &e, -1, 1);
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
-static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
+static void fsr_draw(VStage *fs); static void fsr_mv_streams(int from_cb, VStage *vs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
 static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
@@ -3522,6 +3522,12 @@ static uint64_t c2_ref(int s) {
     return off;
 }
 static LONG64 g_tess_draws, g_tess_pipes;          /* [witchtime] */
+/* [witchtime] motion vectors (nvn_vk_fsr.c, the velocity pass): a pre-pass draw noted for a second draw into FSR's motion vectors */
+typedef struct { void *pipe; uint32_t prev, n14, n3; uint64_t p14, p3; } MvPrep;
+static int fsr_mv_prepare(VStage *vs, int tess, MvPrep *o);
+static void fsr_mv_record(const MvPrep *q, VStage *vs, const BufRef *bufs, uint32_t vnb, const VkVertexInputBindingDescription2EXT *vbd, uint32_t vna, const VkVertexInputAttributeDescription2EXT *vad,
+                          const VkBuffer *vb, const VkDeviceSize *vo, VRes **vkept, int from_cb);
+static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst);
 static int draw_prepare(unsigned prim) {
     g_dp_fs_stores = 0;
     if (g_ptm_on < 0) g_ptm_on = getenv("WT_VK_PREPTIME") && atoi(getenv("WT_VK_PREPTIME"));
@@ -3626,6 +3632,8 @@ static int draw_prepare(unsigned prim) {
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
+    MvPrep mvq;                                    /* [witchtime] motion vectors: the pre-pass's object constants kept; last frame's into the ring for the velocity pass */
+    int mv = fsr_mv_prepare(vs, tess, &mvq);
     PT(2);
     /* vertex streams: only the ones an attribute names (a stale binding of another mesh is not read, and is not copied) */
     uint64_t voff[16];
@@ -3644,6 +3652,7 @@ static int draw_prepare(unsigned prim) {
     }
     if (nvn_front_draw_tag()) { memcpy(g_dt_voff, voff, sizeof g_dt_voff); memcpy(g_dt_vb, vbufs, sizeof g_dt_vb); }      /* round 17, test (WT_DRAWTAG) */
     R.cb_draws += from_cb;
+    fsr_mv_streams(from_cb, vs);                   /* [witchtime] TEST ONLY (WT_FSR_MVLOG) */
     PT(3);
     /* the vertex input, described before the pipeline: without VK_EXT_vertex_input_dynamic_state its layout is part of the key */
     VkVertexInputBindingDescription2EXT vbd[17];
@@ -3710,6 +3719,7 @@ static int draw_prepare(unsigned prim) {
         if (D.has_vids) vkCmdSetVertexInputEXT(R.cmd, vnb, vbd, vna, vad);
         if (vnb) vkCmdBindVertexBuffers(R.cmd, 0, vnb, vb, vo);
         for (int i = 0; i < 16; i++) if (vkept[i]) vkept[i]->busy = R.serial + 1;      /* finding 140: freed only after this command buffer */
+        if (mv) fsr_mv_record(&mvq, vs, bufs, vnb, vbd, vna, vad, vb, vo, vkept, from_cb);
     }
     PT(7);
     /* 5. descriptors */
@@ -4441,6 +4451,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        fsr_mv_commit(0, NULL, 0, VK_INDEX_TYPE_UINT16, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, (uint32_t)a[3]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
@@ -4456,6 +4467,7 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        fsr_mv_commit(1, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);

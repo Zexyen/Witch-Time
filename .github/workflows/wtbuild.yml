@@ -7,7 +7,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/language_test.c', 'tests/rebind_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/language_test.c', 'tests/rebind_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/mx_prev_test.c', 'tests/mv_match_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -55,6 +55,16 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_loop_guard_test"
           "$RUNNER_TEMP/mx_loop_guard_test"
+
+      - name: A vertex stage's previous position (runtime/mx_translate.c, motion vectors)
+        run: |
+          clang -O2 -Wall -I runtime tests/mx_prev_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_prev_test"
+          "$RUNNER_TEMP/mx_prev_test"
+
+      - name: Last frame's object constants are paired by nearness (runtime/mv_match.h, motion vectors)
+        run: |
+          clang -O2 -Wall -I runtime tests/mv_match_test.c -o "$RUNNER_TEMP/mv_match_test"
+          "$RUNNER_TEMP/mv_match_test"
 
       - name: Fragment stages work on quads, not lane numbers (runtime/mx_translate.c, issue 66)
         run: |

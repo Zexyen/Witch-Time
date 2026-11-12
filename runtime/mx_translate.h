@@ -73,6 +73,11 @@ typedef struct {
     /* [issue 26] graphics stages: jumps back allowed before the stage is ended (0 = MX_LOOP_MAX of mx_translate.c); a fragment
      * stage ended that way writes magenta, so a picture shows the pixels whose loop ran away. */
     unsigned loopdebug;
+    /* Motion vectors (vertex stage, target 1): constant buffers (bit n = buffer n, 3 and up) that also get a block "uint mxpN[]"
+     * at set 0, binding prev_base + n, for last frame's contents. The code then runs twice: once reading those blocks, its
+     * gl_Position kept in the output "vec4 mx_prev" (location MxOut.prev_loc), then as always. 0 = the text exactly as before. */
+    uint32_t prev_cbufs;
+    unsigned prev_base;
 } MxIn;
 
 typedef struct {
@@ -91,6 +96,8 @@ typedef struct {
     /* target 1: the samplers the text declares in set 1 (the back end binds a view of that type, or a dummy of that type) */
     struct { uint8_t unit, shadow; uint16_t binding; char type[24]; } smp[64];
     int nsmp;
+    uint32_t prev_cbufs;             /* the buffers of MxIn.prev_cbufs the code reads; 0: no previous position (none read, the code stores, or no free location) */
+    int prev_loc;                    /* location of mx_prev when prev_cbufs is not 0 */
 } MxOut;
 
 /* Returns 1 on success. out->glsl must be freed by the caller. */

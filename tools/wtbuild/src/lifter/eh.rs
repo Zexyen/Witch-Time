@@ -53,6 +53,7 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100d02db0, "target_h"),
     (0x7100bd563c, "model_lod"),
     (0x7100cb9440, "cam_upload"),
+    (0x7100d17d44, "palette_upload"),
     (0x7100c0f6d0, "ui_file"),
     (0x7100aa4c64, "tabs_ctor"),
     (0x7100aa4de4, "tabs_dtor"),

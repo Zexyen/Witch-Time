@@ -929,6 +929,66 @@ resolution. `fsr3` stays native AA.
   in 2.2 ms, the picture at its full size). Not run on Windows, the Deck, Android, NVIDIA
   or Intel.
 
+
+## Object motion vectors (2026-11-11; with FSR, experimental)
+
+FSR gets the camera's motion only (above). For things that move on their own, the plan: the vertex stage also gives last
+frame's position (step 1), the host keeps last frame's object constants (step 2), and a pass of our own draws the moving
+objects again into FSR's motion-vector image with a depth test for equality (step 3). `WT_FSR_MV=0` turns the pass off.
+- **What the game has** (the prologue's cutscene, 176-217 pre-pass draws, 19 vertex programs; four read as GLSL): position =
+  projection (c3[16..31]) x view (c3[0..11]) x a matrix of constant buffer 14, which is the object's palette of 3 x 4 bone
+  matrices (0x30 each, up to four weights a vertex: skinning is in the vertex stage) or, for the instanced stages, one 0x40-byte
+  record an instance. It holds this frame only: there is no previous transform anywhere, so `modelshadervelocitymap.vso` drawn
+  again would need ours too. Each object owns a ring of 3 slots (some 6) for it, its address changes every frame, and the draw
+  order changes between frames.
+- **Step 1** (`runtime/mx_translate.c`, `MxIn.prev_cbufs` / `prev_base`; `tests/mx_prev_test.c`): the chosen constant buffers
+  get a second block `mxpN[]`; the stage's code runs first on those, its `gl_Position` kept in the output `mx_prev`
+  (`MxOut.prev_loc`), then as always. A stage that reads none of them or stores gets the text as before. 400 of the game's
+  vertex stages translated that way compiled with glslang; with the option off the text is byte-identical.
+- **Step 2** (`runtime/mv_match.h`, `fsr_mv_draw` / `fsr_mv_last` in `runtime/nvn_vk_fsr.c`, `h_palette_upload` in
+  `runtime/game_shim_eh.c`; `tests/mv_match_test.c`): while FSR runs, buffer 14 of every pre-pass draw is kept for one frame
+  (100-200 KB) by its address, and the camera's c3 of the last frame (`F.c3_prev`). **The game says which slot was last
+  frame's**: `f_7100d17d44` (object x0, buffer table x1, mesh part x2; one caller, `f_7100d03668`, on three job threads)
+  writes a part's palette into slot `buffer[+0x30] + buffer[+0x38] * index` of the buffer `*(x1 + [object + 0x88] * 0x18)`.
+  That entry is one of two buffers in turn, each with its own index (+0x68, going 0, 1, 2 with each write), so a palette goes
+  through six slots and the phases differ from part to part. The override notes each write by (object, part) and exports
+  the pair (this slot, the slot of the write before) in `game_mv_pairs`; the runtime looks the pair up at the draw and
+  takes last frame's bytes of that slot. A block with no pair is looked for at its own address (a slot not written again).
+  TEST log `WT_FSR_MVLOG=1`.
+- **Measured** (Linux, RX 9070 XT, 300 s from New Game with `WT_SKIP_MOVIES=1`: title, the prologue's cutscenes and its
+  fight; 49 logged frames, 4,318 blocks): 3,827 have last frame's bytes (88.6 %; 3,497 of them changed), 454 have no pair
+  and 37 a pair whose slot was not drawn last frame. The ones without: the instanced stages' records (0x2000 blocks, copied
+  by `f_710080c698`, not hooked: they keep the camera's motion) and objects in their first frame. Validation layer: only the
+  known warning; `wtbuild smoke` and the lifter's golden (blessed: one more override) pass.
+- **Tried first, dropped**: pairing a block with last frame's nearest block of its size. Over 4,061 blocks 21 % were paired
+  at a squared distance over 100, which is no small motion, and it cost 0.26 ms a frame on the render thread.
+- **Fights** (the prologue's, frames 6000-8100 of that run): no pre-pass draw takes a vertex stream from a compute buffer
+  and no pre-pass vertex stage reads a storage buffer (0 of 10,020 logged draws). The dispatches of a fight (about 6 a frame)
+  feed one or two draws a frame outside the pre-pass (particles). So step 1's vertex variant is enough for what has depth.
+- **Step 3, the velocity pass** (`fsr_mv_prepare` / `_record` / `_commit` / `_pass` in `runtime/nvn_vk_fsr.c`, called from
+  `draw_prepare` and the two direct draw commands): a pre-pass draw whose palette has last frame's bytes and changed is noted
+  with what the command buffer holds for it (vertex input, buffers in the stream ring or kept vertex buffers, viewport,
+  culling, depth bias) and drawn again in `fsr_run`, after the camera's compute pass, into FI_MV: the stage's step-1 variant
+  with last frame's c14 and c3 at bindings 54 and 43, a fragment stage of ours (previous and current NDC without their
+  jitters, as the compute pass), depth test EQUAL on the scene's depth, no depth write. The game's draws and pipelines are
+  untouched. A stage's pipeline is made by a thread of its own at the stage's first draw (40 ms each on a cold cache, 0.3-6
+  warm); until then its draws keep the camera's vector. Not drawn: instanced and tessellated draws, vertex stages with a
+  texture or storage buffer, draws fed by compute, indirect draws, an object in its first frame, the draws noted before a
+  wrap of the stream ring.
+- **Checked** (Linux, RX 9070 XT, RADV; raw FI_MV of a frame before and after the pass, `WT_FSR_MVDUMP=<frame>`):
+  with `WT_FSR_MV_ALL=1` (TEST: unmoved objects drawn too) in a cutscene with a moving camera (vectors 0.53 px median, 4.6
+  max) the pass covered 93.3 % of the picture and 86.2 % of those pixels came out within 0.02 px of the camera's vector
+  (median difference 0.001 px): the depth test passes on whole objects, and the conventions, both jitters and last frame's
+  camera agree with the compute pass. In the prologue's fight the pass wrote 8.6 % of the picture (the character, her hair
+  and ribbons, the gun: 12 px median, 130 max, against 0.09 px of camera motion), in a cutscene 22 %. Validation layer:
+  only the known warning, also in a quality mode; shutdown clean.
+- **Cost** (resolution_scale 2.4, fsr3_quality, frames 4500-8400 of the route, two runs each way, alternating): batch replay
+  2.03 / 1.88 ms a frame with the pass against 1.82 / 1.79 without, GPU 5.44 / 5.27 against 5.22 / 5.28 ms, 59.7-59.8 fps
+  either way: at most 0.2 ms of each, inside the spread of the runs.
+- **Not shown**: that the picture is better. Two runs do not reach the same frames, so there is no pair of pictures with
+  and without; the frames with the pass look sound. Not run on Windows, NVIDIA, Intel, the Deck; a fight with many enemies
+  and the 30 fps cutscene mode not measured.
+
 ## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
 
 **First step done (2026-10-27): `frame_rate = 61 .. 120` in graphics.ini.** `h_frame_clock` (`runtime/game_shim_eh.c`)
