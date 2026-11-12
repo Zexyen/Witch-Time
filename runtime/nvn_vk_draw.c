@@ -545,11 +545,16 @@ void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.
 static char g_step[256];
 static int g_step_busy;
 static int vk_step(void) { static int v = -1; if (v < 0) { v = getenv("WT_VK_STEP") && atoi(getenv("WT_VK_STEP")); if (v) printf("nvn_vk: WT_VK_STEP=1 (a test): the GPU finishes every command of the game before the next one; very slow\n"); } return v; }
-/* [issue 55] TEST: an Intel GPU on Windows (a UHD 620, driver 101.2145): the driver faults in vkCmdBeginRendering when the pass
- * follows compute dispatches in one command buffer (not when every command has its own: WT_VK_STEP), and skinned models come
- * out as ribbons. Two guesses, both unproven: such a pass starts a new command buffer (pass_begin), and compute stages ask for
- * 32 lanes, the width the lane emulation of the translator is written for (sg_required). WT_VK_INTEL=0 off, 1 on any GPU. */
-static int g_cmd_disp;
+/* [issue 55] TEST: an Intel GPU on Windows (a UHD 620, driver 101.2145): the driver faults in vkCmdBeginRendering of the first
+ * pass after the frame's compute dispatches (already submitted, still running), not when the GPU finishes every command first
+ * (WT_VK_STEP), and skinned models come out as ribbons. Two guesses, both unproven: the GPU finishes the dispatches before the
+ * next pass begins (pass_begin: one wait a frame), and compute stages ask for 32 lanes, the width the lane emulation of the
+ * translator is written for (sg_required). WT_VK_INTEL=0 off, 1 on any GPU. With it, the first 6000 submissions, dispatches
+ * and passes are named in the log (nvn_vk_trace), so a fault shows what came before it. */
+static int g_cmd_disp, g_disp_unwaited;
+static void cmd_wait_all(void);
+static int vk_intel(void);
+static int vk_trace(void) { static int n; return vk_intel() && n < 6000 && ++n; }
 static int vk_intel(void) {
     static int v = -1;
     if (v < 0) {
@@ -570,7 +575,7 @@ static uint32_t sg_required(void) {
     p2.pNext = &p13;
     vkGetPhysicalDeviceProperties2(V.gpu, &p2);
     uint32_t r = D.f13.subgroupSizeControl && (p13.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) && p13.minSubgroupSize <= 32 && p13.maxSubgroupSize >= 32 ? 32 : 0;
-    if (!InterlockedExchange(&done, 1)) printf("nvn_vk_intel: on (WT_VK_INTEL): a pass after compute dispatches starts a new command buffer; compute stages: subgroups of %u to %u lanes offered, size control %d, stages 0x%x: %s\n", p13.minSubgroupSize, p13.maxSubgroupSize, (int)D.f13.subgroupSizeControl, (unsigned)p13.requiredSubgroupSizeStages, r ? "32 lanes required" : "NOT required (the driver cannot)");
+    if (!InterlockedExchange(&done, 1)) printf("nvn_vk_intel: on (WT_VK_INTEL): the GPU finishes compute dispatches before the next pass; compute stages: subgroups of %u to %u lanes offered, size control %d, stages 0x%x: %s\n", p13.minSubgroupSize, p13.maxSubgroupSize, (int)D.f13.subgroupSizeControl, (unsigned)p13.requiredSubgroupSizeStages, r ? "32 lanes required" : "NOT required (the driver cannot)");
     req = r;
     return req;
 }
@@ -696,6 +701,7 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     VKC(vkQueueSubmit(V.queue, 1, &sb, s->fence));
     s->pending = 1; s->serial = ++R.serial;
     R.recording = 0; R.cmd = NULL; R.flushes++;
+    if (vk_trace()) { printf("nvn_vk_trace: submit, frame %lld, %d dispatches and %lld draws in it\n", (long long)nvn_front_frame_next(), g_cmd_disp, (long long)g_cmd_draws); fflush(stdout); }
     return R.serial;
 }
 static void gcp_settle_done(void);
@@ -1887,7 +1893,7 @@ static int pass_begin(void) {
     if (R.in_pass) return 1;
     if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : VK_SPLIT_DEFAULT; }
     if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }
-    else if (g_cmd_disp && R.recording && vk_intel()) { cmd_submit(NULL, NULL); g_splits++; }      /* [issue 55] TEST, see vk_intel */      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
+    if (g_disp_unwaited && vk_intel()) { g_disp_unwaited = 0; if (vk_trace()) { printf("nvn_vk_trace: the GPU finishes the compute dispatches before this pass, frame %lld\n", (long long)nvn_front_frame_next()); fflush(stdout); } cmd_wait_all(); }      /* [issue 55] TEST, see vk_intel */      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
     memset(ca, 0, sizeof ca); memset(&da, 0, sizeof da);
@@ -1980,7 +1986,7 @@ static int pass_begin(void) {
     cmd_begin();                                   /* vt_get may have submitted (ring wrap) */
     ri.renderArea.extent.width = (uint32_t)w; ri.renderArea.extent.height = (uint32_t)h; ri.layerCount = 1; ri.colorAttachmentCount = (uint32_t)R.ncol; ri.pColorAttachments = ca;
     if (g_pt_on > 0) { Tex *c0 = R.ncol ? R.col[0].tex : NULL; pt_mark(w, h, R.ncol, c0 ? (int)c0->b.format : 0, ri.pDepthAttachment != NULL, c0 && wintex_is(c0), 0); }
-    if (vk_step()) {      /* [issue 55] TEST ONLY: a driver that faults in the call below (a UHD 620 on v0.9.1): the last line of the log is its pass */
+    if (vk_step() || vk_trace()) {      /* [issue 55] TEST ONLY: a driver that faults in the call below (a UHD 620 on v0.9.1): the last line of the log is its pass */
         static int n; char b[1024]; int o = 0;
         for (int i = 0; i <= R.ncol && n < 20000; i++) {
             TargetRef *r = i < R.ncol ? &R.col[i] : &R.depth; VkImageView v = i < R.ncol ? ca[i].imageView : da.imageView; VTex *vt = v ? (VTex *)r->tex->vk : NULL;
@@ -3540,6 +3546,8 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
     g_cmd_disp++;
+    g_disp_unwaited = 1;
+    if (vk_trace()) { printf("nvn_vk_trace: dispatch, frame %lld, compute #%d\n", (long long)nvn_front_frame_next(), p->serial); fflush(stdout); }
     ckpt(2, NULL, NULL, NULL);
     g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
     if (v->images) storage_barrier();              /* [witchtime] */
