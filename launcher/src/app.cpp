@@ -655,7 +655,11 @@ void App::handle(SDL_Event& ev)
 		if (std::abs(int(ev.gaxis.value)) > 16384)            // past half, as the game: a drifting stick is not use
 			prompts_use(SDL_GetGamepadFromID(ev.gaxis.which));
 		return;
-	case SDL_EVENT_MOUSE_BUTTON_DOWN: prompts_use(4); break;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		prompts_use(4);
+		if (ev.button.button == SDL_BUTTON_LEFT && hint_click(ev.button.x * SDL_GetWindowPixelDensity(window)))
+			return;
+		break;
 	case SDL_EVENT_KEY_DOWN:
 	{
 		prompts_use(4);
@@ -681,6 +685,29 @@ void App::handle(SDL_Event& ev)
 		typed = true;
 	if (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || ev.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
 		rescale();
+}
+
+// a click on a hint of the bottom row presses its key (issue 197). RmlUi never sees the click: it would move the focus
+// to the hint, and the keys act on the focused control. x: the pointer, in the context's pixels.
+bool App::hint_click(float x)
+{
+	Rml::Element* e = ctx->GetHoverElement();
+	while (e && !e->HasAttribute("key"))
+		e = e->GetParentNode();
+	if (!e)
+		return false;
+	using namespace Rml::Input;
+	const Rml::String k = e->GetAttribute<Rml::String>("key", "");
+	if (k == "back")
+		back();
+	else if (k == "change")                      // one glyph for both ways: its left half steps back, the rest (and the word) on
+	{
+		Rml::Element* g = e->GetFirstChild();
+		key(g && x < g->GetAbsoluteOffset(Rml::BoxArea::Border).x + g->GetOffsetWidth() / 2 ? KI_LEFT : KI_RIGHT);
+	}
+	else
+		key(k == "q" ? KI_Q : k == "e" ? KI_E : KI_RETURN);
+	return true;
 }
 
 // the control under the mouse takes the focus (not shown as the keys' focus), so one row is lit, not the hovered one and

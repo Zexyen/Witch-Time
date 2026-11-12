@@ -32,7 +32,7 @@
 	<div class="foot">
 		<div class="fl">{{ footer_info }}</div>
 		<div class="grow"></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
@@ -92,8 +92,8 @@
 	<div class="foot">
 		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
 		<div class="grow"></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -138,8 +138,8 @@
 	<div class="band">{{ build_line }}</div>
 	<div class="foot">
 		<div class="grow"></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -186,8 +186,8 @@
 	<div class="band">{{ mods_summary }}</div>
 	<div class="foot">
 		<div class="grow"></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -248,9 +248,9 @@
 	<div class="band">Changes are saved as you make them.</div>
 	<div class="foot">
 		<div class="grow"></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="e"><img class="gl" key="q" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
+		<div class="hint" key="change"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 

@@ -109,6 +109,7 @@ body {
 .foot .fl { font-size: 15dp; color: #5d5868; letter-spacing: 1dp; }
 .foot .grow { flex: 1; }
 .hint { display: flex; flex-direction: row; align-items: center; gap: 8dp; }
+.hint[key]:hover { color: #6a49d0; }   /* a click presses the hint's key (App::hint_click) */
 .gl { width: 28dp; height: 28dp; }
 .key { height: 26dp; line-height: 24dp; padding: 0 8dp; border: 1dp #26222f; border-radius: 4dp; font-size: 13dp; font-weight: 600; color: #26222f; }
 
