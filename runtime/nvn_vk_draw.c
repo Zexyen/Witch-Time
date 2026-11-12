@@ -920,6 +920,20 @@ static Tex *g_rs_keep[256];
 static int g_rs_nkeep;
 static LONG64 g_rs_demoted;
 static int g_rs_demoting;                          /* vk_drop called by the demotion below (not a finalize) */
+/* [witchtime] issue 126: the mist (the clouds of erasure's patches, drawn into the 520x360 class) fades against the scene with
+ * the minimum of #5548's half-size depth image, which stays at the game's size. At a scale its cut-out around characters and
+ * buildings steps in 2 game pixels (4.8 of the picture's at 2160p), and #5548 takes 2x2 texels of the scaled depth for each,
+ * a part of the footprint: over an object that fades through the dither the minimum misses it in a grid of dots. #5548's own
+ * colour target holds the same linear depth for every pixel of the scaled scene (red), so those draws sample it instead, with
+ * a sampler that returns the minimum of its 2x2 texels (the dither's pixels are the image's). Not at 1.0 (nothing is kept).
+ * WT_VK_MISTDEPTH=0: off; =alt (TEST): on in odd frames only, an A/B in two frames of one run. */
+static Tex *g_rs_fine_kept, *g_rs_fine_full;       /* the kept image and the colour target of the draw that stored it */
+static LONG64 g_rs_fine_draws;
+static int rs_fine_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("WT_VK_MISTDEPTH"); on = !e ? 1 : !strcmp(e, "alt") ? 2 : atoi(e) != 0; }
+    return on == 2 ? (int)(nvn_front_frame_next() & 1) : on;
+}
 static Tex *g_rs_post[64];                         /* [witchtime] issue 118: tonemap targets made at the picture's scale (rs_promote) */
 static int g_rs_npost;
 static int rs_post_has(const Tex *t) { for (int i = 0; i < g_rs_npost; i++) if (g_rs_post[i] == t) return 1; return 0; }
@@ -986,6 +1000,7 @@ static void vk_drop(int kind, void *host) {
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
     if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [witchtime] finalized: a later texture at this address starts over */
     if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
+    if (!g_rs_demoting && (t == g_rs_fine_kept || t == g_rs_fine_full)) g_rs_fine_kept = g_rs_fine_full = NULL;      /* [witchtime] issue 126 */
     if (g_hdr_tm == t && !g_rs_demoting) g_hdr_tm = NULL;
     VTex *vt = t->vk;
     if (!vt) return;
@@ -2094,6 +2109,14 @@ static void resolve_sampler(int s, VStage *v, int i) {
         Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
         if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
         VTex *vt = vt_get(t);
+        if (s == 1 && t == g_rs_fine_kept && rs_fine_on() && R.ncol && R.col[0].tex && rs_extra_class(R.col[0].tex->b.width, R.col[0].tex->b.height)) {      /* [witchtime] issue 126: the mist reads the scaled depth */
+            Tex *f = g_rs_fine_full;
+            VTex *fv = f && !f->dead ? vt_get(f) : NULL;
+            if (fv && fv->rs && fv->samples == 1 && D.f12.samplerFilterMinmax && fmt_supported(fv->fmt, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT)) {
+                t = f; vt = fv; view.set = 0; g_rs_fine_draws++;
+                sp.reduction = 1; sp.min = sp.mag = 1;      /* the minimum of the 2x2 texels at the sample, level 0 */
+            }
+        }
         VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's phase of the dither while FSR runs (may end the pass) */
         if (!dither) dither = fsr_up_view(s, t, vt, &view);           /* [witchtime] issue 118: FSR's output for a tonemap at the picture's scale (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
@@ -3340,6 +3363,10 @@ static int resolve_image(int s, VStage *v, int k) {
     if (vt && vt->rs && g_rs_nkeep < 256) {        /* [witchtime] a storage image stays at the game's size (g_rs_keep) */
         rs_demote(t);
         vt = vt_get(t);
+    }
+    if (s == 1 && R.ncol == 1 && R.col[0].tex && rs_keep_has(t)) {      /* [witchtime] issue 126: this draw's colour target is the same picture at twice the size (#5548: the depth of every pixel) */
+        Tex *c = R.col[0].tex;
+        if (c->b.format != t->b.format && c->b.width == 2 * t->b.width && c->b.height == 2 * t->b.height) { g_rs_fine_kept = t; g_rs_fine_full = c; }
     }
     int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
     if (!vt || !vt->storage || dim < 0) { nvn_vk_missing("a storage image of a format, kind or sample count that cannot be a Vulkan storage image (or a buffer image)"); return 0; }
@@ -6008,6 +6035,7 @@ static void vkd_shutdown(void) {
     if (g_rs_twoscale) printf("nvn_vk_scale: %lld passes had attachments of both scales (the scene's %.3f, the picture's %.3f): each drawn in the area all of them hold\n", (long long)g_rs_twoscale, (double)rs_render_scale(), (double)rs_scale());
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: WT_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
     if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
+    if (RS_ON && g_rs_fine_draws) printf("nvn_vk_scale: %lld texture reads of the mist's draws given the scaled depth instead of the half-size one kept at the game's size (issue 126; WT_VK_MISTDEPTH=0 off)\n", (long long)g_rs_fine_draws);      /* [witchtime] */
     if (RS_ON && g_sf_draws) printf("nvn_vk_scale: %lld draws below 1.0 that store into kept images drawn again at the game's size (issue 147; WT_VK_STOREFULL=0 off)\n", (long long)g_sf_draws);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
