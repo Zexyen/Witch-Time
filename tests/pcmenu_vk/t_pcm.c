@@ -14,6 +14,7 @@ void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int s) { *b = 0; *lx = *ly =
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
 uint32_t nnhid_menu_pad(void) { return 0; }
 int nvn_front_post_pcmenu(void) { return 0; }
+int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) {}
 int display_window_apply(void) { return 1; }
 void display_mouse_want(int on) { (void)on; }

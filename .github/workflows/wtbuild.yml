@@ -18,6 +18,7 @@ jobs:
 
       - name: Tools
         run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld libssl-dev
 
@@ -88,6 +89,7 @@ jobs:
 
       - name: Tools
         run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang libclang-dev cmake ninja-build
 

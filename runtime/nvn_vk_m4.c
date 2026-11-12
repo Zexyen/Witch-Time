@@ -30,7 +30,7 @@ typedef struct VStage {
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
-typedef struct { int stage, code_len, serial, rs, nograin; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess); rs: a fragment stage translated for a scale other than 1.0, kept here because a worker may build it after the scale changed */
+typedef struct { int stage, code_len, serial, rs, nograin; uint32_t hdr; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess); rs: a fragment stage translated for a scale other than 1.0, kept here because a worker may build it after the scale changed */
 static CRITICAL_SECTION g_sh_lock;
 static CONDITION_VARIABLE g_sh_cv, g_jq_cv;        /* g_sh_cv: something was finished; g_jq_cv: a job was queued */
 /* ---- Session 12: the freeze watchdog's wait registry (nvn_vk_wd.c writes the report). Every wait of ours that has no
@@ -119,12 +119,14 @@ static int stage_fx(Stage *st) {
     }
     return st->fx;
 }
+static uint32_t stage_hdr(Stage *st) { return g_hdr_var && stage_fx(st) == FX_GRAIN ? (uint32_t)g_hdr_var : 0; }      /* [witchtime] SSrc.hdr of a fragment stage: hdr_stage_text */
 static int ssrc_of(SSrc *o, const Prog *p, int s) {
     const Stage *st = &p->st[s];
     memset(o, 0, sizeof *o);
     if (!st->code || st->code_len <= 0) return 0;
     o->stage = s; o->code = st->code; o->code_len = st->code_len; o->serial = p->serial; o->rs = s == 1 && RS_ON;
     o->nograin = s == 1 && gfx_options()->no_film_grain && stage_fx((Stage *)st) == FX_GRAIN;
+    o->hdr = s == 1 ? stage_hdr((Stage *)st) : 0;
     if (st->ctl[3] && st->ctl[4]) { o->cdata = st->code - (s == 5 ? 0 : 0x30) + st->ctl[4]; o->cdata_size = st->ctl[3]; }      /* a compute stage has no program header */
     memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
@@ -145,6 +147,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
+    if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs2", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -305,6 +308,55 @@ static void rs_pre_queue(const SSrc *src, const uint32_t *key, uint32_t fo) {   
     LeaveCriticalSection(&g_rs_lock);
     InterlockedIncrement64(&g_rs_pre_queued);
 }
+/* [witchtime] HDR, the scene's bright parts above white. The four tone map stages (stage_fx FX_GRAIN) put each channel x of the
+ * scene through the game's curve: a toe, a straight part of slope k = c4[17], and from x0 = c4[20] a shoulder
+ * y = W - S * exp(-(x - x0) * k / S) that ends at W = c4[16] (S = c4[21]; 0 in Shibuya: y is cut off at W). Then grain and
+ * vignette, a clamp to 0..1, the sRGB encoding and, in three of them, the grading table. The translation made here leaves all
+ * of that as it is and multiplies the result by one gain per pixel: with x the largest channel going into the curve and y the
+ * largest coming out, the shoulder that starts at the same place with the same slope but ends at P * W (P = peak / white,
+ * var in eighths) gives h = P * W - Sh * exp(-(x - x0) * k / Sh), Sh = P * W - (W - S), and the gain is h / y: 1 up to x0,
+ * towards P for the brightest things of the scene. One gain for the three channels keeps the hue the game's curve and
+ * grading gave the pixel. The gain is of light, so it goes through the curve the HDR pass reads the picture with (var bit
+ * 30: sRGB, else gamma 2.2). The text is found by its shape: the three comparisons with c4[20], and three lines "y * g,
+ * clamped" after the grain's line, g the same in all. A stage where it is not found stays as it is (white at most) and says so. */
+static void hdr_stage_text(char **glsl, uint32_t var) {
+    char *t = *glsl, *g = strstr(t, "(F(c4[13u]))"), *m = strstr(t, "\nvoid main() {"), *fe = NULL, *at[6], *o, *w;
+    int a[3], b[3], x[3], c, n = 0, nx = 0;
+    for (char *f = t; (f = strstr(f, " frag0 = vec4(")) != NULL; f++) fe = f;
+    if (fe) fe = strstr(fe, ");");
+    for (char *l = m ? strchr(m + 1, '\n') : NULL; l; l = strchr(l + 1, '\n'))
+        if (!strncmp(l + 1, "{ uint res = (((F(r", 19) && strstr(l + 1, ")) >= (F(c4[20u])))") == strchr(l + 1, ')')) { if (nx < 3) { at[nx] = l + 1; x[nx] = atoi(l + 20); } nx++; }
+    for (char *l = g ? strchr(g, '\n') : NULL; l && n < 3; l = strchr(l + 1, '\n'))
+        if (sscanf(l + 1, "{ float f = (F(r%d)) * (F(r%d)); f = clamp(f, 0.0, 1.0); r%d = U(f); }", &a[n], &b[n], &c) == 3 && (at[3 + n] = strstr(l + 1, "f = clamp(")) != NULL) n++;
+    int ys = n == 3 && b[0] == b[1] && b[1] == b[2] ? 0 : n == 3 && a[0] == a[1] && a[1] == a[2] ? 1 : -1;
+    if (ys < 0 || nx != 3 || !fe || fe < at[5] || fe < at[2] || !strstr(t, "c4[16u]") || !strstr(t, "c4[17u]") || !strstr(t, "c4[21u]") || !(o = malloc(strlen(t) + 2000))) {
+        printf("nvn_vk_hdr: a tone map stage does not have the text looked for: its picture stays at white or below\n"); fflush(stdout);
+        return;
+    }
+    w = o;
+#define PUT(from, to) do { memcpy(w, from, (size_t)((to) - (from))); w += (to) - (from); } while (0)
+    PUT(t, m + 1);
+    w += sprintf(w, "float mx_hdr_x = 0.0, mx_hdr_y = 0.0;\n"
+                    "vec3 mx_hdr_out(vec3 c) {\n"
+                    "  float W = F(c4[16u]), x0 = F(c4[20u]), k = F(c4[17u]), T = %u.%03u * W, Sh = T - (W - F(c4[21u]));\n"
+                    "  if (!(mx_hdr_x > x0 && mx_hdr_y > 1e-4 && k > 0.0 && Sh > 0.0)) return c;\n"      /* (false for a NaN too) */
+                    "  float g = max((T - Sh * exp((x0 - mx_hdr_x) * k / Sh)) / mx_hdr_y, 1.0);\n"
+                    "%s}\n", (var & 0xffff) / 8, (var & 7) * 125, var & (1u << 30)
+                    ? "  vec3 l = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045))) * g;\n"
+                      "  return mix(l * 12.92, 1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, greaterThan(l, vec3(0.0031308)));\n"
+                    : "  return c * pow(g, 1.0 / 2.2);\n");
+    char *from = m + 1;
+    for (int i = 0, j = 3; i < 3 || j < 6; ) {      /* the six places in the text's order (a comparison can come after the first y) */
+        if (j == 6 || (i < 3 && at[i] < at[j])) { PUT(from, at[i]); w += sprintf(w, "mx_hdr_x = max(mx_hdr_x, F(r%d));\n", x[i]); from = at[i++]; }
+        else { PUT(from, at[j]); w += sprintf(w, "mx_hdr_y = max(mx_hdr_y, F(r%d)); ", ys ? b[j - 3] : a[j - 3]); from = at[j++]; }
+    }
+    PUT(from, fe + 2);
+    w += sprintf(w, " frag0.rgb = mx_hdr_out(frag0.rgb);");
+    strcpy(w, fe + 2);
+#undef PUT
+    free(t);
+    *glsl = o;
+}
 static void vstage_build(VStage *v, const SSrc *src) {
     int s = v->stage, done = 0;
     char path[128];
@@ -339,6 +391,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
             uint64_t spv_hash = 0;
+            if (src->hdr) hdr_stage_text(&out.glsl, src->hdr);      /* [witchtime] before the grain's text goes */
             if (src->nograin) { char *g = strstr(out.glsl, "(F(c4[13u]))"); if (g) memcpy(g, "(0.0       )", 12); }      /* issue 86, stage_fx */
             if (getenv("WT_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: WT_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
                 uint32_t dep = s == 0 ? out.int_dep : 0, ck[4] = { v->key[0] & dep, v->key[1] & dep, v->key[2] & out.tex_units, v->key[3] & out.tex_units };
@@ -427,6 +480,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     int how;
     if (!st->code) return NULL;
     if (s == 1 && stage_fx(st) == FX_GRAIN && st->nograin != gfx_options()->no_film_grain) { st->nograin = gfx_options()->no_film_grain; st->vk = v = NULL; }      /* issue 86: film_grain changed */
+    if (s == 1 && st->hdr != stage_hdr(st)) { st->hdr = stage_hdr(st); st->vk = v = NULL; }      /* [witchtime] HDR on or off, or another peak / white */
     if (s == 1 && st->rs_flips != g_rs_flips) { st->rs_flips = g_rs_flips; st->vk = v = NULL; }      /* [witchtime] the scale left or reached 1.0: the other translation (rs_apply) */
     if (v && v->state == 2 && v->fo == fo && key_fits(s, key, v->key, v->dep, v->tex_units)) return v->ok ? v : NULL;
     if (!ssrc_of(&src, p, s)) return NULL;

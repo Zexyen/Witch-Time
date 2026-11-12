@@ -80,6 +80,11 @@ static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_r
     {"film_grain", "MENU_OPTION_LIST_PC_GRAIN", {"on", "off"}, {"CORE_SETTING_003", "CORE_SETTING_004"}, 0},
     {"upscaler", "MENU_OPTION_LIST_PC_FSR", {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"},
      {"CORE_SETTING_004", "CORE_PC_FSR_AA", "CORE_PC_FSR_Q", "CORE_PC_FSR_B", "CORE_PC_FSR_P", "CORE_PC_FSR_UP"}, 0},
+    {"hdr", "MENU_OPTION_LIST_PC_HDR", {"auto", "off", "on"}, {"CORE_PC_AUTO", "CORE_SETTING_004", "CORE_SETTING_003"}, 0},
+    {"hdr_paper_white", "MENU_OPTION_LIST_PC_HDR_WHITE", {"auto", "100", "150", "200", "250", "300", "400"},
+     {"CORE_PC_AUTO", "CORE_PC_NITS_100", "CORE_PC_NITS_150", "CORE_PC_NITS_200", "CORE_PC_NITS_250", "CORE_PC_NITS_300", "CORE_PC_NITS_400"}, 0},
+    {"hdr_peak", "MENU_OPTION_LIST_PC_HDR_PEAK", {"auto", "400", "600", "800", "1000", "1500", "2000", "4000"},
+     {"CORE_PC_AUTO", "CORE_PC_NITS_400", "CORE_PC_NITS_600", "CORE_PC_NITS_800", "CORE_PC_NITS_1000", "CORE_PC_NITS_1500", "CORE_PC_NITS_2000", "CORE_PC_NITS_4000"}, 0},
     {"aspect", "MENU_OPTION_LIST_PC_FIT", {"keep", "stretch"}, {"CORE_PC_FIT_KEEP", "CORE_PC_FIT_STRETCH"}, 0},
     {"aspect_ratio", "MENU_OPTION_LIST_PC_ASPECT", {"16:9", "auto"}, {"CORE_PC_FIXED", "CORE_PC_UNLOCKED"}, 0},      /* [witchtime] aspect ratios: Fixed / Unlocked */
     {"hud_area", "MENU_OPTION_LIST_PC_HUD", {"screen", "16:9"}, {"CORE_PC_HUD_FULL", "CORE_PC_HUD_CENTER"}, 0},      /* [witchtime] aspect ratios */
