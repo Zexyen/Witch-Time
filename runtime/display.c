@@ -639,6 +639,10 @@ static void no_app_nap(void) {
 static SDL_Window *window_open(void) {
 #ifdef __APPLE__
     no_app_nap();
+    /* MoltenVK turns a Vulkan command buffer into Metal calls when it is submitted, on the submitting thread: 1.9 ms of the
+     * render thread's 7 ms in a Shibuya fight frame. With this it does that on a thread of its own and vkQueueSubmit returns
+     * at once (frame_rate = 120 on an M5 Pro: 118.7 -> 119.8 fps, the replay 4.1 -> 2.6 ms). Set to 1 by hand: as before. */
+    if (!getenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS")) _putenv_s("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0");
     {   /* macOS: SDL looks for the Vulkan loader in the system's folders only; Homebrew's is where plat_posix.c finds it too */
         const char *brew = getenv("HOMEBREW_PREFIX");
         const char *const dirs[] = { brew && *brew ? brew : "/opt/homebrew", "/usr/local" };
@@ -1418,6 +1422,10 @@ void display_report(FILE *out) {
         pace_stat_line(out, "fight frames", 1, 0);
         fprintf(out, "display-timing: presents by tenth of a refresh after the vblank before them: %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)g_ps_phase[0], (long long)g_ps_phase[1], (long long)g_ps_phase[2], (long long)g_ps_phase[3],
                 (long long)g_ps_phase[4], (long long)g_ps_phase[5], (long long)g_ps_phase[6], (long long)g_ps_phase[7], (long long)g_ps_phase[8], (long long)g_ps_phase[9]);
+    } else {                                               /* no vblank measured (macOS, a hidden window): the ticks are the program's clock */
+        fprintf(out, "display: our own clock (ticks for %d fps); presents held for their tick %lld, late frames presented at once %lld\n", g_pace_hz, (long long)g_hold_n, (long long)g_hold_late);
+        pace_stat_line(out, "all frames", 0, 0);
+        pace_stat_line(out, "fight frames", 1, 0);
     }
     l1_report(out);
     nvn_gl_report(out);

@@ -2077,6 +2077,35 @@ and for the game's threads, 150 s runs of the prologue scene at the 120 target, 
 `MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0`, the wider `nobj` table below. MoltenVK lacks `drawIndirectCount`, so counts
 compute wrote are read on the CPU there (a wait each); KosmicKrisp has it and waited longer.
 
+**120 fps in the fight (2026-11-12).** `frame_rate = 120`, the same scene, 150 s runs, the fight's frames (4200 on):
+109.8 fps on average before (the slowest 300 frames 83), **119.8 now** (the slowest 300 frames 113.5, the first of the
+fight; all others 119.6-120.0); a save of the installed game on the Linux PC (a cutscene, then a fight) 110.9 -> 119.8.
+The render thread's replay went from 6.8 to 2.7 ms a frame, its waits for the GPU from 3.7 to 0.1. A `sample` of the
+fight showed the game's thread waiting 37 % of a frame for its fence and the render thread 27 % in `vkWaitForFences`:
+- **A stand-in for `drawIndirectCount`** (`nvn_vk_draw.c` `gce_*`; MoltenVK has none, Metal has no such draw). B3 culls
+  on the GPU: about 700 indirect draws a frame, each with a count of 0 or 1 a compute dispatch wrote. Reading the first
+  count on the CPU submitted the frame so far and waited for all the GPU had queued. Now the record goes into the ring
+  and is drawn with `vkCmdDraw(Indexed)Indirect`; one compute dispatch in the command buffer submitted just before
+  (`up_cmd`) zeroes the instance count of every record at or past its count. What writes a count has to be in an earlier
+  command buffer, so a count draw after a dispatch or a storing draw of the same one submits first (no wait). Records
+  compute wrote with a fixed count are read by the GPU as on the other systems (they waited too). 109.8 -> 116.0 fps.
+  `WT_VK_GPUCOUNT=2` takes this path on a device that has the real call; `=0` reads on the CPU as before.
+- **The submission a storing draw is in** (every system). A compute buffer a draw writes (B3's light lists: two of
+  130 KB a frame) had the batch's last submission as its writer, so landing it in the next frame, because the game had
+  written into its range, waited for the whole previous frame on the GPU. `draw_prepare` now names the command buffer the
+  draw is recorded in. 116.0 -> 118.7 fps, the waits 0.84 -> 0.04 ms a frame.
+- **`MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0`** is set at start unless the variable is there already (`display.c`):
+  MoltenVK makes the Metal calls of a command buffer when it is submitted, 1.9 ms a frame of the render thread; with this
+  on a thread of its own. 118.7 -> 119.8 fps, the game's wait for its tick 4.4 -> 6.9 ms a frame. It made no difference
+  while the waits above were there. The log's frame times (taken where the replay ends) spread more with it (1 % low
+  80 against 102); the presents are held for their tick as before: 12 of 12,631 frames came late in 120 s (125 with
+  synchronous submits). Nobody looked at it on a 120 Hz display: this Mac's is 60 Hz and the runs had a hidden window.
+- Tried and left out: `MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS=1` (the game stops making frames when the fight starts),
+  allocated descriptor sets instead of pushed ones (no gain), answering the game's fence wait once the replay is submitted
+  (+2 fps; the game may read what the GPU wrote after its fence).
+- At 60: 60.0 fps as before, the render thread 7.5 -> 2.9 ms a frame. Validation layer, 90 s of the fight: no error.
+  `display_report` prints the held and late presents also without a measured vblank.
+
 **A native Metal renderer: measured, not built.** The renderer speaks Vulkan (`nvn_vk*.c`, 1.2 MB of C, and the shader
 translator's GLSL to SPIR-V); a Metal back end would be a third renderer beside it. What it could win was measured
 instead, in the prologue's 3D scenes at 60 fps (`sample`, 8 s, every thread; the game's own thread is the busy one):
