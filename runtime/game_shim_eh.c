@@ -777,6 +777,40 @@ void h_cam_upload(Ctx *c) {
     memcpy((void *)(uintptr_t)(rec + 0x40), m, sizeof m);
     if (ext) memcpy((void *)(uintptr_t)(rec + 0x1b0), m, sizeof m);
 }
+/* [witchtime] motion vectors: which slot held an object's bone palette last frame. f_7100d17d44(object x0, buffer table x1,
+ * mesh part x2 = {u16 *bones, int count}) writes the part's palette (3 x 4 floats a bone, x [object + 0x40] instances) into
+ * constant buffer 14's slot: buffer = *(x1 + [object + 0x88] * 0x18), slot = buffer[+0x30] + buffer[+0x38] * index, the index
+ * at +0x68 (+0x6c when [+0x18] is not 0) going 0, 1, 2 with each write; returns 1 when it wrote. The table's entry is one of
+ * two buffers in turn, each with its own index, so a part's palette goes through six slots and nothing in the buffers says
+ * which one was last frame's. While FSR runs (game_fsr_w) each write is noted here by object and part, and the pair (this
+ * slot, the slot of the write before) goes to the runtime (nvn_vk_fsr.c fsr_mv_last). An older write needs no check here: the
+ * runtime has only the bytes of the slots drawn in the last frame, and a part's slots are its own. Three job threads call it
+ * at once: one lock.
+ * shortcut: both tables are direct mapped, so two parts of one hash lose a pair (the camera's motion is used); 65,536
+ * entries for the few hundred parts of a frame. */
+typedef struct { volatile uint64_t dst, prev; } GameMvPair;
+__declspec(dllexport) GameMvPair game_mv_pairs[1 << 16];      /* by the slot's address (mv_hash) */
+B3_FN void f_7100d17d44(Ctx *c);
+static uint32_t mv_hash(uint64_t a, uint64_t b) { uint64_t h = (a ^ (b << 1) ^ (b >> 7)) * 0x9e3779b97f4a7c15ull; return (uint32_t)(h >> 48); }
+void h_palette_upload(Ctx *c) {
+    uint64_t obj = c->x[0], tab = c->x[1], part = c->x[2], buf = 0, base = 0, stride = 0;
+    int32_t ent = 0; uint32_t alt = 0, idx = 0;
+    if (game_fsr_w > 0) { memcpy(&ent, (void *)(uintptr_t)(obj + 0x88), 4); memcpy(&buf, (void *)(uintptr_t)(tab + (uint64_t)((int64_t)ent * 0x18)), 8); }
+    if (buf) { memcpy(&alt, (void *)(uintptr_t)(buf + 0x18), 4); memcpy(&idx, (void *)(uintptr_t)(buf + (alt ? 0x6c : 0x68)), 4); memcpy(&base, (void *)(uintptr_t)(buf + 0x30), 8); memcpy(&stride, (void *)(uintptr_t)(buf + 0x38), 8); }
+    f_7100d17d44(c);
+    if (!buf || (uint32_t)c->x[0] != 1 || !base) return;
+    static struct { uint64_t obj, part, dst; } last[1 << 16];
+    static char lock;
+    uint64_t dst = base + stride * (uint64_t)(int64_t)(int32_t)idx, prev = 0;
+    while (__atomic_exchange_n(&lock, 1, __ATOMIC_ACQUIRE)) {}
+    {   __typeof__(last[0]) *l = &last[mv_hash(obj, part)];
+        if (l->obj == obj && l->part == part) prev = l->dst;
+        l->obj = obj; l->part = part; l->dst = dst;
+        GameMvPair *p = &game_mv_pairs[mv_hash(dst, 0)];
+        p->dst = 0; p->prev = prev; p->dst = dst;      /* (the runtime reads dst, prev, dst) */
+    }
+    __atomic_store_n(&lock, 0, __ATOMIC_RELEASE);
+}
 /* f_7100c0ef04(layout x0, state out x1, element w2, time s0): one element of a UI layout (a .uid of ui/*.dat: elements of 0x1b4
  * bytes from layout + [layout + 0xc]) at this frame: its base position (+0, +4), turn, scale and colours into out + 0x10 ..,
  * then its animation tracks; one caller, 0x7100c12340, every frame. The layouts are in a 1280x720 space around the
