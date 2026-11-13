@@ -2123,6 +2123,15 @@ int mx_translate(const MxIn *in, MxOut *out) {
         out->prev_cbufs = pv; out->prev_loc = ploc;
         free(h.s);
     }
+    if (in->fs_test == 5 && in->stage == MX_FRAGMENT)      /* TEST ONLY: every texture read is a constant (the text keeps its length) */
+        for (char *t = res; (t = strstr(t, " = texture")) != NULL; ) {
+            char *end = strchr(t, ';'), *q = t + 3;
+            int isf = t >= res + 2 && !strncmp(t - 2, "sv", 2), isu = t >= res + 8 && (!strncmp(t - 8, "uvec4 tv", 8) || !strncmp(t - 8, "ivec4 tv", 8));
+            if (!end) break;
+            int n = snprintf(q, (size_t)(end - q), "%s", isf ? "0.5" : isu ? (t[-8] == 'u' ? "uvec4(0u)" : "ivec4(0)") : "vec4(0.5)");
+            for (char *z = q + n; z < end; z++) *z = ' ';
+            t = end;
+        }
     out->glsl = res;
     out->cbufs = e->cbufs; out->in_attr = e->in_attr; out->out_attr = e->out_attr; out->tex_units = e->tex_units;
     out->int_dep = in->stage == MX_VERTEX ? e->in_attr : e->tex_units;
