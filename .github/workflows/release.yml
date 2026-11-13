@@ -25,6 +25,11 @@
 #                                    and llvm-mingw's compiler-rt builtins: the player's PC compiles the game's code and
 #                                    links game.dll with these alone (tools/wtbuild/src/link.rs)
 #   licenses/
+#
+# Android (job android, AArch64, Android 10+; in progress, untested on a device):
+#   WitchTime-<v>-android.apk                 the app: SDL's activity, the runtime and SDL3, FFmpeg, the shader shim
+#   WitchTime-<v>-android-prebuilt.zip        prebuilt-android/, unpacked into a Witch Time folder on a PC: what
+#                                             `wtbuild link --target android` links the player's game.so against
 name: Release
 
 on:
@@ -33,7 +38,7 @@ on:
   workflow_dispatch:
   # a pull request that changes what the archive is built from builds it too, as a check
   pull_request:
-    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'lifter/sdklift_install.txt', '.gitattributes', '.github/workflows/release.yml']
+    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'android/**', 'lifter/sdklift_install.txt', '.gitattributes', '.github/workflows/release.yml']
 
 permissions:
   contents: write
@@ -45,6 +50,7 @@ env:
   LLVM_VERSION: 23.1.4
   LLVM_MINGW_TAG: '20260922'
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
+  OPUS_TAG: v1.5.2
   FREETYPE_TAG: VER-2-13-3
 
 jobs:
@@ -220,6 +226,129 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/*.sha256
+
+  android:
+    runs-on: ubuntu-24.04
+    env:
+      # r29: clang 21 (r28's clang 19 has no #embed, which runtime/pcmenu.c uses)
+      NDK_VERSION: r29
+      # the Vulkan driver for Adreno (android/build_deps.sh). A newer one: test it in a fight on a phone first
+      TURNIP_TAG: v26.0.0-rc08
+      TURNIP_ZIP: Turnip_v26.0.0_R8.zip
+      TURNIP_SHA256: e634db0f929e2205e95511c769071817d0390180ec72c8e690bc76375e813715
+      ADRENOTOOLS_COMMIT: 8fae8ce254dfc1344527e05301e43f37dea2df80
+      GRADLE_VERSION: 8.14.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-android" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: NDK cache
+        id: ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/android-ndk-${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}
+      - name: NDK
+        if: steps.ndk.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/ndk.zip" "https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux.zip"
+          unzip -q "$RUNNER_TEMP/ndk.zip" -d "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/ndk.zip"
+
+      # SDL3, FFmpeg, glslang and the Vulkan headers for Android, at the tags of the other jobs
+      - name: Android libraries cache
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/deps/sdl3
+            ${{ runner.temp }}/deps/sdl-java
+            ${{ runner.temp }}/deps/ffmpeg
+            ${{ runner.temp }}/deps/glslang
+            ${{ runner.temp }}/deps/vulkan-headers
+            ${{ runner.temp }}/deps/opus
+            ${{ runner.temp }}/deps/turnip
+          key: android-deps-${{ env.TURNIP_SHA256 }}-${{ env.ADRENOTOOLS_COMMIT }}-${{ env.NDK_VERSION }}-${{ env.SDL_TAG }}-${{ env.FFMPEG_TAG }}-${{ env.GLSLANG_TAG }}-${{ env.VULKAN_HEADERS_TAG }}-${{ env.OPUS_TAG }}-${{ hashFiles('android/build_deps.sh') }}
+      - name: Android libraries
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: sh android/build_deps.sh "$RUNNER_TEMP/android-ndk-$NDK_VERSION" "$RUNNER_TEMP/deps"
+
+      - name: wtbuild
+        run: cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      # the runtime, with the NDK's clang; SDL3 and FFmpeg are copied in first (the link finds them there), libopus to
+      # ship it with the app
+      - name: Runtime
+        run: |
+          d="$RUNNER_TEMP/deps" tc="$RUNNER_TEMP/android-ndk-$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64"
+          s="$tc/sysroot/usr/lib/aarch64-linux-android"
+          mkdir -p prebuilt-android
+          cp "$d/sdl3/lib/libSDL3.so" "$d"/ffmpeg/lib/*.so prebuilt-android/
+          cp -L "$d/opus/lib/libopus.so" prebuilt-android/
+          export LLVM_ROOT="$tc"
+          export CPATH="$d/sdl3/include:$d/ffmpeg/include:$d/vulkan-headers/include:$d/glslang/include"
+          export WTBUILD_GLSLANG_LIBS="-Wl,--start-group $(echo "$d"/glslang/lib/*.a) -Wl,--end-group $s/libc++_static.a $s/libc++abi.a -Wl,--exclude-libs,ALL"
+          tools/wtbuild/target/release/wtbuild runtime --target android --out prebuilt-android
+          "$tc/bin/llvm-strip" prebuilt-android/libwt_glslang.so
+          "$tc/bin/llvm-readelf" -d prebuilt-android/libwitchtime.so | grep -E 'NEEDED|SONAME'
+          ls -la prebuilt-android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: App
+        run: |
+          gradle -p android --no-daemon assembleRelease -Pwitchtime.deps="$RUNNER_TEMP/deps" \
+            -Pwitchtime.prebuilt="$PWD/prebuilt-android" -Pwitchtime.version="${{ steps.version.outputs.version }}"
+
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          d="$RUNNER_TEMP/deps"
+          mkdir -p dist "dist/$name-prebuilt/licenses"
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/$name.apk"
+          cp -a prebuilt-android "dist/$name-prebuilt/prebuilt-android"
+          cp "$d/sdl3/LICENSE.txt" "dist/$name-prebuilt/licenses/SDL3.txt"
+          cp "$d/ffmpeg/COPYING.LGPLv2.1" "dist/$name-prebuilt/licenses/FFmpeg-LGPL-2.1.txt"
+          cp "$d/glslang/LICENSE.txt" "dist/$name-prebuilt/licenses/glslang.txt"
+          cp "$d/opus/COPYING" "dist/$name-prebuilt/licenses/Opus.txt"
+          cp "$d/turnip/libadrenotools-LICENSE.txt" "dist/$name-prebuilt/licenses/libadrenotools.txt"
+          cp android/Mesa-LICENSE.txt "dist/$name-prebuilt/licenses/Mesa.txt"
+          (cd "dist/$name-prebuilt" && zip -qr "../$name-prebuilt.zip" .)
+          (cd dist && sha256sum "$name.apk" "$name-prebuilt.zip" > "$name.sha256")
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.apk
+            dist/*.zip
+            dist/*.sha256
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Witch Time ${{ steps.version.outputs.version }}
+          files: |
+            dist/*.apk
+            dist/*.zip
             dist/*.sha256
 
   windows:

@@ -1,7 +1,9 @@
 //! What the build makes differs between Linux, Windows and macOS: the file names, the compiler's target and the runtime's
 //! libraries. The player's build is always for the system it runs on; `wtbuild compile / link / runtime --target windows`
-//! makes the Windows files elsewhere too (CI builds the Windows runtime on Linux with llvm-mingw). macOS (Apple silicon)
-//! is built on a Mac only, with Apple's clang and linker.
+//! makes the Windows files elsewhere too (CI builds the Windows runtime on Linux with llvm-mingw). Android (AArch64,
+//! API 29 = Android 10) is never a host: the player's PC compiles and links game.so for it (`--target android`, no NDK
+//! needed: the lifted code uses runtime/freestanding), and CI builds the runtime with the NDK's clang (LLVM_ROOT).
+//! macOS (Apple silicon) is built on a Mac only, with Apple's clang and linker.
 
 use std::fs;
 use std::path::Path;
@@ -10,6 +12,7 @@ use std::path::Path;
 pub enum Target {
     Linux,
     Windows,
+    Android,
     MacOS,
 }
 
@@ -30,13 +33,18 @@ impl Target {
             None => Ok(Target::host()),
             Some(Some("linux")) => Ok(Target::Linux),
             Some(Some("windows")) => Ok(Target::Windows),
+            Some(Some("android")) => Ok(Target::Android),
             Some(Some("macos")) => Ok(Target::MacOS),
-            Some(v) => Err(format!("--target {}: linux, windows or macos", v.unwrap_or(""))),
+            Some(v) => Err(format!("--target {}: linux, windows, macos or android", v.unwrap_or(""))),
         }
     }
 
     pub fn windows(self) -> bool {
         self == Target::Windows
+    }
+
+    pub fn android(self) -> bool {
+        self == Target::Android
     }
 
     pub fn macos(self) -> bool {
@@ -48,6 +56,7 @@ impl Target {
         match self {
             Target::Linux => "linux",
             Target::Windows => "windows",
+            Target::Android => "android",
             Target::MacOS => "macos",
         }
     }
@@ -55,33 +64,48 @@ impl Target {
     /// the game's own library, linked on the player's PC
     pub fn game_lib(self) -> &'static str {
         match self {
-            Target::Linux => "game.so",
+            Target::Linux | Target::Android => "game.so",
             Target::Windows => "game.dll",
             Target::MacOS => "game.dylib",
         }
     }
 
-    /// the program that runs the game
+    /// the program that runs the game (Android: the runtime library itself, loaded by the app's SDLActivity)
     pub fn game_exe(self) -> &'static str {
         match self {
             Target::Linux | Target::MacOS => "witch-time-game",
             Target::Windows => "witch-time-game.exe",
+            Target::Android => "libwitchtime.so",
         }
     }
 
-    /// clang flags that pick the target. Windows: the MinGW ABI the runtime is built with, for any clang (the bundled one,
-    /// LLVM's own release, would make MSVC objects; llvm-mingw's makes these anyway)
+    /// clang flags that pick the target. Windows: the MinGW ABI the runtime is built with, for any clang
+    /// (the bundled one, LLVM's own release, would make MSVC objects; llvm-mingw's makes these anyway). Android: AArch64,
+    /// the 16-byte atomics inline (ldxp / stxp) instead of calls into compiler-rt, which the bundled clang has not got
     pub fn clang_flags(self) -> Vec<String> {
         match self {
             Target::Linux | Target::MacOS => vec![],
             Target::Windows => vec!["--target=x86_64-w64-mingw32".into()],
+            Target::Android => vec!["--target=aarch64-linux-android29".into(), "-mno-outline-atomics".into()],
         }
+    }
+
+    /// the lifted objects: build/obj for this system's game library, build/obj_<target> for another's, so that both can be
+    /// built in one folder
+    pub fn obj_dir(self, repo: &Path) -> std::path::PathBuf {
+        crate::layout::build(repo).join(if self == Target::host() { "obj".to_string() } else { format!("obj_{}", self.name()) })
+    }
+
+    /// where the game library and the runtime go: build/ for this system, build/<target> for another's
+    pub fn out_dir(self, repo: &Path) -> std::path::PathBuf {
+        let build = crate::layout::build(repo);
+        if self == Target::host() { build } else { build.join(self.name()) }
     }
 
     /// code that goes into a shared library: position-independent on ELF and Mach-O; PE has no such flag (clang refuses it)
     pub fn pic(self) -> Vec<String> {
         match self {
-            Target::Linux | Target::MacOS => vec!["-fPIC".into()],
+            Target::Linux | Target::Android | Target::MacOS => vec!["-fPIC".into()],
             Target::Windows => vec![],
         }
     }
@@ -91,7 +115,7 @@ impl Target {
     pub fn cpu(self) -> Vec<String> {
         match self {
             Target::Linux | Target::Windows => vec!["-mcx16".into()],
-            Target::MacOS => vec![],
+            Target::MacOS | Target::Android => vec![],
         }
     }
 
@@ -110,7 +134,7 @@ impl Target {
     /// the linker: lld, which a release brings with its compiler; on macOS Apple's own, which every clang there uses
     pub fn linker(self) -> Vec<String> {
         match self {
-            Target::Linux | Target::Windows => vec!["-fuse-ld=lld".into()],
+            Target::Linux | Target::Windows | Target::Android => vec!["-fuse-ld=lld".into()],
             Target::MacOS => vec![],
         }
     }

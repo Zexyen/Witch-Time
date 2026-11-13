@@ -333,8 +333,8 @@ static void record_or_replay(uint64_t *buttons, int *lx, int *ly) {
                 printf("input replay: poll %lld (anchor %d + %lld) buttons %llx stick %d %d\n", g_rec_poll, g_anchor, since, (unsigned long long)g_play[g_play_pos].buttons, g_play[g_play_pos].lx, g_play[g_play_pos].ly);
             g_play_pos++;
         }
+        /* before the first line of the recording the scripted keys steer: recording starts at the movie, not the menus */
         if (g_play_pos > 0 && (g_play[g_play_pos - 1].anchor >= 0 || g_play[g_play_pos - 1].poll >= 0)) { *buttons = g_play[g_play_pos - 1].buttons; *lx = g_play[g_play_pos - 1].lx; *ly = g_play[g_play_pos - 1].ly; }
-        else { *buttons = 0; *lx = 0; *ly = 0; }
         return;
     }
     if (g_rec && g_anchor >= 0 && (*buttons != g_rec_buttons || *lx != g_rec_lx || *ly != g_rec_ly)) {

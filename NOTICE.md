@@ -31,6 +31,9 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 | `runtime/third_party/NotoSerif-pcmenu.ttf` | Noto Serif Regular 2.015 (The Noto Project Authors), the PC menu's font | SIL Open Font License 1.1 (`runtime/third_party/OFL-NotoSerif.txt`) | Subset to Latin-1 and a few punctuation marks (`pyftsubset`, kerning kept, hinting removed) |
 | `runtime/third_party/fsr3/` (issue 118) | [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) tag v1.1.4 (commit `c6efa6b`, 2025-05-08): the FSR 3.1.4 upscaler's GLSL passes and GPU headers, 27 files, copied; `runtime/nvn_vk_fsr.c` ports the host logic of the SDK's `ffx_fsr3upscaler.cpp` (constants, resources, clears, the order of the passes) to C | MIT (`runtime/third_party/fsr3/LICENSE.txt`) | One line: `rw_luma_history`'s format qualifier `rgba8` became `rgba16f`, the format AMD's host gives that image (marked `[witchtime]`) |
 
+The Android app also carries, unmodified, a [Mesa](https://mesa3d.org) Turnip Vulkan driver built by K11MCH1 (MIT, `android/Mesa-LICENSE.txt`) and
+[libadrenotools](https://github.com/bylaws/libadrenotools) (BSD-2-Clause). `android/build_deps.sh` fetches both.
+
 Our own files (everything else: `scripts/`, `launcher/`, `tests/`, `tools/` apart from the ports above, among them
 `tools/wtbuild/src/sdklift.rs` and `tools/wtbuild/src/tables.rs`, new runtime files) are under the same licence.
 `tools/wtbuild/src/setup.rs` follows the structure of ssbu-recomp's `scripts/setup.py` (resumable steps, state file,

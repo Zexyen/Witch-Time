@@ -23,7 +23,7 @@ static int have_targets_live(void);
     X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetLineWidth) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) \
     X(vkCmdSetPrimitiveTopology) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
     X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) \
-    X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) \
+    X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) X(vkCmdUpdateBuffer) \
     X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetQueryPoolResults) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkResetQueryPool) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) X(vkDestroyPipelineCache) X(vkCmdCopyBuffer) \
     X(vkCreateDescriptorUpdateTemplate) X(vkUpdateDescriptorSetWithTemplate) X(vkDestroyDescriptorUpdateTemplate)
 #define X(n) static PFN_##n n;
@@ -54,6 +54,15 @@ static struct {
     int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
+    int no_switch;                                 /* [witchtime] MxIn.no_switch: Qualcomm (WT_VK_NOSWITCH=0/1 forces it) */
+    int fs_test;                                   /* [witchtime] TEST: WT_VK_FSTEST=<n>: MxIn.fs_test */
+    int no_wave;                                   /* [witchtime] MxIn.no_wave (WT_VK_NOWAVE=0/1) */
+    int early_z;                                   /* [witchtime] TEST: WT_VK_EARLYZ=1: MxIn.early_z in every fragment stage */
+    int seq_all;                                   /* [witchtime] MxIn.seq_all (WT_VK_SEQALL=0/1; test) */
+    int cb_ubo;                                    /* [witchtime] MxIn.cb_ubo: the graphics stages' constant buffers as uniform buffers (Adreno; WT_VK_CBUBO=0/1 forces it) */
+#define CB_DT (D.cb_ubo ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+    int no_fc;                                     /* [witchtime] MxIn.no_fc: the driver has no shaderSignedZeroInfNanPreserveFloat32 (WT_VK_NOFC=0/1 forces it) */
+    int nan_exact;                                 /* [witchtime] MxIn.nan_exact: not AMD / NVIDIA / Intel (WT_VK_NANEXACT=0/1 forces it) */
     VkPhysicalDeviceMemoryProperties mp;
 } D;
 static int g_ck_on;                                /* [issue 26] WT_VK_CHECKPOINTS (ckpt, after nvn_vk_m4.c) */
@@ -89,7 +98,10 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
         D.port.sType = (VkStructureType)1000163000; *tail = &D.port; tail = &D.port.pNext;
     }
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
-    if (!(getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")))) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* WT_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
+    /* [witchtime] Qualcomm's driver (Adreno 740) feeds some attributes of a dynamic vertex input as (0, 0, 0, 1): the title's
+     * text and the stage meshes vanish. There the vertex layout is part of each pipeline (WT_VK_VIDS=1 uses the extension) */
+    int vids_want = getenv("WT_VK_VIDS") ? atoi(getenv("WT_VK_VIDS")) != 0 : V.props.vendorID != 0x5143;
+    if (vids_want) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* WT_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
     EXT(has_pv, "VK_EXT_provoking_vertex", pv, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT)
     EXT(has_iu8, "VK_EXT_index_type_uint8", iu8, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT)
@@ -148,11 +160,35 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
                !m ? (e ? "turned off by WT_VK_GPL=0" : "off by default in this build") : D.has_gpl ? (e ? "asked for by WT_VK_GPL" : "the default: the driver has VK_EXT_graphics_pipeline_library, extended dynamic state 3 and dynamic vertex input") :
                !D.ext_gpl ? "the driver has NO VK_EXT_graphics_pipeline_library: fallen back" : "the driver lacks extended dynamic state 3 or dynamic vertex input: fallen back", e ? e : "not set", VK_GPL_DEFAULT);
     }
+    if (getenv("WT_VK_NOINT64")) D.f2.features.shaderInt64 = 0;      /* [witchtime] TEST ONLY: the translation for a GPU without it (Adreno), on any GPU */
     if (!D.f13.dynamicRendering || !D.f13.synchronization2) vkd_fail("the device lacks dynamicRendering / synchronization2");
     if (!D.has_vids)                               /* finding 116: AMD Polaris (RX 400/500) on Windows, older drivers */
         printf("nvn_vk: NO VK_EXT_vertex_input_dynamic_state%s: the vertex layout of a draw is part of its pipeline (numbered in ../cache/vk/vlayouts.bin); attribute divisors above 1: %s\n",
-               getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")) ? " (WT_VK_VIDS=0, a test)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
+               getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")) ? " (WT_VK_VIDS=0, a test)" : V.props.vendorID == 0x5143 ? " (not used on Qualcomm: its driver drops attributes; WT_VK_VIDS=1 uses it)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
+    D.nan_exact = V.props.vendorID != 0x1002 && V.props.vendorID != 0x10de && V.props.vendorID != 0x8086;
+    if (getenv("WT_VK_NANEXACT")) D.nan_exact = atoi(getenv("WT_VK_NANEXACT")) != 0;
+    D.no_switch = V.props.vendorID == 0x5143;
+    D.cb_ubo = 0;                                  /* off: no gain measured on Turnip (an Adreno 740), WT_VK_CBUBO=1 tries it */
+    if (getenv("WT_VK_CBUBO")) D.cb_ubo = atoi(getenv("WT_VK_CBUBO")) != 0;
+    D.seq_all = getenv("WT_VK_SEQALL") && atoi(getenv("WT_VK_SEQALL"));
+    D.fs_test = getenv("WT_VK_FSTEST") ? atoi(getenv("WT_VK_FSTEST")) : 0;
+    D.no_wave = getenv("WT_VK_NOWAVE") && atoi(getenv("WT_VK_NOWAVE"));
+    D.early_z = getenv("WT_VK_EARLYZ") && atoi(getenv("WT_VK_EARLYZ"));
+    if (V.props.limits.maxUniformBufferRange < 65536 || 256 /* RING_ALIGN */ % (V.props.limits.minUniformBufferOffsetAlignment ? V.props.limits.minUniformBufferOffsetAlignment : 1)) D.cb_ubo = 0;
+    printf("nvn_vk: constant buffers of the graphics stages: %s\n", D.cb_ubo ? "uniform buffers" : "storage buffers");
+    if (getenv("WT_VK_NOSWITCH")) D.no_switch = atoi(getenv("WT_VK_NOSWITCH")) != 0;
     if (!D.f2.features.textureCompressionBC) nvn_vk_missing("a GPU without BC texture compression");
+    printf("nvn_vk: texture compression: BC %d, ETC2 %d, ASTC LDR %d\n", (int)D.f2.features.textureCompressionBC, (int)D.f2.features.textureCompressionETC2, (int)D.f2.features.textureCompressionASTC_LDR);
+    {   /* [witchtime] the subgroups the translated shaders' warp operations (SHFL / VOTE / lane masks) run in */
+        PFN_vkGetPhysicalDeviceProperties2 gp2 = vk_sym("vkGetPhysicalDeviceProperties2");
+        VkPhysicalDeviceFloatControlsProperties fc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
+        VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &fc};
+        VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sg};
+        if (gp2) { gp2(V.gpu, &p2); printf("nvn_vk: subgroups: size %u, stages 0x%x (fragment %d, compute %d), operations 0x%x (ballot %d, shuffle %d, vote %d), quad operations in all stages %d\n", sg.subgroupSize, (unsigned)sg.supportedStages, !!(sg.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT), !!(sg.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT), (unsigned)sg.supportedOperations, !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT), (int)sg.quadOperationsInAllStages); }
+        D.no_fc = gp2 && !fc.shaderSignedZeroInfNanPreserveFloat32;
+        if (getenv("WT_VK_NOFC")) D.no_fc = atoi(getenv("WT_VK_NOFC")) != 0;
+        printf("nvn_vk: float controls: 32-bit SignedZeroInfNanPreserve offered %d, in the shaders %d\n", (int)fc.shaderSignedZeroInfNanPreserveFloat32, !D.no_fc);
+    }
     di->enabledExtensionCount = D.next; di->ppEnabledExtensionNames = D.exts; di->pNext = &D.f2;
     printf("nvn_vk: features: vertex input dynamic %d, custom border colour %d, provoking vertex last %d, 8-bit indices %d, list restart %d, ASTC %d, depth clamp %d, wide lines %d, robust buffers %d\n",
            D.has_vids, D.has_cbc, D.has_pv, D.has_iu8, D.has_plr, (int)D.f2.features.textureCompressionASTC_LDR, (int)D.f2.features.depthClamp, (int)D.f2.features.wideLines, (int)D.f2.features.robustBufferAccess);
@@ -468,6 +504,7 @@ static void primlog_add(int indexed, uint64_t n) {
     cnt[indexed] += n; draws++;
 }
 static int g_dump_on;                            /* [Recomps#1] TEST ONLY: WT_VK_DUMPTEX (dump_pass_end, defined above save_bmp_vk) */
+static void dump_each(void);                       /* [witchtime] TEST ONLY: WT_VK_DUMPEACH=1: in the dumped frame every draw is a pass of its own */
 static void dump_pass_end(void);
 static void dump_pass_begin(int w, int h);
 static void dump_tex_op(Tex *s, Tex *d, const char *what);
@@ -533,7 +570,7 @@ int nvn_vk_cutc_live(void) {
  *   0 = one submission per batch as before.
  * "nvn_vk_timeline:" line (every 300 frames, frames with fighters): when, after the start of the batch replay, the first
  *   and the last submission of the frame were made, when the present job began, and the game's waits for a fence. */
-#define PT_MAX 96
+#define PT_MAX 240
 #define PT_KINDS 64
 typedef struct { int w, h, ncol, cf, depth, win, what; } PtKind;      /* what: 0 pass, 1 compute dispatches, 2 present blit */
 static int g_pt_on = -1, g_pt_nkind, g_split = -1;
@@ -551,6 +588,14 @@ static LONG64 g_fu_frames, g_fu_total, g_fu_linked, g_fu_made, g_fu_newsig, g_fu
 #define VK_SPLIT_DEFAULT 0
 static LONG64 g_tl_t0, g_tl_first, g_tl_last, g_tl_sum[8], g_tl_n;      /* sums: 0 first submission, 1 last submission, 2 present job, 3 fence waits (count), 4 fence wait ticks, 5 end of a fence wait after the batch start */
 void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.done moved, a game thread may wait for it */
+/* [witchtime] Has the GPU finished this submission? Turnip on the phone's kernel interface (kgsl) takes over a millisecond
+ * to answer vkGetFenceStatus, and a replay asks dozens of times: there every command buffer ends by writing its number into
+ * a small mapped buffer, and the answer is one read. WT_VK_DONEBUF=0/1 forces it. */
+static VkBuffer g_done_buf; static VMem g_done_mem; static int g_done_on = -1;
+static int slot_done(Slot *s) {
+    if (g_done_on > 0) return ((volatile uint64_t *)g_done_mem.map)[s - R.slot] == s->serial;
+    return vkGetFenceStatus(V.device, s->fence) == VK_SUCCESS;
+}
 static void slot_wait(Slot *s) {
     if (!s->pending) return;
     for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial < s->serial) slot_wait(&R.slot[i]);   /* [Recomps#1] in submission order (oq_land) */
@@ -569,6 +614,12 @@ static void slot_wait(Slot *s) {
             if (ts[1] && vkGetQueryPoolResults(V.device, g_pt_pool, (uint32_t)si * PT_MAX, (uint32_t)n, sizeof pt[0] * (size_t)n, pt, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && g_pt_slot[si].fight)
                 for (int i = 0; i < n; i++) {
                     uint64_t end = i + 1 < n ? pt[i + 1] : ts[1];
+                    {   static long long df = -2;      /* [witchtime] TEST ONLY: WT_VK_PASSDUMP=<frame>: every segment of that frame's command buffers, in order */
+                        if (df == -2) df = getenv("WT_VK_PASSDUMP") ? atoll(getenv("WT_VK_PASSDUMP")) : -1;
+                        const PtKind *q = &g_pt_kind[g_pt_slot[si].kind[i]];
+                        if (df >= 0 && s->ts_frame >= df && s->ts_frame < df + 4 && end >= pt[i]) printf("passdump: f%lld %3d %7.3f ms  %s %dx%d %d colour (0x%x)%s%s\n", (long long)s->ts_frame, i, (double)(end - pt[i]) * (double)V.props.limits.timestampPeriod / 1e6,
+                                                                                  q->what == 1 ? "compute" : q->what == 2 ? "present blit" : "pass", q->w, q->h, q->ncol, q->cf, q->depth ? " + depth" : "", q->win ? " WINDOW" : "");
+                    }
                     if (end >= pt[i]) { g_pt_ns[g_pt_slot[si].kind[i]] += (double)(end - pt[i]) * (double)V.props.limits.timestampPeriod; g_pt_cnt[g_pt_slot[si].kind[i]]++; }
                 }
             g_pt_slot[si].n = 0;
@@ -654,6 +705,12 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     pass_end();
     Slot *s = &R.slot[R.cur];
     if (g_ts_on > 0) vkCmdWriteTimestamp(s->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_ts_pool, (uint32_t)R.cur * 2 + 1);
+    if (g_done_on < 0) {
+        const char *e = getenv("WT_VK_DONEBUF");
+        g_done_on = e ? atoi(e) != 0 : strstr(V.props.deviceName, "Turnip") != NULL;
+        if (g_done_on) { g_done_buf = vbuf_new(NSLOT * 8, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_done_mem); if (!g_done_mem.map) g_done_on = 0; else memset(g_done_mem.map, 0, NSLOT * 8); }
+    }
+    if (g_done_on > 0) { uint64_t v = R.serial + 1; vkCmdUpdateBuffer(s->cmd, g_done_buf, (VkDeviceSize)R.cur * 8, 8, &v); }      /* slot_done */
     if (g_pt_on > 0 && g_pt_slot[R.cur].n) g_pt_draws[g_pt_slot[R.cur].kind[g_pt_slot[R.cur].n - 1]] += g_cmd_draws - g_pt_slot[R.cur].d0;
     if (g_tl_t0) { LONG64 now = tk(); if (!g_tl_first) g_tl_first = now; g_tl_last = now; }
     VKC(vkEndCommandBuffer(s->cmd));
@@ -725,6 +782,7 @@ static int fmt_supported(VkFormat f, VkFlags need) { VkFormatProperties p; vkGet
 static VkFormat tex_vkfmt(int nf, int *expand, int *decode) {
     static int d24 = -1, d24s8, astc;
     if (d24 < 0) { d24 = fmt_supported(VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT); d24s8 = fmt_supported(VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT); astc = D.f2.features.textureCompressionASTC_LDR != 0;
+        if (getenv("WT_VK_TEST") && (atoi(getenv("WT_VK_TEST")) & 16)) { astc = 0; printf("nvn_vk: TEST (WT_VK_TEST bit 16): ASTC decoded by the CPU, as on a GPU without it\n"); }      /* [witchtime] */
         if (getenv("WT_VK_TEST") && (atoi(getenv("WT_VK_TEST")) & 8)) { d24 = d24s8 = 0; printf("nvn_vk: TEST (WT_VK_TEST bit 8): 24-bit depth formats not used: D32_SFLOAT / D32_SFLOAT_S8 as on a GPU without them\n"); } }      /* session 14: the missing stage pieces on NVIDIA only */
     *expand = 0; *decode = 0;
     if ((nf >= 0x01 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) {
@@ -901,15 +959,18 @@ static float rs_extra_scale(float base) {           /* WT_VK_CLOUD_SCALE=<cap>: 
     float v = base < cap ? base : cap;
     return v < 1.0f && base >= 1.0f ? 1.0f : v;
 }
+/* [witchtime] console_mode = handheld (Android's default): the scene targets are 896x496 and its halves, 56:31, which is
+ * 1.6 % wider than 16:9 and so outside the test below: they stayed at the game's size at any scale */
+static int rs_handheld(int w, int h) { return w >= 40 && h >= 22 && w * 31 == h * 56; }
 static int rs_window_class(int w, int h) {
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
     if (w < 40 || h < 22) return 0;
     double a = (double)w / h, b = (double)g_rs_bw / g_rs_bh;
-    return a > b * 0.985 && a < b * 1.015;
+    return (a > b * 0.985 && a < b * 1.015) || (rs_handheld(w, h) && g_rs_bw * 9 == g_rs_bh * 16);
 }
 static int rs_169_class(int w, int h) {                  /* [witchtime] a scene target of 16:9 in a window of another shape (rs_xstretch) */
     double a = (double)w / h, b = 16.0 / 9.0;
-    return !rs_window_class(w, h) && w >= 40 && h >= 22 && a > b * 0.985 && a < b * 1.015;
+    return !rs_window_class(w, h) && w >= 40 && h >= 22 && ((a > b * 0.985 && a < b * 1.015) || rs_handheld(w, h));
 }
 static int rs_screen_class(int w, int h) { return rs_extra_class(w, h) || rs_window_class(w, h) || rs_169_class(w, h); }
 /* [witchtime] issue 118: the image size of a screen-class texture of game size gw x gh, of the picture's scale (post) or the scene's */
@@ -1702,7 +1763,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
     in.stage = s; in.code = st->code; in.code_len = st->code_len; in.cdata = cdata; in.cdata_size = cdata ? st->ctl[3] : 0;
     in.int_attrs = key[0]; in.sint_attrs = key[1]; in.int_tex = key[2]; in.sint_tex = key[3]; in.force_out = fo;
-    in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+    in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
     if (s == 5) {                                  /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
         in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
         memcpy(in.local_size, st->local, sizeof in.local_size); in.smem_bytes = st->smem_bytes; in.lmem_bytes = st->lmem_bytes;
@@ -1761,7 +1822,7 @@ static VkBlendFactor blend_factor(unsigned f) {
 static VkBlendOp blend_op(unsigned e) { static const uint8_t m[6] = {VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, VK_BLEND_OP_SUBTRACT, VK_BLEND_OP_REVERSE_SUBTRACT, VK_BLEND_OP_MIN, VK_BLEND_OP_MAX}; return (VkBlendOp)m[e < 6 ? e : 1]; }
 static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, int *n0, VkDescriptorSetLayoutBinding *b1, int *n1) {
     VkFlags sf = s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
-    for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
+    for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, CB_DT, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
 }
@@ -1886,7 +1947,7 @@ static int pass_begin(void) {
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     int w = 0, h = 0;
     if (R.in_pass) return 1;
-    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : VK_SPLIT_DEFAULT; }
+    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; }      /* [witchtime] Turnip (a phone): the GPU is the slow half of a frame and starts while the rest is recorded (16 -> 20 fps on a Shibuya street; needs slot_done) */
     if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
@@ -2002,9 +2063,9 @@ static VkDescriptorSet set_alloc(VkDescriptorSetLayout layout) {
             continue;
         }
         if (s->npool == 16) vkd_fail("more than 16 descriptor pools in one command buffer");
-        VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32768}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16384}};
+        VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32768}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16384}, {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32768}};
         VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pi.maxSets = 8192; pi.poolSizeCount = 3; pi.pPoolSizes = ps;
+        pi.maxSets = 8192; pi.poolSizeCount = D.cb_ubo ? 4 : 3; pi.pPoolSizes = ps;
         VKC(vkCreateDescriptorPool(V.device, &pi, NULL, &s->pool[s->npool++]));
     }
 }
@@ -2033,7 +2094,7 @@ static VkDescriptorUpdateTemplate set0_template(VkDescriptorSetLayout dl, const 
                 unsigned bit = n < 18 ? v->cbufs >> n & 1 : v->ssbos >> (n - 18) & 1;
                 if (!bit) continue;
                 e[ne].dstBinding = 40u * (unsigned)s + (n < 18 ? n : 20 + n - 18); e[ne].dstArrayElement = 0; e[ne].descriptorCount = 1;
-                e[ne].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; e[ne].offset = ne * sizeof(VkDescriptorBufferInfo); e[ne].stride = sizeof(VkDescriptorBufferInfo);
+                e[ne].descriptorType = n < 18 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; e[ne].offset = ne * sizeof(VkDescriptorBufferInfo); e[ne].stride = sizeof(VkDescriptorBufferInfo);
                 ne++;
             }
         }
@@ -2163,6 +2224,14 @@ static void resolve_sampler(int s, VStage *v, int i) {
             for (q = 0; on && q < (uint64_t)nseen && seen[q] != key; q++) {}
             if (on && q == (uint64_t)nseen && nseen < 1024) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: stage 5 program #%d samples a SCALED %dx%d format 0x%x (unit %u)\n", R.prog[s] ? R.prog[s]->serial : -1, t->b.width, t->b.height, t->b.format, u); }
         }
+        if ((r & 2) && sp.cmode != 1 && (sp.mag || sp.min & 1 || sp.min >= 4)) {          /* filters linearly (sampler_get: min 6+ is linear) */
+            /* [witchtime] a format the GPU cannot filter (Adreno: D16) is sampled NEAREST: linear filtering of it is undefined
+             * (validation: VUID-vkCmdDraw-magFilter-04553), and the Adreno driver loses the device */
+            static signed char lin[256];
+            int ok = vt->fmt < 256 ? lin[vt->fmt] : 0;
+            if (!ok) { ok = fmt_supported(vt->fmt, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? 1 : -1; if (vt->fmt < 256) lin[vt->fmt] = (signed char)ok; }
+            if (ok < 0) { sp.mag = 0; sp.min = sp.min >= 2 && sp.min < 6 ? 2 : 0; }
+        }
         if (r & 2) g_dtex[g_ndtex].smp = sampler_get(&sp);
         if (drawlog_on()) printf("DLT s%d u%u tex=%p fmt=0x%x %dx%dx%d lv=%d tgt=%d view(fmt=0x%x lvl0=%d nlvl=%d swz=%d%d%d%d) dim=%d have=%d ok=%d rs=%d smp=%d min=%u mag=%u wrap=%u,%u,%u lod=%g..%g bias=%g aniso=%g cmode=%u border=%g,%g,%g,%g\n",
                                s, u, (void *)t, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), t->b.target, e.format, e.lvl0, e.nlvl, e.swz[0], e.swz[1], e.swz[2], e.swz[3], dim, have, ok, vt->rs,
@@ -2239,6 +2308,7 @@ static void set_dynamic_state(void) {
       if ((g_vk_test & 64) && (d & 1)) { static LONG64 nop[8]; if (nop[op & 7]++ == 0) printf("nvn_vk: TEST: depth compare op %d in use (0 never, 1 less, 2 equal, 3 less-or-equal, 4 greater, 5 not equal, 6 greater-or-equal, 7 always), depth write %d\n", (int)op, (int)((d >> 1) & 1)); }
       n.dop = (uint32_t)op; }
     n.ste = (uint32_t)((d >> 2) & 1);
+    if (!R.depth.tex) n.dte = n.dwe = n.ste = 0;   /* [witchtime] no depth/stencil attachment: the tests do nothing (Vulkan), and the Adreno driver loses the device on them */
     {   static const uint8_t op[9] = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_INCREMENT_AND_CLAMP, VK_STENCIL_OP_DECREMENT_AND_CLAMP, VK_STENCIL_OP_INVERT,
                                       VK_STENCIL_OP_INCREMENT_AND_WRAP, VK_STENCIL_OP_DECREMENT_AND_WRAP};
 #define SOP(sh) ((uint32_t)op[((d >> (sh)) & 15) < 9 ? ((d >> (sh)) & 15) : 1])
@@ -2551,7 +2621,7 @@ static LONG64 g_cb_lazy_n, g_cb_ready_waits, g_ck_discarded;
 static int cb_defer_pending(void) {
     if (g_cb_lazy < 0) g_cb_lazy = getenv("WT_VK_CBLAZY") ? atoi(getenv("WT_VK_CBLAZY")) : CBLAZY_DEFAULT;
     if (!g_cb_lazy || g_cb_keep != 1 || g_cb_merge <= 0 || g_cb_live || !g_cb_pending) return 0;      /* merge: a buffer counted as written gives back only the bytes compute changed */
-    if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= g_cb_serial && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= g_cb_serial && slot_done(&R.slot[i])) slot_wait(&R.slot[i]);
     if (R.done >= g_cb_serial) return 0;           /* finished already: cb_sync lands it with the exact masks, without a wait */
     for (int i = 0; i < CB_N; i++) {
         CB *c = &g_cb[i];
@@ -2684,7 +2754,7 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     CB *s = NULL;
     for (int i = 0; i < CB_N && !s; i++) if (g_cb[i].state == 3 && src >= g_cb[i].addr && src + size <= g_cb[i].addr + g_cb[i].size) s = &g_cb[i];
     if (!s || R.done >= s->wserial || cb_kept_wrote(s)) return 0;      /* no kept buffer holds the source, the GPU has finished it, or the game wrote into it (landed with the merge): the CPU copies at once */
-    for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= s->wserial && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= s->wserial && slot_done(&R.slot[i])) slot_wait(&R.slot[i]);
     if (R.done >= s->wserial) return 0;
     if (g_cb_live && cb_overlap(dst, size)) return 0;      /* the destination is a compute buffer's of this batch */
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
@@ -2787,7 +2857,7 @@ static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in gu
 static void cb_landing_poll(void) {                /* at the start of a batch: landings whose copy has finished; never waits */
     int open = 0;
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 4 && R.done < g_cb[i].lserial) open = 1;
-    if (open) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    if (open) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && slot_done(&R.slot[i])) slot_wait(&R.slot[i]);
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 4 && R.done >= g_cb[i].lserial) cb_land_finish(&g_cb[i]);
 }
 /* The kept and landing buffers as they are at the START of the batch (cb_kept_index, from vk_submit): during a batch the
@@ -2899,12 +2969,12 @@ static void cb_kept_age(void) {                    /* at the start of a batch */
 static void oq_poll(void) {
     int any = 0;
     for (int i = 0; i < NSLOT; i++) if ((g_oq_nev[i] || g_lr_nev[i]) && R.slot[i].pending) any = 1;      /* finding 118: texel read-backs too */
-    if (any) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+    if (any) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && slot_done(&R.slot[i])) slot_wait(&R.slot[i]);
 }
 static void cb_poll(void) {                        /* pending CBs whose submission has finished are copied back; never waits */
     oq_poll();
     if (g_cb_pending) {
-        if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
+        if (R.done < g_cb_serial) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && slot_done(&R.slot[i])) slot_wait(&R.slot[i]);
         if (R.done >= g_cb_serial) cb_land(0);
     }
     gcp_settle_done();                             /* [witchtime] also with nothing pending: a fence wait that waited (vk_sync_wait) answers with the GPU copies settled */
@@ -3129,7 +3199,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         VkMemoryRequirements rq;
         c->cap = (size + 4095) & ~(uint64_t)4095;
-        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VKC(vkCreateBuffer(V.device, &bi, NULL, &c->buf));
         vkGetBufferMemoryRequirements(V.device, c->buf, &rq);
         VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | (g_cb_cached ? VK_MEMORY_PROPERTY_HOST_CACHED_BIT : 0);
@@ -3578,11 +3648,22 @@ static void compute_pipe_make(VStage *v) {         /* any thread */
         InterlockedIncrement64(&R.pipelines);
     }
 }
+/* [witchtime] TEST ONLY (a GPU fault hunt): WT_VK_SKIP=<serial>,<serial>,... leaves out the compute dispatches and draws
+ * of those programs; "cs" in the list leaves out every compute dispatch, "draw" every draw */
+static int test_skip(int serial, int compute) {
+    static int on = -1;
+    static char list[512];
+    if (on < 0) { const char *e = getenv("WT_VK_SKIP"); on = e != NULL; snprintf(list, sizeof list, ",%s,", e ? e : ""); }
+    char me[16];
+    snprintf(me, sizeof me, ",%d,", serial);
+    return on && (strstr(list, me) || strstr(list, compute ? ",cs," : ",draw,"));
+}
 static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uint32_t gy, uint32_t gz) {
     static BufRef bufs[40];
     int nbuf = 0;
     int16_t wcb[16];
     uint64_t al = V.props.limits.minStorageBufferOffsetAlignment ? V.props.limits.minStorageBufferOffsetAlignment : 1;
+    if (test_skip(p->serial, 1)) return;
     pass_end();
     /* textures, then buffers (both may submit: upload, ring wrap, copy-back), then the mask word, then the commands */
     g_ndtex = 0;
@@ -3726,6 +3807,7 @@ static int draw_prepare(unsigned prim) {
     if (g_tess_alt < 0) g_tess_alt = getenv("WT_VK_TESS_ALT") ? atoi(getenv("WT_VK_TESS_ALT")) : 0;
     int tess_mark = tess && g_tess_alt == 2 && (nvn_front_frame_next() & 1);
     if (tess && g_tess_alt == 1 && (nvn_front_frame_next() & 1)) return 0;
+    if (test_skip(R.prog[0] ? R.prog[0]->serial : -1, 0) || (R.prog[1] && test_skip(R.prog[1]->serial, 0))) return 0;
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [witchtime] TEST ONLY log */
     if (R.prog[2]) { nvn_vk_missing("a draw with a geometry stage"); return 0; }
     uint32_t ints = 0, sints = 0;
@@ -3796,7 +3878,7 @@ static int draw_prepare(unsigned prim) {
             b->zero = 0; b->buf = R.ring;
             if (n == 2) { b->off = c2_ref(s); b->size = sizeof R.c2[s]; }
             else if (n == 1 && st->ctl[3] && st->ctl[4]) { b->size = st->ctl[3]; b->off = ring_put((uint64_t)(uintptr_t)(st->code - 0x30 + st->ctl[4]), b->size); }
-            else if (n >= 3 && R.ubo[s][n - 3].addr && R.ubo[s][n - 3].size) buf_ref(R.ubo[s][n - 3].addr, R.ubo[s][n - 3].size, sal, b);
+            else if (n >= 3 && R.ubo[s][n - 3].addr && R.ubo[s][n - 3].size) buf_ref(R.ubo[s][n - 3].addr, R.ubo[s][n - 3].size, D.cb_ubo ? RING_ALIGN : sal, b);      /* (a uniform buffer's offset: RING_ALIGN is a multiple of the device's alignment) */
             else b->zero = 1;
         }
         for (unsigned k = 0; k < 16; k++) {
@@ -3923,7 +4005,8 @@ static int draw_prepare(unsigned prim) {
                 if (!bit) continue;
                 BufRef *b = &bufs[ib];
                 bi[ib].buffer = b->zero ? R.zero : b->buf; bi[ib].offset = b->zero ? 0 : b->off; bi[ib].range = b->zero ? 65536 : b->size;
-                if (!ut) w[nw] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, sets[0], 40u * (unsigned)s + (n < 18 ? n : 20 + n - 18), 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[ib], NULL};
+                if (D.cb_ubo && n < 18 && bi[ib].range > 65536) bi[ib].range = 65536;
+                if (!ut) w[nw] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, sets[0], 40u * (unsigned)s + (n < 18 ? n : 20 + n - 18), 0, 1, n < 18 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[ib], NULL};
                 nw++; ib++;
             }
         }
@@ -3997,9 +4080,9 @@ static int draw_prepare(unsigned prim) {
         printf("DLD f%lld #%lld prim=%u vs=#%d fs=#%d vsrc=%016llx fsrc=%016llx nattr=%d vattr=", fr, n++, prim, R.prog[0] ? R.prog[0]->serial : -1, R.prog[1] ? R.prog[1]->serial : -1,
                (unsigned long long)vs->h, fs ? (unsigned long long)fs->h : 0ull, R.nattr);
         for (int i = 0; i < R.nattr && i < 16; i++) printf("%x:%u%s", R.vattr[i] & 0xff, (R.vattr[i] >> 14) & 0xffff, i + 1 < R.nattr ? "," : "");
-        printf(" ds=%llx blend_on=%x b0=%u,%u,%u,%u,%u,%u logic=%u chanmask=%x alpha=%d,%g poly=%u,%u,%u,%u pass=%dx%d rs=%d ncol=%d cfmt=0x%x depth=%d dfmt=0x%x vp=%g,%g,%g,%g sc=%d,%d,%d,%d(%d) ubo=",
+        printf(" ds=%llx blend_on=%x b0=%u,%u,%u,%u,%u,%u logic=%u chanmask=%x alpha=%d,%g poly=%u,%u,%u,%u pass=%dx%d rs=%d ncol=%d ct=%p cfmt=0x%x depth=%d dfmt=0x%x vp=%g,%g,%g,%g sc=%d,%d,%d,%d(%d) ubo=",
                (unsigned long long)R.ds, R.blend_on, R.blend[0][0], R.blend[0][1], R.blend[0][2], R.blend[0][3], R.blend[0][4], R.blend[0][5], R.logic, R.chanmask, R.alpha_func, R.alpha_ref,
-               R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.pass_w, R.pass_h, R.pass_rs, R.ncol, R.ncol && R.col[0].tex ? R.col[0].tex->b.format : 0, R.depth.tex != NULL, R.depth.tex ? R.depth.tex->b.format : 0,
+               R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.pass_w, R.pass_h, R.pass_rs, R.ncol, R.ncol ? (void *)R.col[0].tex : NULL, R.ncol && R.col[0].tex ? R.col[0].tex->b.format : 0, R.depth.tex != NULL, R.depth.tex ? R.depth.tex->b.format : 0,
                R.viewport[0], R.viewport[1], R.viewport[2], R.viewport[3], R.scissor[0], R.scissor[1], R.scissor[2], R.scissor[3], R.have_scissor);
         for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; printf("  %s stage: ssbos 0x%x written 0x%x cbufs 0x%x images 0x%x from_rec %d\n", s ? "fs" : "vs", v->ssbos, v->ssbo_w, v->cbufs, v->images, v->from_rec); for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) drawlog_ssbo(s ? "fs" : "vs", (int)k, R.ssbo[s][k], (int)(v->ssbo_w >> k & 1)); }      /* [witchtime] */
         for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; Stage *st = &R.prog[s]->st[s];
@@ -4008,6 +4091,19 @@ static int draw_prepare(unsigned prim) {
                 else if (k == 2) printf("%c2:c2 ", s ? 'f' : 'v');
                 else printf("%c%d:%llx+%llx ", s ? 'f' : 'v', k, (unsigned long long)R.ubo[s][k - 3].addr, (unsigned long long)R.ubo[s][k - 3].size); } }
         printf("\n");
+        if (getenv("WT_VK_DLUBO")) {     /* [witchtime] TEST ONLY: WT_VK_DLUBO=<bank>,<bytes>: that vertex stage bank as floats, as the CPU left it */
+            int k = 0, n = 0; sscanf(getenv("WT_VK_DLUBO"), "%d,%d", &k, &n);
+            if (k >= 3 && R.ubo[0][k - 3].addr && (vs->cbufs >> k & 1)) { const float *w = (const float *)P(R.ubo[0][k - 3].addr); printf("DLU c%d:", k); for (int i = 0; i < n / 4; i++) printf("%s%g", i % 14 ? " " : "\n  ", w[i]); printf("\n"); }
+        }
+        static int full = -1;                      /* [witchtime] TEST ONLY: WT_DRAWLOG_FULL=1: the fragment stage's constant buffers as the CPU left them */
+        if (full < 0) full = getenv("WT_DRAWLOG_FULL") != NULL;
+        for (int k = 3; full && fs && k < 18; k++) if (fs->cbufs >> k & 1 && R.ubo[1][k - 3].addr) {
+            const float *f = (const float *)(uintptr_t)R.ubo[1][k - 3].addr;
+            unsigned n = (unsigned)(R.ubo[1][k - 3].size / 4); if (n > 96) n = 96;
+            printf("  DLU f%d:", k);
+            for (unsigned i = 0; i < n; i++) printf(" %g", f[i]);
+            printf("\n");
+        }
     }
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
     g_dp_fs_stores = fs && fs->images && !fs->ssbo_w;      /* [witchtime] issue 147 (rs_store_low): a stage that also writes buffers would write them twice */
@@ -4387,7 +4483,7 @@ static void slot_poll(void) {
     for (;;) {
         Slot *o = NULL;
         for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && (!o || R.slot[i].serial < o->serial)) o = &R.slot[i];
-        if (!o || vkGetFenceStatus(V.device, o->fence) != VK_SUCCESS) break;
+        if (!o || !slot_done(o)) break;
         slot_wait(o); g_sp_landed++;
     }
     if (g_ngcp) { int n0 = g_ngcp; gcp_settle_done(); if (g_ngcp != n0) nvn_front_done_moved(); }      /* [witchtime] a fence waited for on the game's thread (nvn_vk_sync_done) */
@@ -4645,6 +4741,8 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        if (drawlog_on()) printf("DLI f%lld arrays first %u count %u instances %u base instance %u\n", nvn_front_frame_next(), (unsigned)a[1], (unsigned)a[2], (unsigned)a[4], (unsigned)a[3]);
+        if (g_dump_on) dump_each();
         fsr_mv_commit(0, NULL, 0, VK_INDEX_TYPE_UINT16, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, (uint32_t)a[3]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
@@ -4661,6 +4759,8 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        if (drawlog_on()) printf("DLI f%lld elements type %u count %d instances %u base vertex %d base instance %u index @%llx\n", nvn_front_frame_next(), t, count, (unsigned)a[6], (int)a[4], (unsigned)a[5], (unsigned long long)a[3]);
+        if (g_dump_on) dump_each();
         fsr_mv_commit(1, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
@@ -4752,8 +4852,10 @@ static void exec(const Cmd *m, int depth) {
             if (elements && (d[2] < lo || (uint64_t)d[2] + d[0] > hi)) continue;      /* outside the bound range (only after a fallback of the whole-buffer binding) */
             if (elements) vkCmdDrawIndexed(R.cmd, d[0], d[1], (uint32_t)(d[2] - lo), (int32_t)d[3], d[4]);
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
+            if (drawlog_on()) printf("DLI f%lld indirect %u of %u: %u %u %u %u %u\n", nvn_front_frame_next(), k, n, d[0], d[1], d[2], d[3], elements ? d[4] : 0);
             R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         }
+        if (g_dump_on) dump_each();
         ckpt(2, NULL, NULL, NULL);                 /* [issue 26] the end of the indirect draws (one "before" marker for all of them) */
         break;
     }
@@ -4913,6 +5015,7 @@ static void dump_init(void) {
     printf("nvn_vk_dump: TEST: frame %d, textures %dx%d format 0x%x, into %s\n", g_dump_frame, g_dump_w, g_dump_h, g_dump_fmt, g_dump_dir);
 }
 static int dump_active(void) { return g_dump_on && nvn_front_frame_next() == g_dump_frame; }
+static void dump_each(void) { static int on = -1; if (on < 0) on = getenv("WT_VK_DUMPEACH") != NULL; if (on && dump_active()) pass_end(); }
 static int dump_match(Tex *t) { return t && !t->dead && t->b.width == g_dump_w && t->b.height == g_dump_h && (!g_dump_fmt || t->b.format == g_dump_fmt); }
 static int dump_one(Tex *t) {                      /* no pass is open; returns the dump's number, -1 when none */
     VTex *vt = t->vk;
@@ -5618,6 +5721,9 @@ static void vk_present2(void *arg, int progress) {
     if (g_skip_fr_n) { g_skip_frames++; printf("nvn_vk_skipf: frame %lld (%s): %lld draws left out (shader_wait = skip)\n", (long long)frame, g_in_fight ? "fight" : "no fight", (long long)g_skip_fr_n); g_skip_fr_n = 0; }
     if (shot == -2) { shot = getenv("WT_SHOT") ? atoi(getenv("WT_SHOT")) : -1; every = getenv("WT_SHOT_EVERY") ? atoi(getenv("WT_SHOT_EVERY")) : 0; shot_from = getenv("WT_SHOT_FROM") ? atoi(getenv("WT_SHOT_FROM")) : 0; shot_to = getenv("WT_SHOT_TO") ? atoi(getenv("WT_SHOT_TO")) : 0x7fffffff; }
     pass_end();
+#ifdef __ANDROID__
+    if (g_vk_probe[0] && frame >= 60) { unlink(g_vk_probe); g_vk_probe[0] = 0; }      /* [witchtime] the driver works: vk_own_loader */
+#endif
     if (g_dump_on && frame == g_dump_frame) dump_flush();      /* [Recomps#1] TEST ONLY: WT_VK_DUMPTEX */
     { int step = nvn_front_take_step_shot(); if (step && vt) { char path[300]; const char *dir = getenv("WT_SHOT_DIR"); snprintf(path, sizeof path, "%s%sstep_%03d.bmp", dir ? dir : "", dir ? "/" : "", step - 1); save_bmp_vk(path, vt); } }
     nvn_front_draw_tag_clear();
@@ -5682,7 +5788,9 @@ swap: ;
     if (progress) cmd_wait_all();
     /* The swapchain has the window texture's colour class: a blit between them then keeps the stored values (the OpenGL
      * path blits with FRAMEBUFFER_SRGB off). */
-    VkFormat want = vt && (vt->fmt == VK_FORMAT_R8G8B8A8_SRGB || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB) ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+    int srgb = vt && (vt->fmt == VK_FORMAT_R8G8B8A8_SRGB || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB);
+    int bgra = V.format.format == VK_FORMAT_B8G8R8A8_UNORM || V.format.format == VK_FORMAT_B8G8R8A8_SRGB;     /* [witchtime] the surface's order (nvn_vk.c): Android offers RGBA only */
+    VkFormat want = bgra ? (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM) : (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
     if (want != V.format.format) { cmd_wait_all(); swapchain_destroy(); V.format.format = want; printf("nvn_vk: swapchain format %d (the window texture's colour class)\n", (int)want); }
     hdr_shot_write();                              /* TEST ONLY: WT_HDR_SHOT */
     if (V.swapchain && hdr_mode_want() != V.hdr) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* [Recomps#1] finding 147: Windows' HDR switch changed for this monitor */
@@ -6119,8 +6227,8 @@ static void vkd_init(void) {
         VKC(vkCreateFence(V.device, &fi, NULL, &R.slot[i].fence));
     }
     R.ring_size = 256ull << 20;
-    R.ring = vbuf_new(R.ring_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &R.ring_mem);      /* [witchtime] indirect: records (gpucount_on); transfer dst: GPU copies (gcp_patch) */
-    R.zero = vbuf_new(65536 + 64, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &R.zero_mem);
+    R.ring = vbuf_new(R.ring_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &R.ring_mem);      /* [witchtime] indirect: records (gpucount_on); transfer dst: GPU copies (gcp_patch) */
+    R.zero = vbuf_new(65536 + 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &R.zero_mem);
     memset(R.zero_mem.map, 0, 65536 + 64);
     { float f1 = 1.0f; uint32_t i1 = 1; memcpy((uint8_t *)R.zero_mem.map + 65536 + 12, &f1, 4); memcpy((uint8_t *)R.zero_mem.map + 65536 + 28, &i1, 4); }
     R.gen = 1; R.point_size = 1.0f; R.line_width = 1.0f; R.drange[1] = 1.0f; R.sample_mask = 0xffffffffu; R.chanmask = 0xffffffffu; R.logic = 3; R.poly[2] = 2; R.poly[1] = 1;

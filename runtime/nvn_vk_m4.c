@@ -175,6 +175,15 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
+    if (!D.f2.features.shaderInt64) h = fnv(h, "i32", 3);
+    if (D.nan_exact) h = fnv(h, "nan", 3);                  /* [witchtime] MxIn.nan_exact: another text; on AMD / NVIDIA / Intel the hash is the one it always was */
+    if (D.no_switch) h = fnv(h, "nsw2", 4);                 /* [witchtime] MxIn.no_switch (Qualcomm): another text; 2: mx_ldg / mx_stg / mx_atom too */
+    if (D.cb_ubo && o->stage != 5) h = fnv(h, "ubo1", 4);    /* [witchtime] MxIn.cb_ubo: another text */
+    if (D.fs_test && o->stage == 1) { h = fnv(h, "fst", 3); h = fnv(h, &D.fs_test, 4); }      /* [witchtime] TEST: another text */
+    if (D.no_wave && o->stage == 1) h = fnv(h, "nw1", 3);      /* [witchtime] MxIn.no_wave: another text */
+    if (D.early_z && o->stage == 1) h = fnv(h, "ez1", 3);      /* [witchtime] MxIn.early_z: another text */
+    if (D.seq_all && o->stage == 1) h = fnv(h, "sqa", 3);      /* [witchtime] MxIn.seq_all: another text */
+    if (D.no_fc) h = fnv(h, "nfc", 3);                      /* [witchtime] MxIn.no_fc: another text */
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
@@ -218,6 +227,34 @@ static VkShaderModule module_from_glsl(int stage, const char *glsl, const char *
     g_spirv_free(words);
     InterlockedIncrement64(&R.modules);
     return mod;
+}
+/* [witchtime] TEST ONLY: WT_VK_FSSTUB=1: every pipeline gets one small fragment stage (grey), to tell what the game's fragment stages cost */
+static VkShaderModule fs_stub(VkShaderModule m, int binding) {      /* =2: it also reads every input location, so the vertex stage keeps all its outputs; =4: and it names the stage's first texture (never sampled), so the driver loads the pipeline's texture set */
+    static int on = -1; static VkShaderModule stub[8192], key[8192]; static SRWLOCK lk = SRWLOCK_INIT; uint64_t h;      /* =5: a small stage of its own per game stage (as many programs as the game has); =6: that, each with the long block of =3 */
+    if (on < 0) on = getenv("WT_VK_FSSTUB") ? atoi(getenv("WT_VK_FSSTUB")) : 0;
+    if (!on) return m;
+    int slot = on == 4 && binding >= 0 && binding < 511 ? binding + 1 : 0;
+    AcquireSRWLockExclusive(&lk);
+    if (on >= 5) { slot = 512 + (int)(((uint64_t)(uintptr_t)m * 0x9E3779B97F4A7C15ull) >> 52) % 7000; while (key[slot] && key[slot] != m) slot = slot == 8191 ? 512 : slot + 1; key[slot] = m; }
+    if (!stub[slot]) {
+        static char src[400000]; int n = snprintf(src, sizeof src, "#version 460\nlayout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\nlayout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1; layout(location = 2) out vec4 o2; layout(location = 3) out vec4 o3;\n");
+        if (slot) n += snprintf(src + n, sizeof src - (size_t)n, "layout(set = 1, binding = %d) uniform sampler2D t;\n", binding);
+        for (int k = 0; on >= 2 && k < 32; k++) n += snprintf(src + n, sizeof src - (size_t)n, "layout(location = %d) in vec4 i%d;\n", k, k);
+        n += snprintf(src + n, sizeof src - (size_t)n, "void main() { vec4 a = vec4(0.3, 0.3, %d.0 / 8192.0, 1.0);\n", slot);
+        for (int k = 0; on >= 2 && k < 32; k++) n += snprintf(src + n, sizeof src - (size_t)n, " a += i%d * 1e-6;\n", k);
+        if (slot) n += snprintf(src + n, sizeof src - (size_t)n, " if (mx_alpha.x == 0xdeadbeefu) a += textureLod(t, gl_FragCoord.xy, 0.0);\n");
+        if (on == 3 || on == 6) {                             /* =3,<statements>: and a long block that never runs: does a stage's size alone cost? */
+            const char *c = strchr(getenv("WT_VK_FSSTUB"), ','); int len = c ? atoi(c + 1) : 3000;
+            n += snprintf(src + n, sizeof src - (size_t)n, " if (mx_alpha.x == 0xdeadbeefu) {\n");
+            for (int k = 0; k < len && n < (int)sizeof src - 200; k++) n += snprintf(src + n, sizeof src - (size_t)n, "  a += gl_FragCoord.yxwz * %d.5;\n", k + 1);
+            n += snprintf(src + n, sizeof src - (size_t)n, " }\n");
+        }
+        snprintf(src + n, sizeof src - (size_t)n, " o0 = o1 = o2 = o3 = a; }\n");
+        stub[slot] = module_from_glsl(1, src, "WT_VK_FSSTUB", &h);
+    }
+    VkShaderModule r = stub[slot] ? stub[slot] : m;
+    ReleaseSRWLockExclusive(&lk);
+    return r;
 }
 static int stage_rec_read(int s, uint64_t vh, StageRec *r) {
     char path[128];
@@ -393,6 +430,11 @@ static void vstage_build(VStage *v, const SSrc *src) {
     StageRec r;
     snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), s, (unsigned long long)v->hb);
     FILE *fp = fopen(path, "rb");
+    if (fp && getenv("WT_VK_GLSLIN")) {           /* [witchtime] TEST ONLY: a stage WT_VK_GLSLIN replaces is translated again, not taken from the cache */
+        char gp[MAX_PATH]; FILE *g;
+        snprintf(gp, sizeof gp, "%s/p%05d_%s.glsl", getenv("WT_VK_GLSLIN"), src->serial, s == 5 ? "cs" : s ? "fs" : "vs");
+        if ((g = fopen(gp, "rb")) != NULL) { fclose(g); fclose(fp); fp = NULL; }
+    }
     if (fp) {
         VarRec e;
         while (!done && fread(&e, 1, sizeof e, fp) == sizeof e) {
@@ -409,7 +451,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
         in.stage = s; in.code = src->code; in.code_len = src->code_len; in.cdata = src->cdata; in.cdata_size = src->cdata ? src->cdata_size : 0;
         in.int_attrs = v->key[0]; in.sint_attrs = v->key[1]; in.int_tex = v->key[2]; in.sint_tex = v->key[3]; in.force_out = v->fo;
-        in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+        in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.nan_exact = D.nan_exact; in.no_switch = D.no_switch; in.no_fc = D.no_fc; in.cb_ubo = D.cb_ubo && s != 5; in.seq_all = D.seq_all; in.early_z = D.early_z; in.no_wave = D.no_wave; in.fs_test = D.fs_test; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
         if (s == 5) {                              /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;
@@ -427,6 +469,14 @@ static void vstage_build(VStage *v, const SSrc *src) {
             if (getenv("WT_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: WT_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
                 uint32_t dep = s == 0 ? out.int_dep : 0, ck[4] = { v->key[0] & dep, v->key[1] & dep, v->key[2] & out.tex_units, v->key[3] & out.tex_units };
                 glsl_dump(src->serial, s, fnv(fnv(v->hb, ck, 16), &v->fo, 4), out.glsl);
+            }
+            int glslin_used = 0;
+            if (getenv("WT_VK_GLSLIN")) {            /* [witchtime] TEST ONLY: WT_VK_GLSLIN=<dir>: <dir>/p<serial>_<vs|fs|cs>.glsl replaces the translation (a stage
+                                                         * written as WT_VK_GLSLDUMP gives it, edited by hand; without "image" in it the stage binds no storage image) */
+                char path[MAX_PATH];
+                snprintf(path, sizeof path, "%s/p%05d_%s.glsl", getenv("WT_VK_GLSLIN"), src->serial, s == 5 ? "cs" : s ? "fs" : "vs");
+                FILE *gf = fopen(path, "rb");
+                if (gf) { char *buf = malloc(1 << 20); size_t n = fread(buf, 1, (1 << 20) - 1, gf); buf[n] = 0; fclose(gf); free(out.glsl); out.glsl = buf; glslin_used = 1; if (!strstr(buf, "image")) out.images = 0; printf("nvn_vk: TEST %s from %s (WT_VK_GLSLIN)\n", what, path); }
             }
             if (in.screen_scale) { InterlockedIncrement64(&g_rs_stages); if (strstr(out.glsl, "mx_fcs)")) InterlockedIncrement64(&g_rs_fcs); if (strstr(out.glsl, "mx_tf(")) InterlockedIncrement64(&g_rs_tf); }
             v->mod = module_from_glsl(s, out.glsl, what, &spv_hash);
@@ -452,11 +502,11 @@ static void vstage_build(VStage *v, const SSrc *src) {
                 r.uses_alpha = v->uses_alpha; r.nsmp = v->nsmp; memcpy(r.smp, v->smp, sizeof r.smp);
                 memcpy(r.img_fmt, v->img_fmt, sizeof r.img_fmt); memcpy(r.img_type, v->img_type, sizeof r.img_type);
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.st", vkc_dir(), s, (unsigned long long)v->h);
-                if ((fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }
+                if (!glslin_used && (fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }      /* a test override is never cached */
                 memset(&e, 0, sizeof e);
                 e.magic = STAGEREC_MAGIC; memcpy(e.key, v->key, 16); e.fo = v->fo; e.dep = v->dep; e.tex = v->tex_units; e.vh = v->h;
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), s, (unsigned long long)v->hb);
-                if ((fp = fopen(path, "ab")) != NULL) { fwrite(&e, 1, sizeof e, fp); fclose(fp); }
+                if (!glslin_used && (fp = fopen(path, "ab")) != NULL) { fwrite(&e, 1, sizeof e, fp); fclose(fp); }
             }
         }
     }
@@ -652,7 +702,7 @@ static VkBlendFactor blend_factor(unsigned f) {
 static VkBlendOp blend_op(unsigned e) { static const uint8_t m[6] = {VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, VK_BLEND_OP_SUBTRACT, VK_BLEND_OP_REVERSE_SUBTRACT, VK_BLEND_OP_MIN, VK_BLEND_OP_MAX}; return (VkBlendOp)m[e < 6 ? e : 1]; }
 static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, int *n0, VkDescriptorSetLayoutBinding *b1, int *n1) {
     VkFlags sf = s == 3 ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT : s == 4 ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
-    for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
+    for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, CB_DT, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
     for (unsigned k = 0; k < 8; k++) if (v->images >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[(*n1)++] = b; }      /* [witchtime] */
@@ -792,7 +842,7 @@ static PairLib *pairlib_ensure(VStage *vs, VStage *fs, int samples, int sshade, 
     memset(st, 0, sizeof st);
     st[0].sType = st[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     st[0].stage = VK_SHADER_STAGE_VERTEX_BIT; st[0].module = vs->mod; st[0].pName = "main";
-    st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[1].module = fs ? fs->mod : NULL; st[1].pName = "main";
+    st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[1].module = fs ? fs_stub(fs->mod, fs->nsmp ? (int)fs->smp[0].binding : -1) : NULL; st[1].pName = "main";
     VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     vp.viewportCount = 1; vp.scissorCount = 1;
     VkPipelineRasterizationProvokingVertexStateCreateInfoEXT pv = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT};
@@ -905,7 +955,7 @@ static void gpl_universal(void) {
         int n0 = 0, n1 = 0;
         for (unsigned s = 0; s < 2; s++) {
             VkFlags sf = s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
-            for (unsigned n = 1; n < 18; n++) { VkDescriptorSetLayoutBinding b = {40u * s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
+            for (unsigned n = 1; n < 18; n++) { VkDescriptorSetLayoutBinding b = {40u * s + n, CB_DT, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned k = 0; k < 16; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned u = 0; u < 32; u++) { VkDescriptorSetLayoutBinding b = {40u * s + u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[n1++] = b; b.binding += 240; b1[n1++] = b; }
             for (unsigned k = 0; k < 8; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[n1++] = b; }      /* [witchtime] storage images */
@@ -1114,7 +1164,7 @@ whole:;
     for (int i = 0; i < 4; i++) { st[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st[i].pName = "main"; }
     st[nst].stage = VK_SHADER_STAGE_VERTEX_BIT; st[nst++].module = vs->mod;
     if (p->tcs) { st[nst].stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; st[nst++].module = p->tcs->mod; st[nst].stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; st[nst++].module = p->tes->mod; }
-    if (fs) { st[nst].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[nst++].module = fs->mod; }
+    if (fs) { st[nst].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[nst++].module = fs_stub(fs->mod, fs->nsmp ? (int)fs->smp[0].binding : -1); }
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = p->tcs ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : k->topo_class == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : k->topo_class == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     /* [witchtime] the tessellator's domain origin as in OpenGL (the back end flips the viewport the OpenGL way), so GL_CCW keeps its meaning */

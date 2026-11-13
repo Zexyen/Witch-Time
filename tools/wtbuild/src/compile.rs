@@ -423,7 +423,7 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
         target: t,
         clang: clang.to_string(),
         gen: gen.clone(),
-        obj: crate::layout::build(Path::new(repo)).join("obj"),
+        obj: t.obj_dir(Path::new(repo)),
         flags,
         inc,
     };

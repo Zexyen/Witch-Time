@@ -5,6 +5,9 @@
  * lifted code). The file lists per sample: thread id, the thread's guest name or "-", the PCs innermost first; then the
  * presented frame ("@<frame>", last), and the mappings (/proc/self/maps), so `wtbuild lprof` (tools/wtbuild/src/lprof.rs) can turn addresses into function names (the symbol tables of
  * witch-time-game and game.so; lifted functions are f_<guest address>). Included by boot.c (Linux only), like prof15.c. */
+#ifdef __ANDROID__
+void lprof_start(void) {}                        /* [witchtime] no backtrace() before Android 13, and no need: a test aid */
+#else
 #include <execinfo.h>
 #include <signal.h>
 #include <sys/syscall.h>
@@ -101,3 +104,4 @@ void lprof_start(void) {
     const char *spec = getenv("WT_LPROF");
     if (spec && *spec) CloseHandle(CreateThread(NULL, 0, lp_thread, (LPVOID)spec, 0, NULL));
 }
+#endif

@@ -30,7 +30,12 @@ static struct {
     LONG64 jumps, flashes;
 } g_fl = {.on = -1};
 
-static int fl_on(void) { if (g_fl.on < 0) { const char *e = getenv("WT_VK_FLASHLOG"); g_fl.on = e ? atoi(e) : 1; } return g_fl.on; }
+#ifdef __ANDROID__
+#define FL_DEFAULT 0                                /* [witchtime] a test tool: a blit, two barriers and a copy per present */
+#else
+#define FL_DEFAULT 1
+#endif
+static int fl_on(void) { if (g_fl.on < 0) { const char *e = getenv("WT_VK_FLASHLOG"); g_fl.on = e ? atoi(e) : FL_DEFAULT; } return g_fl.on; }
 /* pass_begin: one entry per pass of the frame being drawn */
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth) {
     if (!fl_on()) return;

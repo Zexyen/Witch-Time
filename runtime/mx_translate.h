@@ -56,6 +56,16 @@ typedef struct {
      * gl_VertexIndex / gl_InstanceIndex - gl_BaseInstance; gl_PointCoord.y flipped (the viewport is flipped by the back end);
      * gl_PointSize is always the push constant's (the OpenGL path never enables program point size). */
     int target;
+    int no_int64;                    /* Vulkan: the GPU has no shaderInt64 (Adreno): 64-bit integer ops in 32-bit halves */
+    int no_switch;                   /* the jump dispatcher as an if-chain, not a switch (Qualcomm's compiler gets the switch wrong) */
+    int fs_test;                     /* TEST ONLY: fragment stages of a kind end at once with a flat colour: 1 those with a quad shuffle, 2 those with a step back, 3 the others that write a colour, 4 all */
+    int no_wave;                     /* fragment SHFL: each pixel runs the dispatcher by itself (its quad mates are read where it stands), not the whole wave together (issue 66): for a GPU on which the wave loop is slow */
+    int early_z;                     /* fragment: depth and stencil tests before the stage (early_fragment_tests) unless it writes the depth: for draws that write neither */
+    int seq_all;                     /* every fragment stage with only forward jumps runs its blocks in order (else only chains of 16 blocks and more): no dispatcher loop for a phone's GPU */
+    int cb_ubo;                      /* Vulkan: the constant buffers are uniform blocks of uvec4 (std140), not storage blocks of uint: an Adreno reads those far faster in a vertex stage */
+    int no_fc;                       /* Vulkan: no SignedZeroInfNanPreserve execution mode (the driver does not offer it for 32-bit floats) */
+    int nan_exact;                   /* Vulkan: the GPU's min / max / clamp are not known to answer NaN as Maxwell does (FMNMX gives the
+                                      * other operand, .SAT gives 0): spelled out with isnan (Adreno) */
     unsigned tex_base;
     /* vertex stage: generic outputs to declare (and leave at (0, 0, 0, 1)) although the code never writes them: the inputs
      * of the fragment stage it is paired with. Vulkan requires every fragment input to have a vertex output

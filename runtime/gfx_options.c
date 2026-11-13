@@ -34,7 +34,12 @@ static const char *const k_default_ini =
 ";   windowed:   a normal window with the client size below.\r\n"
 ";   borderless: no frame, covers the monitor the window is on (the desktop keeps its resolution).\r\n"
 ";   fullscreen: as borderless, and always on top. (Exclusive fullscreen with a mode change is not implemented.)\r\n"
+#ifdef __ANDROID__
+";   Android: fullscreen, without the system bars: 16:9 needs no clear of the bars around the picture.\r\n"
+"window = fullscreen\r\n"
+#else
 "window = windowed\r\n"
+#endif
 "width = 1280\r\n"
 "height = 720\r\n"
 "\r\n"
@@ -70,10 +75,22 @@ static const char *const k_default_ini =
 ";   'nvn_vk: device 0: ...'. Examples: gpu = 1      gpu = Intel      gpu = RTX\r\n"
 "gpu = auto\r\n"
 "\r\n"
+#ifdef __ANDROID__
+"; gpu_driver = turnip | system\r\n"
+";   turnip: on an Adreno GPU, the Mesa Turnip driver the app carries. system: the phone's own driver (Adreno 740:\r\n"
+";   its fragment stages get wrong inputs from some vertex stages, and most of the world goes missing in a fight).\r\n"
+"gpu_driver = turnip\r\n"
+"\r\n"
+#endif
 "; console_mode = docked | handheld\r\n"
 ";   What nn::oe::GetOperationMode answers. It does not set the render size (resolution_scale does); kept for study,\r\n"
 ";   leave it at docked.\r\n"
+#ifdef __ANDROID__
+";   Android: handheld, as on the console in the hand (measured on an Adreno 740: about a third less GPU time).\r\n"
+"console_mode = handheld\r\n"
+#else
 "console_mode = docked\r\n"
+#endif
 "\r\n"
 "; resolution_scale = 1.0\r\n"
 /* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
@@ -83,7 +100,12 @@ static const char *const k_default_ini =
 ";   size (width / height above). Measured on an RX 9070 XT (2026-10-25): 59.6-59.9 fps in a fight at every one of\r\n"
 ";   them; 2.4 takes about 1 GB of video memory more. The first run at a scale other than 1.0 holds the loading screens\r\n"
 ";   for about two minutes once, while the shaders are translated for it.\r\n"
+#ifdef __ANDROID__
+";   Android: 0.8 = 1280x720, the size on the console in the hand (measured on an Adreno 740: 40 % less GPU time than 1.0).\r\n"
+"resolution_scale = 0.8\r\n"
+#else
 "resolution_scale = 1.0\r\n"
+#endif
 "\r\n"
 "; shader_wait = hold | skip      (Vulkan)\r\n"
 ";   What happens when a draw needs a shader or pipeline that is not ready yet (mostly the first time something is shown\r\n"
@@ -240,9 +262,17 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
+#ifdef __ANDROID__
+    o->handheld = 1;                               /* [witchtime] the default of a handheld (the ini written above says so too) */
+#endif
     o->bc7_textures = 1;                       /* #54: a graphics.ini from before the key */
     o->aniso = 16; o->texture_lod_bias = -1.0f;      /* [witchtime] fixed at the sharpest since 2026-11-10: no keys, no menu rows (profile = low and WT_TEXTURE_LOD_BIAS still change them) */
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
+#ifdef __ANDROID__
+    o->scale = 0.8f; o->window_mode = 2;           /* [witchtime] as the ini written above */
+    o->aniso = 0; o->texture_lod_bias = 0.0f;      /* [witchtime] a phone's GPU: the game's own filtering (WT_ANISO / WT_TEXTURE_LOD_BIAS change them) */
+    if (getenv("WT_ANISO")) o->aniso = atoi(getenv("WT_ANISO"));
+#endif
     opt_path(o->path);
     if (!arg && !getenv("WT_GRAPHICS_CONFIG") && !getenv("WT_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
     FILE *f = fopen(o->path, "rb");
@@ -265,6 +295,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "width")) { int v = atoi(val); if (v >= 320 && v <= 16384) o->width = v; }
         else if (!_stricmp(key, "height")) { int v = atoi(val); if (v >= 180 && v <= 16384) o->height = v; }
         else if (!_stricmp(key, "vsync")) o->present = !_stricmp(val, "on") ? 1 : !_stricmp(val, "off") ? 2 : !_stricmp(val, "mailbox") ? 3 : !_stricmp(val, "display") ? 4 : !_stricmp(val, "auto") ? 5 : 0;
+        else if (!_stricmp(key, "gpu_driver")) o->system_gpu_driver = !_stricmp(val, "system");
         else if (!_stricmp(key, "gpu")) { if (_stricmp(val, "auto")) snprintf(o->gpu, sizeof o->gpu, "%s", val); }
         else if (!_stricmp(key, "console_mode")) o->handheld = !_stricmp(val, "handheld");
         else if (!_stricmp(key, "resolution_scale")) { float v = (float)atof(val); if (v > 0) o->scale = v; }

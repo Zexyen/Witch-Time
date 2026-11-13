@@ -8,6 +8,7 @@ typedef struct {
     int width, height;       /* client size of the windowed mode */
     int present;             /* 0 clock (mailbox, else immediate, paced by our 60 Hz clock), 1 vsync on (fifo), 2 vsync off (immediate), 3 mailbox;   env WT_VK_PRESENT wins */
     char gpu[64];            /* "" = discrete first; an index of the printed list, or a part of the device name   env WT_VK_DEVICE wins */
+    int system_gpu_driver;   /* [witchtime] Android: 1 = the phone's own Vulkan driver instead of the Turnip the app carries */
     float scale;             /* internal resolution scale asked for (Vulkan: nvn_vk_draw.c rs_scale, 0.25 .. 2.0 since PR #8 (stephenjayakar); env WT_VK_SCALE wins) */
     int handheld;            /* 1: the game is told it runs handheld = it makes its own 1280x720 render targets instead of 1920x1080 */
     int aniso;               /* 0 = the game's own value; 2, 4, 8, 16 = at least that on samplers that filter between mip levels */
