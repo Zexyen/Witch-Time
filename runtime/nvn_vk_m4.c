@@ -25,6 +25,7 @@ typedef struct VStage {
     VkPipeline lib, lib2; volatile LONG lib_state, lib2_state;      /* session 9 (WT_VK_GPL=2): the stage's pipeline library; lib2: a vertex stage with the empty fragment shader state */
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
+    volatile LONG warm;                            /* [witchtime] a pipeline was made with this stage: the driver has compiled it (warm_main) */
 } VStage;
 #define MX_VK_VERSION 21u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
@@ -51,6 +52,29 @@ static int wd_enter(const char *fn, int line) {
 static void wd_leave(int i) { if (i >= 0) g_wd_wait[i].tid = 0; }
 #define WD_SLEEP(cv, lock, ms) do { int wd_i_ = wd_enter(__func__, __LINE__); SleepConditionVariableCS(cv, lock, ms); wd_leave(wd_i_); } while (0)
 static VkPipelineCache g_pcache;
+/* ---- [witchtime] Metal's shader compiles, ahead (macOS; WT_VK_WARM=0 off). The preparation translates every stage of the
+ * game's data, and with pipeline libraries it also has the driver compile each one. MoltenVK has no libraries: Metal
+ * compiles a stage's text when the first pipeline with it is made, at the draw. Measured in a fight with empty caches: a
+ * pipeline whose fragment stage Metal had not compiled 139 ms (mean of 138), one whose fragment stage it had compiled for
+ * another pipeline 15 ms (58), whatever the pass or the blend state. The pipeline itself cannot be made ahead (the blend
+ * state is part of its key on Metal, and B3 hands its stages over one by one), so warm_main makes ONE pipeline with every
+ * fragment stage record of the cache and destroys it: what stays is the compiled text in Metal's own cache on disk, which
+ * the draw's pipeline then finds. Its vertex stage writes what the fragment stage reads. The text Metal gets depends on
+ * which attachments the stage may write: a pass with colour and one with depth only (18 of 122 fragment stages of a
+ * fight were drawn in such a pass, their colour output left out of the text) give every text of that fight. Metal's
+ * code generation comes after the text and is made anew for another attachment format or blend state (a stage compiled
+ * for eight RGBA8 attachments: 38 ms at its first draw, for the pass it is drawn in: 19 ms), so each stage is compiled
+ * for the passes of g_warm_pass. The vertex stages are not compiled ahead: tried (a depth-only pipeline of each, its
+ * attributes as four floats or integers), 20 ms each and no shorter holds.
+ * One thread, while the game runs: Metal compiles one text at a time whatever the number of threads asking (13 workers:
+ * 880 ms each, its compiler process on 1.2 cores), and what several PROCESSES compile at once each keeps in a cache file
+ * of its own that a later run does not read (12 processes: 246 s for 7,662 stages, and a lone process then compiled them
+ * again). About 160 ms a stage, once per macOS version; a marker in the cache folder says it is done. */
+static int g_warm, g_warm_nvs;
+static LONG64 g_warm_n, g_warm_fail, g_warm_skip, g_warm_tk, g_warm_total;
+static struct VStage *g_warm_vs[256];
+static HANDLE g_warm_thread;
+static char g_warm_marker[260];
 static LONG64 g_pw_stages, g_pw_pipes, g_pw_failed, g_pipe_miss;
 static VStage *g_vstage[4096], *g_vh[4096];        /* by hb, by h */
 static uint32_t g_vstage_ids;
@@ -516,7 +540,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
 
 /* ---------------------------------------------------------------- pipelines */
 typedef struct { uint32_t vs, fs, chanmask, sample_mask; int32_t cfmt[8], dfmt; uint8_t topo_class, ncolor, samples, poly, a2c, dclamp, logic, sshade, blend_on, pad[3]; uint8_t blend[8][8]; } PKey;
-typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; } Pipe;      /* tcs, tes, patch: [witchtime] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
+typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; uint8_t warm; /* [witchtime] warm_main: the pipeline is not kept */ } Pipe;      /* tcs, tes, patch: [witchtime] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
 static Pipe *g_pipes[1024];
 static void pkey_targets(PKey *k);
 static int pkey_targets_of(PKey *k, int ncol, const TargetRef *col, const TargetRef *depth);
@@ -1068,6 +1092,7 @@ static double pipe_build(Pipe *p) {
         { LARGE_INTEGER fq; QueryPerformanceFrequency(&fq); return (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart; }
     }
 whole:;
+    if (fs && !p->warm) fs->warm = 1;              /* [witchtime] this pipeline has the driver compile the stage: warm_main's first round leaves it out */
     VkDescriptorSetLayoutBinding b0[80], b1[160];
     layout_bindings(vs, 0, b0, &p->nb[0], b1, &p->nb[1]);
     if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]);
@@ -1151,6 +1176,12 @@ whole:;
     if (!D.has_vids) gi.pVertexInputState = &vi;
     static volatile LONG nfail;
     VkResult r = fail_test("WT_VK_FAILPIPE", &nfail) ? VK_ERROR_INITIALIZATION_FAILED : vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &p->p);
+    if (p->warm) {                                 /* [witchtime] warm_main: made for the driver's cache of compiled stages only */
+        if (r == VK_SUCCESS) vkDestroyPipeline(V.device, p->p, NULL); else g_warm_fail++;
+        vkDestroyPipelineLayout(V.device, p->layout, NULL);
+        for (int i = 0; i < 2; i++) vkDestroyDescriptorSetLayout(V.device, p->dl[i], NULL);
+        return 0;
+    }
     if (r != VK_SUCCESS) {                         /* finding 120: no pipeline: its draws are left out (pipe_get's callers), the game goes on */
         p->p = VK_NULL_HANDLE;
         InterlockedIncrement64(&g_fail_pipe);
@@ -1294,6 +1325,119 @@ static void predict_pair(PairRec *pr, int i) {
     j->kind = 1; j->pipe = pipe_new(&k, pr->vs, pr->fs, h, 0); j->pipe->predicted = 1;
     g_pred_made++;
     job_push(j);
+}
+/* [witchtime] warm_main's thread: one pipeline with the fragment stage, made and destroyed. */
+/* The passes a fragment stage is compiled for, most used first: what B3 draws with on this driver (704 pipelines of two
+ * hours of play: these five are 529 of them). The first two give Metal the two texts of a stage (with its colour
+ * output, without); the others cost only Metal's code generation, which is made anew for another attachment format,
+ * blend state or write mask. Formats: 122 = B10G11R11 float, 130 = D32 float + S8. */
+static const struct { uint8_t ncolor, blend_on, blend[6]; uint32_t chanmask; } g_warm_pass[] = {
+    {1, 0, {2, 1, 2, 1, 1, 1}, 0xf},               /* opaque */
+    {0, 0, {2, 1, 2, 1, 1, 1}, 0},                 /* depth only */
+    {1, 1, {5, 6, 2, 2, 1, 5}, 0xf},               /* blended: source alpha, one minus source alpha */
+    {1, 0, {2, 1, 2, 1, 1, 1}, 0x7},               /* opaque, alpha not written */
+    {1, 1, {5, 2, 2, 2, 1, 5}, 0xf},               /* added: source alpha, one */
+};
+#define WARM_NPASS ((int)(sizeof g_warm_pass / sizeof g_warm_pass[0]))
+static void pipe_warm(VStage *fs, int pass) {
+    static Pipe p;
+    VStage *vs = NULL;
+    for (int i = 0; i < g_warm_nvs; i++) if (g_warm_vs[i]->out_attr == fs->in_attr) vs = g_warm_vs[i];
+    if (!vs) {                                     /* the vertex stage that writes exactly what this stage reads (all of them vec4, as mx_translate declares them) */
+        char src[2600], *d = src;
+        uint64_t h;
+        if (g_warm_nvs == 256) { g_warm_fail++; return; }
+        d += sprintf(d, "#version 450\n");
+        for (unsigned n = 0; n < 32; n++) if (fs->in_attr >> n & 1) d += sprintf(d, "layout(location = %u) out vec4 out_attr%u;\n", n, n);
+        d += sprintf(d, "void main() {\n    gl_Position = vec4(0.0);\n");
+        for (unsigned n = 0; n < 32; n++) if (fs->in_attr >> n & 1) d += sprintf(d, "    out_attr%u = vec4(0.0);\n", n);
+        sprintf(d, "}\n");
+        vs = calloc(1, sizeof *vs);
+        vs->out_attr = fs->in_attr; vs->ok = 1; vs->state = 2;
+        vs->mod = module_from_glsl(0, src, "the vertex stage of a compile made ahead", &h);
+        if (!vs->mod) { free(vs); g_warm_fail++; return; }
+        g_warm_vs[g_warm_nvs++] = vs;
+    }
+    memset(&p, 0, sizeof p);
+    PKey *k = &p.k;
+    k->ncolor = g_warm_pass[pass].ncolor; if (k->ncolor) k->cfmt[0] = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    k->dfmt = VK_FORMAT_D32_SFLOAT_S8_UINT; k->samples = 1; k->poly = 2; k->logic = 3; k->sample_mask = 0xffffffffu; k->topo_class = 2;
+    k->chanmask = g_warm_pass[pass].chanmask; k->blend_on = g_warm_pass[pass].blend_on;
+    for (int i = 0; i < 8; i++) memcpy(k->blend[i], g_warm_pass[i ? 0 : pass].blend, 6);
+    p.vs = vs; p.fs = fs; p.warm = 1;
+    LONG64 t0 = tk();
+    pipe_build(&p);
+    g_warm_tk += tk() - t0; g_warm_n++;
+}
+static int warm_cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
+static DWORD WINAPI warm_main(void *arg) {
+    (void)arg;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    while (!g_m4_quit && g_prep_thread && g_prep_state != 2 && g_prep_state != 3) Sleep(500);      /* after the preparation: its records are what is compiled */
+    char pat[300];
+    WIN32_FIND_DATAA fd;
+    uint64_t *vh = NULL;                           /* the variants of the fragment stage records */
+    int n = 0, cap = 0;
+    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+    LONG64 t0 = tk(), last = t0;
+    snprintf(pat, sizeof pat, "%s/*.st", vkc_file("stage"));
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.cFileName[0] != '1' || fd.cFileName[1] != '_') continue;
+            if (n == cap) vh = realloc(vh, (size_t)(cap = cap ? cap * 2 : 4096) * sizeof *vh);
+            vh[n++] = strtoull(fd.cFileName + 2, NULL, 16);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    qsort(vh, (size_t)n, sizeof *vh, warm_cmp);    /* the same order in every run: one that was cut short finds its first part in Metal's cache */
+    g_warm_total = (LONG64)WARM_NPASS * n;
+    printf("nvn_vk_warm: %d fragment stages of the cache are compiled by Metal now, each for the %d passes most used, one at a time, while the game runs (a first use of one not yet done holds its frame as before)\n", n, WARM_NPASS);
+    for (LONG64 i = 0; i < g_warm_total && !g_m4_quit; i++) {      /* every stage for the first pass, then every stage for the second ... */
+        int pass = (int)(i / n);
+        uint64_t h1 = vh[i % n];
+        StageRec r;
+        VkShaderModule mod;
+        VStage *v, t;
+        EnterCriticalSection(&g_sh_lock);
+        for (v = g_vh[h1 & 4095]; v; v = v->next_h) if (v->h == h1 && v->stage == 1) break;
+        LeaveCriticalSection(&g_sh_lock);
+        if (v && v->warm && !pass) { g_warm_skip++; continue; }      /* a pipeline of the game was made with it (for which pass is not known: the later rounds take every stage) */
+        if (!stage_rec_read(1, h1, &r) || !(mod = module_from_spv(r.spv))) { g_warm_fail++; continue; }
+        memset(&t, 0, sizeof t);
+        vstage_from_rec(&t, &r, h1, mod);
+        t.stage = 1; t.state = 2;
+        pipe_warm(&t, pass);
+        vkDestroyShaderModule(V.device, mod, NULL);
+        if (tk() - last > 60 * fq.QuadPart) { last = tk(); printf("nvn_vk_warm: %lld of %lld compiles (%.0f s)\n", (long long)i + 1, (long long)g_warm_total, (double)(last - t0) / (double)fq.QuadPart); }
+    }
+    if (!g_m4_quit) {
+        FILE *fp = fopen(g_warm_marker, "wb");
+        if (fp) { fprintf(fp, "%d fragment stages\n", n); fclose(fp); }
+        printf("nvn_vk_warm: FINISHED: %lld compiles in %.0f s (%lld left out: a pipeline of the game had them compiled; %lld the driver refused or without their files); marker %s\n",
+               (long long)g_warm_n, (double)(tk() - t0) / (double)fq.QuadPart, (long long)g_warm_skip, (long long)g_warm_fail, g_warm_marker);
+    }
+    free(vh);
+    return 0;
+}
+static void warm_start(void) {                     /* after prep_start */
+#ifdef __APPLE__
+    char os[64] = "";
+    size_t len = sizeof os - 1;
+    int sysctlbyname(const char *, void *, size_t *, void *, size_t);
+    g_warm = !D.has_gpl && !(getenv("WT_VK_WARM") && !atoi(getenv("WT_VK_WARM")));
+    if (sysctlbyname("kern.osversion", os, &len, NULL, 0) != 0) os[0] = 0;      /* Metal empties its cache when the system is updated */
+#else
+    const char *os = "";
+    g_warm = !D.has_gpl && getenv("WT_VK_WARM") && atoi(getenv("WT_VK_WARM"));
+#endif
+    if (!g_warm) return;
+    snprintf(g_warm_marker, sizeof g_warm_marker, "%s/compiled4_v%u_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, RS_ON ? 3 : 0, os, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    if (GetFileAttributesA(g_warm_marker) != INVALID_FILE_ATTRIBUTES && !(getenv("WT_VK_WARM") && atoi(getenv("WT_VK_WARM")) == 2)) {
+        printf("nvn_vk_warm: the fragment stages of the cache were compiled by Metal in an earlier run (%s; WT_VK_WARM=2 does it again)\n", g_warm_marker);
+        return;
+    }
+    g_warm_thread = CreateThread(NULL, 0, warm_main, NULL, 0, NULL);
 }
 /* Render thread, at a draw: the pipeline of the key; made here, or waited for, when it is not ready (the frame is late). */
 /* [witchtime] Tessellated pipelines (B3: 29 control / evaluation pairs): made whole (no libraries) on the render thread at their
@@ -1983,6 +2127,7 @@ static void prewarm_start(void) {
     printf("nvn_vk: %d pipelines listed in ../cache/vk/pipes.bin; %d worker threads; programs are handed to them when the game sets their shaders: %s; key prediction: %s\n", g_pw_n, g_pw_nthread,
            g_m4_on ? "yes" : "no (WT_VK_HANDOVER=0)", g_predict ? "blind (WT_VK_PREDICT=1)" : g_scan_on ? "look-ahead of every batch" : D.has_eds3 ? "none (WT_VK_LOOKAHEAD=0)" : "none (blend state is part of the key on this GPU)");
     prep_start();
+    warm_start();
 }
 /* ---------------------------------------------------------------- look-ahead: what a batch will draw, before it is replayed
  * The lists of a submitted batch are read once for the (stage pair, pass formats, topology class) of every draw. A
@@ -2153,6 +2298,7 @@ static void m4_report(void) {
            (long long)n, (double)t * k, (double)g_hold_max * k, (long long)g_hold_n[0], (double)g_hold_tk[0] * k, (long long)g_hold_n[1], (double)g_hold_tk[1] * k, (long long)g_hold_n[2], (double)g_hold_tk[2] * k, (long long)g_hold_n[3], (double)g_hold_tk[3] * k);
     printf("nvn_vk_m4: workers: %lld programs handed over, %lld stages made by them, %lld pipelines made by them; look-ahead: %lld pipelines and %lld draws with stages still to make sent ahead, %.0f ms of reading in all; blind prediction: %lld keys, %lld used; pass signatures %d; nvnProgramSetShaders held its caller %lld times, %.0f ms in all\n",
            (long long)g_w_progs, (long long)g_w_stages, (long long)g_w_pipes, (long long)g_scan_pipes, (long long)g_scan_jobs, (double)g_tm[9] * k, (long long)g_pred_made, (long long)g_pred_used, g_nsig, (long long)g_set_held, (double)g_set_held_tk * k);
+    if (g_warm_thread || g_warm_total) printf("nvn_vk_warm: compiles of stages by Metal ahead in this run: %lld of %lld (%.0f ms each), %lld left out (a pipeline of the game had them compiled), %lld refused or without their files\n", (long long)g_warm_n, (long long)g_warm_total, g_warm_n ? (double)g_warm_tk * k / (double)g_warm_n : 0.0, (long long)g_warm_skip, (long long)g_warm_fail);
     printf("nvn_vk_cscan: searches for a container header: %lld made (%lld given up at their time budget); answered by an interval a failed search had proved empty: %lld at once, %lld after looking at the steps above it\n", (long long)g_cs_search, (long long)g_cs_gaveup, (long long)g_cs_neg_hit, (long long)g_cs_neg_ext);
     printf("nvn_vk_cscan: container scan %s: %lld containers scanned (%d known), %lld variations, %lld handed to the workers (%lld KB of code copied), %lld pairs found, %.0f ms of the guest threads' time; pipelines made for a container's pass signatures: %lld (counted in the keys above), background jobs %lld queued / %lld done\n",
            g_cscan ? "on" : "off (WT_VK_CSCAN=0)", (long long)g_cs_scans, g_ncont, (long long)g_cs_vars, (long long)g_cs_jobs, (long long)(g_cs_bytes >> 10), (long long)g_cs_pairs, (double)g_cs_tk * k, (long long)g_cs_pred, (long long)g_bq_queued, (long long)g_bq_done);
@@ -2170,6 +2316,7 @@ static void m4_stop(void) {
     for (int i = 0; i < g_pw_nthread; i++) CloseHandle(g_pw_thread[i]);
     g_pw_nthread = 0;
     if (g_prep_thread) { WaitForSingleObject(g_prep_thread, 30000); CloseHandle(g_prep_thread); g_prep_thread = NULL; }
+    if (g_warm_thread) { WaitForSingleObject(g_warm_thread, 30000); CloseHandle(g_warm_thread); g_warm_thread = NULL; }      /* [witchtime] it ends after the stage it is at */
     if (g_rs_thread) {
         EnterCriticalSection(&g_rs_lock); WakeAllConditionVariable(&g_rs_cv); LeaveCriticalSection(&g_rs_lock);
         WaitForSingleObject(g_rs_thread, 30000); CloseHandle(g_rs_thread); g_rs_thread = NULL;

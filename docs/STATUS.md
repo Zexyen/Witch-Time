@@ -2106,6 +2106,53 @@ fight showed the game's thread waiting 37 % of a frame for its fence and the ren
 - At 60: 60.0 fps as before, the render thread 7.5 -> 2.9 ms a frame. Validation layer, 90 s of the fight: no error.
   `display_report` prints the held and late presents also without a measured vblank.
 
+**Metal's shader compiles, ahead (2026-11-12; not played by hand with it yet).** A hand run
+of a fight on a save from the Linux PC: 104 holds of the render thread, 8.3 s in all, the longest 340 ms, 98 of them a
+pipeline made at its first draw ("significant stutter when new effects show up"). Where the time goes, the Shibuya
+fight with empty caches (no `pipes.bin`, Metal's own cache in `$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` moved
+away; `WT_VK_HOLDLOG=1`): a pipeline whose fragment stage Metal had not compiled 139 ms (mean of 138), one whose
+fragment stage it had compiled for another pipeline 15 ms (58). So `warm_main` (`nvn_vk_m4.c`, macOS; `WT_VK_WARM=0`
+off, `=2` again) makes one pipeline with every fragment stage record of the cache, after the preparation, on one thread
+while the game runs, and destroys it; a marker `compiled4_v..._<macOS build>_...txt` in the cache folder says it is
+done. Every stage is compiled for five passes (`g_warm_pass`), the ones B3 draws with most (529 of the 704 pipelines
+this Mac had recorded): opaque, depth only, blended, opaque without alpha, added.
+- The fight as a first run (no `pipes.bin`), by what was compiled ahead; holds in all, and a pipeline with a new
+  fragment stage and a vertex stage seen before:
+
+  | compiled ahead | holds | new fragment stage, mean | pipelines over 60 ms |
+  |---|---|---|---|
+  | nothing | 20.6 s | 137 ms | 104 of 198 |
+  | one pass of eight RGBA8 attachments | 8.7 s | 45 ms | 57 of 229 |
+  | that and a depth-only pass | 7.4 s | 39 ms | 37 of 214 |
+  | the opaque pass of the game and depth only | 6.1 s | 19 ms | 12 of 224 |
+  | the five passes | 5.7 s | 17 ms | 11 of 225 |
+  | everything (every pipeline of the fight in Metal's cache) | 1.8 s | 9 ms | 2 of 222 |
+
+  The first three rows compiled every record of the cache; the last two before "everything" only the 173 fragment
+  stages the fight uses (the same result in a minute instead of an hour). The longest hold 1,025 -> about 300 ms.
+- Two things are compiled: the TEXT (160 ms a stage; MoltenVK leaves the colour output out of it in a pass without
+  colour attachment, hence the depth-only pass: with both, every fragment text of the fight, 122 with a colour output
+  and 26 without, was byte for byte one compiled ahead, `MVK_CONFIG_SHADER_DUMP_DIR`), and after it Metal's code
+  generation, which is made anew for another attachment format or blend state (43 ms a stage and pass) and partly for
+  another vertex stage. What is left at a first use is that part: about 25 ms a pipeline against 9 when all is cached.
+- Vertex stages ahead (a depth-only pipeline of each): 20 ms each, no shorter holds; left out.
+- It takes 7,662 records (this Mac's cache, several scales and settings) x 5 passes; a cache of one setting has about
+  half. A run cut short starts again and finds its first part in Metal's cache (13 ms a compile). While it runs, a
+  draw's own compile can stand behind one of these. Measured: the two texts of the 7,662 from empty 49 minutes; the five
+  passes with those texts already in Metal's cache 23 minutes (three more passes: about 35 ms a stage each), so about
+  an hour from empty for this cache. Metal's cache afterwards: 1.2 GB.
+- Why one thread: Metal compiles one text at a time whatever the number of threads asking (13 workers: 880 ms each,
+  `MTLCompilerService` on 1.2 cores; `MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION=1` changed nothing). Several
+  processes do compile at once (12: 246 s for the 7,662), but each keeps its results in a file of its own
+  (`libraries1.data` ...) and a lone process afterwards compiled everything again.
+- Tried and left out: compiling a fragment stage when a worker makes it (the game hands over 3,750 before the first
+  fight and draws with about 200; 703 were done by then and the draws' own compiles stood behind them: 28.8 s of holds).
+- `shader_wait = skip` works there as elsewhere (near a fight a draw whose pipeline is not ready is left out): the
+  fight with empty caches 108.0 fps on average against 70.7, 7 frames over 20 ms against 16, 1,663 frames with
+  something left out. Not the default.
+- Not checked: the game started from `Witch Time.app` (Metal keeps a cache per program; the marker is per cache folder),
+  Linux and Windows builds of this change (the code is off there unless `WT_VK_WARM=1`).
+
 **A native Metal renderer: measured, not built.** The renderer speaks Vulkan (`nvn_vk*.c`, 1.2 MB of C, and the shader
 translator's GLSL to SPIR-V); a Metal back end would be a third renderer beside it. What it could win was measured
 instead, in the prologue's 3D scenes at 60 fps (`sample`, 8 s, every thread; the game's own thread is the busy one):

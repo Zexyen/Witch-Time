@@ -6154,6 +6154,8 @@ static void vkd_shutdown(void) {
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;
+    for (int i = 0; i < g_warm_nvs; i++) { vkDestroyShaderModule(V.device, g_warm_vs[i]->mod, NULL); free(g_warm_vs[i]); }      /* [witchtime] warm_main's vertex stages */
+    g_warm_nvs = 0;
     for (int i = 0; i < 4096; i++) for (VStage *v = g_vstage[i], *n; v; v = n) {
         n = v->next;
         if (v->cp) { vkDestroyPipeline(V.device, v->cp, NULL); vkDestroyPipelineLayout(V.device, v->cl, NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[0], NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[1], NULL); }
