@@ -1918,6 +1918,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; float mx_fcs_y; };\n");      /* track O */
         else
         if (vk && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && e->uses_alpha))) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\n");
+        /* [witchtime] issue 126: a fetch from an image of the game's own size (a pattern) at the game's pixel position masked by
+         * that size is the screen-door dither: it takes the image's pixel instead, so the dots are the picture's pixels at any
+         * scale. Draws that sample a screen image keep mx_fcs (resolve_sampler's own-pixels rule cannot reach them). */
+        if (vk && e->uses_tf && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "ivec2 mx_tf(ivec2 p, ivec2 real, uint gw, uint gh) { ivec2 g = ivec2(int(gw), int(gh)), m = real - 1;\n"
+            "  if (g.x <= 0 || g.y <= 0 || g == real) return (real & m) == ivec2(0) && p == (ivec2(int(gl_FragCoord[0] * mx_fcs), int(gl_FragCoord[1] * mx_fcs_y)) & m) ? ivec2(gl_FragCoord.xy) & m : p;\n"
+            "  return ivec2(floor((vec2(p) + 0.5) * vec2(real) / vec2(g))); }\n");
+        else
         if (vk && e->uses_tf) emit(&h, "ivec2 mx_tf(ivec2 p, ivec2 real, uint gw, uint gh) { ivec2 g = ivec2(int(gw), int(gh)); return (g.x <= 0 || g.y <= 0 || g == real) ? p : ivec2(floor((vec2(p) + 0.5) * vec2(real) / vec2(g))); }\n");
         if (vk && in->stage == MX_VERTEX) emit(&h, "float mx_psize;\n");
         for (int k = 0; vk && k < e->nsmp; k++) emit(&h, "layout(set = 1, binding = %u) uniform %s mx_t%u_%s;\n", (unsigned)e->smp[k].binding, e->smp[k].type, (unsigned)e->smp[k].unit, e->smp[k].type);

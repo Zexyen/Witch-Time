@@ -587,7 +587,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         dirs.iter().try_for_each(|d| scan(d))
     }
     scan(Path::new(&dump))?;
-    let (exefs, mut romfs) = (Path::new(&dump).join("exefs"), Path::new(&dump).join("romfs"));
+    let (exefs, mut romfs) = (exefs_source(Path::new(&dump), &cx.targets), Path::new(&dump).join("romfs"));
     if !romfs.is_dir() && cx.targets.join("romfs").is_dir() {
         romfs = cx.targets.join("romfs"); // moved into the build folder by an earlier run (--move-dump)
     }
@@ -673,10 +673,14 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
     Ok(())
 }
 
-fn need_dump(cx: &Ctx) -> Result<String, Fail> {
-    match &cx.dump {
-        Some(d) if Path::new(d).is_dir() => Ok(d.clone()),
-        _ => Err(Fail("the dump folder is not known: run with --dump <folder>".into())),
+/// the dump's exefs/, or the copies convert kept in targets/exefs when the dump's is gone (issue 200: the game data was
+/// moved into the build folder and the dump deleted; romfs and the fonts have the same fallback in place_folder)
+fn exefs_source(dump: &Path, targets: &Path) -> PathBuf {
+    let d = dump.join("exefs");
+    if !d.is_dir() && targets.join("exefs").join("main").is_file() {
+        targets.join("exefs")
+    } else {
+        d
     }
 }
 
@@ -754,12 +758,14 @@ fn convert_nso(src: &Path, dst: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn step_convert(cx: &mut Ctx) -> Result<(), Fail> {
-    let dump = need_dump(cx)?;
-    let d = Path::new(&dump).join("exefs");
+    let Some(dump) = cx.dump.clone() else {
+        return Err(Fail("the dump folder is not known: run with --dump <folder>".into()));
+    };
     let out = cx.targets.join("exefs");
+    let d = exefs_source(Path::new(&dump), &cx.targets);
     fs::create_dir_all(&out).map_err(|e| Fail(e.to_string()))?;
-    for e in fs::read_dir(&d).map_err(|e| Fail(e.to_string()))?.flatten() {
-        if e.path().is_file() {
+    for e in fs::read_dir(&d).map_err(|e| Fail(format!("{}: {}", d.display(), e)))?.flatten() {
+        if d != out && e.path().is_file() {
             copy2(&e.path(), &out.join(e.file_name())).map_err(|x| Fail(format!("{}: {}", e.path().display(), x)))?;
         }
     }
@@ -1312,6 +1318,19 @@ mod tests {
         assert_eq!(fs::read(dst.join("movie").join("b.webm")).unwrap(), b"b");
         assert_eq!(fs::read(dst.join("a.pkz")).unwrap(), b"aa");
         assert!(place_folder(&dst, &src, true).is_ok()); // moved before: in place
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn exefs_comes_from_targets_when_the_dump_has_none() {
+        let t = std::env::temp_dir().join(format!("wtbuild_exefs_{}", std::process::id()));
+        let (dump, targets) = (t.join("dump"), t.join("targets"));
+        fs::create_dir_all(targets.join("exefs")).unwrap();
+        assert_eq!(exefs_source(&dump, &targets), dump.join("exefs")); // nothing kept: the dump's, so the error names it
+        fs::write(targets.join("exefs").join("main"), b"x").unwrap();
+        assert_eq!(exefs_source(&dump, &targets), targets.join("exefs"));
+        fs::create_dir_all(dump.join("exefs")).unwrap();
+        assert_eq!(exefs_source(&dump, &targets), dump.join("exefs")); // a dump that is there always wins
         fs::remove_dir_all(&t).unwrap();
     }
 

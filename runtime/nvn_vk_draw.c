@@ -937,6 +937,20 @@ static Tex *g_rs_keep[256];
 static int g_rs_nkeep;
 static LONG64 g_rs_demoted;
 static int g_rs_demoting;                          /* vk_drop called by the demotion below (not a finalize) */
+/* [witchtime] issue 126: the mist (the clouds of erasure's patches, drawn into the 520x360 class) fades against the scene with
+ * the minimum of #5548's half-size depth image, which stays at the game's size. At a scale its cut-out around characters and
+ * buildings steps in 2 game pixels (4.8 of the picture's at 2160p), and #5548 takes 2x2 texels of the scaled depth for each,
+ * a part of the footprint: over an object that fades through the dither the minimum misses it in a grid of dots. #5548's own
+ * colour target holds the same linear depth for every pixel of the scaled scene (red), so those draws sample it instead, with
+ * a sampler that returns the minimum of its 2x2 texels (the dither's pixels are the image's). Not at 1.0 (nothing is kept).
+ * WT_VK_MISTDEPTH=0: off; =alt (TEST): on in odd frames only, an A/B in two frames of one run. */
+static Tex *g_rs_fine_kept, *g_rs_fine_full;       /* the kept image and the colour target of the draw that stored it */
+static LONG64 g_rs_fine_draws;
+static int rs_fine_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("WT_VK_MISTDEPTH"); on = !e ? 1 : !strcmp(e, "alt") ? 2 : atoi(e) != 0; }
+    return on == 2 ? (int)(nvn_front_frame_next() & 1) : on;
+}
 static Tex *g_rs_post[64];                         /* [witchtime] issue 118: tonemap targets made at the picture's scale (rs_promote) */
 static int g_rs_npost;
 static int rs_post_has(const Tex *t) { for (int i = 0; i < g_rs_npost; i++) if (g_rs_post[i] == t) return 1; return 0; }
@@ -1003,6 +1017,7 @@ static void vk_drop(int kind, void *host) {
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
     if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [witchtime] finalized: a later texture at this address starts over */
     if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
+    if (!g_rs_demoting && (t == g_rs_fine_kept || t == g_rs_fine_full)) g_rs_fine_kept = g_rs_fine_full = NULL;      /* [witchtime] issue 126 */
     if (g_hdr_tm == t && !g_rs_demoting) g_hdr_tm = NULL;
     VTex *vt = t->vk;
     if (!vt) return;
@@ -2112,6 +2127,14 @@ static void resolve_sampler(int s, VStage *v, int i) {
         Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
         if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
         VTex *vt = vt_get(t);
+        if (s == 1 && t == g_rs_fine_kept && rs_fine_on() && R.ncol && R.col[0].tex && rs_extra_class(R.col[0].tex->b.width, R.col[0].tex->b.height)) {      /* [witchtime] issue 126: the mist reads the scaled depth */
+            Tex *f = g_rs_fine_full;
+            VTex *fv = f && !f->dead ? vt_get(f) : NULL;
+            if (fv && fv->rs && fv->samples == 1 && D.f12.samplerFilterMinmax && fmt_supported(fv->fmt, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT)) {
+                t = f; vt = fv; view.set = 0; g_rs_fine_draws++;
+                sp.reduction = 1; sp.min = sp.mag = 1;      /* the minimum of the 2x2 texels at the sample, level 0 */
+            }
+        }
         VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's phase of the dither while FSR runs (may end the pass) */
         if (!dither) dither = fsr_up_view(s, t, vt, &view);           /* [witchtime] issue 118: FSR's output for a tonemap at the picture's scale (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
@@ -2566,28 +2589,39 @@ static int cb_kept_wrote(CB *k);                  /* below cb_guest_wrote */
  * in the slot's `up` command buffer after a barrier; and the bytes reach guest memory once the source's writer has finished
  * (gcp_settle_upto, oldest first, only the bytes nobody changed since, as the copy-back merge). Any other CPU read or write of
  * the destination, any change of the source buffer and the game's fence waits settle first, waiting if they must. Kept
- * vertex buffers do not take an overlaid range (vrc_cb_touch). WT_VK_GPUCOPY=0: off. */
+ * vertex buffers do not take an overlaid range (vrc_cb_touch). WT_VK_GPUCOPY=0: off.
+ * Issue 156: B3 dispatches into that luminance buffer again every frame, and "the source changes" meant a wait for the last
+ * frame whenever the GPU was behind (a frame then cost replay plus GPU: 25 fps in the Chapter 1 ride on an RX 6800 XT). Now
+ * the bytes move on the GPU instead (gcp_src_rewritten): the slot's `up` buffer, which runs before the dispatch, copies them
+ * into a slot of a small side buffer, and the overlay reads that slot from this submission on. WT_VK_GPUCOPY_SIDE=0: off. */
 #define GCP_N 32
-typedef struct { uint64_t dst, size, soff, wserial; int src; uint8_t *snap; } GCopy;
+#define GCP_SIDE 4096                              /* bytes per side slot = the largest overlay (gcp_add) */
+typedef struct { uint64_t dst, size, soff, wserial, sserial; int src, side; uint8_t *snap; } GCopy;      /* side: slot of the side buffer, written by submission sserial; -1 none */
 static GCopy g_gcp[GCP_N];
-static int g_gpucopy = -1, g_gcp_busy;
-static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped;
+static int g_gpucopy = -1, g_gcp_busy, g_gcp_sideon = -1;
+static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped, g_gcp_sides;
+static VkBuffer g_gcp_sbuf;
+static VMem g_gcp_smem;
+static uint32_t g_gcp_sused;                       /* one bit per side slot */
 static VkCommandBuffer up_cmd(void);
 static int gcp_hits(int i, uint64_t addr, uint64_t size) { return addr < g_gcp[i].dst + g_gcp[i].size && g_gcp[i].dst < addr + size; }
-static void gcp_remove(int i) { free(g_gcp[i].snap); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
+static int gcp_sided(const GCopy *o) { return o->side >= 0 && R.serial >= o->sserial; }      /* the copy into its side slot was submitted: the source buffer no longer holds its bytes */
+static void gcp_remove(int i) { free(g_gcp[i].snap); if (g_gcp[i].side >= 0) g_gcp_sused &= ~(1u << g_gcp[i].side); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
 static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach guest memory, oldest first; wait 0: only while their source's writer has finished */
     if (g_gcp_busy) return;                        /* a wait below can come back here (slot_wait does not, cb_poll does) */
     g_gcp_busy = 1;
     for (; g_ngcp && last >= 0; last--) {
         GCopy *o = &g_gcp[0];
-        if (R.done < o->wserial) {
+        int sided = gcp_sided(o);                  /* else the source buffer still holds the bytes (a side copy not submitted yet has not run) */
+        uint64_t need = sided ? o->sserial : o->wserial;
+        if (R.done < need) {
             if (!wait) break;
-            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= o->wserial) slot_wait(&R.slot[i]);
-            if (R.done < o->wserial) R.done = o->wserial;      /* submitted (its batch has ended) and every slot up to it has finished */
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= need) slot_wait(&R.slot[i]);
+            if (R.done < need) R.done = need;      /* submitted (its batch has ended) and every slot up to it has finished */
             g_gcp_waits++;
         }
         uint8_t *g = P(o->dst);
-        const uint8_t *m = (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+        const uint8_t *m = sided ? (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE : (const uint8_t *)g_cb[o->src].mem.map + o->soff;
         for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
         R.gen++;                                   /* guest memory changed: ranges are streamed again */
         gcp_remove(0);
@@ -2606,8 +2640,41 @@ static void gcp_overwritten(uint64_t addr, uint64_t size) {      /* the CPU writ
 }
 static void gcp_src_changes(const CB *c) {         /* the source buffer is about to change or go: what was copied from it settles */
     int last = -1, idx = (int)(c - g_cb);
-    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx) last = i;
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && !gcp_sided(&g_gcp[i])) last = i;
     if (last >= 0) gcp_settle_upto(last, 1);
+}
+static void gcp_up_barrier(Slot *sl, VkCommandBuffer up) {      /* once per `up` buffer: the source's writer is in an earlier submission */
+    if (sl->up_ovl) return;
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    sl->up_ovl = 1;
+}
+/* Issue 156: compute is about to write a kept buffer again (cb_new). Overlays the GPU has not finished keep their bytes
+ * without a wait: copied into side slots by `up`, which runs before this command buffer's dispatch. What cannot move
+ * (switch off, no free slot, a writer not submitted) settles with the wait, as before. */
+static void gcp_src_rewritten(const CB *c) {
+    int idx = (int)(c - g_cb), n = 0;
+    gcp_settle_done();                             /* what the GPU has finished needs no slot */
+    if (g_gcp_sideon < 0) g_gcp_sideon = !(getenv("WT_VK_GPUCOPY_SIDE") && !atoi(getenv("WT_VK_GPUCOPY_SIDE")));
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && g_gcp[i].side < 0) n++;
+    if (!n) return;
+    if (!g_gcp_sideon || c->wserial > R.serial || n > GCP_N - __builtin_popcount(g_gcp_sused)) { gcp_src_changes(c); return; }
+    if (!g_gcp_sbuf) g_gcp_sbuf = vbuf_new((uint64_t)GCP_N * GCP_SIDE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_gcp_smem);
+    VkCommandBuffer up = up_cmd();
+    gcp_up_barrier(&R.slot[R.cur], up);
+    for (int i = 0; i < g_ngcp; i++) {
+        GCopy *o = &g_gcp[i];
+        if (o->src != idx || o->side >= 0) continue;
+        o->side = __builtin_ctz(~g_gcp_sused); g_gcp_sused |= 1u << o->side;
+        o->sserial = R.serial + 1;                 /* the number the command buffer being recorded gets at its submission */
+        VkBufferCopy r = {o->soff, (uint64_t)o->side * GCP_SIDE, o->size};
+        vkCmdCopyBuffer(up, c->buf, g_gcp_sbuf, 1, &r);
+        g_gcp_sides++;
+    }
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* gcp_patch reads the slots later in this `up` */
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the copy is an overlay (and nothing else is to be done) */
     if (g_gpucopy < 0) g_gpucopy = !(getenv("WT_VK_GPUCOPY") && !atoi(getenv("WT_VK_GPUCOPY")));
@@ -2621,7 +2688,7 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, src, size)) return 0;      /* the source is another copy's destination */
     GCopy *o = &g_gcp[g_ngcp++];
-    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial;
+    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial; o->side = -1; o->sserial = 0;
     o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
     g_gcp_made++;
     R.gen++;                                       /* the range is streamed again, now with the patch */
@@ -2634,11 +2701,12 @@ static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring
         uint64_t x0 = o->dst > addr ? o->dst : addr, x1 = o->dst + o->size < addr + size ? o->dst + o->size : addr + size;
         VkCommandBuffer up = up_cmd();
         Slot *sl = &R.slot[R.cur];
-        if (!sl->up_ovl) {                         /* the source's writer is in an earlier submission */
-            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-            vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
-            sl->up_ovl = 1;
+        gcp_up_barrier(sl, up);
+        if (o->side >= 0) {                        /* its bytes are in the side slot: written earlier in this `up` or by an earlier submission */
+            VkBufferCopy r = {(uint64_t)o->side * GCP_SIDE + (x0 - o->dst), off + (x0 - addr), x1 - x0};
+            vkCmdCopyBuffer(up, g_gcp_sbuf, R.ring, 1, &r);
+            g_gcp_patches++;
+            continue;
         }
         VkBufferCopy r = {o->soff + (x0 - o->dst), off + (x0 - addr), x1 - x0};
         vkCmdCopyBuffer(up, g_cb[o->src].buf, R.ring, 1, &r);
@@ -3017,7 +3085,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
             CB *k = &g_cb[i];
             if (k->state != 3 || k->addr != addr || k->size != size) continue;
             if (g_cb_ww && cb_guest_wrote(k)) { cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
-            if (g_ngcp) gcp_src_changes(k);        /* [witchtime] the GPU writes it again: copies from it settle first */
+            if (g_ngcp) gcp_src_rewritten(k);      /* [witchtime] the GPU writes it again: copies from it keep their bytes (issue 156: on the GPU, no wait) */
             k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
             if (addr < g_live_lo) g_live_lo = addr;
@@ -3433,6 +3501,10 @@ static int resolve_image(int s, VStage *v, int k) {
     if (vt && vt->rs && g_rs_nkeep < 256) {        /* [witchtime] a storage image stays at the game's size (g_rs_keep) */
         rs_demote(t);
         vt = vt_get(t);
+    }
+    if (s == 1 && R.ncol == 1 && R.col[0].tex && rs_keep_has(t)) {      /* [witchtime] issue 126: this draw's colour target is the same picture at twice the size (#5548: the depth of every pixel) */
+        Tex *c = R.col[0].tex;
+        if (c->b.format != t->b.format && c->b.width == 2 * t->b.width && c->b.height == 2 * t->b.height) { g_rs_fine_kept = t; g_rs_fine_full = c; }
     }
     int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
     if (!vt || !vt->storage || dim < 0) { nvn_vk_missing("a storage image of a format, kind or sample count that cannot be a Vulkan storage image (or a buffer image)"); return 0; }
@@ -5149,14 +5221,16 @@ static DWORD WINAPI hdr_watch(LPVOID arg) { (void)arg; for (;;) { Sleep(1000); h
 static void hdr_query(void) {                      /* [witchtime] Linux, the render thread at every present: SDL's window properties */
     SDL_PropertiesID p = SDL_GetWindowProperties((SDL_Window *)V.hwnd);
     LONG on = SDL_GetBooleanProperty(p, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
-    /* 1.0 = 80 nits (scRGB). With the desktop's HDR off (hdr = on) nothing is said: 203 nits, the white the desktop gives an HDR picture (BT.2408) */
-    LONG white = on ? (LONG)(SDL_GetFloatProperty(p, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) * 80000.0f) : 203000;
+    /* [#180] The desktop shows 203 nits of a PQ or scRGB picture (their reference white, color-management-v1) at its own
+     * brightness of SDR programs, so that is the white, and the monitor's peak in the picture's nits is 203 x the headroom.
+     * SDL's SDR white is the reference of the desktop's preferred description (80 on KDE), not of ours: white at 80 was
+     * 0.39 of the desktop's white. */
+    LONG white = 203000;
     LONG peak = on ? (LONG)((float)white * SDL_GetFloatProperty(p, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 0;
-    if (white < 40000 || white > 2000000) white = 203000;
-    LONG was = InterlockedExchange(&g_hdr_on, on), was_w = InterlockedExchange(&g_hdr_white_mn, white);
-    InterlockedExchange(&g_hdr_peak_mn, peak);
-    if (was != on || (on && (was_w - white > 500 || white - was_w > 500))) {
-        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: white %.0f nits, peak %.0f nits\n", (double)white / 1000.0, (double)peak / 1000.0);
+    LONG was = InterlockedExchange(&g_hdr_on, on), was_p = InterlockedExchange(&g_hdr_peak_mn, peak);
+    InterlockedExchange(&g_hdr_white_mn, white);
+    if (was != on || (on && (was_p - peak > 500 || peak - was_p > 500))) {
+        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: the monitor's peak is %.2f times the desktop's white (white 203 nits in the picture, peak %.0f)\n", (double)peak / (double)white, (double)peak / 1000.0);
         else printf("nvn_vk_hdr: the desktop's HDR is off for the window (or the session is not Wayland)\n");
         fflush(stdout);
     }
@@ -5809,11 +5883,11 @@ swap: ;
         }
         if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
             static LONG64 lc, ld, lf;
-            static LONG64 lz, lr, lx, lom, lop, low, lod;
+            static LONG64 lz, lr, lx, lom, lop, low, lod, los;
             static LONG64 lg, ln;
-            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
-                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0);
-            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped;
+            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten, %.2f moved to a side slot\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
+                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0, (double)(g_gcp_sides - los) / 300.0);
+            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped; los = g_gcp_sides;
         }
         {   /* Round 16: the long report every 3000 frames cost the present job 17.5-18.4 ms (runs p16t_bf_g, p16t_zt_g,
              * and the owner's logged sessions: frame 3001 late each time): it now waits for a frame without fighters.
@@ -6118,6 +6192,7 @@ static void vkd_shutdown(void) {
     if (g_rs_twoscale) printf("nvn_vk_scale: %lld passes had attachments of both scales (the scene's %.3f, the picture's %.3f): each drawn in the area all of them hold\n", (long long)g_rs_twoscale, (double)rs_render_scale(), (double)rs_scale());
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: WT_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
     if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
+    if (RS_ON && g_rs_fine_draws) printf("nvn_vk_scale: %lld texture reads of the mist's draws given the scaled depth instead of the half-size one kept at the game's size (issue 126; WT_VK_MISTDEPTH=0 off)\n", (long long)g_rs_fine_draws);      /* [witchtime] */
     if (RS_ON && g_sf_draws) printf("nvn_vk_scale: %lld draws below 1.0 that store into kept images drawn again at the game's size (issue 147; WT_VK_STOREFULL=0 off)\n", (long long)g_sf_draws);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
@@ -6171,6 +6246,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < NSLOT; i++) { for (int k = 0; k < R.slot[i].npool; k++) vkDestroyDescriptorPool(V.device, R.slot[i].pool[k], NULL); vkDestroyFence(V.device, R.slot[i].fence, NULL); }
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
     if (GE.ok > 0) { for (int i = 0; i < NSLOT; i++) vkDestroyBuffer(V.device, GE.req[i], NULL); vkDestroyPipeline(V.device, GE.pipe, NULL); vkDestroyPipelineLayout(V.device, GE.pl, NULL); vkDestroyDescriptorSetLayout(V.device, GE.dl, NULL); printf("nvn_vk: the stand-in for drawIndirectCount: %lld compute passes for %lld records, %lld draws it could not take\n", (long long)g_gce_flushes, (long long)g_gce_reqs, (long long)g_gce_splits); memset(&GE, 0, sizeof GE); }
+    if (g_gcp_sbuf) { vkDestroyBuffer(V.device, g_gcp_sbuf, NULL); g_gcp_sbuf = NULL; }
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
     printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);

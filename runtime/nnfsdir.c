@@ -39,6 +39,7 @@ typedef struct { uint32_t magic; int count, pos; HostEntry *entries; } HostDir;
 #define FS_DIR_ROOTS 18                                   /* = nnfs.c's: RomFS mods (ROM_MOD_MAX 16) + working + committed folder */
 int fs_dir_roots(const char *guest, char roots[][MAX_PATH], uint32_t *result);   /* nnfs.c: mount table, save data journal, RomFS mods */
 int fs_dir_hidden(const char *guest_dir, const char *name);
+int fs_rom_hidden(const char *guest_dir, const char *name);       /* nnfs.c, #181 / #46: a mod's single files of the archives */
 uint32_t fs_delete_directory(const char *guest);
 static int dir_host_path(const char *guest, char *out) {  /* superseded by fs_dir_roots (kept for the self-test's scratch folder) */
     const char *env = getenv("WT_ROMFS");
@@ -86,6 +87,7 @@ static void fs_OpenDirectory(Ctx *c) {                    /* (DirectoryHandle *o
                 WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, ansi, sizeof ansi, NULL, NULL);
                 if (fs_dir_hidden((const char *)(uintptr_t)A1, ansi)) continue;
             }
+            if (fs_rom_hidden((const char *)(uintptr_t)A1, name)) continue;
             for (int k = 0; k < d->count && !dup; k++) dup = _stricmp(d->entries[k].name, name) == 0;
             if (dup) continue;
             if (is_dir ? !(mode & 1) : !(mode & 2)) {

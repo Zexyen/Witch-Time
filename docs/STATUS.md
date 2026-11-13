@@ -516,9 +516,22 @@ A GPU with ASTC never looks at the pack.
 The launcher's Remove, Continue, the chain after a build, and "off stays off" were run for real (a headless KWin, a stub for
 `setup`); so was a `graphics.ini` without the key. The branch for a drive without the room was not.
 
-#46: the mod's 4,442 paths each name an entry of the archive of that name, so "0 replace the game's" is expected: originals live
-in the `.pkz`. With all those paths in place, as unchanged copies of the game's files, the game opened none of them in a Shibuya
-run. That run's picture was broken, smaller parts of the tree were not; seen once, not repeated, not understood.
+#46 and #181 (2026-11-12): the mod's 4,442 paths each name an entry of the archive of that name (`romfs/ba_000/ba/ba0000.dat` =
+entry `ba/ba0000.dat` of `ba_000.pkz`): archives unpacked into folders. The game never opened such files, and its walk of
+`rom:/` at boot (0x7100cbd9c0) copies the name of every file and folder into a fixed pool it shares with the archives'
+entries: 372 blocks of 1 KB, 341 used by the game's own files. With the pool full the walk stopped after `sound_016.pkz` and
+the last 19 archives were never entered: the broken title screen of #46. Mods also replaced whole archives only, so one with
+just the changed entries hid the rest (#181). Now `nnfs.c` serves an archive the mods touch as a view: a table made in memory of
+the game's entries with the mods' put in by name, each source file mapped whole at an offset of its own; reads, the file's size
+and the pause menu's hint lookup go through it. A mod ships a partial `.pkz`, a file in a folder named like its archive, or a
+file at its entry's path (`tools/wtbuild/README.md`, "Data mods"); those single files are not listed to the game, so the pool
+stays as it was. Measured on the dump: 18,732 entry names in 72 archives, none twice; 12 archives have no `None` codec name and
+0 to 56 bytes after their table, which is why the view writes its own table instead of patching the game's.
+Run (Linux, RADV, headless): `Text_000` (394 of 394) and `core_000` (5 of 5, a 35 MB stored file in place of a Kraken one) from
+single files, half of `font_000` from a partial archive, 30 `ui/` files over the PC settings mod's whole `ui_000.pkz`: the
+title screen is the game's; with the partial archive's font textures damaged, its text turns to blocks. `WT_SDK_SELFTEST`
+checks the layers on made-up archives. **Not run**: Windows; a real mod; a level (only the title screen); a file added under a
+new name being asked for by the game (the game boots with some added).
 
 **Left**: no measurement on a Deck; Windows: `wtbuild.exe` cross-built and its tests run under Wine, not on Windows, and the MSVC
 `cargo test` of release.yml has not run. The launcher does not know the GPU, so one with ASTC (most Intel) gets a pack it never
@@ -766,6 +779,31 @@ stored. At 0.8, every fifth one: a fixed grid of zeros (the image's clear), so 6
   the game's size and their barriers), only below 1.0.
 - **Not shown**: the reporter's squares on shadows and water (RX 560, RADV) did not come up here; a fight gives no same-pose
   pair. Not run on Windows.
+
+## Mist and fog walls at a scale (issue 126, 2026-11-12)
+
+Blocky dots and steps in the fog walls and the mist at 2160p, much less at 900p. Two things, both the game's own look drawn
+in the game's pixels while the rest of the picture is finer:
+- **The fog wall's dither.** Its fragment stages (fs6354, fs6384) fade through the 64 x 64 pattern,
+  `texelFetch(t14, uint(gl_FragCoord) & 63)`, and also read the mist's layers (520x360x3, a scaled image), so the own-pixels
+  rule of `resolve_sampler` left them at the game's pixels: dots of one game pixel on a grid of two, 2.8 and 5.6 pixels of a
+  2160p picture at the lower dynamic size (period measured: 5.626). **Fix** (`mx_translate.c`, the scaled translation's
+  `mx_tf`): a fetch from an image of the game's own size, a power of two, at exactly the game's pixel position masked by that
+  size takes the image's pixel. The scaled fragment stages are another text: key `rs3`, marker `_s4_`, so a PC at a scale or
+  another aspect ratio prepares once more (165 s here, 14 workers); 1.0 keeps its cache.
+- **The mist's cut-out.** Its patches (fs3856, fs3857, fs5332 ...) multiply their alpha by a fade against the minimum of
+  fs5548's half-size depth, kept at the game's size: steps of 2 game pixels. **Fix** (`g_rs_fine_*`, `nvn_vk_draw.c`): in a
+  pass of the 520x360 class those reads get fs5548's colour target (the same linear depth for every pixel of the scaled scene)
+  through a sampler that returns the minimum of its 2x2 texels; a plain linear read lets the depth of a dithered object
+  through as a grid. Needs samplerFilterMinmax and the format's support, else the game's image. `WT_VK_MISTDEPTH=0` off,
+  `=alt` on in odd frames.
+- **Measured** (Linux, RX 9070 XT, 2.4, the Shibuya fight by `WT_PRESS=Z,30,3`): the mist layer of two consecutive frames
+  (`WT_VK_MISTDEPTH=alt`, `WT_VK_DUMPTEX`), off and on: the cut-out's steps are gone; the fog wall's fade in the same fight
+  frame before and after: a stipple of the picture's pixels. 0 Vulkan call failures; under validation only the 10
+  unused-output warnings. 1.0: no preparation, neither path runs.
+- **Not done**: the Chapter 1 wave of the report was not reached; no Windows, NVIDIA or Intel run; FSR and other aspect
+  ratios not run with it. fs5548 still takes 2x2 texels of the scaled depth for each kept texel (the light tiles and the fog
+  march read that). A scene copy of a third by a half (453x384) stays at the game's size.
 
 ## Level of detail (2026-10-25)
 
@@ -1714,6 +1752,18 @@ never drawn; `WT_VK_GPUCOUNT_MULTI=0`: off). Measured in that ride on the RX 907
 3.7-6.7 ms to 0.2-0.3 ms a frame, batch replay 19-25 ms to 15.6-16.9 ms, 4.1 to 3.1 submissions, GPU time the same
 (4.4-7.8 ms). Not measured: Windows, AMD's and NVIDIA's own drivers, and whether the reporters' GPUs alone fit the frame.
 
+**The exposure copies when the GPU is behind (2026-11-12; issue 156).** A v0.9.1 log from an RX 6800 XT (1440p, scale 2.4)
+still had the ride at 22-26 fps in its busiest stretch: "GPU copies: ... 0.3-0.84 settled with a wait" a frame, 10-22 ms of
+GPU wait in a 27-40 ms replay. The four exposure copies of a frame are overlays that read the kept luminance buffer
+(`gcp_add`), and compute writes that buffer again every frame; `cb_new` then settled the overlays first, which waits for the
+last frame whenever the GPU has not finished it. Now the slot's `up` command buffer, which runs before the dispatch, copies
+those bytes into a slot of a small side buffer and the overlay reads the slot from then on (`gcp_src_rewritten`;
+`WT_VK_GPUCOPY_SIDE=0`: off; the log line counts "moved to a side slot"). Reproduced on the RX 9070 XT only with the GPU
+loaded by other copies of the game (Shibuya, 1440p, scale 2.4, on and off side by side under the same load): settled with a
+wait 0.96-0.97 to 0.00 a frame, wait for the GPU 15.7-22.9 to 0.4-0.8 ms, batch replay 22-31 to 7-8 ms, 29-33 to 45 fps. A
+test-only compare of the slot's bytes with the ones the wait would have read: 14,000 of 14,000 equal. Not measured: the ride
+itself, Windows, AMD's and NVIDIA's own drivers.
+
 ## Cutscenes on a slow disk (2026-11-05; issue 136)
 
 Issue 136 (Windows, RX 6600, v0.7.0): a cutscene's first viewing freezes for 1-4 s, less the second time. **Cause**: the
@@ -1985,7 +2035,7 @@ was Windows only. Now:
   and the monitor's peak are SDL's window properties, read at every present (`hdr_query`). The surface's format list was
   read into 64 entries and Mesa lists 81 on Wayland (9 formats in 9 colour spaces), so the HDR ones were cut off: 256 now.
   X11 offers no HDR swapchain. With `hdr = on` and the desktop's HDR off the white is 203 nits (BT.2408).
-- **The scene above white** (`hdr_peak`, auto = the monitor's peak on Linux, 1000 on Windows). The four tone map stages
+- **The scene above white** (`hdr_peak`, auto = 203 nits x the headroom the desktop says on Linux (issue 180: the white is 203 there, the reference the desktop shows at its SDR brightness), 1000 on Windows). The four tone map stages
   (`stage_fx` FX_GRAIN) get another translation while HDR is on (`nvn_vk_m4.c` `hdr_stage_text`, a part of the stage's
   hash per peak / white): the game's curve is a toe, a straight part and from `c4[20]` a shoulder that ends at `c4[16]`
   (in Shibuya the shoulder's size `c4[21]` is 0: a cut at white). The translation leaves it alone and multiplies the

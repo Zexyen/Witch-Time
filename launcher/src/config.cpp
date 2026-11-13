@@ -177,6 +177,8 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 		lines.insert(lines.begin() + insert_at, key + " = " + value);
 	}
 	std::string tmp = file + ".tmp";
+	std::error_code ec;
+	std::filesystem::create_directories(std::filesystem::path(file).parent_path(), ec);   // issue 199: a release ships no settings files, and config/ may be gone
 	{
 		std::ofstream f(tmp, std::ios::binary);
 		for (const std::string& l : lines)
@@ -184,8 +186,7 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 		if (!f)
 			return false;
 	}
-	std::error_code ec;   // std::rename will not replace an existing file on Windows
-	std::filesystem::rename(tmp, file, ec);
+	std::filesystem::rename(tmp, file, ec);   // std::rename will not replace an existing file on Windows
 	return !ec;
 }
 

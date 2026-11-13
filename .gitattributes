@@ -1,2 +1,6 @@
 # the regression tests compare these byte for byte: no CRLF on a Windows checkout
 tools/wtbuild/testdata/** -text
+# issue 199: not in a release archive (git archive), so unpacking one over an install cannot reset the player's settings;
+# the game writes both with the defaults when they are missing (runtime/gfx_options.c, runtime/nnpad_sdl.c)
+config/graphics.ini export-ignore
+config/controllers.ini export-ignore
