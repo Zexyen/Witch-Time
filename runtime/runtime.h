@@ -46,6 +46,25 @@ void guest_svc(Ctx *c, uint32_t number);
     static inline void wr##bits(uint64_t a, uint##bits##_t v) { memcpy((void *)(uintptr_t)a, &v, sizeof v); }
 DEF_MEM(8) DEF_MEM(16) DEF_MEM(32) DEF_MEM(64)
 
+/* [witchtime] The guest's ordering instructions: LDAR / LDAXR (rda), STLR (wrl), DMB / DSB (host_dmb). An x86-64 host
+ * keeps its loads and stores in order by itself, which the PC build always relied on (plain accesses, no fence: the
+ * same machine code as before); an AArch64 host does not, so there they are its own acquire / release accesses and
+ * barrier (without them the game's lock-free queues, e.g. its audio engine's, see each other's writes out of order).
+ * Sequentially consistent, as the guest's LDAR / STLR are (an STLR is never passed by a later LDAR): on AArch64 that is
+ * the same LDAR / STLR, and keeps the compiler from moving an acquire load above a release store. */
+#if defined(__aarch64__)
+#define DEF_ORD(bits) \
+    static inline uint##bits##_t rda##bits(uint64_t a) { return __atomic_load_n((uint##bits##_t *)(uintptr_t)a, __ATOMIC_SEQ_CST); } \
+    static inline void wrl##bits(uint64_t a, uint##bits##_t v) { __atomic_store_n((uint##bits##_t *)(uintptr_t)a, v, __ATOMIC_SEQ_CST); }
+#define host_dmb() __atomic_thread_fence(__ATOMIC_SEQ_CST)
+#else
+#define DEF_ORD(bits) \
+    static inline uint##bits##_t rda##bits(uint64_t a) { return rd##bits(a); } \
+    static inline void wrl##bits(uint64_t a, uint##bits##_t v) { wr##bits(a, v); }
+#define host_dmb() ((void)0)
+#endif
+DEF_ORD(8) DEF_ORD(16) DEF_ORD(32) DEF_ORD(64)
+
 /* STXR: store only if the location still holds the value the matching LDXR read. Returns 0 on success. */
 void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, int bits);
 #define DEF_STX(bits) \
