@@ -1,4 +1,4 @@
-# Builds the Witch Time launcher for Linux and Windows and publishes them as a release.
+# Builds the Witch Time launcher for Linux and Windows and publishes them as a release (macOS: job macos, an artifact only).
 #
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
@@ -475,3 +475,64 @@ jobs:
           files: |
             dist/*.zip
             dist/*.sha256
+
+  # macOS (experimental, Apple silicon): the launcher, its bundle and the build tool, as a workflow artifact only; no
+  # release gets it yet (the launcher on a Mac looks for WitchTime-<tag>-macos-arm64.tar.gz: add softprops/action-gh-release
+  # here as in the Linux job when it is to be published). No prebuilt/ and no deps/llvm: the player's Mac builds the runtime
+  # too, with Apple's Command Line Tools against its own Homebrew libraries (README, "Build (macOS)"; Homebrew's FFmpeg is a
+  # GPL build with versioned names, so it is neither shipped nor linked against here for the player).
+  macos:
+    # the oldest Apple silicon runner, so the programs start on older macOS too
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-macos-arm64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: brew install ninja freetype sdl3 molten-vk vulkan-loader vulkan-headers glslang spirv-tools ffmpeg
+
+      - name: wtbuild
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      # build/witch-time and build/Witch Time.app (launcher/macos/make_app.sh)
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DWT_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          otool -L build/witch-time
+          codesign --verify --verbose "build/Witch Time.app"
+
+      # nothing is stripped: that would break the ad hoc signatures, without which Apple silicon starts no program
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          mkdir -p "dist/$name/build" "dist/$name/licenses"
+          git archive HEAD | tar -x -C "dist/$name"
+          rm -rf "dist/$name/.github"
+          cp build/witch-time tools/wtbuild/target/release/wtbuild "dist/$name/build/"
+          cp -R "build/Witch Time.app" "dist/$name/build/"
+          cp build/launcher/_deps/rmlui-src/LICENSE.txt "dist/$name/licenses/RmlUi.txt"
+          ln -s build/witch-time "dist/$name/witch-time"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          ls -la dist
+
+      # the archive as a player unpacks it: the runtime and game.dylib from stand-in modules, built there with Apple's
+      # clang against Homebrew's libraries, run until the image is mapped
+      - name: Smoke test of the link step
+        run: |
+          p="$PWD/dist/${{ steps.version.outputs.name }}"
+          "$p/build/wtbuild" smoke --repo "$p"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: dist/*.tar.gz
