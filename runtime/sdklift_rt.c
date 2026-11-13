@@ -16,6 +16,7 @@
 #include <string.h>
 #include <windows.h>
 #include "sdklift.h"
+#include "plat.h"
 
 static int g_ready;
 static uint8_t *g_file;                   /* sdk.elf as read from disk */
@@ -54,7 +55,7 @@ static int load_image(void) {
     g_file = malloc(g_file_size);
     if (fread(g_file, 1, g_file_size, f) != g_file_size || memcmp(g_file, "\x7f" "ELF", 4)) { fclose(f); printf("sdklift: %s is not readable as an ELF\n", path); return 0; }
     fclose(f);
-    uint8_t *img = VirtualAlloc((void *)(uintptr_t)SDK_BASE, SDK_IMAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    uint8_t *img = plat_map_fixed(SDK_BASE, SDK_IMAGE_SIZE);
     if (img != (uint8_t *)(uintptr_t)SDK_BASE) { printf("sdklift: cannot map the SDK image at %llx\n", (unsigned long long)SDK_BASE); return 0; }
     uint64_t phoff = *(uint64_t *)(g_file + 0x20);
     int phnum = *(uint16_t *)(g_file + 0x38);

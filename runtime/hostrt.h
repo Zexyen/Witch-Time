@@ -7,13 +7,19 @@
 #include "runtime.h"
 
 #define GUEST_BASE 0x7100000000ULL
+#ifdef __ANDROID__
+/* Android's libraries, allocator regions and CFI shadow take 0x70..0x7f (39-bit address space): the placeholders go
+ * below them. Only main's image (GUEST_BASE) and the SDK's (SDK_BASE) must be at the console's addresses */
+#define IMPORT_BASE 0x1300000000ULL
+#define HOSTFN_BASE 0x1400000000ULL
+#else
 #define IMPORT_BASE 0x7300000000ULL      /* placeholder addresses for symbols of other modules */
+#define HOSTFN_BASE 0x7400000000ULL      /* placeholder addresses for host functions handed out at run time */
+#endif
 #define IMPORT_SLOT 256ULL
 
 typedef void (*ImportFn)(Ctx *c);
 typedef struct { const char *name; ImportFn fn; } ImportDef;
-
-#define HOSTFN_BASE 0x7400000000ULL      /* placeholder addresses for host functions handed out at run time */
 
 uint64_t hostfn_address(const char *name, ImportFn fn);
 const char *hostfn_current_name(void);
