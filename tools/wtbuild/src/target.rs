@@ -95,6 +95,18 @@ impl Target {
         }
     }
 
+    /// the lifted code's processor level, picked on the PC that compiles it (always the player's own): AVX2 and FMA
+    /// (x86-64-v3) make every fused multiply-add and rounding of the game one instruction instead of a call, SSE4.2
+    /// (x86-64-v2) the rounding and the table lookups (neon.h v_tbl). `WT_CPU_LEVEL=1|2|3` forces one (1: neither).
+    /// Nothing when the build is for another system or processor. The runtime, built once for everyone, keeps `cpu()`.
+    pub fn cpu_level(self) -> Vec<String> {
+        if self != Target::host() || !cfg!(target_arch = "x86_64") {
+            return vec![];
+        }
+        let forced = std::env::var("WT_CPU_LEVEL").ok().and_then(|v| v.trim().parse::<u8>().ok());
+        level_flags(forced.unwrap_or_else(host_level))
+    }
+
     /// the linker: lld, which a release brings with its compiler; on macOS Apple's own, which every clang there uses
     pub fn linker(self) -> Vec<String> {
         match self {
@@ -115,6 +127,28 @@ impl Target {
         }
         vec![format!("-I{}/include", prefix), format!("-L{}/lib", prefix)]
     }
+}
+
+fn level_flags(level: u8) -> Vec<String> {
+    match level {
+        3.. => vec!["-march=x86-64-v3".into()],
+        2 => vec!["-march=x86-64-v2".into()],
+        _ => vec![],
+    }
+}
+
+/// the x86-64 level of this PC's processor (3, 2 or 1), by the features clang's -march=x86-64-vN turns on
+#[cfg(target_arch = "x86_64")]
+fn host_level() -> u8 {
+    use std::arch::is_x86_feature_detected as has;
+    let v2 = has!("cmpxchg16b") && has!("popcnt") && has!("sse3") && has!("ssse3") && has!("sse4.1") && has!("sse4.2");
+    let v3 = v2 && has!("avx") && has!("avx2") && has!("bmi1") && has!("bmi2") && has!("f16c") && has!("fma") && has!("lzcnt") && has!("movbe");
+    1 + v2 as u8 + v3 as u8
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn host_level() -> u8 {
+    1
 }
 
 /// the compiler's name: clang, clang.exe
@@ -151,5 +185,20 @@ pub fn remove_dir_link(link: &Path) -> std::io::Result<()> {
         fs::remove_dir(link) // a junction (or a directory symbolic link) is removed as an empty folder
     } else {
         fs::remove_file(link)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_levels() {
+        assert_eq!(level_flags(1), Vec::<String>::new());
+        assert_eq!(level_flags(2), ["-march=x86-64-v2"]);
+        assert_eq!(level_flags(3), ["-march=x86-64-v3"]);
+        assert!((1..=3).contains(&host_level()));
+        let other = if Target::host() == Target::Windows { Target::Linux } else { Target::Windows };
+        assert_eq!(other.cpu_level(), Vec::<String>::new()); // a build for another system never takes this PC's level
     }
 }

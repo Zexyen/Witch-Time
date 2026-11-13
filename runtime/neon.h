@@ -240,7 +240,25 @@ static inline void v_ext(V128 *d, const V128 *pn, const V128 *pm, int imm, int q
     *d = r;
 }
 
-/* TBL / TBX with `len` consecutive table registers starting at index rn. */
+/* TBL / TBX with `len` consecutive table registers starting at index rn. With SSSE3 (wtbuild's cpu_level 2 and 3): one
+ * byte shuffle per table register, keeping the bytes whose index falls in it (after Astral Chain Recomp's sv_tbl, MIT).
+ * The byte loop stores single bytes that the next whole-register load cannot forward from. */
+#ifdef __SSSE3__
+typedef char v_b16 __attribute__((vector_size(16), aligned(1), may_alias));   /* no <tmmintrin.h>: it wants the system's malloc.h */
+static inline void v_tbl(Ctx *c, int rd, int rn, int len, int rm, int q, int tbx) {
+    v_b16 idx = *(const v_b16 *)&c->v[rm], r = {0}, hit = {0};
+    for (int i = 0; i < len; i++) {
+        v_b16 rel = idx - (char)(16 * i);
+        v_b16 in = (v_b16)((rel & (char)0xf0) == 0);
+        r |= __builtin_ia32_pshufb128(*(const v_b16 *)&c->v[(rn + i) & 31], rel) & in;
+        hit |= in;
+    }
+    if (tbx) r |= *(const v_b16 *)&c->v[rd] & ~hit;      /* out of range: the old byte stays */
+    V128 o; memcpy(&o, &r, 16);
+    if (!q) o.d[1] = 0;
+    c->v[rd] = o;
+}
+#else
 static inline void v_tbl(Ctx *c, int rd, int rn, int len, int rm, int q, int tbx) {
     uint8_t table[64];
     for (int i = 0; i < len; i++) memcpy(table + 16 * i, c->v[(rn + i) & 31].b, 16);
@@ -253,6 +271,7 @@ static inline void v_tbl(Ctx *c, int rd, int rn, int len, int rm, int q, int tbx
     if (!q) r.d[1] = 0;
     c->v[rd] = r;
 }
+#endif
 
 /* LDn / STn multiple structures (n = 2..4): elements are interleaved in memory,
  * element i of register k lives at memory element (i * n + k). */
