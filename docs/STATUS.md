@@ -16,7 +16,7 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
 | link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libwt_glslang.so` |
-| check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each: one failure, `sqrdmulh` by element when both 32-bit lanes are INT32_MIN (`v_ielem` in runtime/rt_ext.h, open); `--synthetic 2000` passes |
+| check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each, and `--synthetic 2000`: no failure (`sqrdmulh` by element with both 32-bit lanes INT32_MIN overflowed int64 in `v_ielem`, runtime/rt_ext.h, until 2026-11-13) |
 
 Tools: `wtbuild pkz list` (`.pkz` entries; `witch-time-game --pkz-dump` extracts and checks every entry, Kraken
 included, section "RomFS archives"), `wtbuild dat list | extract` (DAT), `wtbuild nvn-procs` (NVN entry points of the
