@@ -172,6 +172,13 @@ pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
     put(&mut want, 0x7100a32434, (old434, ldr_w(20, 28, 0xffc)));
     let old438 = want.iter().find(|e| e.0 == 0x7100a32438).unwrap().1 .0;
     put(&mut want, 0x7100a32438, (old438, add(28, 0)));
+    // [witchtime] #203: the game applies the saved volumes as level / 10 after a load, but the Sound sliders (0..20)
+    // as level / 20, so every start played louder than the saved setting. The sliders take the load's scale (the
+    // start keeps the stock loudness): fmov s1 / s8, #20.0 -> #10.0 in the three setters, their resets and the page reset
+    for a in [0x710071c424, 0x710071c484, 0x710071c4e4, 0x710071c544, 0x710071c5a4, 0x710071c604] {
+        put(&mut want, a, (0x1e269001, 0x1e249001));
+    }
+    put(&mut want, 0x710071c9d8, (0x1e269008, 0x1e249008));
     for (a, (old, new)) in want {
         let have = im.raw_word(a);
         if have != old {
