@@ -528,7 +528,9 @@ fn main() {
     let (src, exe) = (dir.join("check.c"), dir.join("check"));
     std::fs::write(&src, c_program(&stmts)).unwrap_or_else(|e| die(e));
     let st = Command::new("clang")
-        .args(["-O1", "-w", "-mcx16", "-I"])
+        .args(["-O1", "-w", "-mcx16"])
+        .args(std::env::var("LIFTER_CHECK_CFLAGS").unwrap_or_default().split_whitespace()) // e.g. -march=x86-64-v3 -O2
+        .arg("-I")
         .arg(repo.join("runtime"))
         .arg(&src)
         .arg("-o")

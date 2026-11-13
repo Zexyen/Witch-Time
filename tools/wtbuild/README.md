@@ -47,7 +47,7 @@ and `romfs/` (the `.pkz` archives and `movie/`). Every step derives its files fr
 | mods | optional: code mods (`*.pchtxt`, `*.ips`) patched into `targets/exefs/main.elf` ("Mods" below; always runs, to notice a changed mods folder) |
 | tables | `runtime/gen/` from your sdk and main (layout, imports, lifted SDK functions, SDK constants), plus the copies of `runtime/gen_static/` |
 | lift | your main.elf -> `build/gen_eh` (C) |
-| compile | `build/gen_eh` -> `build/obj` (clang -O2; the longest step) |
+| compile | `build/gen_eh` -> `build/obj` (clang -O2; the longest step). For this PC's own processor: `-march=x86-64-v3` with AVX2 and FMA, `-march=x86-64-v2` with SSE4.2, neither on an older one (`Target::cpu_level`; `WT_CPU_LEVEL=1\|2\|3` forces one). A build copied to an older processor must be compiled again there |
 | link | `build/game.so` with the runtime (prebuilt, or built here); `game.dll` and `witch-time-game.exe` on Windows |
 | book | the Old Picture Book's program (program 1, README "The picture book"), when the dump has a `program1/` folder: checked by size and SHA-256, then convert, tables, lift, compile and link on `targets/program1` and `build/program1` (`src/layout.rs`; `--program 1` runs the developer commands on them); skipped without it |
 | text | the labels and values of the PC settings rows in the game's own text, as `mods/witchtime-pc-settings/` (from your dump's `ui_000.pkz`) |

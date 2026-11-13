@@ -266,8 +266,8 @@ static inline void v_ielem(V128 *d, const V128 *n, uint64_t y, int op, int es, i
         else if (op == 1) z = vget(d, es, i) + x * y;
         else if (op == 2) z = vget(d, es, i) - x * y;
         else {
-            int64_t p = 2 * vsext(x, es) * sy + (op == 4 ? (int64_t)1 << (bits - 1) : 0);   /* es <= 2: fits in 64 bits */
-            z = sat_s(p >> bits, es);
+            __int128 p = (__int128)2 * vsext(x, es) * sy + (op == 4 ? (int64_t)1 << (bits - 1) : 0);   /* 2^63 when both are INT32_MIN: past int64 */
+            z = sat_s((int64_t)(p >> bits), es);
         }
         vset(&r, es, i, z);
     }

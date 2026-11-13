@@ -413,6 +413,11 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
     flags.extend(lifted_flags(t));
+    let level = t.cpu_level(); // in the stamps' hash with the rest: a build moved to another processor compiles again
+    if let Some(l) = level.first() {
+        log(format!("compile: for this PC's processor ({})", l));
+    }
+    flags.extend(level);
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     let c = Cfg {
         target: t,

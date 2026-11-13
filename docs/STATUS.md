@@ -16,7 +16,7 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
 | link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libwt_glslang.so` |
-| check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each: one failure, `sqrdmulh` by element when both 32-bit lanes are INT32_MIN (`v_ielem` in runtime/rt_ext.h, open); `--synthetic 2000` passes |
+| check | `tools/lifter-check` (developers; setup skips it): B3's main's 607 words in test_ext's and test_b3's forms against Unicorn, 300 trials each, and `--synthetic 2000`: no failure (`sqrdmulh` by element with both 32-bit lanes INT32_MIN overflowed int64 in `v_ielem`, runtime/rt_ext.h, until 2026-11-13) |
 
 Tools: `wtbuild pkz list` (`.pkz` entries; `witch-time-game --pkz-dump` extracts and checks every entry, Kraken
 included, section "RomFS archives"), `wtbuild dat list | extract` (DAT), `wtbuild nvn-procs` (NVN entry points of the
@@ -1763,6 +1763,45 @@ loaded by other copies of the game (Shibuya, 1440p, scale 2.4, on and off side b
 wait 0.96-0.97 to 0.00 a frame, wait for the GPU 15.7-22.9 to 0.4-0.8 ms, batch replay 22-31 to 7-8 ms, 29-33 to 45 fps. A
 test-only compare of the slot's bytes with the ones the wait would have read: 14,000 of 14,000 equal. Not measured: the ride
 itself, Windows, AMD's and NVIDIA's own drivers.
+
+## The lifted code for the player's own processor (2026-11-13)
+
+After Astral Chain Recomp (same engine family, MIT), which builds its lifted code at `-march=x86-64-v3` and lowers the
+table lookup to byte shuffles. Ours was built for any x86-64 (SSE2): each lane of a fused multiply-add was a call to
+`fmaf` (31,067 vector sites and 3,409 scalar ones in main), each rounding a call, and `v_tbl` (18,201 sites) a byte loop
+whose single-byte stores the next whole-register load cannot forward from.
+
+- **The level** (`Target::cpu_level`, `tools/wtbuild/src/target.rs`): the compile step asks the PC it runs on, always the
+  player's own: `-march=x86-64-v3` with AVX2 and FMA, `-march=x86-64-v2` with SSE4.2, nothing on an older processor
+  (`WT_CPU_LEVEL=1|2|3` forces one; `build/logs/compile.log` names it). Only the lifted code: the runtime, built once for
+  everyone, stays as it was. `-ffp-contract=off` stays, so nothing is fused that the game did not fuse. At v3 game.so
+  has 41,684 fused multiply-add instructions where the baseline has 123,904 calls to `fmaf`.
+- **`v_tbl`** (`runtime/neon.h`, with SSSE3, so at levels 2 and 3): one `pshufb` per table register. 4,000,000 random
+  cases (every length, both widths, TBX, overlapping registers) equal to the loop at -O1 and -O2; a shuffle-multiply-shuffle
+  pass 21.9 ns to 4.0 ns.
+
+Shibuya, scale 1.0, 330 s, on the Ryzen 7 7800X3D, the two builds in turn (the first baseline run started at load 8.3,
+right after a compile; the other three at 1.5-2.9):
+
+| run | fps | at 60 | 1 %-low | p90 / p99 ms | CPU ms a frame: main, render, MainJob1, MainDraw |
+|---|---|---|---|---|---|
+| baseline | 59.9 | 97.1 % | 49.2 | 17.5 / 20.3 | 3.9, 4.6, 3.4, 1.4 |
+| v3 | 60.0 | 98.3 % | 52.0 | 17.3 / 19.2 | 3.0, 4.2, 2.6, 1.1 |
+| baseline | 60.0 | 98.4 % | 51.5 | 17.3 / 19.4 | 3.4, 4.1, 3.0, 1.1 |
+| v3 | 60.0 | 98.0 % | 51.2 | 17.4 / 19.5 | 3.2, 4.3, 2.7, 1.2 |
+
+The game's threads take about a tenth less CPU (main 3.4 to 3.0-3.2 ms, MainJob1 3.0 to 2.6-2.7 against the quiet
+baseline); the frame rate is the same here, where this PC holds 60 either way. `tools/lifter-check` (`LIFTER_CHECK_CFLAGS`
+adds flags): 695,403 cases, no failure at the baseline, `-march=x86-64-v2 -O2` and `-march=x86-64-v3 -O2`.
+
+Tried and not kept: the host runtime at `-O2` instead of `-O1` (theirs is `-O2`; `link.rs`). Same game.so, the two
+runtimes in turn, two runs each, all from a quiet PC: render(host) 4.2 to 4.1 ms a frame both times, 98.4-98.5 % against
+98.4-98.6 % at 60, p99 19.2-19.4 against 19.0-19.1 ms. Too little for a change to code that every system's release shares
+and that only Linux was run on.
+
+Not checked: a slower processor (where the saving could reach the frame rate), level 2 in the game, Windows, other
+scenes. Every player's game compiles again once. A build copied to a PC with an older processor stops at an illegal
+instruction until it is compiled there (no check at start).
 
 ## Cutscenes on a slow disk (2026-11-05; issue 136)
 
