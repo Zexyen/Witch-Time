@@ -1,8 +1,23 @@
 /* Linux build only: the waveOut subset nnaudio.c uses, on an SDL3 audio stream. A header is "done" (WHDR_DONE, and the
  * CALLBACK_EVENT event is set) once the device has pulled all of it; the position counts the frames pulled so far. */
-#ifndef _WIN32
+#include <stdio.h>
 #include <SDL3/SDL.h>
+#ifdef _WIN32   /* [issue 182] Windows: the same code under sdl_ names, what nnaudio.c falls back to when waveOutOpen fails */
+#include <windows.h>
+#include <mmsystem.h>
+#define waveOutOpen sdl_waveOutOpen
+#define waveOutPrepareHeader sdl_waveOutPrepareHeader
+#define waveOutUnprepareHeader sdl_waveOutUnprepareHeader
+#define waveOutWrite sdl_waveOutWrite
+#define waveOutPause sdl_waveOutPause
+#define waveOutRestart sdl_waveOutRestart
+#define waveOutReset sdl_waveOutReset
+#define waveOutSetVolume sdl_waveOutSetVolume
+#define waveOutGetPosition sdl_waveOutGetPosition
+#define waveOutClose sdl_waveOutClose
+#else
 #include "posix/win32_absent.h"
+#endif
 
 typedef struct {
     SDL_AudioStream *stream;
@@ -58,14 +73,14 @@ MMRESULT waveOutOpen(HWAVEOUT *out, UINT dev, const WAVEFORMATEX *f, DWORD_PTR c
     if (!w->stream) { printf("nn::audio: no SDL playback device: %s\n", SDL_GetError()); SDL_DestroyMutex(w->lock); SDL_free(w); return MMSYSERR_NODRIVER; }
     SDL_ResumeAudioStreamDevice(w->stream);           /* waveOutOpen plays at once (SDL opens paused) */
     printf("nn::audio: SDL audio %s, %d Hz, %d channels\n", SDL_GetCurrentAudioDriver(), spec.freq, spec.channels);
-    *out = w;
+    *out = (HWAVEOUT)w;
     return MMSYSERR_NOERROR;
 }
 MMRESULT waveOutPrepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n) { (void)h; (void)n; hdr->dwFlags &= ~WHDR_DONE; return MMSYSERR_NOERROR; }
 MMRESULT waveOutUnprepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n) { (void)h; (void)n; (void)hdr; return MMSYSERR_NOERROR; }
 MMRESULT waveOutWrite(HWAVEOUT h, WAVEHDR *hdr, UINT n) {
     (void)n;
-    WaveOut *w = h;
+    WaveOut *w = (WaveOut *)h;
     MMRESULT r = MMSYSERR_NOERROR;
     SDL_LockMutex(w->lock);
     if (w->tail - w->head >= 256) r = 7;               /* never at the runtime's at most 64 slots */
@@ -76,7 +91,7 @@ MMRESULT waveOutWrite(HWAVEOUT h, WAVEHDR *hdr, UINT n) {
 MMRESULT waveOutPause(HWAVEOUT h) { return SDL_PauseAudioStreamDevice(((WaveOut *)h)->stream) ? MMSYSERR_NOERROR : MMSYSERR_NODRIVER; }
 MMRESULT waveOutRestart(HWAVEOUT h) { return SDL_ResumeAudioStreamDevice(((WaveOut *)h)->stream) ? MMSYSERR_NOERROR : MMSYSERR_NODRIVER; }
 MMRESULT waveOutReset(HWAVEOUT h) {                    /* every queued header becomes done, the position goes back to 0 */
-    WaveOut *w = h;
+    WaveOut *w = (WaveOut *)h;
     SDL_LockMutex(w->lock);
     for (; w->told != w->head; w->told++) w->queue[w->told % 256]->dwFlags |= WHDR_DONE;
     for (; w->head != w->tail; w->head++) w->queue[w->head % 256]->dwFlags |= WHDR_DONE;
@@ -90,7 +105,7 @@ MMRESULT waveOutReset(HWAVEOUT h) {                    /* every queued header be
 MMRESULT waveOutSetVolume(HWAVEOUT h, DWORD v) { return SDL_SetAudioStreamGain(((WaveOut *)h)->stream, (float)(v & 0xffff) / 65535.0f) ? MMSYSERR_NOERROR : MMSYSERR_NODRIVER; }
 MMRESULT waveOutGetPosition(HWAVEOUT h, MMTIME *t, UINT n) {
     (void)n;
-    WaveOut *w = h;
+    WaveOut *w = (WaveOut *)h;
     SDL_LockMutex(w->lock);
     uint64_t pulled = w->frames;
     SDL_UnlockMutex(w->lock);
@@ -101,10 +116,9 @@ MMRESULT waveOutGetPosition(HWAVEOUT h, MMTIME *t, UINT n) {
     return MMSYSERR_NOERROR;
 }
 MMRESULT waveOutClose(HWAVEOUT h) {
-    WaveOut *w = h;
+    WaveOut *w = (WaveOut *)h;
     SDL_DestroyAudioStream(w->stream);
     SDL_DestroyMutex(w->lock);
     SDL_free(w);
     return MMSYSERR_NOERROR;
 }
-#endif

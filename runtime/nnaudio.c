@@ -72,6 +72,29 @@ typedef struct {
     int prepared;
 } Slot;
 
+#ifdef _WIN32
+/* [issue 182] plat_audio_sdl.c: the same nine calls on SDL audio, taken when waveOutOpen fails (g_sdl) */
+MMRESULT sdl_waveOutOpen(HWAVEOUT *out, UINT dev, const WAVEFORMATEX *f, DWORD_PTR cb, DWORD_PTR inst, DWORD flags);
+MMRESULT sdl_waveOutClose(HWAVEOUT h);
+MMRESULT sdl_waveOutPrepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutUnprepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutWrite(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutReset(HWAVEOUT h);
+MMRESULT sdl_waveOutPause(HWAVEOUT h);
+MMRESULT sdl_waveOutRestart(HWAVEOUT h);
+MMRESULT sdl_waveOutSetVolume(HWAVEOUT h, DWORD v);
+MMRESULT sdl_waveOutGetPosition(HWAVEOUT h, MMTIME *t, UINT n);
+static int g_sdl;
+#define waveOutClose(h) (g_sdl ? sdl_waveOutClose(h) : waveOutClose(h))
+#define waveOutPrepareHeader(h, a, n) (g_sdl ? sdl_waveOutPrepareHeader(h, a, n) : waveOutPrepareHeader(h, a, n))
+#define waveOutUnprepareHeader(h, a, n) (g_sdl ? sdl_waveOutUnprepareHeader(h, a, n) : waveOutUnprepareHeader(h, a, n))
+#define waveOutWrite(h, a, n) (g_sdl ? sdl_waveOutWrite(h, a, n) : waveOutWrite(h, a, n))
+#define waveOutReset(h) (g_sdl ? sdl_waveOutReset(h) : waveOutReset(h))
+#define waveOutPause(h) (g_sdl ? sdl_waveOutPause(h) : waveOutPause(h))
+#define waveOutRestart(h) (g_sdl ? sdl_waveOutRestart(h) : waveOutRestart(h))
+#define waveOutSetVolume(h, v) (g_sdl ? sdl_waveOutSetVolume(h, v) : waveOutSetVolume(h, v))
+#define waveOutGetPosition(h, t, n) (g_sdl ? sdl_waveOutGetPosition(h, t, n) : waveOutGetPosition(h, t, n))
+#endif
 static CRITICAL_SECTION g_lock;
 static uint64_t g_audio_out, g_event, g_device_event;
 static int g_rate = 48000, g_channels = 2, g_open, g_started;
@@ -291,6 +314,17 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
         }
 #endif
         MMRESULT r = waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+#ifdef _WIN32
+        /* [issue 182] one PC's Windows refused the mapper (error 2) with four devices listed, while the launcher's SDL
+         * sound played: SDL's default device is the second try. WT_AUDIO_SDL=1 takes it from the start (the test). */
+        g_sdl = 0;
+        if (r != MMSYSERR_NOERROR || getenv("WT_AUDIO_SDL")) {
+            if (r == MMSYSERR_NOERROR) waveOutClose(g_wave);
+            else printf("nn::audio: waveOutOpen failed (%u): trying SDL audio\n", (unsigned)r);
+            r = sdl_waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+            g_sdl = r == MMSYSERR_NOERROR;
+        }
+#endif
         if (r != MMSYSERR_NOERROR) { g_wave = NULL; printf("nn::audio: waveOutOpen failed (%u): no sound, buffers are released by the clock\n", (unsigned)r); }
         else {
             waveOutPause(g_wave);                     /* nothing plays before StartAudioOut */
