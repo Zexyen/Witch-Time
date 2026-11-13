@@ -1794,6 +1794,11 @@ The game's threads take about a tenth less CPU (main 3.4 to 3.0-3.2 ms, MainJob1
 baseline); the frame rate is the same here, where this PC holds 60 either way. `tools/lifter-check` (`LIFTER_CHECK_CFLAGS`
 adds flags): 695,403 cases, no failure at the baseline, `-march=x86-64-v2 -O2` and `-march=x86-64-v3 -O2`.
 
+Tried and not kept: the host runtime at `-O2` instead of `-O1` (theirs is `-O2`; `link.rs`). Same game.so, the two
+runtimes in turn, two runs each, all from a quiet PC: render(host) 4.2 to 4.1 ms a frame both times, 98.4-98.5 % against
+98.4-98.6 % at 60, p99 19.2-19.4 against 19.0-19.1 ms. Too little for a change to code that every system's release shares
+and that only Linux was run on.
+
 Not checked: a slower processor (where the saving could reach the frame rate), level 2 in the game, Windows, other
 scenes. Every player's game compiles again once. A build copied to a PC with an older processor stops at an illegal
 instruction until it is compiled there (no check at start).
