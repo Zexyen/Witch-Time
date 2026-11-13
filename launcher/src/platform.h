@@ -1,4 +1,4 @@
-// What differs between Linux and Windows for the launcher: file names, folders, the environment, and (Windows) starting
+// What differs between Linux, Windows and macOS for the launcher: file names, folders, the environment, and (Windows) starting
 // programs with their output read through a pipe. Paths are UTF-8 with '/' on both; on Windows the program runs with
 // UTF-8 as its code page (witch-time.manifest), so the C library's file functions take them as they are.
 #pragma once
@@ -15,6 +15,8 @@
 inline const char* const GAME_EXE = "witch-time-game" WT_EXE;
 #ifdef _WIN32
 inline const char* const GAME_LIB = "game.dll";
+#elif defined(__APPLE__)
+inline const char* const GAME_LIB = "game.dylib";
 #else
 inline const char* const GAME_LIB = "game.so";
 #endif
@@ -27,7 +29,8 @@ bool change_dir(const std::string& path);
 // a program file that can be started (on Windows: that exists)
 bool is_program(const std::string& path);
 // A shortcut that starts `program --play` (#143): on Windows "Witch Time.lnk" in `desktop`; on Linux witchtime.desktop
-// in the application menu and, when there is one, in `desktop` (a folder ending in a separator, or empty). `icon` is
+// in the application menu and, when there is one, in `desktop` (a folder ending in a separator, or empty); on macOS
+// "Witch Time.command" in `desktop`, a script Finder starts with a double click. `icon` is
 // the Linux entry's picture; the Windows one shows the program's own. Made again, it replaces the old one. *said: where
 // it is now, or why not.
 bool create_shortcut(const std::string& desktop, const std::string& program, const std::string& icon, std::string* said);

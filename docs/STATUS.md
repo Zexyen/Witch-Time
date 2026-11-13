@@ -2060,6 +2060,190 @@ was Windows only. Now:
   and FSR were not run with it. `WT_VK_CACHE=<an empty folder>` crashes in a preparation worker (`stagelib_ensure`) on
   this PC, also on the commit before this work: not looked into.
 
+## macOS (2026-11-11; experimental, Apple silicon)
+
+Built and run on a Mac mini (M5 Pro, macOS 27.2, Apple clang 21, MoltenVK 1.4.2 and SDL 3.4 from Homebrew), from a
+checkout: `wtbuild setup` passes every step (compile 409 files in 4 min with 14 jobs, `game.dylib` 94 MB; the picture
+book's program too), `wtbuild smoke` and `cargo test` pass. README, "Build (macOS)"; `tools/wtbuild/README.md`, "macOS".
+
+Runs with a hidden window (`WT_SHOW=0`) and scripted keys, pictures from `WT_SHOT_EVERY`: first-run shader preparation
+(8,024 stages, about 65 s), the title screen, the menus up to the story's start, the opening movie (FFmpeg) and the
+prologue's first cutscenes in the 3D world, 300 s without a stop: 0 Vulkan call failures, 0 operations not implemented.
+30 fps on the title and in the movie, as set; **60.0 fps in the prologue's scenes** (1 % low 54-56). MoltenVK has no
+`VK_EXT_graphics_pipeline_library`, no dynamic vertex input and not all of extended dynamic state 3, so the renderer
+takes its whole-pipeline path there (a first use can hold a frame, as on the GPUs of finding 116).
+
+For every system, found there: `nvn_stub.c`'s object table hashed by the low 12 bits of a product, which only bits
+3..14 of an object's address reach, so the 40,000 buffers at a regular stride shared a few hundred of its 4,096
+chains; it has 65,536 chains picked by the high bits now (no measurable change in these scenes).
+
+What macOS needed (`__APPLE__` in the runtime, `Target::MacOS` in wtbuild):
+
+- **The window on the first thread.** AppKit works on the program's first thread only: `display_init` makes the window
+  there, `boot.c` reads its events while it waits for the game's thread (`display_main_wait`), the render thread has
+  its surface made there (`SDL_RunOnMainThread`), and the title is set there.
+- **The guest's addresses.** macOS's allocator reserves 12 GB at a place it picks for every process between
+  0x7000000000 and 0x8000000000, where the image (0x7100000000), the import area and the sdk (0x7500000000) go: about
+  every second start it was in the way. `plat_guest_space` reserves the whole range first thing and, when it is taken,
+  starts the program again in place (`execv`, some milliseconds a try).
+- **16 KB pages.** The guest's pages are 4 KB: `plat_mprotect` gives access to every host page a range touches and takes
+  it only from those it covers whole.
+- **Write watch.** No userfaultfd: a watched region (the game's heap) is read-only until written, and the fault handler
+  notes the page (`ww_signal` in `plat_posix.c`). Without it every texture was hashed on every use: 13-19 ms a frame
+  and 45 fps in the same scenes (`WT_WW=0` gives that state back).
+- **The largest shaders.** The translator keeps every register in a variable, MoltenVK writes the module out as Metal
+  source as it stands, and Apple's Metal compiler gave up on the two largest fragment stages (535 KB of SPIR-V, 734,000
+  lines of Metal: `XPC_ERROR_CONNECTION_INTERRUPTED`, "THE DRIVER REFUSED A WHOLE PIPELINE"). They are the scene's
+  lighting pass: 18,000 draws were left out in ten minutes and the world was black but for particles and light shafts,
+  which a side-by-side with the Linux build's pictures of the same scripted run showed (RX 9070 XT, RADV). Modules of
+  128 KB and more now go through SPIRV-Tools' optimizer first (`vk_glslang_shim.c`, macOS only; `WT_VK_SPVOPT`): the
+  same stage is 38,000 lines and compiles in 0.8 s, nothing is refused, and the pictures match.
+- **Portability features.** MoltenVK's `VK_KHR_portability_subset` features (view swizzles, comparison samplers set per
+  use, the samplers' LOD bias) are off unless asked for: asked for now, as every other supported feature is
+  (`vkd_device_info`). The validation layer (Homebrew's `vulkan-validationlayers`, `WT_VK_VALIDATE=1`) named them;
+  what it still names there: "Metal does not support disabling primitive restart" (a draw without restart whose
+  indices hold 0xFFFF would break).
+- **Shuffles in tessellation evaluation stages.** Metal has subgroup operations in fragment, compute and tessellation
+  control stages only; MoltenVK refused the evaluation stages whose code has a warp shuffle ("Subgroup builtins are
+  not available in this type of function"), two pipelines in Shibuya with 135,000 draws left out in 200 s. Where the
+  device's `subgroupSupportedStages` lacks a vertex or tessellation stage, the translator now writes it as a warp of
+  one lane (`MxIn.lone_lane`: a shuffle gives the lane's own value, a vote its own predicate; such stages hash apart,
+  every other stage's text and hash are unchanged). Nothing is refused in Shibuya now; the tessellated objects'
+  picture was not compared.
+- **App Nap.** A program with a hidden or covered window and no sound has its timers held back by macOS: the refresh
+  clock's thread woke up to 100 ms late (thousands of "refreshes slept through"), 24 fps in the Shibuya fight, in test
+  runs with `WT_SHOW=0 WT_AUDIO_MUTE=1`. `display.c` now holds a latency-critical activity for the whole run
+  (`no_app_nap`): 60.0 fps and 0 refreshes slept through in the same run.
+- Fibers are a context switch of our own (ucontext is deprecated there); thread ids, timed waits, the memory map,
+  `/proc/self/exe`, random numbers, the library names and the system font stand-in (Arial Unicode) have their macOS forms.
+
+**Shibuya street fight** (the bench's scene and inputs, `tools/wtbuild/src/perf_bench.rs`, with a save copied from
+the Linux PC; 1600x900): 60.0 fps, 1 % low 51-53, p99 18.9-19.5 ms, render thread 7.6 ms a frame (3.4 of it waiting
+for the GPU; the Linux PC's RX 9070 XT run of the scene: 59.5 fps, 1 % low 48.8, 6.7 ms and 1.35). With
+`frame_rate = 120` it runs at 109 fps on average (the slowest 300 frames 83 fps; the Linux PC's 120 run: 104), and the
+prologue's scenes at 117: the Mac has about that much room at 60. What was tried against the render thread's GPU waits
+and for the game's threads, 150 s runs of the prologue scene at the 120 target, each within the runs' own spread
+(116.7-117.4 fps): `WT_OBJ_LOCKFREE=1` (the lock-free object look-up of `os_threads.c`),
+`MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0`, the wider `nobj` table below. MoltenVK lacks `drawIndirectCount`, so counts
+compute wrote are read on the CPU there (a wait each); KosmicKrisp has it and waited longer.
+
+**120 fps in the fight (2026-11-12).** `frame_rate = 120`, the same scene, 150 s runs, the fight's frames (4200 on):
+109.8 fps on average before (the slowest 300 frames 83), **119.8 now** (the slowest 300 frames 113.5, the first of the
+fight; all others 119.6-120.0); a save of the installed game on the Linux PC (a cutscene, then a fight) 110.9 -> 119.8.
+The render thread's replay went from 6.8 to 2.7 ms a frame, its waits for the GPU from 3.7 to 0.1. A `sample` of the
+fight showed the game's thread waiting 37 % of a frame for its fence and the render thread 27 % in `vkWaitForFences`:
+- **A stand-in for `drawIndirectCount`** (`nvn_vk_draw.c` `gce_*`; MoltenVK has none, Metal has no such draw). B3 culls
+  on the GPU: about 700 indirect draws a frame, each with a count of 0 or 1 a compute dispatch wrote. Reading the first
+  count on the CPU submitted the frame so far and waited for all the GPU had queued. Now the record goes into the ring
+  and is drawn with `vkCmdDraw(Indexed)Indirect`; one compute dispatch in the command buffer submitted just before
+  (`up_cmd`) zeroes the instance count of every record at or past its count. What writes a count has to be in an earlier
+  command buffer, so a count draw after a dispatch or a storing draw of the same one submits first (no wait). Records
+  compute wrote with a fixed count are read by the GPU as on the other systems (they waited too). 109.8 -> 116.0 fps.
+  `WT_VK_GPUCOUNT=2` takes this path on a device that has the real call; `=0` reads on the CPU as before.
+- **The submission a storing draw is in** (every system). A compute buffer a draw writes (B3's light lists: two of
+  130 KB a frame) had the batch's last submission as its writer, so landing it in the next frame, because the game had
+  written into its range, waited for the whole previous frame on the GPU. `draw_prepare` now names the command buffer the
+  draw is recorded in. 116.0 -> 118.7 fps, the waits 0.84 -> 0.04 ms a frame.
+- **`MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=0`** is set at start unless the variable is there already (`display.c`):
+  MoltenVK makes the Metal calls of a command buffer when it is submitted, 1.9 ms a frame of the render thread; with this
+  on a thread of its own. 118.7 -> 119.8 fps, the game's wait for its tick 4.4 -> 6.9 ms a frame. It made no difference
+  while the waits above were there. The log's frame times (taken where the replay ends) spread more with it (1 % low
+  80 against 102); the presents are held for their tick as before: 12 of 12,631 frames came late in 120 s (125 with
+  synchronous submits). Nobody looked at it on a 120 Hz display: this Mac's is 60 Hz and the runs had a hidden window.
+- Tried and left out: `MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS=1` (the game stops making frames when the fight starts),
+  allocated descriptor sets instead of pushed ones (no gain), answering the game's fence wait once the replay is submitted
+  (+2 fps; the game may read what the GPU wrote after its fence).
+- At 60: 60.0 fps as before, the render thread 7.5 -> 2.9 ms a frame. Validation layer, 90 s of the fight: no error.
+  `display_report` prints the held and late presents also without a measured vblank.
+
+**Metal's shader compiles, ahead (2026-11-12; not played by hand with it yet).** A hand run
+of a fight on a save from the Linux PC: 104 holds of the render thread, 8.3 s in all, the longest 340 ms, 98 of them a
+pipeline made at its first draw ("significant stutter when new effects show up"). Where the time goes, the Shibuya
+fight with empty caches (no `pipes.bin`, Metal's own cache in `$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` moved
+away; `WT_VK_HOLDLOG=1`): a pipeline whose fragment stage Metal had not compiled 139 ms (mean of 138), one whose
+fragment stage it had compiled for another pipeline 15 ms (58). So `warm_main` (`nvn_vk_m4.c`, macOS; `WT_VK_WARM=0`
+off, `=2` again) makes one pipeline with every fragment stage record of the cache, after the preparation, on one thread
+while the game runs, and destroys it; a marker `compiled4_v..._<macOS build>_...txt` in the cache folder says it is
+done. Every stage is compiled for five passes (`g_warm_pass`), the ones B3 draws with most (529 of the 704 pipelines
+this Mac had recorded): opaque, depth only, blended, opaque without alpha, added.
+- The fight as a first run (no `pipes.bin`), by what was compiled ahead; holds in all, and a pipeline with a new
+  fragment stage and a vertex stage seen before:
+
+  | compiled ahead | holds | new fragment stage, mean | pipelines over 60 ms |
+  |---|---|---|---|
+  | nothing | 20.6 s | 137 ms | 104 of 198 |
+  | one pass of eight RGBA8 attachments | 8.7 s | 45 ms | 57 of 229 |
+  | that and a depth-only pass | 7.4 s | 39 ms | 37 of 214 |
+  | the opaque pass of the game and depth only | 6.1 s | 19 ms | 12 of 224 |
+  | the five passes | 5.7 s | 17 ms | 11 of 225 |
+  | everything (every pipeline of the fight in Metal's cache) | 1.8 s | 9 ms | 2 of 222 |
+
+  The first three rows compiled every record of the cache; the last two before "everything" only the 173 fragment
+  stages the fight uses (the same result in a minute instead of an hour). The longest hold 1,025 -> about 300 ms.
+- Two things are compiled: the TEXT (160 ms a stage; MoltenVK leaves the colour output out of it in a pass without
+  colour attachment, hence the depth-only pass: with both, every fragment text of the fight, 122 with a colour output
+  and 26 without, was byte for byte one compiled ahead, `MVK_CONFIG_SHADER_DUMP_DIR`), and after it Metal's code
+  generation, which is made anew for another attachment format or blend state (43 ms a stage and pass) and partly for
+  another vertex stage. What is left at a first use is that part: about 25 ms a pipeline against 9 when all is cached.
+- Vertex stages ahead (a depth-only pipeline of each): 20 ms each, no shorter holds; left out.
+- It takes 7,662 records (this Mac's cache, several scales and settings) x 5 passes; a cache of one setting has about
+  half. A run cut short starts again and finds its first part in Metal's cache (13 ms a compile). While it runs, a
+  draw's own compile can stand behind one of these. Measured: the two texts of the 7,662 from empty 49 minutes; the five
+  passes with those texts already in Metal's cache 23 minutes (three more passes: about 35 ms a stage each), so about
+  an hour from empty for this cache. Metal's cache afterwards: 1.2 GB.
+- Why one thread: Metal compiles one text at a time whatever the number of threads asking (13 workers: 880 ms each,
+  `MTLCompilerService` on 1.2 cores; `MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION=1` changed nothing). Several
+  processes do compile at once (12: 246 s for the 7,662), but each keeps its results in a file of its own
+  (`libraries1.data` ...) and a lone process afterwards compiled everything again.
+- Tried and left out: compiling a fragment stage when a worker makes it (the game hands over 3,750 before the first
+  fight and draws with about 200; 703 were done by then and the draws' own compiles stood behind them: 28.8 s of holds).
+- `shader_wait = skip` works there as elsewhere (near a fight a draw whose pipeline is not ready is left out): the
+  fight with empty caches 108.0 fps on average against 70.7, 7 frames over 20 ms against 16, 1,663 frames with
+  something left out. Not the default.
+- Not checked: the game started from `Witch Time.app` (Metal keeps a cache per program; the marker is per cache folder),
+  Linux and Windows builds of this change (the code is off there unless `WT_VK_WARM=1`).
+
+**A native Metal renderer: measured, not built.** The renderer speaks Vulkan (`nvn_vk*.c`, 1.2 MB of C, and the shader
+translator's GLSL to SPIR-V); a Metal back end would be a third renderer beside it. What it could win was measured
+instead, in the prologue's 3D scenes at 60 fps (`sample`, 8 s, every thread; the game's own thread is the busy one):
+
+| where the CPU time went | share of all busy time |
+|---|---|
+| the game's lifted code | 66 % (its main thread busy 93 % of the time) |
+| the runtime (ours) | 16 % |
+| Apple's Metal and GPU driver | 16 % |
+| MoltenVK's own code | 2 % |
+
+The render thread was busy 18 % of the time (runtime 8, Metal 6, MoltenVK 4). So the layer a native renderer would
+remove costs about 2 % of the CPU work and none of the frame time: the frame is bound by the game's thread, and the
+Metal driver's share stays whatever calls it. Shader and pipeline compilation (the first-run preparation, the holds of
+a first use: 30 holds, 4.0 s in all in a 560 s run) is Apple's Metal compiler either way. The same run on **Mesa's
+KosmicKrisp** (the other Vulkan driver on Metal, Homebrew's `mesa`, `VK_DRIVER_FILES=...kosmickrisp_mesa_icd...`) also
+ran 400 s with 0 failed calls, but slower: 50-54 fps in scenes MoltenVK holds at 60, and it has no pipeline libraries
+or dynamic vertex input either. With both installed the loader lists the GPU twice: `nvn_vk_init` takes MoltenVK
+(`gpu = <number>` in graphics.ini picks the other).
+
+**Launcher** (`launcher/`, 2026-11-11): builds with Homebrew's `sdl3` and `freetype`; its screens are drawn with Metal
+(SDL's GPU API has no Vulkan there), and Play starts the game as a program of its own, as on Windows.
+`witch-time --play` was run: it starts the game, writes `build/run/witch-time-game.log` and ends with it. The build
+also makes `build/Witch Time.app` (the same program in a bundle, with the icon) for Finder and the Dock. The texture
+conversion after a build is skipped there (the GPU reads ASTC). Its screens were not looked at: this session could not
+take pictures of the desktop.
+
+Open there:
+
+- **Not played by hand**: no visible window and no controller were tried. Sound goes out through SDL's CoreAudio
+  stream (252 of 300 s with sound in the log) but nobody listened to it. Controllers go through SDL's macOS drivers
+  from the game's own threads, untried.
+- Stopping a run while it loads crashed in two places, both fixed: `vkd_shutdown` read the vertex stream table before
+  its first use had made it (any system), and the panel's shutdown submitted commands recorded for images already
+  destroyed, which MoltenVK encodes at the submit (now submitted before the images go).
+- No release: no prebuilt runtime, no bundled compiler (Apple's linker wants the SDK for `game.dylib`), and the `.app`
+  only works inside `build/`. The launcher's screens, its Build button and its folder dialog were not tried by hand.
+- `shortcut:` a protection the guest sets inside the watched heap is lost at the first write there; `kill -USR1` stack
+  dumps, `WT_LPROF` and the per-thread CPU times of the frame-rate line are Linux only; converted BC7 textures
+  (`wtbuild textures`) were not made or measured (the GPU has ASTC).
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.

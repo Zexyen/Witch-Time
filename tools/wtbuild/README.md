@@ -168,6 +168,19 @@ program imports (its PE import table) against `build\`, `prebuilt\` and System32
 runs the smoke test there, or on Linux under Wine; `wtbuild check-freestanding --target windows` checks the freestanding
 headers against mingw-w64's.
 
+### macOS
+
+Apple silicon only, built on a Mac (`src/target.rs`, `Target::MacOS`; there is no cross build and no prebuilt runtime
+yet). Linux's split with Mach-O's means: `libwitchtime.dylib` and `game.dylib` are both linked with `-undefined
+dynamic_lookup`, so what each takes from the other is looked up when the game starts, and the runtime names
+`game.dylib` (`@rpath`, beside it) as a library it needs. Apple's clang and linker are used (no `-fuse-ld=lld`, no
+`-mcx16`); the runtime's libraries are Homebrew's (`-I` / `-L` of `HOMEBREW_PREFIX`, else `/opt/homebrew`), with
+`runtime/macos` standing in for the two headers glibc and Mesa have and macOS lacks (`malloc.h`, `GL/gl.h`). Apple's
+linker refuses a library without libSystem, so `game.dylib` is not `-nostdlib`: the player's Mac needs the Command Line
+Tools' SDK. The lifted code is compiled with `runtime/freestanding` as elsewhere (`jmp_buf` is the system's there).
+`wtbuild smoke` runs as on Windows, with stand-ins for the game functions the runtime replaces (dyld looks up every
+symbol when it loads the library).
+
 ## Regression tests
 
 `cargo test --release --manifest-path tools/wtbuild/Cargo.toml` needs no dump; CI runs it on Linux

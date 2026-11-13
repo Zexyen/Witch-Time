@@ -140,7 +140,8 @@ fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[Path
     lifter::eh::lift_main(&lifter::Image::main(main), &build.join("gen_eh"), log).map_err(|e| format!("lift: {}", e))?;
     let clang = compile::find_clang(root);
     compile::run_step(&repo.to_string_lossy(), &clang, t, util::default_jobs(), &setup::child_env, log)?;
-    if t.windows() {
+    if t.windows() || t.macos() {
+        // macOS: dyld looks up every symbol of game.dylib when it loads it, the functions of the real main too
         let standin = build.join("standin.c");
         let c: String = only.iter().map(|n| format!("void {}(Ctx *c) {{ (void)c; }}\n", n)).collect();
         fs::write(&standin, format!("typedef struct Ctx Ctx;\n{}", c)).map_err(|e| io(&standin, e))?;
@@ -170,7 +171,7 @@ fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[Path
     if prebuilt.is_some() && !used_prebuilt {
         return Err("the prebuilt runtime was not used".into());
     }
-    if !t.windows() {
+    if t == Target::Linux {
         let o = Command::new("ldd")
             .arg("-r")
             .arg(build.join(t.game_exe()))

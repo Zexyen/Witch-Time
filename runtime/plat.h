@@ -1,4 +1,4 @@
-/* Host platform layer (Linux port, step 1).
+/* Host platform layer (Linux port, step 1; macOS on Apple silicon follows Linux, its differences under __APPLE__).
  *
  * Windows: <windows.h> plus thin wrappers that make exactly the calls the runtime made before, so the Windows build
  * does not change. Linux: the same Win32 names for the simple things the runtime uses everywhere (integer types,
@@ -28,7 +28,7 @@ static inline int plat_protect(void *p, size_t size, int prot) {
     return VirtualProtect(p, size, prot == PLAT_RW ? PAGE_READWRITE : prot == PLAT_RO ? PAGE_READONLY : PAGE_NOACCESS, &old) != 0;
 }
 
-#else /* POSIX (Linux) */
+#else /* POSIX (Linux, macOS) */
 #include <errno.h>
 #include <malloc.h>
 #include <pthread.h>
@@ -141,7 +141,11 @@ BOOL CloseHandle(HANDLE h);
 #define SetThreadPriorityBoost(h, off) TRUE
 #define SetThreadAffinityMask(h, m) ((DWORD_PTR)1)   /* shortcut: affinity not applied, port pthread_setaffinity_np if pinning matters */
 #define GetCurrentProcessId() ((DWORD)getpid())
+#ifdef __APPLE__
+#define GetCurrentProcessorNumber() ((DWORD)0)   /* macOS does not say which core a thread is on */
+#else
 #define GetCurrentProcessorNumber() ((DWORD)sched_getcpu())
+#endif
 static inline uint64_t GetTickCount64(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; }
 #define GetTickCount() ((DWORD)GetTickCount64())
 void GetSystemTimeAsFileTime(FILETIME *ft);
@@ -357,10 +361,23 @@ FILE *plat_fopen(const char *path, const char *mode);
 #define _putenv_s(k, v) setenv((k), (v), 1)
 static inline char *_strlwr(char *s) { for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p); return s; }
 
+#ifdef __APPLE__
+/* macOS: no MAP_FIXED_NOREPLACE (mmap takes an address as a hint it need not follow): plat_map_at (plat_posix.c) asks
+ * Mach for exactly that address, which fails when something is there. No MAP_NORESERVE or MAP_STACK either (memory is
+ * not accounted before it is touched anyway). The host's pages are 16 KB where the guest's are 4 KB: plat_mprotect
+ * changes the host pages a 4 KB range can be given. */
+#define MAP_NORESERVE 0
+#define MAP_STACK 0
+int plat_mprotect(void *p, size_t size, int prot);
+void *plat_map_at(uint64_t addr, size_t size, int prot);   /* NULL when it cannot be mapped there */
+static inline void *plat_map_fixed(uint64_t addr, size_t size) { return plat_map_at(addr, size, PROT_READ | PROT_WRITE); }
+#else
+#define plat_mprotect mprotect
 static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     return p == (void *)(uintptr_t)addr ? p : NULL;   /* kernels before 4.17 ignore the flag and may map elsewhere */
 }
+#endif
 static inline void *plat_alloc(size_t size) {
     void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return p == MAP_FAILED ? NULL : p;
@@ -369,9 +386,9 @@ static inline void *plat_reserve(size_t size) {
     void *p = mmap(NULL, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     return p == MAP_FAILED ? NULL : p;
 }
-static inline int plat_commit(void *p, size_t size) { return mprotect(p, size, PROT_READ | PROT_WRITE) == 0; }
+static inline int plat_commit(void *p, size_t size) { return plat_mprotect(p, size, PROT_READ | PROT_WRITE) == 0; }
 static inline int plat_protect(void *p, size_t size, int prot) {
-    return mprotect(p, size, prot == PLAT_RW ? PROT_READ | PROT_WRITE : prot == PLAT_RO ? PROT_READ : PROT_NONE) == 0;
+    return plat_mprotect(p, size, prot == PLAT_RW ? PROT_READ | PROT_WRITE : prot == PLAT_RO ? PROT_READ : PROT_NONE) == 0;
 }
 
 /* Interlocked*: full barriers, return values as on Windows (the new value, or the old one for Exchange/CompareExchange) */
@@ -391,7 +408,11 @@ static inline int plat_protect(void *p, size_t size, int prot) {
 #define InterlockedCompareExchange(p, x, c)        plat_cas_((p), (x), (c))
 #define InterlockedCompareExchange64(p, x, c)      plat_cas_((p), (x), (c))
 #define InterlockedCompareExchangePointer(p, x, c) plat_cas_((p), (x), (c))
+#if defined(__aarch64__)
+#define YieldProcessor() __asm__ volatile("yield")
+#else
 #define YieldProcessor() __builtin_ia32_pause()
+#endif
 
 /* SRW locks: a mutex, because SleepConditionVariableSRW waits on them (a pthread condvar needs a mutex); shared
  * acquisitions are exclusive, which is stricter and so still correct */

@@ -460,7 +460,13 @@ BOOL GetClientRect(HWND h, RECT *r) {
 }
 BOOL IsIconic(HWND h) { return h && (SDL_GetWindowFlags((SDL_Window *)h) & SDL_WINDOW_MINIMIZED) != 0; }
 int GetWindowTextA(HWND h, LPSTR out, int n) { const char *t = h ? SDL_GetWindowTitle((SDL_Window *)h) : ""; snprintf(out, (size_t)n, "%s", t ? t : ""); return (int)strlen(out); }
+#ifdef __APPLE__
+/* macOS: AppKit's window calls are for the main thread only (display_main_wait runs what is handed over here) */
+static void SDLCALL title_on_main(void *t) { if (g_hwnd) SDL_SetWindowTitle((SDL_Window *)g_hwnd, t); free(t); }
+BOOL SetWindowTextA(HWND h, LPCSTR t) { return h && SDL_RunOnMainThread(title_on_main, strdup(t), false); }
+#else
 BOOL SetWindowTextA(HWND h, LPCSTR t) { return h && SDL_SetWindowTitle((SDL_Window *)h, t); }
+#endif
 /* focus: the game window is "the foreground window" while it has the keyboard focus (nnhid.c, nnmisc.c focus rules) */
 HWND GetForegroundWindow(void) { return g_hwnd && has_focus((SDL_Window *)g_hwnd) ? g_hwnd : NULL; }
 DWORD GetWindowThreadProcessId(HWND h, DWORD *pid) { if (!h || h != g_hwnd) return 0; if (pid) *pid = GetCurrentProcessId(); return 1; }
@@ -609,8 +615,44 @@ static void window_apply(SDL_Window *w) {
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
     printf("display: window %s, client %dx%d pixels now%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph, 10);
 }
-static DWORD WINAPI window_thread(LPVOID arg) {
-    (void)arg;
+#ifdef __APPLE__
+/* [witchtime] macOS: App Nap. A program whose window is hidden or covered and that plays no sound gets its timers held
+ * back by the system: the refresh clock's thread (vsync_thread) then woke up to 100 ms late, 24 fps in a Shibuya fight
+ * that runs at 60 (a test run with WT_SHOW=0 and WT_AUDIO_MUTE=1; with the audio device open it did not happen). An
+ * activity of the "user initiated, latency critical" kind, held for the whole run, tells the system not to. Through the
+ * Objective-C runtime's C functions, declared here: its headers have a BOOL of their own. */
+extern void *objc_getClass(const char *name);
+extern void *sel_registerName(const char *name);
+extern void objc_msgSend(void);
+static void no_app_nap(void) {
+    void *pi_class = objc_getClass("NSProcessInfo"), *str_class = objc_getClass("NSString");
+    if (!pi_class || !str_class) return;
+    void *pi = ((void *(*)(void *, void *))objc_msgSend)(pi_class, sel_registerName("processInfo"));
+    void *reason = ((void *(*)(void *, void *, const char *))objc_msgSend)(str_class, sel_registerName("stringWithUTF8String:"), "the game is running");
+    const uint64_t user_initiated = 0x00FFFFFFull, latency_critical = 0xFF00000000ull;      /* NSActivityUserInitiated | NSActivityLatencyCritical */
+    void *activity = pi ? ((void *(*)(void *, void *, uint64_t, void *))objc_msgSend)(pi, sel_registerName("beginActivityWithOptions:reason:"), user_initiated | latency_critical, reason) : NULL;
+    if (activity) ((void *(*)(void *, void *))objc_msgSend)(activity, sel_registerName("retain"));      /* never ended */
+}
+#endif
+/* the window, made or taken over; then its events, one at a time (window_event). On Linux both on a thread of their own
+ * (window_thread); on macOS on the program's first thread, the only one AppKit works on (display_init, display_main_wait) */
+static SDL_Window *window_open(void) {
+#ifdef __APPLE__
+    no_app_nap();
+    /* MoltenVK turns a Vulkan command buffer into Metal calls when it is submitted, on the submitting thread: 1.9 ms of the
+     * render thread's 7 ms in a Shibuya fight frame. With this it does that on a thread of its own and vkQueueSubmit returns
+     * at once (frame_rate = 120 on an M5 Pro: 118.7 -> 119.8 fps, the replay 4.1 -> 2.6 ms). Set to 1 by hand: as before. */
+    if (!getenv("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS")) _putenv_s("MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS", "0");
+    {   /* macOS: SDL looks for the Vulkan loader in the system's folders only; Homebrew's is where plat_posix.c finds it too */
+        const char *brew = getenv("HOMEBREW_PREFIX");
+        const char *const dirs[] = { brew && *brew ? brew : "/opt/homebrew", "/usr/local" };
+        for (int i = 0; i < 2 && !SDL_GetHint(SDL_HINT_VULKAN_LIBRARY); i++) {
+            char path[MAX_PATH];
+            snprintf(path, sizeof path, "%s/lib/libvulkan.1.dylib", dirs[i]);
+            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, path);
+        }
+    }
+#endif
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { printf("display: SDL video cannot start: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }
     const GfxOptions *go = gfx_options();
     const char *show = getenv("WT_SHOW");
@@ -637,12 +679,12 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     g_hwnd = (HWND)w;
     InterlockedExchange(&g_ready, 1);
     { const char *ks = getenv("WT_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }
-    float fx = 0, fy = 0;
-    for (;;) {
-        SDL_Event e;
-        int got = SDL_WaitEventTimeout(&e, 20);
-        sdl_mouse_update(w);                         /* also when display_mouse_want changed (nnhid.c, any thread) */
-        if (!got) continue;
+    return w;
+}
+static void window_event(SDL_Window *w, const SDL_Event *ev) {
+    static float fx, fy;
+    SDL_Event e = *ev;
+    {
         if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) && e.key.scancode < SDL_SCANCODE_COUNT) g_keys[e.key.scancode] = e.key.down;
         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) __atomic_fetch_or(&g_mbtn, SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) __atomic_fetch_and(&g_mbtn, ~SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
@@ -664,15 +706,42 @@ static DWORD WINAPI window_thread(LPVOID arg) {
             g_mouse_grab = 0;
             sdl_mouse_update(w);
         }
-        if (g_apply_ev && e.type == g_apply_ev) { window_apply(w); continue; }
+        if (g_apply_ev && e.type == g_apply_ev) { window_apply(w); return; }
         if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {   /* as WM_CLOSE: nn::oe decides */
             printf("\nwindow closed by the user after %lld frames\n", (long long)g_frames);
             { extern volatile LONG g_display_close; InterlockedExchange(&g_display_close, 1); }
             if (!oe_exit_request()) report_and_exit(0);
         }
     }
+}
+#ifdef __APPLE__
+/* macOS: the window's events while the program's first thread waits for the thread `t` (boot.c, in place of
+ * WaitForSingleObject): WAIT_OBJECT_0 when it has ended, WAIT_TIMEOUT after `ms` */
+DWORD display_main_wait(HANDLE t, DWORD ms) {
+    SDL_Window *w = (SDL_Window *)g_hwnd;
+    ULONGLONG end = GetTickCount64() + ms;
+    while (WaitForSingleObject(t, 0) != WAIT_OBJECT_0) {
+        if (ms != INFINITE && GetTickCount64() >= end) return WAIT_TIMEOUT;
+        SDL_Event e;
+        int got = SDL_WaitEventTimeout(&e, 20);
+        sdl_mouse_update(w);
+        if (got) window_event(w, &e);
+    }
+    return WAIT_OBJECT_0;
+}
+#else
+static DWORD WINAPI window_thread(LPVOID arg) {
+    (void)arg;
+    SDL_Window *w = window_open();
+    for (;;) {
+        SDL_Event e;
+        int got = SDL_WaitEventTimeout(&e, 20);
+        sdl_mouse_update(w);                         /* also when display_mouse_want changed (nnhid.c, any thread) */
+        if (got) window_event(w, &e);
+    }
     return 0;
 }
+#endif
 #endif
 
 /* Signals the guest's vsync event 60 times per second. */
@@ -848,7 +917,11 @@ void display_init(void) {
      * WT_TIMER_PERIOD=<ms> (default 1; 0 = leave the system default). */
     { const char *e = getenv("WT_TIMER_PERIOD"); int ms = e ? atoi(e) : 1; if (ms > 0) { MMRESULT r = timeBeginPeriod((UINT)ms); printf("display: system timer period %d ms requested (%s)%c", ms, r == TIMERR_NOERROR ? "ok" : "refused", 10); } }
     hitch_init();
+#ifdef __APPLE__
+    window_open();                                   /* macOS: on this thread, the program's first (window_open) */
+#else
     CreateThread(NULL, 0, window_thread, NULL, 0, NULL);
+#endif
     while (!g_ready) Sleep(1);
     nvn_gl_start(g_hwnd);
     speed_init();
@@ -1349,6 +1422,10 @@ void display_report(FILE *out) {
         pace_stat_line(out, "fight frames", 1, 0);
         fprintf(out, "display-timing: presents by tenth of a refresh after the vblank before them: %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)g_ps_phase[0], (long long)g_ps_phase[1], (long long)g_ps_phase[2], (long long)g_ps_phase[3],
                 (long long)g_ps_phase[4], (long long)g_ps_phase[5], (long long)g_ps_phase[6], (long long)g_ps_phase[7], (long long)g_ps_phase[8], (long long)g_ps_phase[9]);
+    } else {                                               /* no vblank measured (macOS, a hidden window): the ticks are the program's clock */
+        fprintf(out, "display: our own clock (ticks for %d fps); presents held for their tick %lld, late frames presented at once %lld\n", g_pace_hz, (long long)g_hold_n, (long long)g_hold_late);
+        pace_stat_line(out, "all frames", 0, 0);
+        pace_stat_line(out, "fight frames", 1, 0);
     }
     l1_report(out);
     nvn_gl_report(out);

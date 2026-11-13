@@ -1,4 +1,4 @@
-/* Linux build only: the Win32 functions plat.h declares (threads and waitable handles, memory regions, fibers, modules,
+/* Linux and macOS builds: the Win32 functions plat.h declares (threads and waitable handles, memory regions, fibers, modules,
  * files). Behaviour follows what the runtime's call sites rely on, not all of Win32; the limits are marked "shortcut:". */
 #ifndef _WIN32
 #ifndef _GNU_SOURCE
@@ -12,14 +12,31 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <fnmatch.h>
+#include <sys/stat.h>
+#ifdef __APPLE__
+/* [witchtime] macOS (Apple silicon). What differs from Linux, each at its place below: thread ids, timed waits (no
+ * CLOCK_MONOTONIC condition variables), fibers (a context switch of our own: ucontext is deprecated there), 16 KB pages
+ * (plat_mprotect), the guest's fixed addresses (plat_guest_space), the memory map (mach_vm_region for /proc/self/maps),
+ * the write watch (write faults for userfaultfd), the libraries' names. */
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <mach-o/dyld.h>
+#include <pthread/qos.h>
+#define st_mtim st_mtimespec
+#define st_atim st_atimespec
+#define st_ctim st_ctimespec
+extern void *__dso_handle;                    /* this module's Mach-O header */
+#define SELF_MODULE ((HMODULE)&__dso_handle)
+static DWORD self_tid(void) { uint64_t id = 0; pthread_threadid_np(NULL, &id); return (DWORD)id; }
+#else
 #include <linux/fs.h>
 #include <linux/userfaultfd.h>
 #include <sys/ioctl.h>
 #include <sys/random.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
-#ifndef PAGEMAP_SCAN                          /* [witchtime] Linux 6.7's uapi, for older kernel headers (the release builds
+#endif
+#if !defined(__APPLE__) && !defined(PAGEMAP_SCAN)                          /* [witchtime] Linux 6.7's uapi, for older kernel headers (the release builds
                                                  on Ubuntu 22.04); whether the kernel has it is asked at run time */
 #define PAGEMAP_SCAN _IOWR('f', 16, struct pm_scan_arg)
 #define PAGE_IS_WRITTEN (1 << 1)
@@ -36,8 +53,12 @@ struct pm_scan_arg { __u64 size, flags, start, end, walk_end, vec, vec_len, max_
 #define UFFD_FEATURE_WP_ASYNC (1 << 15)
 #endif
 
+#ifndef __APPLE__
 /* [witchtime] the start of this module: the program, or libwitchtime.so when the launcher runs the game in its process */
 extern const char __ehdr_start __attribute__((visibility("hidden")));
+#define SELF_MODULE ((HMODULE)&__ehdr_start)
+static DWORD self_tid(void) { return (DWORD)syscall(SYS_gettid); }
+#endif
 
 static int64_t mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; }
 static struct timespec ns_to_ts(int64_t ns) { struct timespec ts = { ns / 1000000000, ns % 1000000000 }; return ts; }
@@ -72,12 +93,27 @@ static PH *ph_new(int kind, int refs) {
     if (!h) return NULL;
     h->kind = kind; h->refs = refs;
     pthread_mutex_init(&h->m, NULL);
+#ifdef __APPLE__
+    pthread_cond_init(&h->cv, NULL);   /* waits are relative there (ph_wait_until) */
+#else
     pthread_condattr_t ca;
     pthread_condattr_init(&ca);
     pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
     pthread_cond_init(&h->cv, &ca);
     pthread_condattr_destroy(&ca);
+#endif
     return h;
+}
+/* waits on h->cv until the monotonic time `until` (ns) at the latest */
+static void ph_wait_until(PH *h, int64_t until) {
+#ifdef __APPLE__
+    int64_t left = until - mono_ns();
+    struct timespec ts = ns_to_ts(left > 0 ? left : 0);
+    pthread_cond_timedwait_relative_np(&h->cv, &h->m, &ts);
+#else
+    struct timespec ts = ns_to_ts(until);
+    pthread_cond_timedwait(&h->cv, &h->m, &ts);
+#endif
 }
 static void ph_release(PH *h) {
     if (__atomic_sub_fetch(&h->refs, 1, __ATOMIC_ACQ_REL)) return;
@@ -86,7 +122,10 @@ static void ph_release(PH *h) {
 
 static void *thread_entry(void *p) {
     PH *h = p;
-    h->tid = (pid_t)syscall(SYS_gettid);
+    h->tid = (pid_t)self_tid();
+#ifdef __APPLE__
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);   /* the performance cores: every runtime thread serves the frame */
+#endif
     pthread_mutex_lock(&h->m);
     while (h->suspended) pthread_cond_wait(&h->cv, &h->m);
     pthread_mutex_unlock(&h->m);
@@ -106,7 +145,8 @@ HANDLE CreateThread(SECURITY_ATTRIBUTES *sa, SIZE_T stack, LPTHREAD_START_ROUTIN
     pthread_attr_t at;
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    pthread_attr_setstacksize(&at, stack ? stack : (SIZE_T)8 << 20);   /* Windows' default is 1 MB; the guest runs on its own stacks */
+    stack = stack ? (stack + 0xffff) & ~(SIZE_T)0xffff : (SIZE_T)8 << 20;   /* whole pages of any host (macOS refuses others); Windows' default is 1 MB; the guest runs on its own stacks */
+    pthread_attr_setstacksize(&at, stack);
     pthread_t th;
     int e = pthread_create(&th, &at, thread_entry, h);
     pthread_attr_destroy(&at);
@@ -115,7 +155,7 @@ HANDLE CreateThread(SECURITY_ATTRIBUTES *sa, SIZE_T stack, LPTHREAD_START_ROUTIN
     return h;
 }
 HANDLE GetCurrentThread(void) { return PSEUDO_THREAD; }
-DWORD GetCurrentThreadId(void) { return (DWORD)syscall(SYS_gettid); }
+DWORD GetCurrentThreadId(void) { return self_tid(); }
 DWORD GetThreadId(HANDLE h) {
     if (h == PSEUDO_THREAD) return GetCurrentThreadId();
     PH *p = h;
@@ -214,8 +254,7 @@ DWORD WaitForSingleObject(HANDLE h, DWORD ms) {
         if (until == INT64_MAX) pthread_cond_wait(&p->cv, &p->m);
         else {
             if (mono_ns() >= deadline) { pthread_mutex_unlock(&p->m); return WAIT_TIMEOUT; }
-            struct timespec ts = ns_to_ts(until);
-            pthread_cond_timedwait(&p->cv, &p->m, &ts);
+            ph_wait_until(p, until);
         }
     }
     ph_consume(p);
@@ -280,9 +319,31 @@ BOOL InitOnceExecuteOnce(INIT_ONCE *once, BOOL (*fn)(INIT_ONCE *, PVOID, PVOID *
 
 /* ---------------------------------------------------------------- fibers */
 DWORD FlsAlloc(void (*dtor)(PVOID)) { pthread_key_t k; return pthread_key_create(&k, dtor) ? FLS_OUT_OF_INDEXES : (DWORD)k; }
+#ifdef __APPLE__
+/* [witchtime] macOS: ucontext is deprecated there, and swapcontext makes two system calls for the signal mask. A fiber's
+ * context is what AAPCS64 keeps across a call: x19..x28, the frame pointer, the return address, the stack pointer and
+ * d8..d15. wt_fiber_swap saves it in `from` and continues `to`; a new fiber starts in wt_fiber_start with its Fiber in
+ * x19. (x18 is the system's and never touched.) */
+typedef struct { uint64_t x[12], sp, d[8]; } FiberCtx;      /* x19..x28, x29, x30 */
+void wt_fiber_swap(FiberCtx *from, const FiberCtx *to);
+void wt_fiber_start(void);
+__asm__(".text\n.p2align 2\n.globl _wt_fiber_swap\n_wt_fiber_swap:\n"
+        "  stp x19, x20, [x0, #0]\n  stp x21, x22, [x0, #16]\n  stp x23, x24, [x0, #32]\n  stp x25, x26, [x0, #48]\n"
+        "  stp x27, x28, [x0, #64]\n  stp x29, x30, [x0, #80]\n  mov x9, sp\n  str x9, [x0, #96]\n"
+        "  stp d8, d9, [x0, #104]\n  stp d10, d11, [x0, #120]\n  stp d12, d13, [x0, #136]\n  stp d14, d15, [x0, #152]\n"
+        "  ldp x19, x20, [x1, #0]\n  ldp x21, x22, [x1, #16]\n  ldp x23, x24, [x1, #32]\n  ldp x25, x26, [x1, #48]\n"
+        "  ldp x27, x28, [x1, #64]\n  ldp x29, x30, [x1, #80]\n  ldr x9, [x1, #96]\n  mov sp, x9\n"
+        "  ldp d8, d9, [x1, #104]\n  ldp d10, d11, [x1, #120]\n  ldp d12, d13, [x1, #136]\n  ldp d14, d15, [x1, #152]\n"
+        "  ret\n"
+        ".globl _wt_fiber_start\n_wt_fiber_start:\n  mov x0, x19\n  bl _wt_fiber_run\n  brk #1\n");
+typedef struct Fiber { FiberCtx uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
+static __thread Fiber *t_fiber;
+void wt_fiber_run(Fiber *f) { f->fn(f->arg); _exit(70); }   /* a fiber function never returns (Windows ends the thread) */
+#else
 typedef struct Fiber { ucontext_t uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
 static __thread Fiber *t_fiber;
 static void fiber_entry(void) { t_fiber->fn(t_fiber->arg); _exit(70); }   /* a fiber function never returns (Windows ends the thread) */
+#endif
 LPVOID ConvertThreadToFiber(LPVOID arg) {
     Fiber *f = calloc(1, sizeof *f);
     if (f) { f->arg = arg; t_fiber = f; }
@@ -296,17 +357,27 @@ LPVOID CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_START_R
     f->stack = mmap(NULL, f->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
     if (f->stack == MAP_FAILED) { free(f); return NULL; }
     f->fn = fn; f->arg = arg;
+#ifdef __APPLE__
+    f->uc.x[0] = (uint64_t)(uintptr_t)f;                                             /* x19 */
+    f->uc.x[11] = (uint64_t)(uintptr_t)wt_fiber_start;                               /* x30 */
+    f->uc.sp = ((uint64_t)(uintptr_t)f->stack + f->stack_size) & ~(uint64_t)15;
+#else
     getcontext(&f->uc);
     f->uc.uc_stack.ss_sp = f->stack;
     f->uc.uc_stack.ss_size = f->stack_size;
     f->uc.uc_link = NULL;
     makecontext(&f->uc, fiber_entry, 0);
+#endif
     return f;
 }
 void SwitchToFiber(LPVOID fiber) {
     Fiber *from = t_fiber, *to = fiber;
     t_fiber = to;
+#ifdef __APPLE__
+    wt_fiber_swap(&from->uc, &to->uc);
+#else
     swapcontext(&from->uc, &to->uc);
+#endif
 }
 void DeleteFiber(LPVOID fiber) {
     Fiber *f = fiber;
@@ -320,6 +391,81 @@ static Region *g_regions;
 static size_t g_nregions, g_cap;
 static pthread_mutex_t g_reg_lock = PTHREAD_MUTEX_INITIALIZER;
 static size_t page_up(size_t n) { return (n + 4095) & ~(size_t)4095; }
+#ifdef __APPLE__
+/* [witchtime] mprotect for 4 KB ranges on a host with larger pages (16 KB on Apple silicon; mprotect refuses an address
+ * inside one). Access is given to every host page the range touches and taken only from the ones it covers whole: what
+ * the guest may reach it always can, and a protection that cannot be had exactly is the weaker one. */
+int plat_mprotect(void *p, size_t size, int prot) {
+    uintptr_t hp = (uintptr_t)getpagesize() - 1, a = (uintptr_t)p, e = a + size;
+    if (prot & PROT_WRITE) { a &= ~hp; e = (e + hp) & ~hp; }
+    else { a = (a + hp) & ~hp; e &= ~hp; }
+    return e > a ? mprotect((void *)a, e - a, prot) : 0;
+}
+/* [witchtime] The guest's fixed addresses (the image at 0x7100000000, the import area, the sdk at 0x7500000000) lie where
+ * macOS's own allocator reserves 12 GB at a place it picks anew for every process, between 0x7000000000 and 0x8000000000:
+ * about every second start it is in the way. plat_guest_space, called first thing, reserves the whole range; when part
+ * of it is taken it starts the program again (the same process, a new address space layout), a few milliseconds each
+ * time. plat_map_at then hands out pieces of the reservation. */
+#define GUEST_SPACE_LO 0x7100000000ull
+#define GUEST_SPACE_HI 0x7580000000ull
+static struct { uint64_t lo, hi; } g_guest_used[64];
+static int g_guest_nused, g_guest_reserved;
+void plat_guest_space(char **argv) {
+    mach_vm_address_t a = GUEST_SPACE_LO;
+    if (g_guest_reserved) return;
+    if (mach_vm_allocate(mach_task_self(), &a, GUEST_SPACE_HI - GUEST_SPACE_LO, VM_FLAGS_FIXED) == KERN_SUCCESS) {
+        mprotect((void *)(uintptr_t)GUEST_SPACE_LO, GUEST_SPACE_HI - GUEST_SPACE_LO, PROT_NONE);
+        g_guest_reserved = 1;
+        return;
+    }
+    const char *e = getenv("WT_GUEST_SPACE_TRY");
+    int n = e ? atoi(e) : 0;
+    char num[16], self[4096];
+    if (n >= 64 || !argv || !GetModuleFileNameA(NULL, self, sizeof self)) {
+        fprintf(stderr, "macOS has something of its own at the game's addresses (0x%llx..0x%llx) in %d starts in a row: start the game again\n", GUEST_SPACE_LO, GUEST_SPACE_HI, n + 1);
+        exit(1);
+    }
+    snprintf(num, sizeof num, "%d", n + 1);
+    setenv("WT_GUEST_SPACE_TRY", num, 1);
+    fflush(NULL);
+    execv(self, argv);
+    perror("execv"); exit(1);
+}
+void *plat_map_at(uint64_t addr, size_t size, int prot) {
+    mach_vm_address_t a = addr;
+    uintptr_t hp = (uintptr_t)getpagesize() - 1;
+    if (g_guest_reserved && !(addr & hp) && addr >= GUEST_SPACE_LO && addr + size <= GUEST_SPACE_HI) {   /* a piece of the reservation, once */
+        uint64_t hi = addr + ((size + hp) & ~(uint64_t)hp);
+        void *p = NULL;
+        pthread_mutex_lock(&g_reg_lock);
+        int free_ = g_guest_nused < 64;
+        for (int i = 0; i < g_guest_nused; i++) if (addr < g_guest_used[i].hi && g_guest_used[i].lo < hi) free_ = 0;
+        if (free_ && mmap((void *)(uintptr_t)addr, hi - addr, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED) {
+            g_guest_used[g_guest_nused].lo = addr; g_guest_used[g_guest_nused++].hi = hi;
+            p = (void *)(uintptr_t)addr;
+        }
+        pthread_mutex_unlock(&g_reg_lock);
+        return p;
+    }
+    if ((addr & hp) || mach_vm_allocate(mach_task_self(), &a, (size + hp) & ~hp, VM_FLAGS_FIXED) != KERN_SUCCESS) {
+        MEMORY_BASIC_INFORMATION mi;           /* say what is in the way */
+        for (uint64_t q = addr; q < addr + size && VirtualQuery((void *)(uintptr_t)q, &mi, sizeof mi); q = (uint64_t)(uintptr_t)mi.BaseAddress + mi.RegionSize)
+            if (mi.State != MEM_FREE) { fprintf(stderr, "plat: 0x%llx (+0x%zx) is not free: 0x%llx..0x%llx is mapped (protection %u)\n", (unsigned long long)addr, size,
+                                                (unsigned long long)(uintptr_t)mi.AllocationBase, (unsigned long long)((uintptr_t)mi.BaseAddress + mi.RegionSize), (unsigned)mi.Protect); break; }
+        return NULL;
+    }
+    if (prot != (PROT_READ | PROT_WRITE)) mprotect((void *)(uintptr_t)addr, (size + hp) & ~hp, prot);
+    return (void *)(uintptr_t)addr;
+}
+/* the contents of [a, a+n) dropped (they read as zero again): the whole host pages by mapping them anew, the rest cleared */
+static void drop_pages(uintptr_t a, size_t n) {
+    uintptr_t hp = (uintptr_t)getpagesize() - 1, lo = (a + hp) & ~hp, hi = (a + n) & ~hp;
+    if (hi <= lo) { memset((void *)a, 0, n); return; }
+    if (lo > a) memset((void *)a, 0, lo - a);
+    if (a + n > hi) memset((void *)hi, 0, a + n - hi);
+    mmap((void *)lo, hi - lo, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+}
+#endif
 static int to_prot(DWORD p) {
     switch (p & 0xff) {
     case PAGE_READONLY: return PROT_READ;
@@ -334,6 +480,111 @@ static int to_prot(DWORD p) {
  * pages written and protects them again in one call (Linux 6.7+; Wine emulates write watches the same way). Without it
  * (an older kernel, userfaultfd not allowed) a watched region answers "every page written": always correct, only slower. */
 static int g_uffd = -1, g_pagemap = -1, g_ww_state;   /* g_ww_state: 0 not tried, 1 on, 2 not available */
+#ifdef __APPLE__
+/* [witchtime] macOS has no userfaultfd and no way to ask which pages were written. A watched region is kept read-only
+ * instead: the first write to a page faults (SIGBUS), the handler notes the page as written and makes it writable, and the
+ * write runs again. Asking with a reset makes the pages read-only again. A host page is 16 KB, four of the guest's: a fault
+ * marks all four, a question clears only the ones it asked about but takes the write access of the whole host page, so
+ * the next write to any of the four marks them all again (two textures can share a host page).
+ * What the kernel itself writes into a watched page (a read() into it) would fail there instead of faulting: ww_touch
+ * marks and opens the pages first (ReadFile below). shortcut: a protection the guest set inside a watched region is lost
+ * at the first write there. WT_WW=0: not tracked, every watched page counts as written (the state before this). */
+#include <signal.h>
+typedef struct { uintptr_t base; size_t size; uint8_t *bits; volatile int lock; } WwRegion;      /* bits: one byte per host page, bit k = its guest page k written */
+static WwRegion g_ww[8];
+static volatile int g_nww;
+static struct sigaction g_ww_old[2];
+static void ww_lock(WwRegion *w) { while (__atomic_exchange_n(&w->lock, 1, __ATOMIC_ACQUIRE)) YieldProcessor(); }
+static void ww_unlock(WwRegion *w) { __atomic_store_n(&w->lock, 0, __ATOMIC_RELEASE); }
+static WwRegion *ww_region(uintptr_t a) {
+    for (int i = 0, n = g_nww; i < n; i++) if (a - g_ww[i].base < g_ww[i].size) return &g_ww[i];
+    return NULL;
+}
+static void ww_signal(int sig, siginfo_t *si, void *uc) {
+    uintptr_t a = (uintptr_t)si->si_addr, hs = (uintptr_t)getpagesize();
+    WwRegion *w = ww_region(a);
+    if (w) {
+        int e = errno;
+        ww_lock(w);
+        w->bits[(a - w->base) / hs] = 0xff;
+        mprotect((void *)(a & ~(hs - 1)), hs, PROT_READ | PROT_WRITE);
+        ww_unlock(w);
+        errno = e;
+        return;
+    }
+    struct sigaction *old = &g_ww_old[sig == SIGBUS];      /* not ours: the crash report (hostrt.c), or the system's default */
+    if ((old->sa_flags & SA_SIGINFO) && old->sa_sigaction) old->sa_sigaction(sig, si, uc);
+    else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) old->sa_handler(sig);
+    else { signal(sig, SIG_DFL); }                         /* the instruction faults again, without us */
+}
+/* [a, a+n) written and writable, without a fault: before the kernel writes there */
+static void ww_touch(uintptr_t a, size_t n) {
+    uintptr_t hs = (uintptr_t)getpagesize();
+    WwRegion *w = n ? ww_region(a) : NULL;
+    if (!w) return;
+    uintptr_t lo = a & ~(hs - 1), hi = (a + n + hs - 1) & ~(hs - 1);
+    if (hi > w->base + w->size) hi = w->base + w->size;
+    ww_lock(w);
+    memset(w->bits + (lo - w->base) / hs, 0xff, (hi - lo) / hs);
+    mprotect((void *)lo, hi - lo, PROT_READ | PROT_WRITE);
+    ww_unlock(w);
+}
+/* a new watched region [p, p+size): nothing written yet */
+static int ww_track(uintptr_t p, size_t size) {
+    const char *e = getenv("WT_WW");
+    uintptr_t hs = (uintptr_t)getpagesize();
+    pthread_mutex_lock(&g_reg_lock);
+    int ok = !(e && !atoi(e)) && g_nww < 8 && !(p & (hs - 1));
+    if (ok && !g_ww_state) {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = ww_signal; sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &g_ww_old[0]); sigaction(SIGBUS, &sa, &g_ww_old[1]);
+    }
+    WwRegion *w = &g_ww[g_nww];
+    if (ok && (w->bits = calloc((size + hs - 1) / hs, 1)) != NULL) {
+        w->base = p; w->size = (size + hs - 1) & ~(hs - 1); w->lock = 0;
+        mprotect((void *)p, w->size, PROT_READ);
+        __atomic_store_n(&g_nww, g_nww + 1, __ATOMIC_RELEASE);
+    } else ok = 0;
+    if (!g_ww_state || (!ok && g_ww_state == 1)) printf(ok ? "plat: write watch tracked by write faults (macOS: watched pages are read-only until written)\n"
+                                                           : "plat: write watch NOT tracked (WT_WW=0, or no room): every watched page counts as written\n");
+    g_ww_state = ok ? 1 : 2;
+    pthread_mutex_unlock(&g_reg_lock);
+    return ok;
+}
+static void ww_untrack(uintptr_t p) {
+    WwRegion *w = ww_region(p);
+    if (w && w->base == p) { ww_lock(w); w->size = 0; ww_unlock(w); }      /* (its slot and bits are not used again) */
+}
+/* from now on [a, a+n) counts as not written; with addrs, the guest pages of it that were written are listed first
+ * (at most cap, *count of them: the pages past a full list keep their state) */
+static int ww_take(uintptr_t a, size_t n, int reset, PVOID *addrs, ULONG_PTR cap, ULONG_PTR *count) {
+    uintptr_t hs = (uintptr_t)getpagesize(), end = a + n;
+    WwRegion *w = ww_region(a);
+    ULONG_PTR k = 0;
+    if (!w) return 0;
+    if (end > w->base + w->size) end = w->base + w->size;
+    ww_lock(w);
+    for (uintptr_t hp = a & ~(hs - 1), run = 0; ; hp += hs) {
+        int cleared = 0, more = hp < end && (!addrs || k < cap);
+        for (uintptr_t g = hp; more && g < hp + hs; g += 4096) {
+            uint8_t bit = (uint8_t)(1u << ((g - hp) / 4096)), *b = &w->bits[(hp - w->base) / hs];
+            if (g + 4096 <= a || g >= end || !(*b & bit)) continue;
+            if (addrs) { if (k == cap) break; addrs[k++] = (PVOID)g; }
+            if (reset) { *b &= (uint8_t)~bit; cleared = 1; }
+        }
+        if (cleared && !run) run = hp;
+        if (run && !cleared) { mprotect((void *)run, hp - run, PROT_READ); run = 0; }      /* a run of host pages ends */
+        if (!more) break;
+    }
+    ww_unlock(w);
+    if (count) *count = k;
+    return 1;
+}
+static int ww_protect(uintptr_t a, size_t n) { return ww_take(a, n, 1, NULL, 0, NULL); }
+#else
 static int ww_available(void) {
     pthread_mutex_lock(&g_reg_lock);
     if (!g_ww_state) {
@@ -354,6 +605,7 @@ static int ww_protect(uintptr_t a, size_t n) {         /* from now on [a, a+n) c
     struct uffdio_writeprotect wp = { .range = { a, n }, .mode = UFFDIO_WRITEPROTECT_MODE_WP };
     return ioctl(g_uffd, UFFDIO_WRITEPROTECT, &wp) == 0;
 }
+#endif
 static int ww_of(uintptr_t a, size_t n) {              /* the write watch of the region holding [a, a+n), 0 = none */
     int ww = 0;
     pthread_mutex_lock(&g_reg_lock);
@@ -367,17 +619,38 @@ LPVOID VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD prot) {
     if (!(type & MEM_RESERVE)) {               /* commit inside a reservation */
         uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
         size_t n = page_up((uintptr_t)addr + size - a);
-        if (mprotect((void *)a, n, to_prot(prot))) return NULL;
+#ifdef __APPLE__
+        if (ww_of(a, n) == 1 && (to_prot(prot) & PROT_WRITE)) {   /* watched: readable, and not written (the first write opens it) */
+            WwRegion *w = ww_region(a);
+            uintptr_t hs = (uintptr_t)getpagesize(), lo = a & ~(hs - 1), hi = (a + n + hs - 1) & ~(hs - 1);
+            ww_lock(w);
+            for (uintptr_t g = a; g < a + n; g += 4096) w->bits[(g - w->base) / hs] &= (uint8_t)~(1u << ((g & (hs - 1)) / 4096));
+            mprotect((void *)lo, hi - lo, PROT_READ);
+            ww_unlock(w);
+            return addr;
+        }
+#endif
+        if (plat_mprotect((void *)a, n, to_prot(prot))) return NULL;
         if (ww_of(a, n) == 1) ww_protect(a, n);  /* newly committed pages are not written (as on Windows) */
         return addr;
     }
+#ifdef __APPLE__
+    void *p = addr ? plat_map_at((uintptr_t)addr, size, (type & MEM_COMMIT) ? to_prot(prot) : PROT_NONE)
+                   : mmap(NULL, size, (type & MEM_COMMIT) ? to_prot(prot) : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (!p) p = MAP_FAILED;
+#else
     int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | (addr ? MAP_FIXED_NOREPLACE : 0);
     void *p = mmap(addr, size, (type & MEM_COMMIT) ? to_prot(prot) : PROT_NONE, flags, -1, 0);
+#endif
     if (p == MAP_FAILED || (addr && p != addr)) { if (p != MAP_FAILED) munmap(p, size); return NULL; }
     int ww = 0;
     if (type & MEM_WRITE_WATCH) {
+#ifdef __APPLE__
+        ww = ww_track((uintptr_t)p, size) ? 1 : 2;
+#else
         struct uffdio_register reg = { .range = { (uintptr_t)p, size }, .mode = UFFDIO_REGISTER_MODE_WP };
         ww = ww_available() && ioctl(g_uffd, UFFDIO_REGISTER, &reg) == 0 && ww_protect((uintptr_t)p, size) ? 1 : 2;
+#endif
     }
     pthread_mutex_lock(&g_reg_lock);
     if (g_nregions == g_cap) { g_cap = g_cap ? g_cap * 2 : 256; g_regions = realloc(g_regions, g_cap * sizeof *g_regions); }
@@ -389,8 +662,13 @@ BOOL VirtualFree(LPVOID addr, SIZE_T size, DWORD type) {
     if (type & MEM_DECOMMIT) {                 /* back to reserved: contents dropped, as on Windows */
         uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
         size_t n = page_up((uintptr_t)addr + size - a);
+#ifdef __APPLE__
+        drop_pages(a, n);                      /* MADV_DONTNEED keeps the contents there */
+        return TRUE;
+#else
         madvise((void *)a, n, MADV_DONTNEED);
         return mprotect((void *)a, n, PROT_NONE) == 0;
+#endif
     }
     pthread_mutex_lock(&g_reg_lock);
     for (size_t i = 0; i < g_nregions; i++)
@@ -398,6 +676,9 @@ BOOL VirtualFree(LPVOID addr, SIZE_T size, DWORD type) {
             Region r = g_regions[i];
             g_regions[i] = g_regions[--g_nregions];
             pthread_mutex_unlock(&g_reg_lock);
+#ifdef __APPLE__
+            if (r.ww == 1) ww_untrack(r.base);
+#endif
             return munmap(addr, r.size) == 0;
         }
     pthread_mutex_unlock(&g_reg_lock);
@@ -408,13 +689,36 @@ BOOL VirtualProtect(LPVOID addr, SIZE_T size, DWORD prot, DWORD *old) {
     MEMORY_BASIC_INFORMATION mi;
     if (old) *old = VirtualQuery(addr, &mi, sizeof mi) ? mi.Protect : PAGE_NOACCESS;
     uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
-    return mprotect((void *)a, page_up((uintptr_t)addr + size - a), to_prot(prot)) == 0;
+#ifdef __APPLE__
+    if ((to_prot(prot) & PROT_WRITE) && ww_region(a)) { ww_touch(a, page_up((uintptr_t)addr + size - a)); return TRUE; }      /* writable there means written */
+#endif
+    return plat_mprotect((void *)a, page_up((uintptr_t)addr + size - a), to_prot(prot)) == 0;
 }
 /* shortcut: reads /proc/self/maps on every call (fine for the runtime's diagnostics; cache it if a hot path calls it) */
 SIZE_T VirtualQuery(LPCVOID addr, MEMORY_BASIC_INFORMATION *mi, SIZE_T len) {
     if (len < sizeof *mi) return 0;
     memset(mi, 0, sizeof *mi);
     uintptr_t a = (uintptr_t)addr, page = a & ~(uintptr_t)4095;
+#ifdef __APPLE__
+    {   /* macOS: the region at or after the address, from the kernel */
+        mach_vm_address_t lo = a;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t bi;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t obj = MACH_PORT_NULL;
+        mi->BaseAddress = (void *)page; mi->State = MEM_FREE; mi->Protect = PAGE_NOACCESS; mi->RegionSize = 4096;
+        if (mach_vm_region(mach_task_self(), &lo, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&bi, &count, &obj) != KERN_SUCCESS) return sizeof *mi;
+        if (obj != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), obj);
+        if (a < lo) { mi->RegionSize = (uintptr_t)lo - page; return sizeof *mi; }
+        int r = (bi.protection & VM_PROT_READ) != 0, w = (bi.protection & VM_PROT_WRITE) != 0, x = (bi.protection & VM_PROT_EXECUTE) != 0;
+        mi->AllocationBase = (void *)(uintptr_t)lo; mi->RegionSize = (uintptr_t)(lo + size) - page;
+        mi->Protect = !r ? PAGE_NOACCESS : x ? (w ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : w ? PAGE_READWRITE : PAGE_READONLY;
+        mi->AllocationProtect = mi->Protect;
+        mi->State = r ? MEM_COMMIT : MEM_RESERVE;
+        mi->Type = 0x20000;
+        return sizeof *mi;
+    }
+#endif
     FILE *f = fopen("/proc/self/maps", "r");
     if (!f) return 0;
     char line[512], perm[8];
@@ -455,6 +759,7 @@ UINT GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addrs, ULONG_PTR
     if (!ww) return 1;
     *gran = 4096;
     ULONG_PTR cap = *count, n = 0;
+#ifndef __APPLE__
     if (ww == 1) {
         struct page_region vec[256];
         while (start < end && n < cap) {
@@ -471,6 +776,9 @@ UINT GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addrs, ULONG_PTR
         if (ww == 1) { *count = n; return 0; }
         start = (uintptr_t)base & ~(uintptr_t)4095;
     }
+#else
+    if (ww == 1 && ww_take(start, end - start, (flags & WRITE_WATCH_FLAG_RESET) != 0, addrs, cap, &n)) { *count = n; return 0; }
+#endif
     for (uintptr_t pg = start; pg < end && n < cap; pg += 4096) addrs[n++] = (void *)pg;   /* untracked: every page */
     *count = n;
     return 0;
@@ -496,11 +804,26 @@ void GetSystemInfo(SYSTEM_INFO *si) {
 /* ---------------------------------------------------------------- modules and process */
 HMODULE LoadLibraryA(LPCSTR name) {
     static const char *const map[][2] = {      /* the Windows DLLs the runtime opens by name, and their Linux libraries */
+#ifdef __APPLE__
+        {"vulkan-1.dll", "libvulkan.1.dylib"}, {"wt_glslang.dll", "libwt_glslang.dylib"}, {"SDL3.dll", "libSDL3.0.dylib"}, {"libopus-0.dll", "libopus.0.dylib"},
+#else
         {"vulkan-1.dll", "libvulkan.so.1"}, {"wt_glslang.dll", "libwt_glslang.so"}, {"SDL3.dll", "libSDL3.so.0"}, {"libopus-0.dll", "libopus.so.0"},
+#endif
     };
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
         if (!strcasecmp(name, map[i][0])) {
             void *h = dlopen(map[i][1], RTLD_NOW);
+#ifdef __APPLE__
+            {   /* macOS: dyld does not look in Homebrew's folder by itself */
+                const char *brew = getenv("HOMEBREW_PREFIX");
+                const char *const dirs[] = { brew && *brew ? brew : "/opt/homebrew", "/usr/local" };
+                for (size_t d = 0; !h && d < sizeof dirs / sizeof dirs[0]; d++) {
+                    char path[MAX_PATH + 64];
+                    snprintf(path, sizeof path, "%s/lib/%s", dirs[d], map[i][1]);
+                    h = dlopen(path, RTLD_NOW);
+                }
+            }
+#endif
             if (!h && strchr(map[i][1], '/') == NULL) {   /* beside the program, like a DLL */
                 char path[MAX_PATH + 64];
                 DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
@@ -513,14 +836,22 @@ HMODULE LoadLibraryA(LPCSTR name) {
     if (n > 4 && !strcasecmp(name + n - 4, ".dll")) return NULL;   /* a Windows system DLL (gdi32, dwmapi, ...): not here */
     return dlopen(name, RTLD_NOW);
 }
-void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == (HMODULE)&__ehdr_start ? RTLD_DEFAULT : m, name); }
-HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : (HMODULE)&__ehdr_start; }
+void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == SELF_MODULE ? RTLD_DEFAULT : m, name); }
+HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : SELF_MODULE; }
 DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     (void)m;   /* the runtime asks for its own program only */
+#ifdef __APPLE__
+    char raw[4096], real[4096];
+    uint32_t cap = sizeof raw;
+    if (!n || _NSGetExecutablePath(raw, &cap) || !realpath(raw, real) || strlen(real) >= n) { if (n) out[0] = 0; return 0; }
+    strcpy(out, real);
+    return (DWORD)strlen(out);
+#else
     ssize_t len = readlink("/proc/self/exe", out, n ? n - 1 : 0);
     if (len < 0) { if (n) out[0] = 0; return 0; }
     out[len] = 0;
     return (DWORD)len;
+#endif
 }
 /* [witchtime] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libwitchtime.so) sets
  * the hook to see the exit first: it goes back to its own screens instead of ending with the game. */
@@ -658,6 +989,9 @@ BOOL ReadFile(HANDLE h, LPVOID buf, DWORD n, DWORD *got, OVERLAPPED *ov) {
     if (got) *got = 0;
     size_t done = 0;
     off_t off = ov ? (off_t)(((uint64_t)ov->OffsetHigh << 32) | ov->Offset) : 0;
+#ifdef __APPLE__
+    ww_touch((uintptr_t)buf, n);   /* the kernel's copy into a watched page does not fault: it fails */
+#endif
     while (done < n) {   /* like ReadFile on a disk file: everything up to the end, short only at the end */
         ssize_t r = ov ? pread(fd, (uint8_t *)buf + done, n - done, off + (off_t)done) : read(fd, (uint8_t *)buf + done, n - done);
         if (r < 0) { if (errno == EINTR) continue; fail_errno(); if (got) *got = (DWORD)done; return FALSE; }
@@ -812,7 +1146,9 @@ int WideCharToMultiByte(UINT cp, DWORD flags, LPCWSTR in, int n, LPSTR out, int 
     }
     return count;
 }
-__attribute__((constructor)) static void utf8_locale(void) { if (!setlocale(LC_CTYPE, "C.UTF-8")) setlocale(LC_CTYPE, ""); }
+__attribute__((constructor)) static void utf8_locale(void) {
+    if (!setlocale(LC_CTYPE, "C.UTF-8") && !setlocale(LC_CTYPE, "en_US.UTF-8")) setlocale(LC_CTYPE, "");   /* macOS has no C.UTF-8 */
+}
 
 /* ---------------------------------------------------------------- file mappings (read-only) */
 HANDLE CreateFileMappingA(HANDLE file, SECURITY_ATTRIBUTES *sa, DWORD prot, DWORD hi, DWORD lo, LPCSTR name) {
@@ -862,22 +1198,33 @@ void GetLocalTime(SYSTEMTIME *st) { struct timespec ts; struct tm t; clock_getti
 void GetSystemTime(SYSTEMTIME *st) { struct timespec ts; struct tm t; clock_gettime(CLOCK_REALTIME, &ts); gmtime_r(&ts.tv_sec, &t); to_systemtime(&t, ts.tv_nsec, st); }
 BOOL GetProcessAffinityMask(HANDLE p, DWORD_PTR *proc, DWORD_PTR *sys) {
     (void)p;
+#ifdef __APPLE__
+    long n = sysconf(_SC_NPROCESSORS_ONLN);    /* macOS has no affinity: every core */
+    *proc = *sys = n >= 64 ? ~(DWORD_PTR)0 : ((DWORD_PTR)1 << (n > 0 ? n : 1)) - 1;
+    return TRUE;
+#else
     cpu_set_t set;
     *proc = *sys = 0;
     if (sched_getaffinity(0, sizeof set, &set)) return FALSE;
     for (int i = 0; i < 64; i++) if (CPU_ISSET(i, &set)) *proc |= (DWORD_PTR)1 << i;
     *sys = *proc;
     return TRUE;
+#endif
 }
 BOOLEAN SystemFunction036(PVOID buf, ULONG n) {
+#ifdef __APPLE__
+    arc4random_buf(buf, n);
+    return TRUE;
+#else
     for (ULONG done = 0; done < n;) {
         ssize_t r = getrandom((uint8_t *)buf + done, n - done, 0);
         if (r < 0) { if (errno == EINTR) continue; return FALSE; }
         done += (ULONG)r;
     }
     return TRUE;
+#endif
 }
-/* __argc / __argv as the MSVC and mingw C runtimes have them: glibc hands every constructor the program's arguments */
+/* __argc / __argv as the MSVC and mingw C runtimes have them: glibc hands every constructor the program's arguments (dyld too) */
 int __argc;
 char **__argv;
 __attribute__((constructor)) static void save_args(int argc, char **argv) { __argc = argc; __argv = argv; }

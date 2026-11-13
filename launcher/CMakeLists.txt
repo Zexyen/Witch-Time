@@ -1,5 +1,6 @@
 # Witch Time: the launcher. Builds the game from the player's dump (wtbuild setup) and plays it in the same window
-# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
+# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux, Windows (llvm-mingw) and macOS (the game runs as
+# build/witch-time-game there, as on Windows).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
 #     cmake --build build/launcher                      -> build/witch-time (Windows: build/witch-time.exe, and
@@ -53,8 +54,21 @@ target_compile_definitions(witch-time PRIVATE RMLUI_SDL_VERSION_MAJOR=3 WT_VERSI
 target_link_libraries(witch-time PRIVATE RmlUi::Core SDL3::SDL3 ${CMAKE_DL_LIBS})
 # beside witch-time-game, game.so and libwitchtime.so: the launcher finds the repository from its own place (build/..)
 # $ORIGIN: a release ships libSDL3.so.0 beside it, which libwitchtime.so (also $ORIGIN) then shares
+if(APPLE)
+	set(WT_ORIGIN "@loader_path")
+else()
+	set(WT_ORIGIN "$ORIGIN")
+endif()
 set_target_properties(witch-time PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
-	BUILD_RPATH "$ORIGIN")
+	BUILD_RPATH "${WT_ORIGIN}")
+if(APPLE)
+	# build/Witch Time.app: the same program in a bundle, for Finder and the Dock (macos/make_app.sh)
+	configure_file(macos/Info.plist.in "${CMAKE_CURRENT_BINARY_DIR}/Info.plist" @ONLY)
+	add_custom_command(TARGET witch-time POST_BUILD
+		COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/macos/make_app.sh" "$<TARGET_FILE:witch-time>" "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+			"${CMAKE_CURRENT_SOURCE_DIR}/ui/img/icon.png" "${CMAKE_CURRENT_SOURCE_DIR}/../build/Witch Time.app"
+		VERBATIM)
+endif()
 if(WIN32)
 	# a window program (no console), with UTF-8 as its code page (win32/witch-time.rc); C++ runtime linked in, so that it
 	# needs nothing beside it but SDL3.dll

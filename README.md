@@ -80,6 +80,26 @@ Building the runtime yourself (a checkout, or a changed `runtime\`) needs llvm-m
 FFmpeg, glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-builds all of it on Linux
 (`.github/workflows/release.yml`, job `windows`): `wtbuild runtime --target windows --out prebuilt`.
 
+## Build (macOS)
+
+Experimental, from a checkout only (no release has macOS files yet): a Mac with Apple silicon. The game's AArch64 code
+is translated to C and compiled for the Mac's own AArch64 processor; the picture goes through Vulkan on MoltenVK
+(Metal). `docs/STATUS.md`, "macOS", says how far it runs.
+
+It needs Apple's Command Line Tools (`xcode-select --install`: clang, the linker and the macOS SDK) and, from
+[Homebrew](https://brew.sh), the build tools and the runtime's libraries:
+
+```
+brew install rust sdl3 molten-vk vulkan-loader vulkan-headers glslang spirv-tools ffmpeg
+cargo build --release --manifest-path tools/wtbuild/Cargo.toml
+tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
+```
+
+The link step builds the runtime there (`libwitchtime.dylib`, `witch-time-game`, `libwt_glslang.dylib`) and the game's
+own library, `build/game.dylib`. The launcher builds too (`launcher/README.md`; add `brew install cmake ninja
+freetype`): `build/witch-time`, and `build/Witch Time.app` for Finder and the Dock. It starts the game as
+`build/witch-time-game`, in a window of its own.
+
 ## Starting the game directly
 
 `witch-time --play` (Windows: `witch-time.exe --play`) skips the launcher's screens: it starts the game and closes

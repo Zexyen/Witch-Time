@@ -129,8 +129,9 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 		g.error = "Cannot open " + paths.run + ".";
 		return g;
 	}
-#ifdef _WIN32
-	// Windows: the runtime makes a window of its own (runtime/display.c), so the game always runs as a program of its own
+#if defined(_WIN32) || defined(__APPLE__)
+	// Windows: the runtime makes a window of its own (runtime/display.c), so the game always runs as a program of its own.
+	// macOS too: the game reads its window's events on its program's first thread (display_main_wait)
 	return g;
 #else
 	const std::string lib = build + "/libwitchtime.so";

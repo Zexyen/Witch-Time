@@ -1,5 +1,6 @@
-//! The `li        .map(|n| (n.strip_prefix("gen/").map_or_else(|| rt.join(n), |g| crate::layout::gen(repo).join(g)), objt.joink` step: build/game.so (Windows: game.dll) from the lifted objects and the player's own tables, beside the
-//! runtime (libwitchtime.so, witch-time-game, libwt_glslang.so; Windows: witch-time-game.exe, wt_glslang.dll).
+//! The `link` step: build/game.so (Windows: game.dll, macOS: game.dylib) from the lifted objects and the player's own tables, beside the
+//! runtime (libwitchtime.so, witch-time-game, libwt_glslang.so; Windows: witch-time-game.exe, wt_glslang.dll; macOS:
+//! libwitchtime.dylib, witch-time-game, libwt_glslang.dylib).
 //!
 //! The runtime holds nothing from the dump: the few values it needs from it (runtime/split) are data in game.so
 //! (runtime/wt_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
@@ -13,6 +14,12 @@
 //! start-up code and imports the few C functions it calls from the UCRT, which every Windows 10 and 11 has, through
 //! mingw-w64's libucrtbase.a (shipped in prebuilt/). So the player's PC needs only clang and lld there too, and builds
 //! the runtime itself only in a checkout (with llvm-mingw, SDL3, the Vulkan headers and glslang).
+//!
+//! macOS: Linux's split with Mach-O's means. A library there names the library each of its symbols comes from, which
+//! neither side can do for the other, so both are linked with `-undefined dynamic_lookup`: the symbols are looked up
+//! among everything loaded when the game starts. libwitchtime.dylib names game.dylib as a library it needs (a stand-in of
+//! that name at link time), so loading the runtime loads the game beside it. Apple's linker refuses a library without
+//! libSystem, so game.dylib links against it, which needs the macOS SDK (the Command Line Tools) on the player's Mac.
 
 use crate::compile::{run, tail};
 use crate::target::Target;
@@ -85,6 +92,20 @@ const LIBS: &[&str] = &[
     "-ldl",
     "-lpthread",
     "-lm",
+    "-lavformat",
+    "-lavcodec",
+    "-lswscale",
+    "-lswresample",
+    "-lavutil",
+];
+/// macOS: SDL3 and FFmpeg (Homebrew's), and the system's OpenGL framework for the GL names nvn_gl.c refers to
+const MAC_LIBS: &[&str] = &[
+    "-lSDL3",
+    "-framework",
+    "OpenGL",
+    "-framework",
+    "Foundation", // NSProcessInfo, through the Objective-C runtime (display.c no_app_nap)
+    "-lobjc",
     "-lavformat",
     "-lavcodec",
     "-lswscale",
@@ -183,6 +204,7 @@ fn runtime_files(t: Target) -> &'static [&'static str] {
     match t {
         Target::Linux => &["libwitchtime.so", "witch-time-game", "libwt_glslang.so", "game_shim_eh.o"],
         Target::Windows => &["witch-time-game.exe", "wt_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
+        Target::MacOS => &["libwitchtime.dylib", "witch-time-game", "libwt_glslang.dylib", "game_shim_eh.o"],
     }
 }
 pub const PREBUILT: &str = "prebuilt";
@@ -202,7 +224,8 @@ pub fn freestanding(repo: &Path) -> Vec<String> {
 
 /// the player's tables' flags after the target's, without the header folders (check-freestanding uses them too)
 pub fn table_flags(t: Target) -> Vec<String> {
-    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]);
+    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing"]);
+    flags.extend(t.cpu());
     if !t.windows() {
         flags.extend(strs(&["-fPIC", "-D__declspec(x)="]));
     }
@@ -326,7 +349,12 @@ pub fn build_runtime(
     if !t.windows() {
         flags.extend(["-I".to_string(), s(&rt.join("posix"))]);
     }
-    flags.extend(strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]));
+    if t.macos() {
+        flags.extend(["-I".to_string(), s(&rt.join("macos"))]); // what glibc and Mesa have and macOS lacks (malloc.h, GL/gl.h)
+    }
+    flags.extend(strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing"]));
+    flags.extend(t.cpu());
+    flags.extend(t.lib_dirs());
     if t.windows() {
         flags.push("-gcodeview".into()); // debug information in a PDB beside the program (crash addresses -> source)
     }
@@ -372,7 +400,8 @@ pub fn build_runtime(
 
     // 2. game.so's own part of the runtime: the calls back into the host, the landing-pad resume, host versions of
     // game functions (on Windows also game.dll's entry point: it is linked without the C runtime)
-    let mut a = strs(&["-c", "-O1", "-w", "-mcx16"]);
+    let mut a = strs(&["-c", "-O1", "-w"]);
+    a.extend(t.cpu());
     a.extend(if t.windows() {
         strs(&["-DWT_GAME_NOSTDLIB"])
     } else {
@@ -387,6 +416,9 @@ pub fn build_runtime(
 
     if t.windows() {
         return build_runtime_windows(repo, &cl, &jobs, out, objdir, log);
+    }
+    if t.macos() {
+        return build_runtime_macos(repo, &cl, &jobs, out, &stub, log);
     }
 
     // 3. libwitchtime.so, needing game.so (beside it, rpath $ORIGIN), linked against an empty one of that name: the
@@ -447,6 +479,74 @@ pub fn build_runtime(
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
         return Err("libwt_glslang.so did not build".into());
+    }
+    Ok(())
+}
+
+/// steps 3 to 5 of build_runtime for macOS (the module comment has the linking)
+fn build_runtime_macos(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], out: &Path, stub: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
+    let rt = repo.join("runtime");
+    let name = |n: &str| ["-Xlinker".to_string(), "-install_name".into(), "-Xlinker".into(), format!("@rpath/{}", n)];
+    let beside = strs(&["-Xlinker", "-rpath", "-Xlinker", "@loader_path"]);
+    let lookup = strs(&["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"]);
+
+    // 3. libwitchtime.dylib, needing game.dylib (beside it), linked against an empty one of that name
+    let stand_in = stub.join("game.dylib");
+    let mut a = strs(&["-shared", "-x", "c", "/dev/null"]);
+    a.extend(name("game.dylib"));
+    a.extend(["-o".into(), s(&stand_in)]);
+    let (code, o, _) = cl.run(&a);
+    if code != Some(0) {
+        log(tail(&o, 3000).to_string());
+        return Err("the stand-in game.dylib did not link".into());
+    }
+    let host = out.join("libwitchtime.dylib");
+    let mut a = strs(&["-shared", "-g"]);
+    a.extend(jobs.iter().map(|j| s(&j.1)));
+    a.extend(lookup.iter().cloned());
+    a.extend(["-Xlinker".into(), "-needed_library".into(), "-Xlinker".into(), s(&stand_in)]);
+    a.extend(beside.iter().cloned());
+    a.extend(name("libwitchtime.dylib"));
+    a.extend(cl.t.lib_dirs());
+    a.extend(strs(MAC_LIBS));
+    a.extend(["-o".into(), s(&host)]);
+    let (code, o, _) = cl.run(&a);
+    log(format!("libwitchtime.dylib: link exit {}", code.unwrap_or(-1)));
+    if code != Some(0) {
+        log(tail(&o, 6000).to_string());
+        return Err("libwitchtime.dylib did not link".into());
+    }
+
+    // 4. witch-time-game: the same runtime as a program of its own
+    let exe = out.join("witch-time-game");
+    let mut a = strs(&["-g"]);
+    a.extend([s(&rt.join("wt_main.c")), s(&host)]);
+    a.extend(beside.iter().cloned());
+    a.extend(["-o".into(), s(&exe)]);
+    let (code, o, _) = cl.run(&a);
+    log(format!("witch-time-game: link exit {}", code.unwrap_or(-1)));
+    if code != Some(0) {
+        log(tail(&o, 3000).to_string());
+        return Err("witch-time-game did not link".into());
+    }
+
+    // 5. the shader compiler shim; LoadLibraryA("wt_glslang.dll") opens it beside the program
+    let so = out.join("libwt_glslang.dylib");
+    let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
+    let mut a = strs(&["-shared", "-fPIC", "-O2", "-w", "-D__declspec(x)=", "-I"]);
+    a.extend([s(&rt.join("posix")), "-I".into(), s(&rt.join("macos")), "-I".into(), s(&rt)]);
+    a.extend(cl.t.lib_dirs());
+    a.push(s(&rt.join("vk_glslang_shim.c")));
+    a.extend(glslang.split_whitespace().map(String::from));
+    a.extend(strs(&["-lSPIRV-Tools-opt", "-lSPIRV-Tools"])); // the optimizer the shim runs there (vk_glslang_shim.c)
+    a.extend(lookup.iter().cloned()); // InitOnceExecuteOnce is the runtime's (plat_posix.c)
+    a.extend(name("libwt_glslang.dylib"));
+    a.extend(["-o".into(), s(&so)]);
+    let (code, o, _) = cl.run(&a);
+    log(format!("libwt_glslang.dylib: exit {}", code.unwrap_or(-1)));
+    if code != Some(0) {
+        log(tail(&o, 3000).to_string());
+        return Err("libwt_glslang.dylib did not build".into());
     }
     Ok(())
 }
@@ -595,8 +695,13 @@ fn link_game(
         log(format!("{}: the old one is in use (a witch-time-game.exe still running?), moved to old/", name));
     }
     let t0 = Instant::now();
-    let mut a = strs(&["-shared", "-nostdlib", "-fuse-ld=lld"]);
-    if !t.windows() {
+    let mut a = if t.macos() {
+        // with libSystem (Apple's linker wants it in every library); the rest is looked up when the game starts
+        strs(&["-shared", "-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup", "-Xlinker", "-install_name", "-Xlinker", "@rpath/game.dylib"])
+    } else {
+        strs(&["-shared", "-nostdlib", "-fuse-ld=lld"])
+    };
+    if t == Target::Linux {
         a.extend(strs(&["-Xlinker", "-soname=game.so"]));
     }
     a.push(s(shim));
@@ -608,7 +713,7 @@ fn link_game(
         a.push(s(&def));
         a.extend(implibs.iter().map(|p| s(p)));
     }
-    let builtins = cl.builtins();
+    let builtins = if t.macos() { None } else { cl.builtins() }; // macOS: clang links its own, with libSystem
     a.extend(builtins.iter().cloned());
     a.extend(["-o".into(), s(&dll)]);
     let (code, out, _) = cl.run(&a);
@@ -618,7 +723,7 @@ fn link_game(
         code.unwrap_or(-1),
         t0.elapsed().as_secs_f64(),
         objs.len(),
-        builtins.as_deref().unwrap_or("(none found)")
+        builtins.as_deref().unwrap_or(if t.macos() { "the compiler's" } else { "(none found)" })
     ));
     if code != Some(0) {
         log(tail(&out, 4000).to_string());
@@ -740,7 +845,11 @@ pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command)
     };
     link_game(repo, clang, t, env, &shim, &implibs, log)?;
     let mb = |f: &str| fs::metadata(build.join(f)).map(|m| m.len()).unwrap_or(0) as f64 / (1 << 20) as f64;
-    let host = if t.windows() { "witch-time-game.exe" } else { "libwitchtime.so" };
+    let host = match t {
+        Target::Windows => "witch-time-game.exe",
+        Target::MacOS => "libwitchtime.dylib",
+        Target::Linux => "libwitchtime.so",
+    };
     log(format!(
         "{}: {:.1} MB, {} {:.0} MB (TOOLCHAIN={})",
         s(&build.join(host)),
@@ -772,6 +881,9 @@ pub fn prebuilt_missing(repo: &Path) -> Vec<String> {
             })
             .filter(|d| ![repo.join("build"), repo.join(PREBUILT), sys.clone()].iter().any(|dir| dir.join(d).is_file()))
             .collect();
+    }
+    if cfg!(target_os = "macos") {
+        return vec![]; // no release ships a prebuilt runtime for macOS yet: the link step builds it
     }
     let mut c = Command::new("ldd");
     c.arg(repo.join(PREBUILT).join("libwitchtime.so")).env("LD_LIBRARY_PATH", repo.join("build"));
@@ -823,6 +935,7 @@ mod tests {
         let win = ["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"];
         assert_eq!(table_flags(Target::Windows), win);
         assert_eq!(table_flags(Target::Linux), [&win[..], &["-fPIC", "-D__declspec(x)="]].concat());
+        assert_eq!(table_flags(Target::MacOS), [&win[..4], &["-fPIC", "-D__declspec(x)="]].concat());
     }
 
     #[test]

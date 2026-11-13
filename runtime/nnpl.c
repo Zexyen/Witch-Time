@@ -97,6 +97,17 @@ static void load_font(unsigned type) {
                     if (t != type && g_fonts[t].data && !_stricmp(g_fonts[t].path, path)) data = g_fonts[t].data, size = g_fonts[t].size;
                 if (!data) data = read_file(path, &size);
             }
+#elif defined(__APPLE__)
+            /* macOS: Arial Unicode, one file with every language's letters; Arial where it is missing */
+            static const char *const k_mac[] = {"/System/Library/Fonts/Supplemental/Arial Unicode.ttf", "/Library/Fonts/Arial Unicode.ttf",
+                                                "/System/Library/Fonts/Supplemental/Arial.ttf"};
+            for (int i = 0; i < 3 && !data; i++) {
+                snprintf(path, MAX_PATH, "%s", k_mac[i]);
+                for (unsigned t = 0; t < FONT_TYPES && !data; t++)
+                    if (t != type && g_fonts[t].data && !strcmp(g_fonts[t].path, path)) data = g_fonts[t].data, size = g_fonts[t].size;
+                if (!data) data = read_file(path, &size);
+                if (data && !is_sfnt(data)) { _aligned_free(data); data = NULL; }
+            }
 #else
             /* Linux: fontconfig's sans-serif for the type's language (the same languages as the Windows list) */
             static const char *const k_lang[FONT_TYPES] = {"ja", "zh-cn", "zh-cn", "zh-tw", "ko", "en", "en"};

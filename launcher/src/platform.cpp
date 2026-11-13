@@ -214,6 +214,21 @@ bool change_dir(const std::string& path) { return chdir(path.c_str()) == 0; }
 
 bool is_program(const std::string& path) { return access(path.c_str(), X_OK) == 0; }
 
+#ifdef __APPLE__
+bool create_shortcut(const std::string& desktop, const std::string& program, const std::string&, std::string* said)
+{
+	// macOS: a .command file is a shell script Finder runs in a Terminal window; the program's name inside single quotes
+	std::string quoted;
+	for (char c : program)
+		quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+	const std::string path = desktop + "Witch Time.command";
+	FILE* f = desktop.empty() ? nullptr : std::fopen(path.c_str(), "w");
+	bool ok = f && std::fprintf(f, "#!/bin/sh\n# Witch Time, without the launcher's screens\nexec '%s' --play\n", quoted.c_str()) > 0;
+	ok = f && std::fclose(f) == 0 && ok && chmod(path.c_str(), 0755) == 0;
+	*said = ok ? "On your desktop now" : desktop.empty() ? "macOS names no desktop folder" : "Could not write to the desktop folder";
+	return ok;
+}
+#else
 bool create_shortcut(const std::string& desktop, const std::string& program, const std::string& icon, std::string* said)
 {
 	// Desktop Entry Specification: a string value doubles its backslashes; Exec's quoted program also takes one before
@@ -253,4 +268,5 @@ bool create_shortcut(const std::string& desktop, const std::string& program, con
 		desk ? "On your desktop now" : "Could not write to the app menu's folder";
 	return menu || desk;
 }
+#endif
 #endif

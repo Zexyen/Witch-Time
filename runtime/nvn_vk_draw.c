@@ -47,9 +47,11 @@ static struct {
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
+    struct { VkStructureType sType; void *pNext; VkBool32 f[15]; } port;      /* [witchtime] VkPhysicalDevicePortabilitySubsetFeaturesKHR (vulkan_beta.h), macOS */
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
+    int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
     VkPhysicalDeviceMemoryProperties mp;
@@ -80,6 +82,12 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES; D.f13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     D.f2.pNext = &D.f11; D.f11.pNext = &D.f12; D.f12.pNext = &D.f13; tail = &D.f13.pNext;
     D.exts[D.next++] = "VK_KHR_swapchain";
+    if (has_name(dext, ndext, "VK_KHR_portability_subset")) {      /* macOS (MoltenVK): a device that has it must be given it */
+        /* its features are off unless asked for, like any other: view swizzles, comparison samplers set per use and the
+         * samplers' LOD bias among them (the validation layer named all three in the first scenes) */
+        D.exts[D.next++] = "VK_KHR_portability_subset";
+        D.port.sType = (VkStructureType)1000163000; *tail = &D.port; tail = &D.port.pNext;
+    }
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
     if (!(getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")))) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* WT_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
@@ -119,8 +127,13 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
          * to coverage out of the dynamic state. Here it goes into the pipeline key on that branch's whole-pipeline path, as on a GPU
          * without extended dynamic state 3. WT_VK_DYN_A2C=0 / 1 forces either way on whole pipelines. */
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv;
+        VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
+        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv; D.drv.pNext = &p11;
         vkGetPhysicalDeviceProperties2(V.gpu, &p2);
+        D.drv.pNext = NULL;
+        D.sg_stages = p11.subgroupSupportedStages; D.sg_known = 1;
+        if (!(D.sg_stages & VK_SHADER_STAGE_VERTEX_BIT) || !(D.sg_stages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+            printf("nvn_vk: subgroup operations in stages 0x%x only: a vertex or tessellation stage without them is translated as a warp of one lane\n", (unsigned)D.sg_stages);
         const char *e = getenv("WT_VK_DYN_A2C");
         int amd_sc = D.drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(D.drv.driverInfo, "shader compiler") != NULL;
         D.dyn_a2c = D.has_eds3 && (D.has_gpl || (e && e[0] ? atoi(e) != 0 : !amd_sc));      /* the libraries hold no alpha to coverage: always dynamic with them */
@@ -584,8 +597,11 @@ static LONG64 g_dsh_sent, g_dsh_kept;              /* state commands recorded / 
 static void dsh_forget(void) { g_dsh_ok = g_dsh3_ok = 0; g_dsh_topo = g_dsh_rst = -1; }
 static int dsh_on(void) { if (g_dsh_on < 0) g_dsh_on = !(getenv("WT_VK_DYNSHADOW") && !atoi(getenv("WT_VK_DYNSHADOW"))); return g_dsh_on; }
 static int g_cb_lazy_bar;                        /* [witchtime] cb_defer_pending: the next command buffer starts with a full barrier */
+static uint64_t g_gpu_writes, g_gpu_writes_cmd;    /* [witchtime] g_gpu_writes (below) when the command buffer being recorded began */
+static int g_gce_n; static void gce_flush(void);   /* [witchtime] counts of indirect draws the GPU applies without drawIndirectCount (gce_add, below) */
 static void cmd_begin(void) {
     if (R.recording) return;
+    g_gpu_writes_cmd = g_gpu_writes;
     dsh_forget();
     g_tset_gen++; g_tset_used = 0; g_tset_list_used = 0;
     R.cur = (R.cur + 1) % NSLOT;
@@ -641,6 +657,7 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (g_pt_on > 0 && g_pt_slot[R.cur].n) g_pt_draws[g_pt_slot[R.cur].kind[g_pt_slot[R.cur].n - 1]] += g_cmd_draws - g_pt_slot[R.cur].d0;
     if (g_tl_t0) { LONG64 now = tk(); if (!g_tl_first) g_tl_first = now; g_tl_last = now; }
     VKC(vkEndCommandBuffer(s->cmd));
+    if (g_gce_n) gce_flush();
     VkCommandBuffer cbs[2];
     uint32_t ncb = 0;
     if (s->up_rec) {                               /* [Recomps#1] finding 140: the copies into vertex buffers kept on the GPU, before the draws that read them */
@@ -1695,6 +1712,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     v->next = g_vstage[h & 4095]; g_vstage[h & 4095] = v;
     st->vk = v;
     snprintf(what, sizeof what, "program #%d %s stage", p->serial, s == 5 ? "compute" : s ? "fragment" : "vertex");
+    in.lone_lane = vk_lone_lane(s);
     if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); return NULL; }
     uint64_t spv_hash = 0;
     glsl_dump(p->serial, s, 0, out.glsl);                 /* [Recomps#1] TEST ONLY: WT_VK_GLSLDUMP */
@@ -3000,13 +3018,15 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
  * object costs its draw preparation instead of a wait. Records compute wrote stay on the CPU path. WT_VK_GPUCOUNT=0: off. */
 #define GPUCOUNT_DEFAULT 1
 static int g_gpucount = -1;
+static int gce_init(void); static int gce_room(CB *pc, unsigned n); static int gce_add(CB *pc, uint64_t param, uint64_t roff, unsigned n, unsigned sz);
 static LONG64 g_gc_calls, g_gc_draws, g_gc_fallback, g_gr_calls, g_gr_noext;
 static int gpucount_on(void) {
     if (g_gpucount < 0) {
         const char *e = getenv("WT_VK_GPUCOUNT");
         int want = e ? atoi(e) : GPUCOUNT_DEFAULT;
-        g_gpucount = want && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
-        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (WT_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount or drawIndirectFirstInstance)");
+        g_gpucount = want == 1 && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
+        if (want && !g_gpucount && D.f2.features.drawIndirectFirstInstance && gce_init()) g_gpucount = 2;      /* no drawIndirectCount (MoltenVK), or WT_VK_GPUCOUNT=2 */
+        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount == 2 ? "records read by the GPU (vkCmdDraw(Indexed)Indirect), a count applied by a compute pass before the command buffer (no drawIndirectCount, or WT_VK_GPUCOUNT=2)" : g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (WT_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount and what its stand-in needs: drawIndirectFirstInstance, VK_KHR_push_descriptor)");
     }
     return g_gpucount;
 }
@@ -3302,6 +3322,79 @@ static VkCommandBuffer up_cmd(void) {              /* the copies of the slot bei
         s->up_rec = 1;
     }
     return s->up;
+}
+/* [witchtime] macOS: MoltenVK has no drawIndirectCount (Metal has no such draw), so every frame of a fight the render thread
+ * read B3's culling counts on the CPU: a submit and a wait for all the GPU had queued in the middle of the replay
+ * (indirect_src; 2.4 ms of a 9 ms frame at frame_rate = 120 on an M5 Pro). The stand-in: the draw's records go into the ring
+ * as for the real call and are drawn with vkCmdDraw(Indexed)Indirect; a request (the record's instance count word in the
+ * ring, the count's word in the compute buffer, the record's number) is kept per command buffer, and one compute dispatch in
+ * the command buffer submitted just before it (up_cmd) zeroes the instance count of every record at or past its count.
+ * What writes a count must therefore be in an earlier command buffer: a count draw after a dispatch or a storing draw of
+ * the same command buffer submits first (as the CPU read did, without its wait). One compute buffer per command buffer;
+ * another one submits. WT_VK_GPUCOUNT=2 takes this path on a device that has the real call (to compare the two). */
+#define GCE_MAX 8192
+static struct { VkPipeline pipe; VkPipelineLayout pl; VkDescriptorSetLayout dl; VkBuffer req[NSLOT], cnt; VMem reqm[NSLOT]; int ok; } GE;
+static LONG64 g_gce_flushes, g_gce_reqs, g_gce_splits;
+static int gce_init(void) {
+    static const char src[] =
+        "#version 450\n"
+        "layout(local_size_x = 64) in;\n"
+        "layout(set = 0, binding = 0) buffer Ring { uint r[]; };\n"
+        "layout(set = 0, binding = 1) readonly buffer Cnt { uint c[]; };\n"
+        "layout(set = 0, binding = 2) readonly buffer Req { uint q[]; };\n"
+        "layout(push_constant) uniform PC { uint n; };\n"
+        "void main() {\n"
+        "    uint i = gl_GlobalInvocationID.x;\n"
+        "    if (i < n && c[q[3u * i + 1u]] <= q[3u * i + 2u]) r[q[3u * i]] = 0u;\n"
+        "}\n";
+    if (GE.ok) return GE.ok > 0;
+    GE.ok = -1;
+    if (!D.has_push) return 0;
+    VkDescriptorSetLayoutBinding lb[3];
+    for (uint32_t i = 0; i < 3; i++) { VkDescriptorSetLayoutBinding b = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; lb[i] = b; }
+    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; li.bindingCount = 3; li.pBindings = lb;
+    VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &GE.dl));
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 4};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &GE.dl; pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pr;
+    VKC(vkCreatePipelineLayout(V.device, &pli, NULL, &GE.pl));
+    uint64_t h;
+    VkShaderModule mod = module_from_glsl(5, src, "the stand-in for drawIndirectCount", &h);
+    if (!mod) return 0;
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = mod; ci.stage.pName = "main"; ci.layout = GE.pl;
+    VkResult r = vkCreateComputePipelines(V.device, g_pcache, 1, &ci, NULL, &GE.pipe);
+    vkDestroyShaderModule(V.device, mod, NULL);
+    if (r != VK_SUCCESS) return 0;
+    for (int i = 0; i < NSLOT; i++) GE.req[i] = vbuf_new((uint64_t)GCE_MAX * 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &GE.reqm[i]);
+    GE.ok = 1;
+    return 1;
+}
+static int gce_room(CB *pc, unsigned n) { return !g_gce_n || (pc && GE.cnt == pc->buf && g_gce_n + (int)n <= GCE_MAX); }
+static int gce_add(CB *pc, uint64_t param, uint64_t roff, unsigned n, unsigned sz) {      /* the draw of n records at roff in the ring takes its count from param; 0: it does not fit this command buffer */
+    if (!R.recording || (g_gce_n && GE.cnt != pc->buf) || g_gce_n + (int)n > GCE_MAX || (roff & 3) || ((param - pc->addr) & 3)) { g_gce_splits++; return 0; }
+    uint32_t *q = (uint32_t *)GE.reqm[R.cur].map + (size_t)g_gce_n * 3;
+    for (unsigned k = 0; k < n; k++) { *q++ = (uint32_t)((roff + (uint64_t)k * sz + 4) >> 2); *q++ = (uint32_t)((param - pc->addr) >> 2); *q++ = k; }
+    GE.cnt = pc->buf; g_gce_n += (int)n;
+    return 1;
+}
+static void gce_flush(void) {                       /* cmd_submit: the requests of the command buffer that ends */
+    VkCommandBuffer up = up_cmd();
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    VkDescriptorBufferInfo bi[3] = {{R.ring, 0, VK_WHOLE_SIZE}, {GE.cnt, 0, VK_WHOLE_SIZE}, {GE.req[R.cur], 0, VK_WHOLE_SIZE}};
+    VkWriteDescriptorSet w[3];
+    for (uint32_t i = 0; i < 3; i++) { VkWriteDescriptorSet x = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; x.dstBinding = i; x.descriptorCount = 1; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; x.pBufferInfo = &bi[i]; w[i] = x; }
+    uint32_t n = (uint32_t)g_gce_n;
+    vkCmdBindPipeline(up, VK_PIPELINE_BIND_POINT_COMPUTE, GE.pipe);
+    vkCmdPushDescriptorSetKHR(up, VK_PIPELINE_BIND_POINT_COMPUTE, GE.pl, 0, 3, w);
+    vkCmdPushConstants(up, GE.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &n);
+    vkCmdDispatch(up, (n + 63) / 64, 1, 1);
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    g_gce_flushes++; g_gce_reqs += n; g_gce_n = 0;
 }
 static void vrc_fill(VRes *e) {
     if (g_vrc_bytes + e->size > g_vrc_cap) { g_vs[15]++; return; }
@@ -3604,7 +3697,13 @@ static int fsr_mv_prepare(VStage *vs, int tess, MvPrep *o);
 static void fsr_mv_record(const MvPrep *q, VStage *vs, const BufRef *bufs, uint32_t vnb, const VkVertexInputBindingDescription2EXT *vbd, uint32_t vna, const VkVertexInputAttributeDescription2EXT *vad,
                           const VkBuffer *vb, const VkDeviceSize *vo, VRes **vkept, int from_cb);
 static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst);
+/* [witchtime] The compute buffers a storing draw writes. Their wserial was the batch's last submission (cb_batch_end), so the
+ * landing of such a buffer in the next frame (the game wrote into its range: B3's light lists, two of 130 KB a frame in
+ * Shibuya) waited for the whole previous frame on the GPU. The draw is in the command buffer being recorded once its
+ * preparation has ended (nothing between that and the draw call submits): that one is named. */
+static CB *g_dw_cb[32]; static int g_dw_n;
 static int draw_prepare(unsigned prim) {
+    g_dw_n = 0;
     g_dp_fs_stores = 0;
     if (g_ptm_on < 0) g_ptm_on = getenv("WT_VK_PREPTIME") && atoi(getenv("WT_VK_PREPTIME"));
     if (g_ptm_on > 0) { g_ptm_t = tk(); g_ptm_n++; }
@@ -3706,7 +3805,7 @@ static int draw_prepare(unsigned prim) {
                 CB *c = g_cb_live ? cb_inside(r.addr, r.size) : NULL;
                 if (c && (r.addr - c->addr) % sal) c = NULL;
                 if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
-                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1; c->wserial = ~0ull;      /* the draw may land in a later submission (a ring wrap in its preparation): cb_batch_end clamps it */
+                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1; c->wserial = ~0ull; if (g_dw_n < 32) g_dw_cb[g_dw_n++] = c;      /* the draw may land in a later submission (a ring wrap in its preparation): draw_prepare names it at its end, else cb_batch_end clamps it */
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
@@ -3910,6 +4009,7 @@ static int draw_prepare(unsigned prim) {
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
     g_dp_fs_stores = fs && fs->images && !fs->ssbo_w;      /* [witchtime] issue 147 (rs_store_low): a stage that also writes buffers would write them twice */
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
+    for (int i = 0; i < g_dw_n; i++) if (g_dw_cb[i]->state == 1 && R.recording) g_dw_cb[i]->wserial = R.serial + 1;
     return 1;
 }
 
@@ -4570,8 +4670,11 @@ static void exec(const Cmd *m, int depth) {
         uint64_t span = (uint64_t)(n - 1) * stride + sz, ext = 0;
         int gcount = (a[6] & 2) && param && gpu_written(param, 4);       /* the count compute (or a storing draw) wrote: the GPU reads it */
         int grecs = gpu_written(a[3], span) && (n == 1 || (D.f2.features.multiDrawIndirect && !(stride & 3) && stride >= sz)) && (!elements || index_extent(a[2], &ext));      /* the records compute wrote: the GPU reads them, the whole index buffer bound */
+        if (g_gpucount == 2 && grecs && gcount) grecs = 0;      /* the stand-in changes the records in the ring: records compute wrote with a count compute wrote stay on the CPU (the line after next) */
         if (gpu_written(a[3], span) && !grecs) g_gr_noext++;
         if (gcount && !grecs && (cb_overlap(a[3], span) || (n != 1 && !recs_bounded(a[3], n, stride, sz, elements, a[2], t)))) gcount = 0;      /* compute wrote the records and the CPU reads them (it waits): the count with them; or a record past the count names indices outside the buffer */
+        if (gcount && g_gpucount == 2 && n > GCE_MAX) gcount = 0;
+        if (gcount && g_gpucount == 2 && R.recording && (g_gpu_writes != g_gpu_writes_cmd || !gce_room(cb_inside(param, 4), n))) cmd_submit(NULL, NULL);      /* the stand-in reads the counts before this command buffer: what wrote them goes in one before it (no wait) */
         if ((a[6] & 2) && !gcount) { uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
         const uint8_t *rec = grecs ? NULL : indirect_src(a[3], span);
         uint64_t lo = ~0ull, hi = 0;
@@ -4603,6 +4706,13 @@ static void exec(const Cmd *m, int depth) {
         if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
         if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         CB *pc = gcount && g_cb_live ? cb_inside(param, 4) : NULL, *rc = grecs && g_cb_live ? cb_inside(a[3], span) : NULL;      /* still live: draw_prepare may have landed them (cb_sync); then guest memory has the bytes */
+        if (g_gpucount == 2 && gcount && pc) {     /* a store of this very draw (draw_prepare) comes after its count is read */
+            if (!gce_add(pc, param, roff, n, sz)) { R.frame_skipped += n; nvn_front_count(1, n); break; }      /* cannot happen: there was room before draw_prepare */
+            if (elements) vkCmdDrawIndexedIndirect(R.cmd, R.ring, roff, n, sz); else vkCmdDrawIndirect(R.cmd, R.ring, roff, n, sz);
+            g_gc_calls++; g_gc_draws += n; R.frame_draws += n; g_cmd_draws += n; nvn_front_count(0, n);
+            ckpt(2, NULL, NULL, NULL);
+            break;
+        }
         if ((!gcount || pc) && (!grecs || rc) && (gcount || grecs)) {
             VkBuffer rb = grecs ? rc->buf : R.ring;
             uint64_t ro = grecs ? a[3] - rc->addr : roff, rs = grecs ? stride : sz;
@@ -6093,7 +6203,8 @@ static void vkd_shutdown(void) {
     m4_stop();
     pcache_save();
     if (g_pcache) { vkDestroyPipelineCache(V.device, g_pcache, NULL); g_pcache = NULL; }
-    for (int i = 0; i < NSLOT; i++) slot_wait(&R.slot[i]);
+    cmd_wait_all();                                /* [witchtime] what is recorded and not submitted yet goes out while its images exist: MoltenVK encodes at
+                                                    * the submit and read a destroyed image when the panel's shutdown submitted it later (a stop while loading) */
     R.done = ~0ull; nvn_front_done_moved(); garbage_collect();
     while (g_vtex_all) { VTex *vt = g_vtex_all; if (vt->t) vt->t->vk = NULL; vt_destroy(vt); }
     for (int i = 0; i < 1024; i++) for (Pipe *p = g_pipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); if (p->p_fast) vkDestroyPipeline(V.device, p->p_fast, NULL); if (!p->libbed) { vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); } free(p); }
@@ -6114,10 +6225,12 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
-    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    for (int i = 0; g_vrc && i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);      /* (no table before the first stream: a stop while loading) */
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;
+    for (int i = 0; i < g_warm_nvs; i++) { vkDestroyShaderModule(V.device, g_warm_vs[i]->mod, NULL); free(g_warm_vs[i]); }      /* [witchtime] warm_main's vertex stages */
+    g_warm_nvs = 0;
     for (int i = 0; i < 4096; i++) for (VStage *v = g_vstage[i], *n; v; v = n) {
         n = v->next;
         if (v->cp) { vkDestroyPipeline(V.device, v->cp, NULL); vkDestroyPipelineLayout(V.device, v->cl, NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[0], NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[1], NULL); }
@@ -6132,6 +6245,7 @@ static void vkd_shutdown(void) {
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }
     for (int i = 0; i < NSLOT; i++) { for (int k = 0; k < R.slot[i].npool; k++) vkDestroyDescriptorPool(V.device, R.slot[i].pool[k], NULL); vkDestroyFence(V.device, R.slot[i].fence, NULL); }
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
+    if (GE.ok > 0) { for (int i = 0; i < NSLOT; i++) vkDestroyBuffer(V.device, GE.req[i], NULL); vkDestroyPipeline(V.device, GE.pipe, NULL); vkDestroyPipelineLayout(V.device, GE.pl, NULL); vkDestroyDescriptorSetLayout(V.device, GE.dl, NULL); printf("nvn_vk: the stand-in for drawIndirectCount: %lld compute passes for %lld records, %lld draws it could not take\n", (long long)g_gce_flushes, (long long)g_gce_reqs, (long long)g_gce_splits); memset(&GE, 0, sizeof GE); }
     if (g_gcp_sbuf) { vkDestroyBuffer(V.device, g_gcp_sbuf, NULL); g_gcp_sbuf = NULL; }
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;

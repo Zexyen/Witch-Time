@@ -94,7 +94,11 @@ static int ipc_read(Ipc p, void *b, uint32_t n) {
 typedef int Ipc;
 #define IPC_NONE (-1)
 static Ipc ipc_open(void) {
+#ifdef __APPLE__
+    const char *dir = getenv("TMPDIR");              /* macOS: Discord's socket is in the user's temporary folder */
+#else
     const char *dir = getenv("XDG_RUNTIME_DIR");
+#endif
     static const char *const sub[] = {"", "app/com.discordapp.Discord/", "snap.discord/"};      /* the Flatpak (Steam Deck) and Snap clients */
     for (int s = 0; s < 3; s++) for (int i = 0; i < 10; i++) {
         struct sockaddr_un a = {.sun_family = AF_UNIX};
