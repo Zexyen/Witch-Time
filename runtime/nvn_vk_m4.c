@@ -182,7 +182,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (D.fs_test && o->stage == 1) { h = fnv(h, "fst", 3); h = fnv(h, &D.fs_test, 4); }      /* [witchtime] TEST: another text */
     if (D.no_wave && o->stage == 1) h = fnv(h, "nw1", 3);      /* [witchtime] MxIn.no_wave: another text */
     if (D.early_z && o->stage == 1) h = fnv(h, "ez1", 3);      /* [witchtime] MxIn.early_z: another text */
-    if (D.seq_all && o->stage == 1) h = fnv(h, "sqa", 3);      /* [witchtime] MxIn.seq_all: another text */
+    if (D.seq_all && o->stage == 1) h = fnv(h, D.seq_all >= 2 ? "sq2" : "sqa", 3);      /* [witchtime] MxIn.seq_all: another text */
     if (D.no_fc) h = fnv(h, "nfc", 3);                      /* [witchtime] MxIn.no_fc: another text */
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */

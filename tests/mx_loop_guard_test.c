@@ -8,11 +8,11 @@
 #include <string.h>
 #include "mx_translate.h"
 
-static int g_no_switch;
+static int g_no_switch, g_seq_all;
 static char *translate(int stage, const uint8_t *code, int len, unsigned loopdebug) {
     MxIn in; MxOut out;
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
-    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug; in.no_switch = g_no_switch;
+    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug; in.no_switch = g_no_switch; in.seq_all = g_seq_all;
     mx_translate(&in, &out);
     if (!out.glsl) printf("stage %d not translated: %s %s\n", stage, out.op, out.why);
     return out.glsl;
@@ -102,6 +102,14 @@ int main(void) {
     nsw = nsw && qs && strstr(qs, "void mx_stg(uint ad, uint v)") && strstr(qs, "switch (ad >> 27)");
     if (!nsw && nn) puts(nn);
     ok = ok && nsw;
+    g_seq_all = 2;                                 /* [witchtime] MxIn.seq_all 2: the loop's blocks in order inside a for (;;), counted, the discard after it */
+    memcpy(code + 0x50, f, sizeof f);
+    char *sl = translate(1, code, sizeof code, 0), *sl_end = sl ? strstr(sl, " pc = 0u; } while (false); if (pc < 1u) break; }") : NULL;      /* the EXIT is no block of its own: the loop runs to the end */
+    int slok = sl_end && strstr(sl, " for (;;) {\n do { if (pc != 1u) continue;") && !strstr(sl, "switch (pc)") && !strstr(sl, "while (pc != 0u)") &&
+               strstr(sl, "if (++mx_back > 4096u) { pc = 0u; continue; }") && strstr(sl_end, "if (mx_kill) discard;");
+    g_seq_all = 0;
+    if (!slok && sl) puts(sl);
+    ok = ok && slok;
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }

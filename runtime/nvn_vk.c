@@ -221,6 +221,19 @@ static int has_name(const VkExtensionProperties *e, uint32_t n, const char *name
 static void wait_last_submit(void);
 static int hdr_mode_want(void);                          /* nvn_vk_draw.c, finding 147: 0 SDR, 1 HDR10, 2 scRGB */
 static void hdr_views(int make);                         /* nvn_vk_draw.c: the swapchain images' views (1) / they and the 8-bit picture go (0) */
+/* [witchtime] Android answers VK_SUBOPTIMAL_KHR at every acquire and present while its compositor turns the picture (a
+ * portrait panel shown landscape: preTransform is IDENTITY, see swapchain_create). Taken as a reason to make the swapchain
+ * again, that was a wait for the whole GPU and a new swapchain every frame (an AYN Thor, a Shibuya street: 6 ms of each
+ * frame waiting, the game never a frame ahead of the GPU). There it counts only when the surface's size has changed. */
+static int swap_suboptimal(VkResult r) {
+    if (r != VK_SUBOPTIMAL_KHR) return 0;
+#ifdef __ANDROID__
+    VkSurfaceCapabilitiesKHR caps;
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.gpu, V.surface, &caps) == VK_SUCCESS && caps.currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR &&
+        caps.currentExtent.width == V.extent.width && caps.currentExtent.height == V.extent.height) return 0;
+#endif
+    return 1;
+}
 static void swapchain_destroy(void) {
     if (!V.swapchain) return;
     wait_last_submit();                                  /* also resets the fence for the next submit */
@@ -339,6 +352,10 @@ static void *vk_own_loader(void) {
         name = "libvulkan_turnip.so";
     }
     if (!*name) return NULL;
+    /* [witchtime] Turnip picks tiled or direct rendering per pass by its own measurements; with our many small passes that
+     * load and store every target it went for tiles where direct is faster (a 720p Shibuya street on an Adreno 740:
+     * GPU 20.1 -> 17.7 ms a frame, 46 -> 53 fps). Read by the driver when it loads; a TU_DEBUG of the player's stays. */
+    setenv("TU_DEBUG", "sysmem", 0);
     void *at = dlopen("libadrenotools.so", RTLD_NOW | RTLD_LOCAL);
     Open open = at ? (Open)dlsym(at, "adrenotools_open_libvulkan") : NULL;
     if (open && dladdr((void *)vk_own_loader, &di) && strrchr(di.dli_fname, '/')) {
@@ -616,7 +633,7 @@ static void present_colour(const float rgba[4]) {
         r = vkAcquireNextImageKHR(V.device, V.swapchain, 1000000000ull, V.acquired, NULL, &index);
     }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { vk_ok("vkAcquireNextImageKHR", r); InterlockedIncrement64(&g_vk_skipped); return; }
-    int suboptimal = r == VK_SUBOPTIMAL_KHR;
+    int suboptimal = swap_suboptimal(r);
 
     VkCommandBufferBeginInfo bi;
     memset(&bi, 0, sizeof bi);
@@ -654,7 +671,7 @@ static void present_colour(const float rgba[4]) {
     pr.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &V.rendered; pr.swapchainCount = 1; pr.pSwapchains = &V.swapchain; pr.pImageIndices = &index;
     r = vkQueuePresentKHR(V.queue, &pr);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || suboptimal) { swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* made again at the next present */
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || swap_suboptimal(r) || suboptimal) { swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* made again at the next present */
     else vk_ok("vkQueuePresentKHR", r);
     InterlockedIncrement64(&g_vk_frames);
 }

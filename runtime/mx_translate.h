@@ -61,7 +61,7 @@ typedef struct {
     int fs_test;                     /* TEST ONLY: fragment stages of a kind end at once with a flat colour: 1 those with a quad shuffle, 2 those with a step back, 3 the others that write a colour, 4 all */
     int no_wave;                     /* fragment SHFL: each pixel runs the dispatcher by itself (its quad mates are read where it stands), not the whole wave together (issue 66): for a GPU on which the wave loop is slow */
     int early_z;                     /* fragment: depth and stencil tests before the stage (early_fragment_tests) unless it writes the depth: for draws that write neither */
-    int seq_all;                     /* every fragment stage with only forward jumps runs its blocks in order (else only chains of 16 blocks and more): no dispatcher loop for a phone's GPU */
+    int seq_all;                     /* 1: every fragment stage with only forward jumps runs its blocks in order (else only chains of 16 blocks and more); 2: those with jumps back too, their loops as for (;;) (see mx_translate): no dispatcher loop for a phone's GPU */
     int cb_ubo;                      /* Vulkan: the constant buffers are uniform blocks of uvec4 (std140), not storage blocks of uint: an Adreno reads those far faster in a vertex stage */
     int no_fc;                       /* Vulkan: no SignedZeroInfNanPreserve execution mode (the driver does not offer it for 32-bit floats) */
     int nan_exact;                   /* Vulkan: the GPU's min / max / clamp are not known to answer NaN as Maxwell does (FMNMX gives the

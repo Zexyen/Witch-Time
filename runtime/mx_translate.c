@@ -43,6 +43,8 @@ typedef struct {
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int nbar;                                 /* [issue 163] compute: BAR sites that leave the dispatcher (see MXOP_BAR) */
     int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
+    int nbk, nlp; unsigned bk[32][2], lp[32][2]; /* [witchtime] MxIn.seq_all 2: the jumps back (target, word), and the loops made of them: blocks [first, end) */
+    char seq_tail[112];
     int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
     uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
     uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
@@ -105,8 +107,9 @@ static void fail(Mx *e, const char *op, const char *fmt, ...) {
  * shortcut: the limit is a guess above the longest loop seen (that lighting stage: 2 x 32 lights x (32 bits + 2 BRX), about
  * 2,240 jumps back at most); raise it if a stage loses detail. */
 #define MX_LOOP_MAX 4096u
+static void back_edge(Mx *e, unsigned tgt, unsigned pc) { e->has_back = 1; if (e->nbk < 32) { e->bk[e->nbk][0] = tgt; e->bk[e->nbk][1] = pc; } e->nbk++; }
 static void loop_guard(Mx *e, int back) {
-    if (!back || e->in->stage == MX_COMPUTE || e->seq) return;
+    if (!back || e->in->stage == MX_COMPUTE || (e->seq && !e->nlp)) return;
     e->uses_guard = 1;
     if (e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ")) e->uses_spun = 1;
     emit(e, "if (++mx_back > %uu) { %spc = 0u; continue; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->uses_spun ? "mx_spun = true; " : "");
@@ -1723,7 +1726,7 @@ static void analyze(Mx *e) {
                 if (MXB(i, 5, 1)) { fail(e, "BRA.CC", "branch through a constant buffer"); break; }
                 if (ft == 0 || ft == 28) continue;                   /* flow test never true */
                 if (tgt >= e->words) { fail(e, "BRA", "branch target %u outside the code", tgt); break; }
-                e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
+                e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) back_edge(e, tgt, pc);
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)sid;
                 if (always && ft == 15) break;
@@ -1738,7 +1741,7 @@ static void analyze(Mx *e) {
                 if (ft == 0 || ft == 28) continue;
                 unsigned tgt = s.tgt[k];
                 s.n = k;
-                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
+                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) back_edge(e, tgt, pc);
                 if (tgt >= e->words) { fail(e, mx_op_name[op], "target outside the code"); break; }
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)stk_id(e, &s);
@@ -1751,7 +1754,7 @@ static void analyze(Mx *e) {
                 if (n < 0) { fail(e, "BRX", n == -2 ? "BRX table not in constant buffer 1" : n == -3 ? "BRX table outside the constants" : "BRX table not found"); break; }
                 for (int k = 0; k < n; k++) {
                     if (tg[k] >= e->words) { fail(e, "BRX", "BRX target outside the code"); break; }
-                    e->leader[tg[k]] = 1; if (tg[k] <= pc) e->has_back = 1;
+                    e->leader[tg[k]] = 1; if (tg[k] <= pc) back_edge(e, tg[k], pc);
                     if (nw < cap) { wpc[nw] = tg[k]; wst[nw++] = (uint16_t)sid; }
                 }
                 e->any_jump = 1;
@@ -1876,6 +1879,29 @@ int mx_translate(const MxIn *in, MxOut *out) {
     int chain = 0;
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) chain += e->leader[pc];
     e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && (chain >= 16 || in->seq_all)));
+    /* [witchtime] MxIn.seq_all 2 (test): a fragment stage with jumps back runs in order too. Each run of blocks a jump back spans
+     * (overlapping ones as one) sits in a for (;;) that repeats while pc is inside it; a jump is still `pc = target; continue`
+     * out of its block, and the blocks up to the target skip themselves. Adreno's compiler keeps every register live across the
+     * dispatcher's loop (the Shibuya lighting stages: 32 full registers); here only the loop's own blocks are in a loop.
+     * Not with a quad snapshot inside a loop: it is taken between blocks, where every lane must be. */
+    if (in->seq_all >= 2 && e->has_back && e->any_jump && !e->nbar && !e->fail && in->stage == MX_FRAGMENT && in->target == 1 && e->nbk <= 32) {
+        int n = e->nbk, ok = 1;
+        for (int k = 0; k < n; k++) {               /* [target, the first leader after the jump) */
+            unsigned end = e->bk[k][1] + 1;
+            while (end < e->words && !(e->reach[end] && e->leader[end])) end++;
+            e->lp[k][0] = e->bk[k][0]; e->lp[k][1] = end;
+        }
+        for (int a = 0; a < n; a++) for (int b = 0; b < n; b++)      /* overlapping: one loop */
+            if (a != b && e->lp[a][0] < e->lp[b][1] && e->lp[b][0] < e->lp[a][1]) {
+                if (e->lp[b][0] < e->lp[a][0]) e->lp[a][0] = e->lp[b][0];
+                if (e->lp[b][1] > e->lp[a][1]) e->lp[a][1] = e->lp[b][1];
+                e->lp[b][0] = e->lp[--n][0]; e->lp[b][1] = e->lp[n][1]; a = -1; break;
+            }
+        for (int k = 0; k < n && ok; k++) for (unsigned pc = e->lp[k][0]; pc < e->lp[k][1] && pc < e->words; pc++) if (e->qlead[pc]) ok = 0;
+        if (ok) { e->seq = 1; e->nlp = n; }
+    }
+    snprintf(e->seq_tail, sizeof e->seq_tail, " pc = 0u; } while (false);");
+    for (int k = 0; k < e->nlp; k++) if (e->lp[k][1] >= e->words) snprintf(e->seq_tail + strlen(e->seq_tail), sizeof e->seq_tail - strlen(e->seq_tail), " if (pc < %uu) break; }", e->lp[k][0]);
     /* [witchtime] MxIn.no_switch: the plain dispatcher as an if-chain; the quad and barrier dispatchers keep their switch */
     int quad = 0;
     for (unsigned pc = 1; in->stage == MX_FRAGMENT && pc < e->words && !e->fail; pc++) if ((pc & 3) && e->reach[pc] && decode(MXW(pc)) == MXOP_SHFL) quad = 1;
@@ -1891,6 +1917,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
             else if (!e->seq) emit(e, "case %uu:\n", pc);
             else {
                 if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc);
+                for (int k = 0; k < e->nlp; k++) if (e->lp[k][1] == pc) emit(e, " if (pc < %uu || pc >= %uu) break; }\n", e->lp[k][0], pc);
+                for (int k = 0; k < e->nlp; k++) if (e->lp[k][0] == pc) emit(e, " for (;;) {\n");
                 if (e->qlead[pc]) {                 /* [issue 107] the sources of the block's leading SHFLs (analyze: no SHFL there reads another's result) */
                     uint8_t done[256] = {0};
                     for (unsigned q = pc; q < e->words; q++) {
@@ -2103,7 +2131,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? " pc = 0u; } while (false);" : e->ifc ? (e->blocks ? " }\n pc = 0u;\n }" : " pc = 0u;\n }") : e->nbar && !e->has_back ? " default: pc = 0u; continue;\n } } }" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
+        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? e->seq_tail : e->ifc ? (e->blocks ? " }\n pc = 0u;\n }" : " pc = 0u;\n }") : e->nbar && !e->has_back ? " default: pc = 0u; continue;\n } } }" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
                                               e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
         else n += (size_t)sprintf(res + n, "%s %s%s\n}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "", e->exitcode, e->uses_kill ? " }" : "");
         res[n] = 0;

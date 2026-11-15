@@ -170,7 +170,8 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.no_switch = V.props.vendorID == 0x5143;
     D.cb_ubo = 0;                                  /* off: no gain measured on Turnip (an Adreno 740), WT_VK_CBUBO=1 tries it */
     if (getenv("WT_VK_CBUBO")) D.cb_ubo = atoi(getenv("WT_VK_CBUBO")) != 0;
-    D.seq_all = getenv("WT_VK_SEQALL") && atoi(getenv("WT_VK_SEQALL"));
+    /* 2: stages with loops too. Turnip: the default (a Shibuya street on an Adreno 740: 17 -> 30 fps; the dispatcher keeps every register live across its loop) */
+    D.seq_all = getenv("WT_VK_SEQALL") ? atoi(getenv("WT_VK_SEQALL")) : strstr(V.props.deviceName, "Turnip") ? 2 : 0;
     D.fs_test = getenv("WT_VK_FSTEST") ? atoi(getenv("WT_VK_FSTEST")) : 0;
     D.no_wave = getenv("WT_VK_NOWAVE") && atoi(getenv("WT_VK_NOWAVE"));
     D.early_z = getenv("WT_VK_EARLYZ") && atoi(getenv("WT_VK_EARLYZ"));
@@ -611,7 +612,8 @@ static void slot_wait(Slot *s) {
         if (g_pt_on > 0 && g_pt_slot[si].n) {      /* WT_VK_PASSTIME: the segments of this command buffer */
             static uint64_t pt[PT_MAX];
             int n = g_pt_slot[si].n;
-            if (ts[1] && vkGetQueryPoolResults(V.device, g_pt_pool, (uint32_t)si * PT_MAX, (uint32_t)n, sizeof pt[0] * (size_t)n, pt, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && g_pt_slot[si].fight)
+            static int pd_any = -1; if (pd_any < 0) pd_any = getenv("WT_VK_PASSDUMP") != NULL;      /* the dump is of any frame (no compute dispatch is counted on some paths: no "fight") */
+            if (ts[1] && vkGetQueryPoolResults(V.device, g_pt_pool, (uint32_t)si * PT_MAX, (uint32_t)n, sizeof pt[0] * (size_t)n, pt, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && (g_pt_slot[si].fight || pd_any))
                 for (int i = 0; i < n; i++) {
                     uint64_t end = i + 1 < n ? pt[i + 1] : ts[1];
                     {   static long long df = -2;      /* [witchtime] TEST ONLY: WT_VK_PASSDUMP=<frame>: every segment of that frame's command buffers, in order */
@@ -884,6 +886,7 @@ struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
     int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
+    int fl; VkFormat fl_twin;                      /* [witchtime] made with a view format list: its own format and fl_twin (Turnip, see vt_get2) */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
     int post;                                      /* [witchtime] issue 118: of the picture's scale (after FSR), not the scene's (rs_size) */
     VView *views; VTex *next, *prev;
@@ -1283,6 +1286,18 @@ static VTex *vt_get2(Tex *t, int sync) {
         if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) ci.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         if (can_color && vt->samples == 1 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) { ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT; vt->storage = 1; }      /* [witchtime] SULD / SUST */
         if (vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT) ci.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+        /* [witchtime] Turnip keeps no framebuffer compression (UBWC) on a mutable image whose view formats are not listed
+         * (tu_image.cc): every render target of ours lost it. They list their own format and its sRGB / UNORM twin; a view
+         * asked for in any other format gets the image's own (vt_view says so). 720p Shibuya street, an Adreno 740: 4 % more
+         * frames. WT_VK_FMTLIST=0: no list. */
+        static int fl_on = -1; VkFormat flf[2]; VkImageFormatListCreateInfo fl = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+        if (fl_on < 0) { const char *fe = getenv("WT_VK_FMTLIST"); fl_on = fe ? atoi(fe) != 0 : strstr(V.props.deviceName, "Turnip") != NULL; }
+        if (fl_on && can_color) {
+            static const VkFormat tw[][2] = {{VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB}, {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB}};
+            flf[0] = vt->fmt; flf[1] = VK_FORMAT_UNDEFINED;
+            for (int k = 0; k < 2; k++) { if (tw[k][0] == vt->fmt) flf[1] = tw[k][1]; if (tw[k][1] == vt->fmt) flf[1] = tw[k][0]; }
+            fl.viewFormatCount = flf[1] ? 2 : 1; fl.pViewFormats = flf; ci.pNext = &fl; vt->fl = 1; vt->fl_twin = flf[1];
+        }
         if (ci.imageType == VK_IMAGE_TYPE_2D && vt->w == vt->h && vt->layers >= 6 && vt->samples == 1) ci.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkResult r = vkCreateImage(V.device, &ci, NULL, &vt->img);
@@ -1477,6 +1492,10 @@ static VkImageView vt_view(VTex *vt, const EView *e, int dim, int attach) {
     ci.image = vt->img; ci.format = vt->fmt;
     if (e->format != vt->t->b.format && vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT && !vt->decode && !vt->expand) { VkFormat f = tex_vkfmt(e->format, &ex, &dec); if (f && !ex && !dec && fmt_aspect(f) == VK_IMAGE_ASPECT_COLOR_BIT) ci.format = f; }
     if (attach >= 2) ci.format = (VkFormat)(attach - 2);      /* [witchtime] a storage view in the shader's typed format (resolve_image) */
+    if (vt->fl && ci.format != vt->fmt && ci.format != vt->fl_twin) {      /* [witchtime] not in the image's list: the image's own format (see vt_get2) */
+        static int n; if (n++ < 20) printf("nvn_vk: a view in format %d of a render target made in format %d (%dx%d, attach %d) is made in the target's own: its view formats are listed (WT_VK_FMTLIST=0 lists none)\n", (int)ci.format, (int)vt->fmt, vt->w, vt->h, attach);
+        ci.format = vt->fmt;
+    }
     if (attach == 1) {
         ci.viewType = VK_IMAGE_VIEW_TYPE_2D; ci.subresourceRange.aspectMask = vt->aspect;
         ci.subresourceRange.baseMipLevel = (uint32_t)e->lvl0; ci.subresourceRange.levelCount = 1; ci.subresourceRange.baseArrayLayer = (uint32_t)(vt->is3d ? 0 : e->lay0); ci.subresourceRange.layerCount = 1;
@@ -3654,9 +3673,10 @@ static int test_skip(int serial, int compute) {
     static int on = -1;
     static char list[512];
     if (on < 0) { const char *e = getenv("WT_VK_SKIP"); on = e != NULL; snprintf(list, sizeof list, ",%s,", e ? e : ""); }
+    if (!on) return 0;                             /* two calls a draw: no text made for a switch that is off */
     char me[16];
     snprintf(me, sizeof me, ",%d,", serial);
-    return on && (strstr(list, me) || strstr(list, compute ? ",cs," : ",draw,"));
+    return strstr(list, me) || strstr(list, compute ? ",cs," : ",draw,");
 }
 static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uint32_t gy, uint32_t gz) {
     static BufRef bufs[40];
@@ -4536,6 +4556,7 @@ static void rs_store_done(int drawn) {             /* the targets of the game's 
     g_oq_on = g_sf_oq;
     g_sf_draws += drawn;
 }
+static unsigned g_tm_draw;                         /* the preparation of every 8th draw is timed (and counted 8 times): two clock reads a draw were 6 % of a replay on a phone */
 static void exec(const Cmd *m, int depth) {
     const uint8_t *blob = BLOB(m);
     const uint64_t *a = m->a;
@@ -4739,7 +4760,7 @@ static void exec(const Cmd *m, int depth) {
         break;
     }
     case OP_DRAW_ARRAYS:
-        { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
+        { int tmd = !(g_tm_draw++ & 7); LONG64 t0 = tmd ? tk() : 0; int ok = draw_prepare((unsigned)a[0]); if (tmd) g_tm[8] += (tk() - t0) * 8; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
         if (drawlog_on()) printf("DLI f%lld arrays first %u count %u instances %u base instance %u\n", nvn_front_frame_next(), (unsigned)a[1], (unsigned)a[2], (unsigned)a[4], (unsigned)a[3]);
         if (g_dump_on) dump_each();
@@ -4756,7 +4777,7 @@ static void exec(const Cmd *m, int depth) {
         if (t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
         BufRef ib;
         buf_ref(a[3], (uint64_t)count << t, (uint64_t)1 << t, &ib);    /* before the draw is prepared: a ring wrap submits */
-        { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
+        { int tmd = !(g_tm_draw++ & 7); LONG64 t0 = tmd ? tk() : 0; int ok = draw_prepare((unsigned)a[0]); if (tmd) g_tm[8] += (tk() - t0) * 8; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         if (drawlog_on()) printf("DLI f%lld elements type %u count %d instances %u base vertex %d base instance %u index @%llx\n", nvn_front_frame_next(), t, count, (unsigned)a[6], (int)a[4], (unsigned)a[5], (unsigned long long)a[3]);
@@ -4817,7 +4838,7 @@ static void exec(const Cmd *m, int depth) {
         }
         if ((gcount || grecs) && R.pass_stores) pass_end();      /* a store earlier in this pass may be what the GPU reads: storage_barrier covers INDIRECT_COMMAND_READ */
         g_dp_potential = gcount || grecs;
-        LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0;
+        int tmd = !(g_tm_draw++ & 7); LONG64 t0 = tmd ? tk() : 0; int ok = draw_prepare((unsigned)a[0]); if (tmd) g_tm[8] += (tk() - t0) * 8;
         g_dp_potential = 0;
         if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
         if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
@@ -5617,7 +5638,7 @@ static void present_flush(void) {
     pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &g_pend.rend; pr.swapchainCount = 1; pr.pSwapchains = &g_pend.sc; pr.pImageIndices = &g_pend.index;
     VkResult r = vkQueuePresentKHR(V.queue, &pr);
     display_present_done(g_pend.fight);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || g_pend.suboptimal) g_pend.recreate = 1;
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || swap_suboptimal(r) || g_pend.suboptimal) g_pend.recreate = 1;
     else vk_ok("vkQueuePresentKHR", r);
     if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) { LONG64 nowt = tk(); if (g_gap_prev && nowt - g_gap_prev > g_gap_max) g_gap_max = nowt - g_gap_prev; g_gap_prev = nowt; g_wd_beat = nowt; }
 }
@@ -5684,7 +5705,63 @@ static void prep_first_hold(LONG64 frame) {
     fflush(stdout);
 }
 static void vk_present(void *arg) { vk_present2(arg, 0); }
+#ifdef __ANDROID__
+/* TEST ONLY (WT_VK_RTPROF=1): 6,000 samples of the render thread's pc on its CPU time (about 4 ms apart: the kernel's tick),
+ * from frame 1800. Then, in the log: `rtprof: lib` per library, `sym` per exported name, `own` per 16-byte place of this
+ * library, `via` for a sample in another library: the innermost return address inside this one. Resolve the offsets with
+ * llvm-symbolizer against the unstripped libwitchtime.so. (simpleperf hung an AYN Thor's compositor: this needs no tool.) */
+#include <dlfcn.h>
+#include <signal.h>
+#include <time.h>
+#include <ucontext.h>
+#include <sys/syscall.h>
+#define RTP_N 6000
+static uint64_t g_rtp[RTP_N]; static volatile LONG g_rtp_n; static int g_rtp_state = -1; static timer_t g_rtp_timer;
+static uint64_t g_rtp_ra[RTP_N], g_rtp_lo, g_rtp_hi;      /* the innermost return address inside this library (lr, then the frame chain) */
+static void rtp_sig(int sig, siginfo_t *si, void *uc_) { (void)sig; (void)si; LONG i = InterlockedIncrement(&g_rtp_n) - 1; if (i >= RTP_N) return;
+    ucontext_t *uc = uc_; uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30], fp = uc->uc_mcontext.regs[29], sp = uc->uc_mcontext.sp, ra = 0;
+    g_rtp[i] = pc;
+    if (pc >= g_rtp_lo && pc < g_rtp_hi) ra = pc; else if (lr >= g_rtp_lo && lr < g_rtp_hi) ra = lr;
+    for (int k = 0; !ra && k < 12 && fp >= sp && fp - sp < (1u << 20) && !(fp & 7); k++) { const uint64_t *f = (const uint64_t *)(uintptr_t)fp; if (f[1] >= g_rtp_lo && f[1] < g_rtp_hi) ra = f[1]; if (f[0] <= fp) break; fp = f[0]; }
+    g_rtp_ra[i] = ra; }
+static int rtp_cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
+static void rtp_tick(void) {
+    if (g_rtp_state < 0) g_rtp_state = getenv("WT_VK_RTPROF") != NULL ? 0 : 3;
+    if (g_rtp_state == 0 && nvn_front_frame_next() > 1800) {
+        { Dl_info me0; dladdr((void *)rtp_tick, &me0); g_rtp_lo = (uint64_t)(uintptr_t)me0.dli_fbase; g_rtp_hi = g_rtp_lo + (12u << 20); }
+        struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = rtp_sig; sa.sa_flags = SA_SIGINFO | SA_RESTART; sigaction(SIGPROF, &sa, NULL);
+        struct sigevent sev; memset(&sev, 0, sizeof sev); sev.sigev_notify = SIGEV_THREAD_ID; sev.sigev_signo = SIGPROF; sev.sigev_notify_thread_id = (int)syscall(SYS_gettid);
+        struct itimerspec its = {{0, 250000}, {0, 250000}};
+        { sigset_t ss; sigemptyset(&ss); sigaddset(&ss, SIGPROF); pthread_sigmask(SIG_UNBLOCK, &ss, NULL); }
+        if (!timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &g_rtp_timer) && !timer_settime(g_rtp_timer, 0, &its, NULL)) { g_rtp_state = 1; printf("rtprof: started at frame %lld\n", nvn_front_frame_next()); } else { g_rtp_state = 3; printf("rtprof: no timer\n"); }
+    }
+    if (g_rtp_state == 1 && g_rtp_n >= RTP_N) {
+        struct itimerspec off; memset(&off, 0, sizeof off); timer_settime(g_rtp_timer, 0, &off, NULL); g_rtp_state = 2;
+        Dl_info me; dladdr((void *)rtp_tick, &me);
+        struct { const void *base; char name[40]; long n; } lib[24]; int nl = 0; long self = 0;
+        static uint64_t own[RTP_N]; int no = 0;
+        for (int i = 0; i < RTP_N; i++) {
+            Dl_info di; memset(&di, 0, sizeof di); dladdr((void *)(uintptr_t)g_rtp[i], &di);
+            int k; for (k = 0; k < nl && lib[k].base != di.dli_fbase; k++) {}
+            if (k == nl && nl < 24) { lib[nl].base = di.dli_fbase; const char *nm = di.dli_fname ? strrchr(di.dli_fname, '/') : NULL; snprintf(lib[nl].name, sizeof lib[nl].name, "%s", nm ? nm + 1 : di.dli_fname ? di.dli_fname : "?"); lib[nl].n = 0; nl++; }
+            if (k < 24) lib[k].n++;
+            if (di.dli_fbase != me.dli_fbase) { static struct { char nm[48]; long n; } sy[96]; static int ns; const char *q = di.dli_sname ? di.dli_sname : "(no name)"; char key[48]; snprintf(key, sizeof key, "%.12s:%.34s", k < 24 ? lib[k].name : "?", q);
+                int z; for (z = 0; z < ns && strcmp(sy[z].nm, key); z++) {} if (z == ns && ns < 96) { snprintf(sy[ns].nm, sizeof sy[ns].nm, "%s", key); sy[ns].n = 0; ns++; } if (z < 96) sy[z].n++;
+                if (i == RTP_N - 1) for (z = 0; z < ns; z++) if (sy[z].n >= 20) printf("rtprof: sym %s %ld\n", sy[z].nm, sy[z].n); }
+            if (di.dli_fbase != me.dli_fbase && g_rtp_ra[i]) printf("rtprof: via %c %llx\n", k < 24 ? lib[k].name[3] : '?', (unsigned long long)(g_rtp_ra[i] - g_rtp_lo));
+            if (di.dli_fbase == me.dli_fbase) { self++; own[no++] = (g_rtp[i] - (uint64_t)(uintptr_t)me.dli_fbase) & ~(uint64_t)15; }
+        }
+        for (int k = 0; k < nl; k++) printf("rtprof: lib %s %ld\n", lib[k].name, lib[k].n);
+        qsort(own, (size_t)no, 8, rtp_cmp);
+        for (int i = 0; i < no;) { int j = i; while (j < no && own[j] == own[i]) j++; if (j - i >= 4) printf("rtprof: own %llx %d\n", (unsigned long long)own[i], j - i); i = j; }
+        printf("rtprof: done, %d samples of %ld in this library\n", RTP_N, self);
+    }
+}
+#else
+static void rtp_tick(void) {}
+#endif
 static void vk_present2(void *arg, int progress) {
+    rtp_tick();
     PresentJob *j = arg;
     static int shot = -2, every, shot_from, shot_to;
     if (!V.alive) return;
@@ -5812,7 +5889,7 @@ swap: ;
     tp[7] = tk();
     if (!ok) { InterlockedIncrement64(&g_vk_skipped); cmd_submit(NULL, NULL); }
     else {
-        int suboptimal = r == VK_SUBOPTIMAL_KHR;
+        int suboptimal = swap_suboptimal(r);
         VkImageSubresourceRange sr = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         {   /* session 11: the semaphore a present waits for is one PER SWAPCHAIN IMAGE (validation run s11v3, twice in 9,783
              * frames: VUID-vkQueueSubmit-pSignalSemaphores-00067, "may still be in use by the swapchain", when the driver
@@ -5884,7 +5961,7 @@ swap: ;
         } else {
         r = vkQueuePresentKHR(V.queue, &pr);
         if (!progress) display_present_done(g_in_fight);
-        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || suboptimal) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || swap_suboptimal(r) || suboptimal) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
         else vk_ok("vkQueuePresentKHR", r);
         }
         if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) { LONG64 nowt = tk(); if (g_gap_prev && nowt - g_gap_prev > g_gap_max) g_gap_max = nowt - g_gap_prev; g_gap_prev = nowt; g_wd_beat = nowt; }      /* session 12: the watchdog's heartbeat = a frame reached the window */
