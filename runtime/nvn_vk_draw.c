@@ -2606,7 +2606,9 @@ static uint32_t g_gcp_sused;                       /* one bit per side slot */
 static VkCommandBuffer up_cmd(void);
 static int gcp_hits(int i, uint64_t addr, uint64_t size) { return addr < g_gcp[i].dst + g_gcp[i].size && g_gcp[i].dst < addr + size; }
 static int gcp_sided(const GCopy *o) { return o->side >= 0 && R.serial >= o->sserial; }      /* the copy into its side slot was submitted: the source buffer no longer holds its bytes */
-static void gcp_remove(int i) { free(g_gcp[i].snap); if (g_gcp[i].side >= 0) g_gcp_sused &= ~(1u << g_gcp[i].side); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
+static volatile uint64_t g_gcp_min = ~0ull;         /* the oldest writer among the copies not settled (nvn_vk_sync_done, any thread) */
+static void gcp_min(void) { uint64_t m = ~0ull; for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].wserial < m) m = g_gcp[i].wserial; g_gcp_min = m; }
+static void gcp_remove(int i) { free(g_gcp[i].snap); if (g_gcp[i].side >= 0) g_gcp_sused &= ~(1u << g_gcp[i].side); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; gcp_min(); }
 static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach guest memory, oldest first; wait 0: only while their source's writer has finished */
     if (g_gcp_busy) return;                        /* a wait below can come back here (slot_wait does not, cb_poll does) */
     g_gcp_busy = 1;
@@ -2690,6 +2692,7 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     GCopy *o = &g_gcp[g_ngcp++];
     o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial; o->side = -1; o->sserial = 0;
     o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
+    gcp_min();
     g_gcp_made++;
     R.gen++;                                       /* the range is streamed again, now with the patch */
     return 1;
@@ -4387,15 +4390,28 @@ static void slot_poll(void) {
         if (!o || vkGetFenceStatus(V.device, o->fence) != VK_SUCCESS) break;
         slot_wait(o); g_sp_landed++;
     }
+    if (g_ngcp) { int n0 = g_ngcp; gcp_settle_done(); if (g_ngcp != n0) nvn_front_done_moved(); }      /* [witchtime] a fence waited for on the game's thread (nvn_vk_sync_done) */
     g_sp_tk += tk() - t0;
 }
+static volatile LONG64 g_sd_n[2];                 /* fences answered as finished here; of those, with buffers live or kept or GPU copies in flight */
 int nvn_vk_sync_done(const SyncObj *o) {          /* any thread: the fence's submission and all before it have finished and landed */
     uint64_t want = (uint64_t)(uintptr_t)*(void *volatile *)&o->s;
     if (!want) return 0;
-    /* compute copy-back buffers in flight or kept (B2 dispatches none): they land in cb_poll / cb_sync, which the job runs
-     * around its wait; the game's thread does not answer then (the job does) */
-    if (*(volatile int *)&g_cb_live || *(volatile int *)&g_cb_pending || *(volatile int *)&g_cb_nkept || *(volatile int *)&g_ngcp) return 0;
+    /* [witchtime] Any buffer in flight or kept used to send the wait to the job, which runs after the batch being replayed:
+     * with compute in every frame the game stood at its fence until the NEXT frame's replay had ended, and only then
+     * finished and sent the frame after it (an Adreno 740, a Shibuya street: 12.5 ms of replay + 6 ms of the game, in
+     * turns: 54 fps; like this 59). What the fence's own frame left behind still does:
+     *   - pending buffers are the batch before's, written at or before this fence: not in guest memory yet;
+     *   - a GPU copy whose writer is at or before this fence has not settled (slot_poll settles them during a replay).
+     * Live buffers belong to the batch being replayed, which was submitted after a fence that has run; kept ones are
+     * landed when they are needed, by no fence (the job did not land them either when the fence had finished). */
+    static int job = -1; if (job < 0) job = getenv("WT_VK_SYNCJOB") != NULL;      /* TEST: as before, anything live, kept or in flight sends the wait to the job */
+    int busy = *(volatile int *)&g_cb_live || *(volatile int *)&g_cb_nkept || *(volatile int *)&g_ngcp;
+    if (job && busy) return 0;
+    if (*(volatile int *)&g_cb_pending) return 0;
+    if (*(volatile int *)&g_ngcp && *(volatile uint64_t *)&g_gcp_min <= want - 1) return 0;
     int done = want - 1 <= *(volatile uint64_t *)&R.done;
+    if (done) { InterlockedIncrement64(&g_sd_n[0]); if (busy) InterlockedIncrement64(&g_sd_n[1]); }
     MemoryBarrier();                               /* what the game reads next was landed before R.done moved */
     return done;
 }
@@ -5881,6 +5897,10 @@ swap: ;
                    g_cb_keep, (long long)g_cg_reads, (long long)g_cg_writes, (long long)g_cg_render, (long long)g_ck_guard_fail);
             lh = g_ck_hits; lf = g_ck_fills; lfb = g_ck_fill_bytes; memcpy(ll, g_ck_land, sizeof ll); llb = g_ck_land_bytes;
         }
+        { static LONG64 l0, l1; LONG64 n0 = g_sd_n[0], n1 = g_sd_n[1];
+          if (n1 != l1) printf("nvn_vk_sync: frames %lld..%lld per frame: %.2f fence reads answered as finished without the job, %.2f of them with compute buffers live or kept or GPU copies in flight (WT_VK_SYNCJOB=1: those wait for the job, as before)\n",
+                               (long long)frame - 300, (long long)frame, (double)(n0 - l0) / 300.0, (double)(n1 - l1) / 300.0);
+          l0 = n0; l1 = n1; }
         if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
             static LONG64 lc, ld, lf;
             static LONG64 lz, lr, lx, lom, lop, low, lod, los;

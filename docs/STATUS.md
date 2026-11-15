@@ -1729,6 +1729,15 @@ The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
   is an overlay; every ring copy of the destination is patched by `vkCmdCopyBuffer` in the slot's `up` command buffer, and
   the bytes reach guest memory when the source's writer has finished (oldest first, merged with a snapshot). Other CPU reads
   and writes of the destination, changes of the source and the game's fence waits settle first.
+- **The fence, answered on the game's thread (2026-11-14)** (`nvn_vk_sync_done`, `WT_VK_SYNCJOB=1` as before): any
+  compute buffer live or kept, or any GPU copy in flight, sent the game's fence wait to the render thread's job, which
+  runs after the batch being replayed. B3 always has kept buffers, so the game stood at its fence for the whole replay of
+  the next frame. Now only what the fence's own frame left behind does that: pending buffers (the batch before's), and a
+  GPU copy whose writer is at or before the fence (`g_gcp_min`; `slot_poll` settles finished copies during a replay).
+  An AYN Thor (Adreno 740, Turnip), a Shibuya street: 54 -> 59 fps. Linux, RX 9070 XT: the same frame rate at 60 and
+  at `frame_rate = 120` (118.8-119.7 against 117.1-118.8); the log's `nvn_vk_sync:` line counts 0.5-1.9 such answers a
+  frame. `WT_VK_CBKEEP=2` (a touch of a kept range ends the run on Linux) over 150 s of the street and a 9 minute run
+  at 120: nothing. Not run: a fight with enemies, cutscenes, Windows, NVIDIA and Intel.
 
 | Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
 |---|---|---|---|---|---|---|
