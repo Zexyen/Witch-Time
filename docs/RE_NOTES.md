@@ -462,3 +462,32 @@ blurred and darkened at the edges. 0x7100b22610 (chapter) -> the name: `p`, `c01
 (Phenomenal Remnant), `witch01` .. `03`, `golem`, `rodin`; the side chapters and chapter 0 get `all`, an empty purple background.
 
 A local build's `build/gen_eh` older than PR 94 has no call to `h_rebind_pads`: it links, and `game_presence` never moves. Lift again.
+
+## 11. No debug menu; phases, objects and effects by hand (2026-11-14; the debug commands)
+
+**The game ships no debug menu.** main's strings (122,118 of four characters or more) have none of a debug or stage-select menu, a
+cheat or a developer screen: every "debug" is NVN's or gRPC's, the one "test" of the game is the sub-phase name `Golem_test_000`.
+What follows is what `runtime/game_shim_eh.c` `debug_tick` calls instead (`WT_DEBUG=<file>`, docs/STATUS.md "Debug commands").
+
+**Phases.** Three records of 0x54 bytes: the current phase 0x7104d72f0c (section 10), the one before 0x7104d72f60, the one asked for
+0x7104d73008; 0x71008481fc moves asked -> current. A phase is asked for with 0x710066f464 (x0 the flow object 0x71024c2220, w1 the
+phase number, x2 the sub-phase's name, w3 0, w4 0, w5 -1 = a fade of its own): about 70 callers, among them the title, the chapter select
+(0xc20 `pc20_ChapterSelect`), the results (0xc60 `pc60_ChapterResult`) and the training room (0x9a0 `p9a0_training`). main holds
+about 500 sub-phase names as strings (`p120_ShibuyaScramble`); the rest are in each phase's `PhaseInfo.bxm`.
+
+**Objects.** A number is category << 16 | number, the categories from the table at 0x7101bfe388: 1 pl, 2 em, 3 wp, 4 et, 5 ef, 6 es,
+7 it, 9 sc, 0xa um, 0xc bg, 0xd bm, 0xe bh, 0xf ba (`em/em0010.dat` is 0x20010). The classes: 1694 rows of {u32 object, constructor,
+kind, name} at 0x7101bb7338, then four rows by category for the objects without one (0x71005bea0c). The files: 0x710081bca8 (x0
+0x7104d728f0, w1 object, 0, 0, w4 -1, 0) asks for an object's, 0x710081baf4 (x0, w1, 0) says 1 once they are loaded, 0x710081c48c lets
+go. The object: 0x71006421c8 (x0 the scene 0x71024c1dc0, x1 a name, w2 object, x3 0; 925 callers) -> an entity, the object at
+entity + 0x60 and the entity at object + 0x12e0; an object's position is four floats at + 0x50. 0x710074d490 (0, 0) -> the player's
+object. An enemy made this way takes part in the fight (it attacks, it can be hit) but belongs to no verse.
+
+**Effects** are numbered inside `effect/<object>.eff`, the file of the object that owns them, plus one file every scene has.
+0x7100b90954 (x0) fills a parameter block with the defaults (the game's are 0x130 bytes on the stack: + 0x20 where the handle goes,
++ 0x30 a scale, + 0x40 a 4x4, + 0x70 its place, + 0xa4 / + 0xa8 the entities it hangs on), 0x7100b8fd44 (x0, x1 entity, w2 0xff)
+adds an entity, and 0x7100b8f970 (x0 {u32 kind, u32 object}, w1 number, x2 a 4x4 scale, x3 the block) plays it and returns 0 when
+there is no such effect: kind 1 with object 0 is the common file, kind 2 an object's file, which must be loaded. 0x7100b90040
+(object, number, block; 637 callers) is the same for an object's own file. Seen played in a training-room fight: 599, 55, 741 and
+1 of the common file, 1, 12, 13, 60, 500 and 501 of `wp1090`.
+

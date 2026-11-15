@@ -55,11 +55,143 @@ static void presence_tick(Ctx *c) {
     game_presence[2] = verse >= 0 && (uint64_t)verse < count && *(const int *)(record + 2248) != 15 ? *(const int *)(record + 68) + 1 : 0;      /* 15: over */
     game_presence[3] = *(int *)(uintptr_t)0x7104dbb128ull;
 }
+/* [witchtime] Debug commands, TEST ONLY (docs/RE_NOTES.md section 11; the game ships no debug menu). WT_DEBUG=<file>: the file is
+ * read and deleted whenever it appears, one command a line, each answered on stdout with "debug:":
+ *   phase <sub-phase>            go to a phase by its sub-phase's name (p9a0_training, pc20_ChapterSelect; "phases" lists them)
+ *   phase <number> <sub-phase>   the same for a name that does not start with its phase's number
+ *   spawn <object> [n] [x y z]   n of an object (em0010, or 20010) at the player plus x y z (default 0 0 3), once its files are loaded
+ *   effect <n> [object] [x y z]  play effect n (599 or 0x257) of the common effect file, or of a loaded object's (wp1090: effect/wp1090.eff),
+ *                                on the player, x y z away from it
+ *   pos / warp <x> <y> <z>       the player's position
+ *   pad <bits> [frames]          hold player 1's buttons (hex, the game's bits of RE_NOTES section 9: 10 A, 20 B, 100 Plus) for 8 frames
+ *   phases / objects [prefix]    the sub-phase names in main / the object classes (objects em)
+ * Runs on the game's thread, in the frame's empty call (h_rebind_pads). */
+#include "debug_cmd.h"
+B3_FN void f_710066f464(Ctx *c);                             /* (x0 flow, w1 phase, x2 sub-phase, w3 0, w4 0, w5 -1 = the fade): go to a phase */
+B3_FN void f_710081bca8(Ctx *c);                             /* (x0 files, w1 object, 0, 0, w4 -1, 0): ask for an object's files */
+B3_FN void f_710081baf4(Ctx *c);                             /* (x0 files, w1 object, 0) -> 1 once they are loaded */
+B3_FN void f_71006421c8(Ctx *c);                             /* (x0 scene, x1 name, w2 object, x3 0) -> the entity, its object at +0x60 */
+B3_FN void f_710074d490(Ctx *c);                             /* (0, 0) -> the player's object; an object's position is 4 floats at +0x50 */
+B3_FN void f_7100b90954(Ctx *c);                             /* (x0 an effect's parameters): the defaults; +0x70 its place (4 floats), +0xa8 its parents */
+B3_FN void f_7100b8fd44(Ctx *c);                             /* (x0 parameters, x1 entity, w2 0xff): the entity the effect hangs on */
+B3_FN void f_7100b8f970(Ctx *c);                             /* (x0 {u32 2, u32 object}: whose effect file, w1 number, x2 a 4x4 scale, x3 parameters): play it */
+static float *debug_player_pos(Ctx *c) {
+    c->x[0] = c->x[1] = 0; f_710074d490(c);
+    return c->x[0] ? (float *)(uintptr_t)(c->x[0] + 0x50) : NULL;
+}
+static struct { unsigned id; int n, age; float at[3]; char name[8]; } g_debug_spawn[16];
+static void debug_spawns(Ctx *c) {
+    for (int i = 0; i < 16; i++) {
+        if (!g_debug_spawn[i].id) continue;
+        unsigned id = g_debug_spawn[i].id;
+        c->x[0] = 0x7104d728f0ull; c->x[1] = id; c->x[2] = 0; f_710081baf4(c);
+        if (!(uint32_t)c->x[0]) {
+            if (++g_debug_spawn[i].age > 1800) { printf("debug: spawn %s: its files did not load\n", g_debug_spawn[i].name); g_debug_spawn[i].id = 0; }
+            continue;
+        }
+        float *p = debug_player_pos(c);
+        int made = 0;
+        for (int k = 0; p && k < g_debug_spawn[i].n; k++) {
+            c->x[0] = 0x71024c1dc0ull; c->x[1] = (uint64_t)(uintptr_t)g_debug_spawn[i].name; c->x[2] = id; c->x[3] = 0; f_71006421c8(c);
+            uint64_t obj = c->x[0] ? *(uint64_t *)(uintptr_t)(c->x[0] + 0x60) : 0;
+            if (!obj) break;
+            float *q = (float *)(uintptr_t)(obj + 0x50);
+            for (int a = 0; a < 3; a++) q[a] = p[a] + g_debug_spawn[i].at[a] + (a == 0 ? 1.5f * k : 0);       /* a row along x */
+            made++;
+        }
+        printf("debug: spawn %s: %d of %d made%s\n", g_debug_spawn[i].name, made, g_debug_spawn[i].n, p ? "" : " (no player here)");
+        g_debug_spawn[i].id = 0;
+    }
+}
+static uint32_t g_debug_pad, g_debug_pad_edge[2];            /* what "pad" holds, and its first frame's presses: gameplay's copies, the menus' */
+static int g_debug_pad_frames;
+static void debug_pad(uint64_t copy, int menus) {            /* a pad's copy: +0 held, +4 pressed */
+    uint32_t *w = (uint32_t *)(uintptr_t)copy;
+    w[0] |= g_debug_pad; w[1] |= g_debug_pad_edge[menus];
+}
+static void debug_command(Ctx *c, char *line) {
+    char a[64] = "", b[64] = "";
+    float v[3] = {0, 0, 3};
+    int n = 1, words = sscanf(line, "%*s %63s %63s", a, b);
+    if (!strncmp(line, "phases", 6)) {                       /* main's .rodata strings (0x7101324000 .. 0x7101b4f000) that look like one */
+        for (const char *s = (const char *)(uintptr_t)0x7101324000ull, *end = (const char *)(uintptr_t)0x7101b4f000ull; s < end; s++)
+            if (s[-1] == 0 && s[0] == 'p' && dbg_phase_of(s) >= 0x100 && (s[4] == '_' || (s[4] >= 'A' && s[4] <= 'Z')) && strlen(s) < 32) printf("debug: phase %s\n", s);
+    } else if (!strncmp(line, "phase", 5) && words >= 1) {
+        const char *name = words == 2 ? b : a;
+        int phase = words == 2 ? (int)strtol(a, NULL, 16) : dbg_phase_of(a);
+        if (phase < 0) { printf("debug: phase: %s does not start with a phase number\n", a); return; }
+        c->x[0] = 0x71024c2220ull; c->x[1] = (uint32_t)phase; c->x[2] = (uint64_t)(uintptr_t)name; c->x[3] = c->x[4] = 0; c->x[5] = 0xffffffffull;
+        f_710066f464(c);
+        printf("debug: phase %x %s asked for\n", phase, name);
+    } else if (!strncmp(line, "spawn", 5) && words >= 1) {
+        unsigned id = dbg_obj_id(a);
+        int slot = 0;
+        sscanf(line, "%*s %*s %d %f %f %f", &n, &v[0], &v[1], &v[2]);
+        while (slot < 16 && g_debug_spawn[slot].id) slot++;
+        if (!id || slot == 16 || n < 1 || n > 32) { printf("debug: spawn: %s\n", !id ? "not an object (em0010 or 20010)" : slot == 16 ? "16 are waiting already" : "1 to 32 at a time"); return; }
+        c->x[0] = 0x7104d728f0ull; c->x[1] = id; c->x[2] = c->x[3] = c->x[5] = 0; c->x[4] = 0xffffffffull; f_710081bca8(c);
+        g_debug_spawn[slot].id = id; g_debug_spawn[slot].n = n; g_debug_spawn[slot].age = 0; memcpy(g_debug_spawn[slot].at, v, sizeof v);
+        snprintf(g_debug_spawn[slot].name, sizeof g_debug_spawn[slot].name, "%.7s", a);
+        printf("debug: spawn %s (%x): files asked for\n", a, id);
+    } else if (!strncmp(line, "effect", 6) && words >= 1) {
+        c->x[0] = c->x[1] = 0; f_710074d490(c);
+        uint64_t pl = c->x[0], entity = pl ? *(uint64_t *)(uintptr_t)(pl + 0x12e0) : 0;
+        if (!entity) { printf("debug: effect: no player here\n"); return; }
+        static _Alignas(16) uint8_t par[0x400];                /* the game's own are 0x130 on its stack */
+        _Alignas(16) float scale[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, at[4] = {0, 0, 0, 1};
+        uint32_t key[2] = {dbg_obj_id(b) ? 2 : 1, dbg_obj_id(b)};       /* {1, 0}: the file every scene has */
+        sscanf(line, dbg_obj_id(b) ? "%*s %*s %*s %f %f %f" : "%*s %*s %f %f %f", &at[0], &at[1], &at[2]);
+        c->x[0] = (uint64_t)(uintptr_t)par; f_7100b90954(c);
+        c->x[0] = (uint64_t)(uintptr_t)par; c->x[1] = entity; c->x[2] = 0xff; f_7100b8fd44(c);
+        memcpy(par + 0x70, at, sizeof at);
+        c->x[0] = (uint64_t)(uintptr_t)key; c->x[1] = (uint32_t)strtol(a, NULL, 0); c->x[2] = (uint64_t)(uintptr_t)scale; c->x[3] = (uint64_t)(uintptr_t)par;
+        f_7100b8f970(c);
+        printf("debug: effect %ld of %s: %s\n", strtol(a, NULL, 0), key[1] ? b : "the common file", (uint32_t)c->x[0] ? "played" : "not played (no such effect, or its file is not loaded)");
+    } else if (!strncmp(line, "pad", 3) && words >= 1) {
+        g_debug_pad_edge[0] = g_debug_pad_edge[1] = g_debug_pad = (uint32_t)strtoul(a, NULL, 16); g_debug_pad_frames = words == 2 && atoi(b) > 0 ? atoi(b) : 8;
+        printf("debug: pad %x for %d frames\n", g_debug_pad, g_debug_pad_frames);
+    } else if (!strncmp(line, "pos", 3) || !strncmp(line, "warp", 4)) {
+        float *p = debug_player_pos(c);
+        if (p && line[0] == 'w' && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) memcpy(p, v, sizeof v);
+        if (p) printf("debug: player at %.2f %.2f %.2f\n", p[0], p[1], p[2]); else printf("debug: no player here\n");
+    } else if (!strncmp(line, "objects", 7)) {               /* the game's class table: 1694 x {u32 object, fn, kind, name} */
+        for (int i = 0; i < 1694; i++) {
+            const uint64_t *row = (const uint64_t *)(uintptr_t)(0x7101bb7338ull + 32ull * i);
+            unsigned id = (uint32_t)row[0];
+            char name[8];
+            snprintf(name, sizeof name, "%s%04x", id >> 16 == 1 ? "pl" : id >> 16 == 2 ? "em" : id >> 16 == 3 ? "wp" : id >> 16 == 4 ? "et" : id >> 16 == 6 ? "es" : id >> 16 == 7 ? "it" : id >> 16 == 0xc ? "bg" : id >> 16 == 0xd ? "bm" : id >> 16 == 0xe ? "bh" : id >> 16 == 0xf ? "ba" : "??", id & 0xffff);
+            if (!a[0] || !strncmp(name, a, strlen(a))) printf("debug: object %s %x %s\n", name, id, (const char *)(uintptr_t)row[3]);
+        }
+    } else printf("debug: unknown command: %s\n", line);
+}
+static void debug_tick(Ctx *c) {
+    static const char *path;
+    static int on = -1;
+    static unsigned frame;
+    if (on < 0) { path = getenv("WT_DEBUG"); on = path && path[0]; if (on) printf("debug: commands from %s\n", path); }
+    if (!on) return;
+    if (g_debug_pad) {                                       /* the copies gameplay reads; the menus' copy is made later (h_rebind_menu_pads) */
+        debug_pad(0x7104d8f338ull, 0); debug_pad(0x7104d8f418ull, 0); debug_pad(0x7104d8f5d8ull, 0);
+        g_debug_pad_edge[0] = 0;
+        if (--g_debug_pad_frames <= 0) g_debug_pad = 0;
+    }
+    debug_spawns(c);
+    if (frame++ & 7) return;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char lines[32][160];
+    int count = 0;
+    while (count < 32 && fgets(lines[count], sizeof lines[0], f)) { lines[count][strcspn(lines[count], "\r\n")] = 0; if (lines[count][0]) count++; }
+    fclose(f); remove(path);
+    for (int i = 0; i < count; i++) debug_command(c, lines[i]);
+    fflush(stdout);
+}
 /* 0x7100983610 is empty and called once, just after the frame's pads were copied (0x710095f40c). What gameplay reads is rewritten
  * here: every pad of the first copy, the gameplay copy, the one record. The menus' copy comes from the raw pads later (0x710095f464). */
 void h_rebind_pads(Ctx *c) {
     static const struct { uint64_t at; int n; } copies[] = {{0x7104d8f338ull, 4}, {0x7104d8f418ull, 4}, {0x7104d8f5d8ull, 1}};
     presence_tick(c);
+    debug_tick(c);
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     const uint8_t *r = rebind_cur(c);
     if (!r) return;
@@ -80,6 +212,7 @@ void h_rebind_pads(Ctx *c) {
 B3_FN void f_710095f464(Ctx *c);
 void h_rebind_menu_pads(Ctx *c) {
     f_710095f464(c);
+    if (g_debug_pad) { debug_pad(0x7104d8f4f8ull, 1); g_debug_pad_edge[1] = 0; }
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     uint64_t fp; uint8_t b; uint16_t h;
     memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&b, (void *)(uintptr_t)(fp + 0x12), 1); memcpy(&h, (void *)(uintptr_t)(fp + 0x16), 2);

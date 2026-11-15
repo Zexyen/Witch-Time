@@ -2293,6 +2293,27 @@ Open there:
   dumps, `WT_LPROF` and the per-thread CPU times of the frame-rate line are Linux only; converted BC7 textures
   (`wtbuild textures`) were not made or measured (the GPU has ASTC).
 
+## Debug commands (2026-11-14; a test aid)
+
+The game has no debug menu (docs/RE_NOTES.md section 11), so the game library takes commands from a file: `WT_DEBUG=<file>`. The
+file is read and deleted whenever it appears (checked every 8 frames, on the game's thread), one command a line, each answered in the
+log with `debug:`. Without the variable nothing runs.
+
+| command | does |
+|---|---|
+| `phase <sub-phase>` | goes to a phase from anywhere, the title included: `phase p9a0_training`, `phase p120_ShibuyaScramble`, `phase pc20_ChapterSelect` (`phase <number> <sub-phase>` for a name that does not start with its phase) |
+| `spawn <object> [n] [x y z]` | n of an object (`em0010`, or `20010`) at the player plus x y z (default 0 0 3), once its files are loaded |
+| `effect <n> [object] [x y z]` | plays effect n of the common effect file, or of a loaded object's (`effect 12 wp1090`), on the player |
+| `pad <bits> [frames]` | holds player 1's buttons (hex, the game's bits: 10 A, 20 B, 40 X, 80 Y, 100 Plus) for 8 frames, in gameplay and menus |
+| `pos`, `warp <x> <y> <z>` | the player's position |
+| `phases`, `objects [prefix]` | lists the sub-phase names main holds, and the object classes (`objects em`) |
+
+Run on Linux (RADV, hidden and muted, a copy of the save): from the title, `phase p9a0_training` loaded the training room, `pad 20`
+closed its tutorial, `spawn em0010 2` made two enemies that attacked; `effect 741`, `599`, `55`, `12 wp1090` and `60 wp1090` drew
+their effects and `effect 3 em0010` (file not loaded) answered "not played"; `phase p120_ShibuyaScramble` then loaded Shibuya, where
+`spawn em0030 3` made three. Not tried: a sub-phase in the middle of a chapter that expects the state of the one before it, objects
+other than those two enemies, Windows. A spawned enemy is in no verse, so a fight's end does not wait for it.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
