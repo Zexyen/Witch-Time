@@ -636,7 +636,12 @@ static void ext_GetTrackConfiguration(Ctx *c) {       /* (int track, MediaData *
     md_set_i32(m, "max-input-size", 0x10000);
     if (tr->kind == 0) {
         md_set_i32(m, "width", tr->w); md_set_i32(m, "height", tr->h);
-        md_set_i32(m, "frame-rate", (int)(tr->fps + 0.5));
+        /* A scene's movie (ev*.webm) is told as 30 fps whatever its file has: the game counts its frames in 30ths of a
+         * second (seconds * 30.0 at 0x7100cd7650 while a sound leads it, picture time * this rate at 0x7100cd74f4 when
+         * none does, and the scene doubles both), so a 60 fps replacement ran subtitles and rumble at twice the speed
+         * in the movies without a sound to follow (ev0011). Pictures are shown by their time: all 60 still appear (#213). */
+        const char *name = strrchr(e->path, '/');
+        md_set_i32(m, "frame-rate", name && !strncmp(name + 1, "ev", 2) ? 30 : (int)(tr->fps + 0.5));
     } else if (tr->kind == 1) {
         md_set_i32(m, "sample-rate", tr->rate); md_set_i32(m, "channel-count", tr->ch);
     }

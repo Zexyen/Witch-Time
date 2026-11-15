@@ -585,6 +585,16 @@ cutscenes in the game's 60 fps mode.
     on Linux: 60.0 ticks a second at v0.4.5 and `bd2923e`, cutscene_fps 60 and 30, New Game and the reporter's save through
     Chapter Select; at the handover the old scene's end runs first. So `keep_movie_flag` sets the flag again and logs a line.
     Why the reporter's PC lost it is not known, nor that it did: v0.4.5's Media Foundation path could not be run here.
+  - **Replacement movies at 60 fps (#213)**: the movie's frame (player +900, state +16) has two sources in `7100cd7388`.
+    While the scene gave it sounds to follow (state +32 / +36 / +40, flag bit 24) it is the sound's position in ms
+    times a fixed 30.0 / 1000; without them (`ev0011`) it is the picture's time over the frame period (+968) plus 1,
+    and the period is 1 / the track's "frame-rate" (`7100cd6054`). So a 60 fps `ev0011` counted 60 a second and its
+    subtitles and rumble ran at twice the speed (14.0 s of cues after 7.0 s of picture, at cutscene_fps 30 and 60);
+    `ev0000`, `ev0005` and `ev0010` follow a sound and stayed right. The runtime now tells 30 for every `ev*.webm`
+    (the scenes are written for that: header bytes 60 / 30). Pictures are taken by their time, not by the period:
+    measured on 60 fps copies of the four movies, `ev0011` 30.0 counts and 60.0 pictures a second, cues within
+    0.03 s. The period also sets a seek's frame to time conversion, the end-of-stream time and the clock's resync
+    limit; no seek of such a scene was run. Linux, a build of 2026-11-02 with the one line changed.
   - **The two kinds of step (#65, #67, #69)**: the two steps of a console frame are not the same. Bit 27 of the flags is set
     at `7100670d0c` before the first and cleared at `7100670d90` after it. In the first the timeline update `7100bbcb94`
     recomputes its pause bits 5 and 31; only there does a seek start. In the second it latches what was asked for: skip
