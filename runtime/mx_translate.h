@@ -81,7 +81,8 @@ typedef struct {
     /* [witchtime] target 1, a stage other than fragment and compute, on a GPU without subgroup operations in that stage
      * (Metal has them in fragment, compute and tessellation control stages only: MoltenVK refuses a tessellation
      * evaluation stage with a shuffle, and its draws were left out). The stage is then a warp of one lane, lane 0: a
-     * shuffle gives the lane's own value, a vote its own predicate. 0 = the text exactly as before. */
+     * shuffle gives the lane's own value, a vote its own predicate. 0 = the text exactly as before.
+     * [issue 207] Also set for the tessellation stages of every GPU (nvn_vk_m4.c vk_lone_lane). */
     int lone_lane;
 } MxIn;
 

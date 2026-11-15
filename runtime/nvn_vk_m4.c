@@ -162,8 +162,13 @@ static unsigned vk_loopdebug(void) {
     if (v < 0) { const char *e = getenv("WT_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: WT_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
     return (unsigned)v;
 }
-/* [witchtime] MxIn.lone_lane: a vertex or tessellation stage on a GPU without subgroup operations in it (Metal) */
+/* [witchtime] MxIn.lone_lane: a vertex or tessellation stage on a GPU without subgroup operations in it (Metal).
+ * [issue 207] And a tessellation stage on every GPU: a subgroup's lanes are other vertices there, and B3's evaluation stages take
+ * their noise coordinates through a shuffle from "the group's first lane" (the clouds of erasure: every vertex displaced by a
+ * neighbour's noise, slivers between the patches).
+ * shortcut: tessellation stages only; a vertex stage with a shuffle needs the same, with MX_VK_VERSION raised. */
 static int vk_lone_lane(int stage) {
+    if (stage == 3 || stage == 4) return 1;
     static const uint32_t bit[6] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, 0, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_COMPUTE_BIT};
     return D.sg_known && stage >= 0 && stage < 6 && stage != 1 && stage != 5 && bit[stage] && !(D.sg_stages & bit[stage]);
 }
