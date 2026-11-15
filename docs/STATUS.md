@@ -715,6 +715,15 @@ halved in 2:1 steps first).
   stays aligned. `WT_VK_CLOUD_SCALE=<cap>` limits their scale for a weak GPU (default: the full scale; 4K A/B at equal
   load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60). Their fragment stage was the cost: 30x cheaper since
   issue 107 ("The clouds of erasure and the dispatcher").
+- **Issue 207, the clouds up close** (2026-11-14). Two things. (1) Dark slivers all over the cloud at any scale: the
+  evaluation stages of its tessellated draws (#5324, #5352) take their noise coordinates through SHFL from "the first
+  lane of the group" (on Maxwell a vertex is a group of its own), which ran as a subgroup shuffle between other
+  vertices, so the patches were displaced apart. Tessellation stages now translate as one lane on every GPU
+  (`vk_lone_lane`, the path made for Metal). (2) Blocks around the player standing before a cloud: the cut-out is made in
+  the cloud pass, 2.8 scene pixels a texel. At a scale of 1.0 or more (not at exactly 1.0, where nothing is scaled) the
+  520x360 class is now drawn in the scene's pixels (`rs_extra_scale`, 1440 / 520 times the scale; 7.7 times the pixels of
+  the pass, 604 MB of scaled images against 403 MB at 1.6). Tested on RADV at 1.6 as patches on the v0.9.3 tree; not on
+  NVIDIA, Windows, Metal, or with FSR.
 - **Measurements later on 2026-10-25 were taken with other programs loading the machine** (a game in Java at about two
   cores and the GPU, two long-running emulator processes): 4K runs then gave 75-81 % of frames at 60 whatever the setting
   (the 96 % above was an idle machine). Only A/B runs interleaved under the same load are compared.

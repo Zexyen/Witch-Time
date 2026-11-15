@@ -895,10 +895,16 @@ void nvn_vk_rs_base(int w, int h) {
  * of erasure (tessellated patches into two RGBA16F targets + D16, a 3-layer RGBA16F array; sampled by a full-screen pass):
  * at 4K it stayed 520x360. Arrays of these sizes are scaled too (all the attachments of their passes together). */
 static int rs_extra_class(int w, int h) { return w == 520 && h == 360; }
-static float rs_extra_scale(float base) {           /* WT_VK_CLOUD_SCALE=<cap>: at most that for these (a weak GPU; the pass is tessellated): 4K A/B at equal load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60 */
+/* [issue 207] At a scale these are drawn in the scene's pixels (1440 / 520 times the scene's scale): the clouds are cut out around
+ * what stands before them in this pass, and at 520x360 times the scale that edge stepped in blocks 2.8 pixels wide around the
+ * player. 7.7 times the pixels of the pass. Not at 1.0 (nothing is scaled there): the console's look.
+ * WT_VK_CLOUD_SCALE=<cap>: at most that scale for these (a weak GPU; the pass is tessellated): 4K A/B at equal load before the
+ * factor, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60. */
+static float rs_extra_scale(float base) {
     static float cap = -1;
-    if (cap < 0) { const char *e = getenv("WT_VK_CLOUD_SCALE"); cap = e ? (float)atof(e) : RS_MAX; }
-    float v = base < cap ? base : cap;
+    if (cap < 0) { const char *e = getenv("WT_VK_CLOUD_SCALE"); cap = e ? (float)atof(e) : 1e9f; }
+    float v = base >= 1.0f ? base * (1440.0f / 520.0f) : base;      /* below 1.0 the player asked for less work */
+    if (v > cap) v = cap;
     return v < 1.0f && base >= 1.0f ? 1.0f : v;
 }
 static int rs_window_class(int w, int h) {
