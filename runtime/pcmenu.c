@@ -109,6 +109,8 @@ static const Row k_rows[] = {
       "fsr4", "fsr4_quality", "fsr4_balanced", "fsr4_performance", "fsr4_ultra_performance"},
      {"Off", "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance", "DLAA", "DLSS Quality", "DLSS Balanced", "DLSS Performance", "DLSS Ultra Performance",
       "FSR 4 Native AA", "FSR 4 Quality", "FSR 4 Balanced", "FSR 4 Performance", "FSR 4 Ultra Performance"}},      /* [witchtime] issue 190: the DLSS values need an NVIDIA RTX GPU and the player's nvngx_dlss.dll; else FSR runs */
+    {"frame_generation", "Frame generation", "Experimental, Windows. A generated picture between every two frames: twice the frame rate on screen, about half a frame more delay. Needs an FSR / DLSS mode above, a 120 Hz display (or vsync off) and your own DLLs beside witch-time.exe (AMD: amd_fidelityfx_framegeneration_vk.dll; NVIDIA: nvngx_dlssg.dll).", "WT_FRAMEGEN", "off", A_LIVE, 0,
+     {"off", "fsr", "dlss"}, {"Off", "FSR", "DLSS"}},      /* [witchtime] issue 119 (nvn_vk_fg.c) */
     {"hdr", "HDR", "Auto: HDR output while the desktop's HDR is on for this monitor. The scene's lights go above white, up to HDR peak; menus and the HUD stay at white.", NULL, "auto", A_LIVE, 0,
      {"auto", "off", "on"}, {"Auto", "Off", "On"}},
     {"hdr_paper_white", "HDR white", "How bright the game's white is with HDR on. Auto: the desktop's brightness of SDR programs.", NULL, "auto", A_LIVE, 0,

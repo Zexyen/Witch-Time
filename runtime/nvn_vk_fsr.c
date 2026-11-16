@@ -225,6 +225,7 @@ static int fsr_want(void) { rs_scale(); return g_rs_mode >= 1 && F.ok >= 0; }   
 static const char *fsr_unable(void);
 static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset); static void dlss_present(void); static void dlss_shutdown(void);      /* nvn_vk_dlss.c (issue 190) */
 static int fsr4_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset); static void fsr4_present(void); static void fsr4_shutdown(void);      /* nvn_vk_fsr4.c */
+static void fg_scene(VTex *vd, int w, int h, int reset); static void fg_shutdown(void);      /* nvn_vk_fg.c (issue 119) */
 static float fsr_ratio(int mode) {
     static const float k[6] = {1.0f, 1.0f, 1.5f, 1.7f, 2.0f, 3.0f};
     if (mode > 5) mode = (mode - 1) % 5 + 1;        /* [witchtime] issue 190: dlaa .. dlss_ultra_performance (6 .. 10) and fsr4 .. fsr4_ultra_performance (11 .. 15) draw at the scale of the FSR 3.1 mode of the same rank, which runs in their place where they cannot */
@@ -251,7 +252,7 @@ static void fsr_img(FImg *im, VkFormat f, int w, int h, int levels, int storage)
     vt->magic = 0x56544558; vt->fmt = f; vt->aspect = VK_IMAGE_ASPECT_COLOR_BIT; vt->w = w; vt->h = h; vt->d = 1; vt->levels = levels; vt->layers = 1; vt->samples = 1; vt->storage = storage;      /* bit 1: also a colour attachment (FI_MV: the velocity pass) */
     ci.imageType = VK_IMAGE_TYPE_2D; ci.format = f; ci.extent.width = (uint32_t)w; ci.extent.height = (uint32_t)h; ci.extent.depth = 1; ci.mipLevels = (uint32_t)levels; ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT; ci.tiling = VK_IMAGE_TILING_OPTIMAL; ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0) | (storage & 2 ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0);
+    ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (storage & 1 ? VK_IMAGE_USAGE_STORAGE_BIT : 0) | (storage & 2 ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0);      /* (bit 0 alone decides storage: nvn_vk_fg.c asks for 2) */
     VKC(vkCreateImage(V.device, &ci, NULL, &vt->img));
     vkGetImageMemoryRequirements(V.device, vt->img, &rq);
     vt->mem = vmem_alloc(rq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0);
@@ -534,6 +535,7 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     uint32_t spd_x = (uint32_t)(w - 1) / 64 + 1, spd_y = (uint32_t)(h - 1) / 64 + 1;
     fsr_dispatch(P_MV, src_x, src_y);
     if (!reset) fsr_mv_dump(depth, vd, w, h);      /* motion vectors, step 3: the objects' own over the camera's (fsr_mv_pass) */
+    fg_scene(vd, w, h, reset);                      /* [witchtime] issue 119: frame generation takes this frame's depth and vectors (nvn_vk_fg.c) */
     if (g_rs_mode < 6 || !(g_rs_mode < 11 ? dlss_run(vc, vd, w, h, uw, uh, reset) : fsr4_run(vc, vd, w, h, uw, uh, reset))) {      /* [witchtime] issue 190: DLSS, or FSR 4, writes FI_OUT from the same inputs (nvn_vk_dlss.c, nvn_vk_fsr4.c) */
     fsr_dispatch(P_PREP, src_x, src_y);
     fsr_dispatch(P_LUMA, spd_x, spd_y);
@@ -1010,7 +1012,7 @@ static void fsr_mv_dump(Tex *depth, VTex *vd, int w, int h) {
 static void fsr_mv_streams(int from_cb, VStage *vs) { if (g_mvlog.on > 0 && !R.ncol && fsr_scene_depth()) { g_mvlog.cb_draws += from_cb != 0; g_mvlog.ssbo_draws += vs->ssbos != 0; } }
 /* nvn_vk_draw.c, at shutdown (the GPU is idle; the images went with the others) */
 static void fsr_shutdown(void) {
-    dlss_shutdown(); fsr4_shutdown();
+    fg_shutdown(); dlss_shutdown(); fsr4_shutdown();
     for (int i = 0; i < 2; i++) { free(g_mv.s[i].b); free(g_mv.s[i].d); }
     memset(&g_mv, 0, sizeof g_mv);
     if (g_mvj_thread) {                            /* the pipeline thread first: it uses the device */

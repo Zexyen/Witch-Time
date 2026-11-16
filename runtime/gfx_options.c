@@ -171,6 +171,17 @@ static const char *const k_default_ini =
 ";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
 "\r\n"
+"; frame_generation = off | fsr | dlss      (Vulkan, Windows; experimental, untested)\r\n"
+";   A generated picture is shown between every two frames of the game, so the screen gets twice the game's frame rate.\r\n"
+";   It needs an upscaler mode above (any but off: that is where the motion vectors come from), your own DLLs beside\r\n"
+";   witch-time.exe, and a display that shows twice the game's frame rate (120 Hz for 60 fps) or vsync = off.\r\n"
+";   fsr: AMD's amd_fidelityfx_loader_vk.dll and amd_fidelityfx_framegeneration_vk.dll (FSR SDK 2.4.0 or newer).\r\n"
+";   dlss: NVIDIA's nvngx_dlss.dll and nvngx_dlssg.dll from a game that has DLSS frame generation (RTX 40 or newer).\r\n"
+";   Menus, movies and anything without a 3D scene are shown as they are. It adds about half a frame of delay, and the\r\n"
+";   HUD can smear on generated pictures. Where it cannot run the game is shown as before and the log says why.\r\n"
+";   Applies while the game runs.\r\n"
+"frame_generation = off\r\n"
+"\r\n"
 "; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
 ";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
 ";   less work for the CPU, and a sharper picture. The launcher makes that folder after a build, about 16 GB: 12 minutes on 4\r\n"
@@ -247,6 +258,7 @@ static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOption
     for (int i = 1; i < 16; i++) if (!_stricmp(v, k[i])) return i;
     return 0;
 }
+static int framegen_of(const char *v) { return !_stricmp(v, "fsr") ? 1 : !_stricmp(v, "dlss") ? 2 : !_stricmp(v, "test") ? 3 : 0; }      /* [witchtime] GfxOptions.frame_gen (test: WT_FRAMEGEN only, the real frame twice) */
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     (void)once; (void)ctx;
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
@@ -288,6 +300,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
+        else if (!_stricmp(key, "frame_generation")) { o->frame_gen = framegen_of(val); if (o->frame_gen == 3) o->frame_gen = 0; }      /* [witchtime] issue 119 */
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
         else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
@@ -307,6 +320,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
     if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
+    if (getenv("WT_FRAMEGEN")) o->frame_gen = framegen_of(getenv("WT_FRAMEGEN"));      /* [witchtime] issue 119 */
     {   /* [witchtime] the mip bias: -1, or WT_TEXTURE_LOD_BIAS (-3 .. 3) */
         const char *e = getenv("WT_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
@@ -521,7 +535,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
-    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
+    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler; g_opt.frame_gen = t.frame_gen;
     g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);

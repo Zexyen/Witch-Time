@@ -935,7 +935,8 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
 - **FSR 4 and frame generation**: FSR 4 runs with the player's own DLLs, see "FSR 4 with the player's DLLs" below. FSR 4.1.2
   on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000 and newer); Adrenalin does not upgrade a
   Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping them. AMD's frame-generation swapchain
-  wants four queues and its own present thread, against display.c's pacing (issue 119 waits on this).
+  wants four queues and its own present thread, against display.c's pacing: frame generation uses AMD's context without
+  it, see "Frame generation with the player's DLLs" below.
 
 ## FSR 3.1 quality modes (issue 118, step 3; 2026-11-03; experimental)
 
@@ -1048,6 +1049,39 @@ row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_fsr4.c`, buil
   dispatch leaves our images in the layouts it found them in, the jitter's and vectors' signs (FSR 3.1's, which AMD's own
   port shares), and the cost of making the context (a stop at the first frame). The in-game Options tab and the launcher
   do not list the values (they show "Custom"), as with DLSS.
+
+## Frame generation with the player's DLLs (2026-11-16; issue 119; generators NOT RUN yet)
+
+`frame_generation = off | fsr | dlss` (graphics.ini, the PC settings row "Frame generation"; `WT_FRAMEGEN` wins and also
+takes `test`). `runtime/nvn_vk_fg.c`; the present path is `vk_present2` in `runtime/nvn_vk_draw.c`.
+
+- **What the window gets**: when the game finishes frame N, the picture between N-1 and N is presented where N was until
+  now (at its tick), and N itself half a game frame later. `vk_present2` runs its swapchain part twice (the crop, the
+  bars, the overlay, the PC menu and the HDR pass on both pictures); the real frame is kept in `g_pend[1]` and a timer
+  thread (`fg_timer`) posts its present to the render thread (`nvn_vk_fg_flush_job`). The game's clock and tick do not
+  change. The real frame is on screen half a frame later than without it.
+- **It needs an upscaler mode** (any but off): the motion vectors, the jitter and the camera are `fsr_run`'s
+  (`fg_scene`). A frame without a scene (menus, movies) is presented as before, with no generated picture.
+- **It needs a display that takes two presents a game frame**: with a present mode that waits for the display (FIFO: AMD's
+  Windows driver has no mailbox) and a measured refresh rate under twice the game's rate, nothing is generated and the
+  log says so once (`nvn_vk_fg: no generated picture: ...`), as two presents would halve the game's speed there.
+- **fsr**: the player's `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_framegeneration_vk.dll` (AMD FSR SDK 2.4.0)
+  beside `witch-time.exe`, through AMD's MIT headers (`runtime/third_party/ffx_api`, now with
+  `framegeneration/include`). Only AMD's frame generation CONTEXT is used: configured each frame without a swapchain or
+  callbacks, its prepare pass in `fsr_run` (depth, vectors, camera), its generation pass at the present into an image of
+  ours. NOT AMD's frame-generation swapchain (four queues, a present thread of its own). Which version runs (3.1.6 on
+  any GPU, or the 4.0 model on RX 9000) is the DLL's choice; the log prints it.
+- **dlss**: the player's `nvngx_dlss.dll` and `nvngx_dlssg.dll`, through the driver's NGX runtime as DLSS above (feature
+  11, the same parameter object). **A guess**: NVIDIA publishes this feature's interface only inside Streamline's closed
+  plugin. The parameter names (`DLSSG.Backbuffer`, `DLSSG.Depth`, `DLSSG.MVecs`, `DLSSG.OutputInterpolated`,
+  `DLSSG.CameraViewToClip`, `DLSSG.MvecScaleX` ...) are those the open project dlssg-to-fsr3 (GPL-3.0, Nukem9) reads in
+  the place of NVIDIA's DLL; what else the real DLL wants (Reflex, more camera data) is not known. Any failed call
+  turns it off with a log line; a fault inside NGX cannot be caught.
+- **test** (`WT_FRAMEGEN=test`): the real frame is copied and shown twice, on every frame: nothing new to see, but the
+  two presents, the kept frame and the timer run. This is the only mode run so far (Linux, RADV).
+- **Not done**: a picture without the HUD (both generators take one; without it the HUD can smear on generated
+  pictures); the generators see the 8-bit picture also with HDR on; the frame-pacing statistics count the generated
+  picture as the frame; the in-game Options tab and the launcher do not list the row.
 
 ## Object motion vectors (2026-11-11; with FSR, experimental)
 

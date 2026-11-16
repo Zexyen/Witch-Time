@@ -26,7 +26,7 @@ static struct {
     int ok, ext;                                   /* ok: 0 not tried, 1 ready, -1 not available (logged once); ext: the device was made for FSR 4 */
     wchar_t dir[MAX_PATH];                         /* the folder of the player's DLLs */
     HMODULE lib;
-    PfnFfxCreateContext create; PfnFfxDestroyContext destroy; PfnFfxQuery query; PfnFfxDispatch dispatch;
+    PfnFfxCreateContext create; PfnFfxDestroyContext destroy; PfnFfxQuery query; PfnFfxDispatch dispatch; PfnFfxConfigure configure;
     uint64_t ver; char name[32];                   /* the FSR 4 version the DLL offers for this device */
     Fsr4Ctx *cur, *old[8];                         /* old: replaced contexts, destroyed a few frames later (commands not yet run may use them) */
     int w, h, uw, uh, hdr;                         /* the largest sizes the context in use was created for */
@@ -71,18 +71,26 @@ static void **fsr4_device_exts(const VkExtensionProperties *dext, uint32_t ndext
     return tail;
 }
 static void fsr4_msg(uint32_t type, const wchar_t *m) { if (A4.msgs++ < 32) printf("nvn_vk_fsr4: AMD's %s: %ls\n", type ? "warning" : "error", m); }
-static int fsr4_setup(void) {                      /* render thread, once */
+/* AMD's loader DLL and its five functions (also nvn_vk_fg.c, frame generation). NULL when loaded, else why not. */
+static const char *fsr4_load(void) {
     wchar_t p[MAX_PATH + 48];
+    if (A4.lib) return A4.dispatch ? NULL : "amd_fidelityfx_loader_vk.dll has no ffxCreateContext / ffxDestroyContext / ffxQuery / ffxDispatch / ffxConfigure";
+    if (!fsr4_find()) return "no amd_fidelityfx_loader_vk.dll beside witch-time.exe (copy AMD's Vulkan DLLs there from the FSR SDK 2.4.0 or a Vulkan game that has FSR 4, then start again)";
+    _snwprintf(p, MAX_PATH + 48, L"%ls\\amd_fidelityfx_loader_vk.dll", A4.dir); p[MAX_PATH + 47] = 0;
+    A4.lib = LoadLibraryExW(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);      /* (its folder first: the loader takes the effect DLLs from beside itself) */
+    if (!A4.lib) { printf("nvn_vk_fsr4: LoadLibrary of amd_fidelityfx_loader_vk.dll: error %lu\n", (unsigned long)GetLastError()); return "amd_fidelityfx_loader_vk.dll did not load"; }
+    PfnFfxCreateContext cr = (PfnFfxCreateContext)(void *)GetProcAddress(A4.lib, "ffxCreateContext");
+    A4.destroy = (PfnFfxDestroyContext)(void *)GetProcAddress(A4.lib, "ffxDestroyContext"); A4.query = (PfnFfxQuery)(void *)GetProcAddress(A4.lib, "ffxQuery");
+    A4.configure = (PfnFfxConfigure)(void *)GetProcAddress(A4.lib, "ffxConfigure"); PfnFfxDispatch di = (PfnFfxDispatch)(void *)GetProcAddress(A4.lib, "ffxDispatch");
+    if (!cr || !A4.destroy || !A4.query || !A4.configure || !di) return "amd_fidelityfx_loader_vk.dll has no ffxCreateContext / ffxDestroyContext / ffxQuery / ffxDispatch / ffxConfigure";
+    A4.create = cr; A4.dispatch = di;
+    return NULL;
+}
+static int fsr4_setup(void) {                      /* render thread, once */
     if (V.props.vendorID != 0x1002) { fsr4_off("this is not an AMD GPU", 0); return 0; }
-    if (!fsr4_find()) { fsr4_off("no amd_fidelityfx_loader_vk.dll beside witch-time.exe (copy it and amd_fidelityfx_upscaler_vk.dll there from AMD's FSR SDK 2.4.0 or a Vulkan game that has FSR 4, then start again)", 0); return 0; }
+    { const char *why = fsr4_load(); if (why) { fsr4_off(why, 0); return 0; } }
     if (!fsr4_file(A4.dir, L"amd_fidelityfx_upscaler_vk.dll")) { fsr4_off("amd_fidelityfx_upscaler_vk.dll is not beside amd_fidelityfx_loader_vk.dll (FSR 4 is in that one)", 0); return 0; }
     if (!A4.ext) { fsr4_off("the device was made before the DLLs were found", 0); return 0; }
-    _snwprintf(p, MAX_PATH + 48, L"%ls\\amd_fidelityfx_loader_vk.dll", A4.dir); p[MAX_PATH + 47] = 0;
-    A4.lib = LoadLibraryExW(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);      /* (its folder first: the loader takes the upscaler DLL from beside itself) */
-    if (!A4.lib) { fsr4_off("amd_fidelityfx_loader_vk.dll did not load", (unsigned)GetLastError()); return 0; }
-    A4.create = (PfnFfxCreateContext)(void *)GetProcAddress(A4.lib, "ffxCreateContext"); A4.destroy = (PfnFfxDestroyContext)(void *)GetProcAddress(A4.lib, "ffxDestroyContext");
-    A4.query = (PfnFfxQuery)(void *)GetProcAddress(A4.lib, "ffxQuery"); A4.dispatch = (PfnFfxDispatch)(void *)GetProcAddress(A4.lib, "ffxDispatch");
-    if (!A4.create || !A4.destroy || !A4.query || !A4.dispatch) { fsr4_off("amd_fidelityfx_loader_vk.dll has no ffxCreateContext / ffxDestroyContext / ffxQuery / ffxDispatch", 0); return 0; }
     /* the versions the DLL (or the driver through it) offers for THIS device: FSR 4 is in the list only where it can run */
     VkDeviceContext dc = {V.device, V.gpu, vkGetDeviceProcAddr};
     uint64_t n = 0, ids[16]; const char *names[16]; char all[256]; size_t at = 0;
@@ -120,6 +128,9 @@ static struct FfxApiResource fsr4_res(const VTex *vt, uint32_t state, int *bad) 
     case VK_FORMAT_B10G11R11_UFLOAT_PACK32: f = FFX_API_SURFACE_FORMAT_R11G11B10_FLOAT; break;
     case VK_FORMAT_R16G16B16A16_SFLOAT: f = FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT; break;
     case VK_FORMAT_R8G8B8A8_UNORM: f = FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM; break;
+    case VK_FORMAT_R8G8B8A8_SRGB: f = FFX_API_SURFACE_FORMAT_R8G8B8A8_SRGB; break;      /* (the window texture: frame generation) */
+    case VK_FORMAT_B8G8R8A8_UNORM: f = FFX_API_SURFACE_FORMAT_B8G8R8A8_UNORM; break;
+    case VK_FORMAT_B8G8R8A8_SRGB: f = FFX_API_SURFACE_FORMAT_B8G8R8A8_SRGB; break;
     case VK_FORMAT_A2B10G10R10_UNORM_PACK32: f = FFX_API_SURFACE_FORMAT_R10G10B10A2_UNORM; break;
     case VK_FORMAT_R16G16_SFLOAT: f = FFX_API_SURFACE_FORMAT_R16G16_FLOAT; break;
     case VK_FORMAT_D24_UNORM_S8_UINT: usage |= FFX_API_RESOURCE_USAGE_STENCILTARGET;      /* fall through */
@@ -196,7 +207,7 @@ static void fsr4_shutdown(void) {                  /* fsr_shutdown: the GPU is i
     if (A4.ok != 1) return;
     if (A4.cur) { A4.destroy(&A4.cur->c, NULL); free(A4.cur); }
     for (int i = 0; i < 8; i++) if (A4.old[i]) { A4.destroy(&A4.old[i]->c, NULL); free(A4.old[i]); }
-    memset(&A4, 0, sizeof A4);                     /* (the DLL stays loaded) */
+    A4.ok = 0; A4.cur = NULL; memset(A4.old, 0, sizeof A4.old);      /* (the DLL stays loaded: its handle and functions are kept) */
 }
 #else
 static void **fsr4_device_exts(const VkExtensionProperties *dext, uint32_t ndext, void **tail) { (void)dext; (void)ndext; return tail; }
