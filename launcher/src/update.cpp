@@ -161,6 +161,12 @@ void check(const Paths& paths)
 	const long long mine = version_number(WT_VERSION);
 	if (mine < 0)
 		return;
+	// issue 211: what releases up to v0.10.2 shipped and a player's PC never reads (release.yml, env TRIM, which keeps it
+	// out of newer archives); an update unpacks over the folder and removes nothing. Never in a checkout (.git).
+	if (!fs::exists(to_path(paths.repo + "/.git"), ec))
+		for (const char* gone : {".claude", ".mcp.json", ".gitattributes", ".gitignore", "docs", "scripts/ghidra", "tests", "tools", "launcher/src",
+		                         "launcher/CMakeLists.txt", "launcher/macos", "launcher/win32", "launcher/README.md", "lifter/README.md"})
+			fs::remove_all(to_path(paths.repo + "/" + gone), ec);
 	set(State::checking, "");
 	std::thread([mine] {
 		int code = -1;
