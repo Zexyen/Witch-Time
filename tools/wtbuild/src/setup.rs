@@ -646,9 +646,18 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
     }
     let ((count, total, digest), sizes) = romfs_manifest(&romfs);
     if digest != ROMFS_MANIFEST.2 {
-        let missing = ROMFS_FILES.iter().any(|(p, _, _)| !sizes.contains_key(*p));
+        let missing: Vec<&str> = ROMFS_FILES.iter().map(|(p, _, _)| *p).filter(|p| !sizes.contains_key(*p)).collect();
         let msg = format!("romfs: {} files / {} bytes, expected {} / {}", count, total, ROMFS_MANIFEST.0, ROMFS_MANIFEST.1);
-        if count < ROMFS_MANIFEST.0 || missing {
+        if !missing.is_empty() {
+            // issue 226: named, as a folder with more files than expected was told only "files are missing"
+            return Err(Fail(format!(
+                "{}: {} not found directly in romfs/ (the folder must hold this game's .pkz archives as extracted: not another game's RomFS, not unpacked; or not {})",
+                msg,
+                missing.join(", "),
+                VERSION
+            )));
+        }
+        if count < ROMFS_MANIFEST.0 {
             return Err(Fail(format!("{}: files are missing (incomplete extraction, or not {})", msg, VERSION)));
         }
         warnings.push(format!("{}: the file list differs (other version, or modded)", msg));
