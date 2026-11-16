@@ -348,6 +348,7 @@ static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = gete
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
 static int g_one_pass;                             /* h_frame_clock: this fixed-step frame runs one logic step (h_main_pass) */
 static int g_half;                                 /* the last frame ran the first kind of logic step alone, so this one is the second (h_step_kind) */
+static int g_exact;                                /* h_frame_clock: this frame is a fixed-step one of the spider ride's scene, whose steps must be 1.0 (scene_even) */
 static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&f, (void *)(uintptr_t)fp, 4); return f; }
 __declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
@@ -362,9 +363,10 @@ void h_fps_mode_set(Ctx *c) {
         fflush(stdout);
         last = want;
     }
-    /* above 60 fps the 30 fps scenes run at frame_rate too (real time), but not the ride set pieces (#45: flag 16, the game's
-     * mode 1 is 2 ticks of frame_rate there): the chapter 3 spider ride's prompts need logic steps of exactly 1.0, 60 a second (scene_even) */
-    g_fps_forced = want == 1 && (uncap_on() ? !(state_flags() & 0x10000) : sixty);
+    /* above 60 fps the 30 fps scenes run at frame_rate too (real time). A ride set piece (flag 16) is gameplay the console runs
+     * at 30: it takes the game's frame rate whatever cutscene_fps says (#156). Only the chapter 3 spider ride's prompt scene stays
+     * at 60 above 60 fps (#45: the game's mode 1 is 2 ticks of frame_rate there): its logic steps must be exactly 1.0, 60 a second */
+    g_fps_forced = want == 1 && (g_exact ? !uncap_on() : uncap_on() || sixty || (state_flags() & 0x10000));
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }
@@ -375,6 +377,21 @@ void h_fps_mode_set(Ctx *c) {
  * the step stays even, 0.5 at 60, 1.0 at 30, and what late frames owe is paid off gently (scene_step.h), on the spider ride in whole frames (scene_even). (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
  * follows the real frame time already. */
 B3_FN void f_7100c1f600(Ctx *c);
+/* Is scene ev%04x playing? The scene slots: *0x71024aae68, 8 of 112 bytes, +0 bit 0 on, +56 the scene, its header at +8, the number at +4. */
+static int scene_playing(uint32_t ev) {
+    uint64_t slots;
+    memcpy(&slots, (void *)(uintptr_t)0x71024aae68ull, 8);
+    for (int i = 0; slots && i < 8; i++) {
+        uint64_t q = slots + 112 * (uint64_t)i, sc, hdr; uint32_t on, n;
+        memcpy(&on, (void *)(uintptr_t)q, 4); memcpy(&sc, (void *)(uintptr_t)(q + 56), 8);
+        if (!(on & 1) || !sc) continue;
+        memcpy(&hdr, (void *)(uintptr_t)(sc + 8), 8);
+        if (!hdr) continue;
+        memcpy(&n, (void *)(uintptr_t)(hdr + 4), 4);
+        if (n == ev) return 1;
+    }
+    return 0;
+}
 /* The main loop runs two logic steps in a frame of a fixed-step scene, when flags 28 and 30 were set before the frame's first:
  * 2 steps of 1.0 a 30 Hz frame, 60 a second, each 1/60 s. They are of two kinds. In the first, flag 27 set (0x7100670d0c to
  * 0x7100670d90), the timeline update 0x7100bbcb94 recomputes its pause bits. In the second (0x7100670da4: pads, 0x7100671600) it
@@ -617,9 +634,10 @@ void h_frame_clock(Ctx *c) {
     g_clock_ctx = c;
     keep_movie_flag(c);
     test_witch_time(c);
-    int fixed = (uint32_t)c->x[1] == 0;
+    int fixed = (uint32_t)c->x[1] == 0, ride = state_flags() & 0x10000;
+    g_exact = fixed && ride && scene_playing(0xa142);
     /* s0 is 4.0 in the game's mode 2 */
-    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on());
+    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on() || ride);
     f_7100c1f600(c);
     {
         static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
@@ -627,14 +645,13 @@ void h_frame_clock(Ctx *c) {
         if (fixed) {
             float v, ms;
             uint32_t flags = state_flags();
-            int ride = flags & 0x10000;
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
             float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; above 60 fps a frame is shorter */
             float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
-            if (uncap_on() && due < even && !ride) even = due;
+            if (uncap_on() && due < even && !g_exact) even = due;
             /* the load before a scene is not the scene's time, nor is its pause menu (flags 14 and 0: its clock stands) */
             if (!was_fixed || flags & 0x4001) { owed = 0.0f; due = even; }
-            float k = ride ? scene_even(&owed, due, even, &g_one_pass, g_half) : scene_step(&owed, due, even);
+            float k = g_exact ? scene_even(&owed, due, even, &g_one_pass, g_half) : scene_step(&owed, due, even);
             v *= g_one_pass ? 2.0f * k : k;            /* one logic step: it is 2 of the 1/60 s ones of a 30 Hz frame */
             memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
         }

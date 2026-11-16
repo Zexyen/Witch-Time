@@ -2459,6 +2459,7 @@ static CB g_cb[CB_N];
 static CDisp g_cdisp[2048];
 static int g_ncdisp, g_cb_live, g_cb_pending, g_cb_cached = -1;
 static int g_live_idx[CB_N], g_live_n;                /* [witchtime] the entries made live in this batch (cb_live_add) */
+static uint64_t g_live_key[CB_N], g_live_max;         /* #156: the list is sorted by the address each entry was added with; the largest size added since it was empty */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
 /* WT_VK_CBKEEP: the buffer's bytes go to guest memory. With the snapshot of the fill (WT_VK_CBMERGE, the default) only
  * the words compute changed since the fill are written, and a word the game changed since then stays the game's. */
@@ -2808,6 +2809,15 @@ static void cb_landing_poll(void) {                /* at the start of a batch: l
  * bounds that are exact at the start of the batch. */
 static int16_t g_kept_idx[CB_N];
 static int g_kept_n;
+static uint64_t g_kept_key[CB_N], g_kept_max;      /* #156: sorted by address, as the live list (cb_live_from); the largest size in it */
+static int cb_kept_cmp(const void *a, const void *b);
+static int cb_kept_from(uint64_t addr, uint64_t size) {      /* the first entry that can hold or overlap a range starting at addr; walk while g_kept_key[n] < addr + size */
+    uint64_t from = addr > g_kept_max ? addr - g_kept_max : 0;
+    int lo = 0, hi = g_kept_n;
+    (void)size;
+    while (lo < hi) { int m = (lo + hi) / 2; if (g_kept_key[m] < from) lo = m + 1; else hi = m; }
+    return lo;
+}
 /* #45: the pages of the buffers buf_ref walks, hashed: a page with no bit is in none of them. Most ranges a draw names
  * touch no compute buffer, and the walks cost 16 ms a frame on the chapter 3 ride (20,000 ranges, 170 kept buffers). A
  * bit that is no longer true only costs the walk. */
@@ -2823,8 +2833,20 @@ static int cb_pf_any(uint64_t addr, uint64_t size) {
     for (; p <= e; p++) { unsigned h = (unsigned)(p * 2654435761u) >> 14; if (g_cb_pf[h >> 6] >> (h & 63) & 1) return 1; }
     return 0;
 }
+/* #156: every walk asks the filter, not only buf_ref's: the demon rides have 600 live buffers, and the walks of the vertex
+ * streams' and indirect draws' ranges were half of the render thread (15 of its 27 ms at 2,400 draws). 1 = no live or kept
+ * buffer has a page of the range. WT_VK_CBPF: 0 off, 2 test: nothing is skipped and a walk's hit the filter denies is reported. */
+static int g_cb_pf_mode = -1;
+static int cb_pf_skip(uint64_t addr, uint64_t size) {
+    if (g_cb_pf_mode < 0) { const char *e = getenv("WT_VK_CBPF"); g_cb_pf_mode = e ? atoi(e) : 1; }
+    return g_cb_pf_mode == 1 && !cb_pf_any(addr, size);
+}
+static void cb_pf_hit(uint64_t addr, uint64_t size, const char *who) {      /* a walk found a buffer */
+    static int said;
+    if (g_cb_pf_mode == 2 && !cb_pf_any(addr, size) && !said++) printf("nvn_vk_cbpf: FAILED: %s: range %llx +%llx is in a buffer the filter denies\n", who, (unsigned long long)addr, (unsigned long long)size);
+}
 static void cb_kept_index(void) {
-    g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0;
+    g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0; g_kept_max = 0;
     memset(g_cb_pf, 0, sizeof g_cb_pf);
     for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) cb_pf_set(c->addr, c->size); }
     if (!g_cb_nkept) return;
@@ -2834,7 +2856,14 @@ static void cb_kept_index(void) {
         g_kept_idx[g_kept_n++] = (int16_t)i;
         if (g_cb[i].addr < g_kept_lo) g_kept_lo = g_cb[i].addr;
         if (g_cb[i].addr + g_cb[i].size > g_kept_hi) g_kept_hi = g_cb[i].addr + g_cb[i].size;
+        if (g_cb[i].size > g_kept_max) g_kept_max = g_cb[i].size;
     }
+    qsort(g_kept_idx, (size_t)g_kept_n, sizeof g_kept_idx[0], cb_kept_cmp);
+    for (int n = 0; n < g_kept_n; n++) g_kept_key[n] = g_cb[g_kept_idx[n]].addr;
+}
+static int cb_kept_cmp(const void *a, const void *b) {
+    uint64_t x = g_cb[*(const int16_t *)a].addr, y = g_cb[*(const int16_t *)b].addr;
+    return x < y ? -1 : x > y;
 }
 /* [witchtime] issues 132, 133: a guest-memory command overwrites every byte of a kept (or landing) buffer: what compute left
  * there is never read again, so the entry is dropped instead of landed. B3 clears its culling counts at the start of each frame
@@ -2856,10 +2885,11 @@ static void cb_kept_discard(uint64_t addr, uint64_t size) {
     }
 }
 static void cb_kept_range(uint64_t addr, uint64_t size, int cause) {
-    if (!g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo) return;
-    for (int n = 0; n < g_kept_n && g_cb_nkept; n++) {
+    if (!g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo || cb_pf_skip(addr, size)) return;
+    for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {
         int i = g_kept_idx[n];
         if (g_cb[i].state < 3 || !(addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size)) continue;
+        cb_pf_hit(addr, size, "cb_kept_range");
         if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else cb_land_force(&g_cb[i], cause);
     }
 }
@@ -2947,13 +2977,27 @@ static void cb_sync(void) {                        /* guest memory must hold wha
  * is read. buf_ref asks cb_inside / cb_overlap for about 15,000 ranges a frame in Tokyo, and the walk up to g_cb_hi (several
  * hundred entries once the table holds kept buffers) was the largest part of buf_ref; live entries are a few dozen. Live
  * entries do not overlap (cb_new lands an overlapping one first), so the order does not change what is found. */
+/* #156: the first place in the list whose key is addr or more. A buffer that holds or overlaps [addr, addr + size) starts
+ * above addr - g_live_max and below addr + size: the walks look only there (the rides have 600 live buffers, and a walk
+ * of them all for each range that passes the page filter was a fifth of the render thread). An entry whose slot was
+ * taken again keeps its old key; the walks test the buffer's own fields, as before, so it can only cost a compare. */
+static int cb_live_from(uint64_t addr) {
+    int lo = 0, hi = g_live_n;
+    while (lo < hi) { int m = (lo + hi) / 2; if (g_live_key[m] < addr) lo = m + 1; else hi = m; }
+    return lo;
+}
 static void cb_live_add(CB *c) {
     if (g_live_n == CB_N) {                        /* full of entries that left state 1: keep the live ones */
         int n = 0;
-        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) g_live_idx[n++] = g_live_idx[i];
+        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) { g_live_idx[n] = g_live_idx[i]; g_live_key[n++] = g_live_key[i]; }
         g_live_n = n;
     }
-    g_live_idx[g_live_n++] = (int)(c - g_cb);
+    if (!g_live_n) g_live_max = 0;
+    int at = cb_live_from(c->addr);
+    memmove(&g_live_idx[at + 1], &g_live_idx[at], (size_t)(g_live_n - at) * sizeof g_live_idx[0]);
+    memmove(&g_live_key[at + 1], &g_live_key[at], (size_t)(g_live_n - at) * sizeof g_live_key[0]);
+    g_live_idx[at] = (int)(c - g_cb); g_live_key[at] = c->addr; g_live_n++;
+    if (c->size > g_live_max) g_live_max = c->size;
     cb_pf_set(c->addr, c->size);
 }
 static void cb_batch_end(void) {
@@ -2967,11 +3011,29 @@ static void cb_batch_end(void) {
  * there. The searches for live ones read g_live_idx (above). */
 static int g_cb_hi, g_cb_bound = -1;
 static CB *cb_inside(uint64_t addr, uint64_t size) {
-    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) return c; }
+    static CB *last;                               /* #156: the indirect draws of a pass read their counts from one buffer */
+    int hit = last && last->state == 1 && addr >= last->addr && addr + size <= last->addr + last->size;
+    if (hit && g_cb_pf_mode != 2) return last;
+    if (cb_pf_skip(addr, size)) return NULL;
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) {
+        CB *c = &g_cb[g_live_idx[n]];
+        if (c->state != 1 || addr < c->addr || addr + size > c->addr + c->size) continue;
+        cb_pf_hit(addr, size, "cb_inside");
+        if (hit && c != last) { static int said; if (!said++) printf("nvn_vk_cbpf: FAILED: cb_inside: range %llx +%llx is in two live buffers\n", (unsigned long long)addr, (unsigned long long)size); }
+        return last = c;
+    }
     return NULL;
 }
+static void cb_live_check(uint64_t addr, uint64_t size, int found, const char *who) {      /* WT_VK_CBPF=2 (test): the walk of the whole list finds the same */
+    static int said;
+    int all = 0;
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) all = 1; }
+    if (all != found && !said++) printf("nvn_vk_cbpf: FAILED: %s: range %llx +%llx: the sorted walk says %d, the whole list %d\n", who, (unsigned long long)addr, (unsigned long long)size, found, all);
+}
 static int cb_overlap(uint64_t addr, uint64_t size) {
-    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) return 1; }
+    if (g_cb_pf_mode == 2) { int f = 0; for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; } cb_live_check(addr, size, f, "cb_overlap"); }
+    if (cb_pf_skip(addr, size)) return 0;
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
     return 0;
 }
 /* [witchtime] 1 = the range overlaps a compute buffer of this batch (state 1) or one the GPU may still write from the batch
@@ -3010,8 +3072,8 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
         R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
         return (const uint8_t *)c->mem.map + (addr - c->addr);
     }
-    if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
-        for (int n = 0; n < g_kept_n; n++) {
+    if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo && !cb_pf_skip(addr, size))
+        for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
             if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || !k->mem.map) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
@@ -3182,8 +3244,8 @@ typedef struct { uint64_t off, size; int zero; VkBuffer buf; } BufRef;
  * alignment the use needs (storage descriptors), 1 = none. Returns 1 when a CB is bound. */
 static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
     b->zero = 0; b->size = size;
-    static int pf = -1;                            /* WT_VK_CBPF: 0 off, 2 test: every range the filter passes is checked against the walks */
-    if (pf < 0) { const char *e = getenv("WT_VK_CBPF"); pf = e ? atoi(e) : 1; }
+    if (g_cb_pf_mode < 0) cb_pf_skip(addr, size);
+    int pf = g_cb_pf_mode;                         /* WT_VK_CBPF: 0 off, 2 test: every range the filter passes is checked against the walks */
     if (pf && !cb_pf_any(addr, size)) {
         if (pf == 2) {
             static int said;
@@ -3206,7 +3268,7 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
          * memory, up to 19 ms: runs p16_e_bfe / p16t_bf_d). Any other overlap: the buffer lands first. */
         static int on = -1;
         if (on < 0) on = !(getenv("WT_VK_CBDRAW") && !atoi(getenv("WT_VK_CBDRAW")));
-        if (on) for (int n = 0; n < g_kept_n; n++) {
+        if (on) for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
             if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || (addr - k->addr) % align) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
@@ -3450,10 +3512,14 @@ static int vrc_use(void) {
 static int vrc_cb_touch(uint64_t addr, uint64_t size) {
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, addr, size)) return 1;      /* [witchtime] a GPU copy goes there: the ring, patched */
     if (g_cb_live && addr < g_live_hi && addr + size > g_live_lo && cb_overlap(addr, size)) return 1;
-    if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
-        for (int n = 0; n < g_kept_n; n++) {
+    if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo && !cb_pf_skip(addr, size))
+        for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
-            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size) return 1;
+            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size) { cb_pf_hit(addr, size, "vrc_cb_touch"); return 1; }
+        }
+        if (g_cb_pf_mode == 2) for (int n = 0; n < g_kept_n; n++) {      /* test: the whole list finds nothing either */
+            CB *k = &g_cb[g_kept_idx[n]]; static int said;
+            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size && !said++) printf("nvn_vk_cbpf: FAILED: vrc_cb_touch: range %llx +%llx is in a kept buffer the sorted walk missed\n", (unsigned long long)addr, (unsigned long long)size);
         }
     return 0;
 }

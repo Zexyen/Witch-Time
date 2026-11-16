@@ -82,3 +82,30 @@
 # sets a count of steps over which amplitude and frequency are blended; at 120 every rumble lasted half as long.
 7100cc376c int countdown -1 a frame: steps left of a slot-A rumble (30 / 60 / 120 ...)  [x11 + 16]
 7100cc37ec int countdown -1 a frame: steps left of a slot-B rumble (the hit pulse: 3)  [x11 + 112]
+# The rides at frame_rate (issue 156; 2026-11-16): the ride set pieces (state flag 16) ran at 60 at most until then, so their
+# own timers were never met above it. A census at 60 and 120 of six ride phases reached by the debug `phase` command
+# (p100_GomoraSlider1, p100_GomoraWaterSkiing, p140_Heli1, p140_3JumpEvent, p380_MalphasRide_ChasePart,
+# p460_Gomo_Ride_Battle; forward held, the attack keys in turn): the frame-locked sites not seen in the fights, read in
+# the lifted code; listed are the plain countdowns of a constant a frame. What each one times in the game is not known.
+710034078c float countdown -1.0 a frame, to 0, of the ridden demon (7100340768); at 0 it clears +4500 / +4504  [x0 + 5404]
+7100422f80 int countdown -1 a frame, not below 0 (71004224b0); beside it +1740 already takes the step  [x22 + 1736]
+710043e600 float -= 0.2 a frame while a button test holds (710043af7c, the demon ridden on the Gomorrah and spider rides)  [x24 + 0]
+710043e940 float -= 0.2 a frame: the same field, the function's second path  [x24 + 0]
+710079bd88 float -= 1/60 a frame (seconds at 60): a list of timed entries, each unlinked at 0 (710079bd30)  [x9 + 8]
+71007a01d4 float countdown -1.0 a frame, to 0 (710079fc54; 400 steps long in a hand run of the spider ride)  [x19 + 748]
+7100086e04 float -= 2.0 a frame while +1816 is above 0 (7100086900)  [x22 + 1820]
+71000dc694 int countdown -1 a frame, not below 0 (71000db480)  [x26 + 3564]
+71000dd0cc int countdown -1 a frame, set to 4 (71000db480)  [x26 + 356]
+71003b5840 float -= 1/60 a frame, to 0 (seconds at 60; 71003b5794); most visits add 0, so the census below cannot show it  [x19 + 6596]
+71006e1c2c int countdown -1 a frame over an array, each cleared at 0 (71006e12d8)  [x8 + 0]
+7100780a18 int countdown -1 a frame, not below 0 (7100780904; its neighbours +7144 and +7756 were not visited)  [x19 + 7744]
+7100814210 int countdown -1 a frame, not below 0 (71008132f8)  [x19 + 3088]
+7100814234 float += 1/60 a frame up to 1.0: the way back of 7100814268 above  [x19 + 3092]
+# Checked (census of the patched build at 120 against the runs at 60): where the run held 120 each adds half as much a
+# visit (ratio 1.92 .. 2.00; in the heliport fight of p100, 59-67 fps, 1.28). Taken out again: 71006843b4 (an int
+# countdown in entries of 320 bytes, 7100682c60: ratio 1.50, it is visited more than once an update) and 71003b5bf0
+# (an int countdown, 71003b5bcc: 40 visits, too few to tell).
+# Not listed from that census: 710039d4d8 and 710035c178 (the add is the time node's step / 60 already: the census ratio
+# was near 1 only because most visits add 0), 7100316084 (a ring index), 710098967c / 7100988274 / 71007f2968 (list
+# counts), 7100c62330 (an effect emitter's interval in frames: twice the emissions a second at 120), 7100c8a290 (a fade of
+# 0.004 a frame), 710009a630 and 7100c84cd0 (up-counters, no reader found), and the engine's waits and handle counts.
