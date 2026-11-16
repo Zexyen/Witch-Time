@@ -16,12 +16,19 @@
  * in frames where fsr_run ran (upscaler not off, a 3D scene). Menus and movies are presented as before.
  *
  * NOT RUN with either DLL (2026-11-16, written on Linux). The pacing was run with WT_FRAMEGEN=test.
- * Not done: a picture without the HUD (the HUD can smear on generated pictures); HDR output takes the 8-bit picture. */
+ *
+ * THE PICTURE WITHOUT THE HUD (fg_draw): in a frame with a scene the game's first draw into the window texture is its last
+ * post pass (FXAA from the tone map's target); the HUD's draws follow into the same texture. Before the second draw the
+ * window texture is copied to G.hud. Both generators take it: they work out the in-between picture from it and put the
+ * HUD of the real frame on top, so the HUD does not move or smear. A scene frame where no second draw came (no HUD on
+ * screen) gives the finished picture as its own HUD-less one. frame_generation_hud = off (WT_FG_HUD=0): not handed over.
+ * Not done: HDR output takes the 8-bit picture. */
 enum { FG_OFF, FG_FSR, FG_DLSS, FG_TEST };
 void nvn_front_post_fg_flush(void);                /* nvn_gl.c */
 double display_refresh_hz(void);                   /* display.c */
 static struct {
-    FImg out; int w, h; VkFormat fmt;              /* the generated picture: the window texture's size and format */
+    FImg out, hud; int w, h; VkFormat fmt;         /* the generated picture, and the frame without its HUD (fg_draw): the window texture's size and format */
+    Tex *win; LONG64 win_frame, hud_frame; int win_draws;      /* the window texture drawn into in F.frame = win_frame, the draws into it so far; hud_frame: G.hud is of that frame */
     int said;                                      /* bit per reason: said once */
     LONG64 scene_frame; int scene_w, scene_h, scene_reset;      /* fsr_run of F.frame = scene_frame left its depth and vectors (fg_scene) */
     uint64_t id; LONG64 last, runs, shown;         /* id: AMD's frame number; last: F.frame of the last generated picture */
@@ -29,6 +36,30 @@ static struct {
     CRITICAL_SECTION lock; CONDITION_VARIABLE cv; HANDLE thread; LONG64 due; int armed;
 } G;
 static int fg_mode(void) { return gfx_options()->frame_gen; }
+static int fg_hud_on(void) { static int e = -2; if (e == -2) { const char *s = getenv("WT_FG_HUD"); e = s ? atoi(s) != 0 : -1; } return e >= 0 ? e : !gfx_options()->frame_gen_no_hud; }
+static void fg_copy(VTex *from, VTex *to) {        /* the whole image; both are left in their transfer layouts */
+    VkImageCopy c; memset(&c, 0, sizeof c);
+    c.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.srcSubresource.layerCount = 1; c.dstSubresource = c.srcSubresource;
+    c.extent.width = (uint32_t)from->w; c.extent.height = (uint32_t)from->h; c.extent.depth = 1;
+    pass_end();
+    vt_layout(from, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL); vt_layout(to, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    cmd_begin();
+    vkCmdCopyImage(R.cmd, from->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, to->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+}
+/* nvn_vk_draw.c, before every draw (render thread): the window texture without the HUD, see the top */
+static void fg_draw(VStage *fs) {
+    static int log = -1;
+    Tex *c = R.ncol ? R.col[0].tex : NULL;
+    if (!gfx_options()->frame_gen || !c || F.ran != F.frame || !wintex_is(c) || c->dead || !c->vk) return;      /* (F.ran: fsr_run ran in this frame, so it has a scene) */
+    if (G.win_frame != F.frame || G.win != c) { G.win_frame = F.frame; G.win = c; G.win_draws = 0; }
+    if (log < 0) { const char *e = getenv("WT_FG_HUDLOG"); log = e ? atoi(e) : 0; }      /* TEST: the draws into the window texture of that many scene frames */
+    if (log > 0 && G.win_draws < 6) { printf("nvn_vk_fg: hudlog: frame %lld, draw %d into the window texture: fragment stage %u (%d samplers)\n", (long long)F.frame, G.win_draws, fs ? fs->id : 0u, fs ? fs->nsmp : 0); if (G.win_draws == 5) log--; }
+    if (G.win_draws++ != 1) return;
+    VTex *vt = c->vk;
+    if (!G.hud.vt || G.w != vt->w || G.h != vt->h || G.fmt != vt->fmt || vt->samples != 1) return;      /* (made by fg_make, for the window texture's size) */
+    fg_copy(vt, G.hud.vt);
+    G.hud_frame = F.frame;
+}
 static void fg_say(int bit, const char *why) { if (!(G.said >> bit & 1)) { G.said |= 1 << bit; printf("nvn_vk_fg: no generated picture: %s\n", why); } }
 /* the camera of this frame's scene, back from fsr_run's constants: deviceToViewDepth = {-q, q * near, .., tan(fovy / 2)}, q = far / (near - far) */
 static void fg_camera(float *zn, float *zf, float *fov) {
@@ -95,6 +126,7 @@ static void fga_prepare(VTex *vd, int w, int h, int reset) {
     struct ffxConfigureDescFrameGeneration cf; memset(&cf, 0, sizeof cf);
     cf.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION; cf.frameGenerationEnabled = true;      /* no swapchain, no callbacks: the dispatch below is ours */
     cf.generationRect.width = GA.dw; cf.generationRect.height = GA.dh; cf.frameID = G.id;
+    if (fg_hud_on() && G.hud.vt && G.hud.vt->fmt == GA.fmt) { cf.HUDLessColor = fsr4_res(G.hud.vt, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad); cf.HUDLessColor.description.usage &= ~(uint32_t)FFX_API_RESOURCE_USAGE_UAV; }      /* the image is ours for good; its picture of this frame is copied before AMD's pass reads it (fg_draw, fg_make) */
     ffxReturnCode_t r = A4.configure(&GA.c, &cf.header);
     if (r != FFX_API_RETURN_OK) { fga_off("AMD's frame generation took no setup without its swapchain", r); return; }
     struct ffxDispatchDescFrameGenerationPrepareV2 p; memset(&p, 0, sizeof p);
@@ -121,7 +153,7 @@ static int fga_run(VTex *vt, VTex *out, int reset) {
     if (GA.ok != 1 || !GA.c || GA.prep != G.scene_frame || GA.dw != vt->w || GA.dh != vt->h || GA.fmt != vt->fmt) return 0;      /* (a new window size: the context follows at the next scene) */
     struct ffxDispatchDescFrameGeneration d; memset(&d, 0, sizeof d);
     d.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION; d.commandList = R.cmd;
-    vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); vt_layout(out, VK_IMAGE_LAYOUT_GENERAL);
+    vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); vt_layout(out, VK_IMAGE_LAYOUT_GENERAL); vt_layout(G.hud.vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     d.presentColor = fsr4_res(vt, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad); d.presentColor.description.usage &= ~(uint32_t)FFX_API_RESOURCE_USAGE_UAV;
     d.outputs[0] = fsr4_res(out, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, &bad); d.outputs[0].description.usage |= FFX_API_RESOURCE_USAGE_RENDERTARGET;
     d.numGeneratedFrames = 1; d.reset = reset != 0; d.backbufferTransferFunction = FFX_API_BACKBUFFER_TRANSFER_FUNCTION_SRGB; d.minMaxLuminance[1] = 200.0f;
@@ -174,10 +206,12 @@ static int fgd_run(Tex *t, VTex *vt, VTex *out, int reset) {
     VkImageView bview = vt_view(vt, &e, DIM_2D, 0);
     vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); vt_layout(vd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     vt_layout(mv, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); vt_layout(out, VK_IMAGE_LAYOUT_GENERAL);
-    NgxRes rb, rd, rm, ro;
+    NgxRes rb, rd, rm, ro, rh;
     memset(&rb, 0, sizeof rb);
     rb.range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; rb.range.levelCount = 1; rb.range.layerCount = 1;
-    rd = rm = ro = rb;
+    rd = rm = ro = rh = rb;
+    vt_layout(G.hud.vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    rh.view = G.hud.lvl[0]; rh.image = G.hud.vt->img; rh.format = G.hud.vt->fmt; rh.width = (unsigned)G.hud.vt->w; rh.height = (unsigned)G.hud.vt->h;
     rb.view = bview; rb.image = vt->img; rb.format = vt->fmt; rb.width = (unsigned)vt->w; rb.height = (unsigned)vt->h;
     rd.view = F.depth_view; rd.image = vd->img; rd.format = vd->fmt; rd.width = (unsigned)vd->w; rd.height = (unsigned)vd->h; rd.range.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     rm.view = F.img[FI_MV].lvl[0]; rm.image = mv->img; rm.format = mv->fmt; rm.width = (unsigned)mv->w; rm.height = (unsigned)mv->h;
@@ -187,7 +221,9 @@ static int fgd_run(Tex *t, VTex *vt, VTex *out, int reset) {
     for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) GD.proj[r * 4 + c] = F.c3[16 + c * 4 + r];      /* ours transposed: NVIDIA's rows are for row vectors */
     GD.proj[8] = GD.proj[9] = 0.0f;                /* without our jitter (the projection's [0][2], [1][2]) */
     ngx_set_p(GD.par, "DLSSG.Backbuffer", &rb); ngx_set_p(GD.par, "DLSSG.Depth", &rd); ngx_set_p(GD.par, "DLSSG.MVecs", &rm); ngx_set_p(GD.par, "DLSSG.OutputInterpolated", &ro);
-    ngx_set_p(GD.par, "DLSSG.HUDLess", NULL); ngx_set_p(GD.par, "DLSSG.OutputReal", NULL); ngx_set_p(GD.par, "DLSSG.CameraViewToClip", GD.proj);
+    ngx_set_p(GD.par, "DLSSG.HUDLess", fg_hud_on() ? &rh : NULL); ngx_set_p(GD.par, "DLSSG.OutputReal", NULL);
+    ngx_set_u(GD.par, "DLSSG.HUDLessSubrectWidth", (unsigned)G.hud.vt->w); ngx_set_u(GD.par, "DLSSG.HUDLessSubrectHeight", (unsigned)G.hud.vt->h);
+    ngx_set_p(GD.par, "DLSSG.CameraViewToClip", GD.proj);
     ngx_set_u(GD.par, "DLSSG.EnableInterp", 1); ngx_set_u(GD.par, "DLSSG.IsRecording", 1); ngx_set_u(GD.par, "DLSSG.MultiFrameCount", 1); ngx_set_u(GD.par, "DLSSG.MultiFrameIndex", 1);
     ngx_set_u(GD.par, "DLSSG.DepthSubrectWidth", (unsigned)G.scene_w); ngx_set_u(GD.par, "DLSSG.DepthSubrectHeight", (unsigned)G.scene_h);
     ngx_set_u(GD.par, "DLSSG.MVecsSubrectWidth", (unsigned)G.scene_w); ngx_set_u(GD.par, "DLSSG.MVecsSubrectHeight", (unsigned)G.scene_h);
@@ -255,11 +291,12 @@ static VTex *fg_make(Tex *t, VTex *vt, LONG64 now) {
         if (d > fq.QuadPart / 20) d = fq.QuadPart / 20;
         G.half = d / 2; G.t_prev = now;
     }
-    if (!mode) { if (G.out.vt) { vt_garbage(G.out.vt); memset(&G.out, 0, sizeof G.out); G.w = 0; } return NULL; }
+    if (!mode) { if (G.out.vt) { vt_garbage(G.out.vt); vt_garbage(G.hud.vt); memset(&G.out, 0, sizeof G.out); memset(&G.hud, 0, sizeof G.hud); G.w = 0; } return NULL; }
     if (G.w != vt->w || G.h != vt->h || G.fmt != vt->fmt || !G.out.vt) {
-        if (G.out.vt) vt_garbage(G.out.vt);
-        memset(&G.out, 0, sizeof G.out);
+        if (G.out.vt) { vt_garbage(G.out.vt); vt_garbage(G.hud.vt); }
+        memset(&G.out, 0, sizeof G.out); memset(&G.hud, 0, sizeof G.hud);
         cmd_begin();
+        fsr_img(&G.hud, vt->fmt, vt->w, vt->h, 1, 0); G.hud.vt->layout = VK_IMAGE_LAYOUT_GENERAL; G.hud_frame = 0;
         fsr_img(&G.out, vt->fmt, vt->w, vt->h, 1, 2 | (fmt_supported(vt->fmt, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) ? 1 : 0));
         G.out.vt->storage &= 1;                     /* (VTex.storage as fsr4_res reads it: made with storage usage) */
         G.out.vt->layout = VK_IMAGE_LAYOUT_GENERAL;
@@ -278,13 +315,23 @@ static VTex *fg_make(Tex *t, VTex *vt, LONG64 now) {
     VTex *out = G.out.vt;
     int reset = G.last != F.frame - 1 || G.scene_reset, ok;
     cmd_begin();
+    if (G.hud_frame != F.frame - 1) fg_copy(vt, G.hud.vt);      /* no second draw into the window texture in this frame: nothing lay over the scene */
+    {   /* TEST ONLY: WT_FG_HUDSHOT=<frame>: that frame and its picture without the HUD as two BMP files in WT_SHOT_DIR. The
+         * screenshot reads the game's own textures only, so the second goes through the window texture: that one frame is
+         * shown without its HUD. */
+        static int shot = -2;
+        if (shot == -2) { const char *e = getenv("WT_FG_HUDSHOT"); shot = e ? atoi(e) : -1; }
+        if (shot > 0 && F.frame >= shot) {
+            char path[300]; const char *dir = getenv("WT_SHOT_DIR");
+            snprintf(path, sizeof path, "%s%sfg_frame_%lld.bmp", dir ? dir : "", dir ? "/" : "", (long long)F.frame); save_bmp_vk(path, vt);
+            fg_copy(G.hud.vt, vt);
+            snprintf(path, sizeof path, "%s%sfg_hudless_%lld.bmp", dir ? dir : "", dir ? "/" : "", (long long)F.frame); save_bmp_vk(path, vt);
+            printf("nvn_vk_fg: TEST: the frame and its picture without the HUD saved at F.frame %lld (HUD-less copy of this frame: %s)\n", (long long)F.frame, G.hud_frame == F.frame - 1 ? "yes" : "no, the whole frame");
+            shot = -1;
+        }
+    }
     if (mode == FG_TEST) {                         /* the real frame once more: only the pacing is new */
-        VkImageCopy c; memset(&c, 0, sizeof c);
-        c.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.srcSubresource.layerCount = 1; c.dstSubresource = c.srcSubresource;
-        c.extent.width = (uint32_t)vt->w; c.extent.height = (uint32_t)vt->h; c.extent.depth = 1;
-        vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL); vt_layout(out, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        cmd_begin();
-        vkCmdCopyImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, out->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        fg_copy(vt, out);
         ok = 1;
     } else ok = mode == FG_FSR ? fga_run(vt, out, reset) : fgd_run(t, vt, out, reset);
     if (!ok) return NULL;

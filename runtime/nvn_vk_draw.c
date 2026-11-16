@@ -1886,6 +1886,7 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
     return vt_view(vt, &e, -1, 1);
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
+static void fg_draw(VStage *fs);                  /* [witchtime] nvn_vk_fg.c (issue 119) */
 static void fsr_draw(VStage *fs); static void fsr_mv_streams(int from_cb, VStage *vs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
@@ -3779,6 +3780,7 @@ static int draw_prepare(unsigned prim) {
     PT(0);
     if (g_hdr_var && R.ncol && R.prog[1] && stage_fx(&R.prog[1]->st[1]) == FX_GRAIN && R.col[0].tex &&
         (g_hdr_tm_frame != nvn_front_frame_next() || !g_hdr_tm || R.col[0].tex->b.width >= g_hdr_tm->b.width)) { g_hdr_tm = R.col[0].tex; g_hdr_tm_frame = nvn_front_frame_next(); }      /* [witchtime] HDR: hdr_tm_view; the widest of the frame (not a screen inside the scene) */
+    if (!g_dp_potential) fg_draw(fs);              /* [witchtime] issue 119: the window texture before its second draw of a scene frame = the picture without the HUD (may end the pass) */
     if (!g_dp_potential) fsr_draw(fs);             /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass); not from a draw the GPU may cull (g_dp_potential) */
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;

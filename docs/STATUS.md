@@ -1079,9 +1079,16 @@ takes `test`). `runtime/nvn_vk_fg.c`; the present path is `vk_present2` in `runt
   turns it off with a log line; a fault inside NGX cannot be caught.
 - **test** (`WT_FRAMEGEN=test`): the real frame is copied and shown twice, on every frame: nothing new to see, but the
   two presents, the kept frame and the timer run. This is the only mode run so far (Linux, RADV).
-- **Not done**: a picture without the HUD (both generators take one; without it the HUD can smear on generated
-  pictures); the generators see the 8-bit picture also with HDR on; the frame-pacing statistics count the generated
-  picture as the frame; the in-game Options tab and the launcher do not list the row.
+- **The picture without the HUD** (`fg_draw`; `frame_generation_hud = on | off`, the row "Frame generation: HUD",
+  `WT_FG_HUD`): in a frame with a scene the game's first draw into the window texture is its last post pass (FXAA from
+  the tone map's target, fragment stage with one sampler), and the HUD's draws follow into the same texture. Before the
+  second draw the window texture is copied to an image of ours, which both generators take next to the finished frame
+  (AMD: `HUDLessColor`; NVIDIA: `DLSSG.HUDLess`): they generate from it and put the real frame's HUD on top, so the HUD
+  neither moves nor smears. A scene frame without a second draw gives the finished frame as its own. Seen on Linux in
+  the training room with `WT_FG_HUDSHOT=<frame>` (a test: the frame and the copy as two BMP files): the frame had a
+  full-screen help page over it, the copy only the scene. Off: the generators get the finished frame only.
+- **Not done**: the generators see the 8-bit picture also with HDR on; the frame-pacing statistics count the generated
+  picture as the frame; the in-game Options tab does not list the two rows (the launcher and the PC panel do).
 
 ## Object motion vectors (2026-11-11; with FSR, experimental)
 
