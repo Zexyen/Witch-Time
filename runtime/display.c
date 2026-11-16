@@ -1230,6 +1230,7 @@ int display_present_defer(void) {
 }
 /* Render thread, after it has stored the kept present: 1 = the tick came meanwhile, present now. (The vsync thread looks
  * at g_defer_target AFTER it has published the tick, this looks at the tick AFTER the target is set: one of the two sees it.) */
+double display_refresh_hz(void) { return g_vb_state == 2 && g_vb_period > 0 ? (double)g_freq.QuadPart / g_vb_period : 0.0; }      /* [witchtime] nvn_vk_fg.c: the display's measured rate, 0 = not known */
 int display_present_due(void) { LONG64 t = g_defer_target; return t && g_vsync_n >= t; }
 void display_present_flushed(void) { InterlockedExchange64(&g_defer_target, 0); }
 /* Render thread, right after vkQueuePresentKHR returned: what the screen gets (see the comment at the top). */

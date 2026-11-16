@@ -36,6 +36,9 @@ typedef struct {
                              * handed on as RECOMPS_HUD_CENTRE=1 (game_shim_eh.c h_ui_element) */
     int upscaler;           /* [witchtime] issue 118: upscaler = off (0) | fsr3 (1: FSR 3.1 as anti-aliasing, nvn_vk_fsr.c) | fsr3_quality (2) | fsr3_balanced (3)
                                | fsr3_performance (4) | fsr3_ultra_performance (5): FSR 3.1 upscaling to the internal resolution; env WT_UPSCALER wins */
+    int frame_gen_no_hud;   /* [witchtime] frame_generation_hud = on | off: off = the generator is not given the picture without the HUD (nvn_vk_fg.c fg_draw) */
+    int frame_gen_on, frame_gen_kind;      /* [witchtime] the file's frame_generation = off | on and frame_generator = fsr (1) | dlss (2) */
+    int frame_gen;          /* [witchtime] what runs: 0 off | 1 fsr | 2 dlss (frame_generation on: the frame_generator): a generated picture between two frames, with the player's own DLLs (nvn_vk_fg.c); env WT_FRAMEGEN = off | on | fsr | dlss | test (3) wins */
     float hdr_peak;         /* [witchtime] hdr_peak: the scene's brightest parts in nits with HDR on (80 .. 10000); 0 = auto (nvn_vk_draw.c hdr_var) */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */

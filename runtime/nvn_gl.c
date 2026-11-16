@@ -4983,6 +4983,8 @@ unsigned long nvn_front_present_tid(void) { return g_pf_main_tid; }      /* the 
  * render thread (in order with the other jobs; nobody waits for it). */
 void nvn_vk_present_flush_job(void *arg);              /* nvn_vk_draw.c */
 void nvn_front_post_present_flush(void) { if (g_vk) gl_post(nvn_vk_present_flush_job, NULL, 0); }
+void nvn_vk_fg_flush_job(void *arg);                   /* nvn_vk_draw.c */
+void nvn_front_post_fg_flush(void) { if (g_vk) gl_post(nvn_vk_fg_flush_job, NULL, 0); }      /* [witchtime] frame generation: the real frame, half a frame after the generated one (nvn_vk_fg.c's timer thread) */
 /* [witchtime] the PC settings menu (pcmenu.c, its own thread): its picture once more, as a job of the render thread */
 void nvn_vk_pcmenu_job(void *arg);                    /* nvn_vk_pcmenu.c */
 int nvn_front_post_pcmenu(void) { if (g_vk) gl_post(nvn_vk_pcmenu_job, NULL, 0); return g_vk; }

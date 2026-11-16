@@ -1886,6 +1886,7 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
     return vt_view(vt, &e, -1, 1);
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
+static void fg_draw(VStage *fs);                  /* [witchtime] nvn_vk_fg.c (issue 119) */
 static void fsr_draw(VStage *fs); static void fsr_mv_streams(int from_cb, VStage *vs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: WT_VK_TEST (see the dynamic state) */
@@ -3779,6 +3780,7 @@ static int draw_prepare(unsigned prim) {
     PT(0);
     if (g_hdr_var && R.ncol && R.prog[1] && stage_fx(&R.prog[1]->st[1]) == FX_GRAIN && R.col[0].tex &&
         (g_hdr_tm_frame != nvn_front_frame_next() || !g_hdr_tm || R.col[0].tex->b.width >= g_hdr_tm->b.width)) { g_hdr_tm = R.col[0].tex; g_hdr_tm_frame = nvn_front_frame_next(); }      /* [witchtime] HDR: hdr_tm_view; the widest of the frame (not a screen inside the scene) */
+    if (!g_dp_potential) fg_draw(fs);              /* [witchtime] issue 119: the window texture before its second draw of a scene frame = the picture without the HUD (may end the pass) */
     if (!g_dp_potential) fsr_draw(fs);             /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass); not from a draw the GPU may cull (g_dp_potential) */
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
@@ -5513,22 +5515,30 @@ void pcmenu_prep_hide(void);
  * nvn_vk_present_flush_job at the tick (render thread, between two other jobs). An out-of-date swapchain found here is
  * made again at the next present (not in the middle of a frame's commands). */
 int display_present_defer(void); int display_present_due(void); void display_present_flushed(void); void display_present_done(int fight);      /* display.c */
-static struct { int on, suboptimal, fight, recreate; VkSwapchainKHR sc; uint32_t index; VkSemaphore rend; } g_pend;
+/* [witchtime] issue 119, frame generation (nvn_vk_fg.c): two kept presents. [0] is the one kept for the tick (with frame
+ * generation: the generated picture, gen = 1); [1] is the real frame of that game frame, which goes to the window half a
+ * frame after [0] did (fg_arm starts the timer; its thread posts nvn_vk_fg_flush_job). Always [0] before [1]. */
+static struct { int on, suboptimal, fight, gen; VkSwapchainKHR sc; uint32_t index; VkSemaphore rend; } g_pend[2];
+static int g_pend_recreate;
 static volatile LONG64 g_gap_prev, g_gap_max, g_wd_beat;
-static void present_flush(void) {
-    if (!g_pend.on) return;
-    g_pend.on = 0;
-    display_present_flushed();
-    if (g_pend.sc != V.swapchain || !V.swapchain) return;      /* the swapchain was made again meanwhile: the image went with it */
+static void fg_arm(void); static VTex *fg_make(Tex *t, VTex *vt, LONG64 now);      /* nvn_vk_fg.c */
+static void present_flush_one(int k) {
+    if (!g_pend[k].on) return;
+    g_pend[k].on = 0;
+    if (!k) display_present_flushed();
+    if (g_pend[k].sc != V.swapchain || !V.swapchain) return;      /* the swapchain was made again meanwhile: the image went with it */
     VkPresentInfoKHR pr = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &g_pend.rend; pr.swapchainCount = 1; pr.pSwapchains = &g_pend.sc; pr.pImageIndices = &g_pend.index;
+    pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &g_pend[k].rend; pr.swapchainCount = 1; pr.pSwapchains = &g_pend[k].sc; pr.pImageIndices = &g_pend[k].index;
     VkResult r = vkQueuePresentKHR(V.queue, &pr);
-    display_present_done(g_pend.fight);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || g_pend.suboptimal) g_pend.recreate = 1;
+    if (!k) display_present_done(g_pend[k].fight);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || g_pend[k].suboptimal) g_pend_recreate = 1;
     else vk_ok("vkQueuePresentKHR", r);
     if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) { LONG64 nowt = tk(); if (g_gap_prev && nowt - g_gap_prev > g_gap_max) g_gap_max = nowt - g_gap_prev; g_gap_prev = nowt; g_wd_beat = nowt; }
+    if (g_pend[k].gen) fg_arm();
 }
-void nvn_vk_present_flush_job(void *arg) { (void)arg; if (V.alive) present_flush(); }
+static void present_flush(void) { present_flush_one(0); present_flush_one(1); }      /* everything kept, in order */
+void nvn_vk_present_flush_job(void *arg) { (void)arg; if (V.alive) present_flush_one(0); }      /* the tick */
+void nvn_vk_fg_flush_job(void *arg) { (void)arg; if (V.alive && !g_pend[0].on) present_flush_one(1); }      /* half a frame after the generated picture (one still kept for its tick: the frame waits for it, the tick starts the timer again) */
 #include "nvn_vk_flash.c"                         /* session 13: the white-flash detector (fl_pass, fl_capture, fl_shutdown) */
 /* nvn_vk_m4.c m4_barrier, render thread, g_sh_lock NOT held: the held loading screen once more, with the bar at `frac` */
 static void present_progress(float frac) { if (!g_ovl.bar_arg) return; g_ovl.frac = frac; g_ovl.thick = 8; vk_present2(g_ovl.bar_arg, 1); g_ovl.thick = 0; }
@@ -5685,7 +5695,7 @@ swap: ;
     tp[1] = tk();
     present_flush();
     tp[2] = tk();                               /* session 14: a present still kept for its tick goes out before the next one is made */
-    if (g_pend.recreate) { g_pend.recreate = 0; cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
+    if (g_pend_recreate) { g_pend_recreate = 0; cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
     /* an extra present of a held loading screen: everything submitted so far is waited for first, so that the semaphore pair
      * taken below has no pending operation (validation run s11v2: VUID-vkAcquireNextImageKHR-semaphore-01779, three times,
      * all at such presents: with one submission a present the pair came round before its command buffer had been waited for) */
@@ -5696,6 +5706,11 @@ swap: ;
     if (want != V.format.format) { cmd_wait_all(); swapchain_destroy(); V.format.format = want; printf("nvn_vk: swapchain format %d (the window texture's colour class)\n", (int)want); }
     hdr_shot_write();                              /* TEST ONLY: WT_HDR_SHOT */
     if (V.swapchain && hdr_mode_want() != V.hdr) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* [Recomps#1] finding 147: Windows' HDR switch changed for this monitor */
+    /* [witchtime] issue 119: with a generated picture (fg_make) the rest runs twice: first for that picture, presented as
+     * the frame was until now (at its tick), then for the frame itself, kept for half a frame later (g_pend[1]) */
+    VTex *vt_real = vt, *gen = !progress && vt && vt->samples == 1 ? fg_make(t, vt, t_present) : NULL;
+    for (int fgp = gen ? 0 : 1; fgp < 2; fgp++) {
+    VTex *vt = fgp ? vt_real : gen;
     uint32_t index = 0;
     VkResult r = VK_SUCCESS;
     /* one pair of semaphores per present, 8 in turn: a semaphore handed to vkAcquireNextImageKHR must not still be waited
@@ -5767,7 +5782,7 @@ swap: ;
             if (g_pt_on > 0) pt_mark((int)V.extent.width, (int)V.extent.height, 0, 0, 0, 1, 2);
             vkCmdBlitImage(R.cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);      /* PR #8: src = vt, or the last reduction step */
         } else { VkClearColorValue z; memset(&z, 0, sizeof z); z.float32[3] = 1.0f; vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr); }
-        fl_capture(vt, fl_s4, frame, fl_layout);      /* session 13: 16x9 copy of what is presented, for the flash detector */
+        if (fgp) fl_capture(vt, fl_s4, frame, fl_layout);      /* session 13: 16x9 copy of what is presented, for the flash detector */
         overlay_draw(tgt);
         pcm_vk_draw(tgt);                             /* [witchtime] the PC menu's panel (nvn_vk_pcmenu.c); nothing while it is closed */
         if (V.hdr) hdr_pass(index, tgt);              /* [Recomps#1] finding 147: leaves the swapchain image in PRESENT_SRC */
@@ -5779,19 +5794,24 @@ swap: ;
         VkPresentInfoKHR pr = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &rend; pr.swapchainCount = 1; pr.pSwapchains = &V.swapchain; pr.pImageIndices = &index;
         g_wd_where = 4;
-        if (!progress && display_present_defer()) {      /* session 14: the finished frame goes to the window AT THE TICK (display.c): kept here, presented by present_flush */
-            g_pend.sc = V.swapchain; g_pend.index = index; g_pend.rend = rend; g_pend.suboptimal = suboptimal; g_pend.fight = g_in_fight; g_pend.on = 1;
-            if (display_present_due()) present_flush();
+        if (gen && fgp) {                             /* [witchtime] issue 119: the real frame, after its generated picture */
+            g_pend[1].sc = V.swapchain; g_pend[1].index = index; g_pend[1].rend = rend; g_pend[1].suboptimal = suboptimal; g_pend[1].fight = g_in_fight; g_pend[1].gen = 0; g_pend[1].on = 1;
+            r = VK_SUCCESS;
+        } else if (!progress && display_present_defer()) {      /* session 14: the finished frame goes to the window AT THE TICK (display.c): kept here, presented by present_flush */
+            g_pend[0].sc = V.swapchain; g_pend[0].index = index; g_pend[0].rend = rend; g_pend[0].suboptimal = suboptimal; g_pend[0].fight = g_in_fight; g_pend[0].gen = gen != NULL; g_pend[0].on = 1;
+            if (display_present_due()) present_flush_one(0);
             r = VK_SUCCESS;
         } else {
         r = vkQueuePresentKHR(V.queue, &pr);
         if (!progress) display_present_done(g_in_fight);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || suboptimal) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
         else vk_ok("vkQueuePresentKHR", r);
+        if (gen) fg_arm();
         }
         if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) { LONG64 nowt = tk(); if (g_gap_prev && nowt - g_gap_prev > g_gap_max) g_gap_max = nowt - g_gap_prev; g_gap_prev = nowt; g_wd_beat = nowt; }      /* session 12: the watchdog's heartbeat = a frame reached the window */
-        if (!progress) InterlockedIncrement64(&g_vk_frames);
+        if (!progress && fgp) InterlockedIncrement64(&g_vk_frames);
     }
+    }      /* (the generated picture, then the frame) */
     g_wd_where = 0;
     if (progress) { g_ovl_presents++; return; }
     tp[5] = tk();
