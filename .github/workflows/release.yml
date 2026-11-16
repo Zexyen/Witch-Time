@@ -3,7 +3,7 @@
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
-# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
+# The archive is the part of this repository a player's PC reads (runtime, lifter tables, launcher screens; env TRIM) with:
 #   build/witch-time, libSDL3.so.0   the launcher and the SDL3 it was built with
 #   build/wtbuild                    the build tool (tools/wtbuild: no Python needed to build the game)
 #   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libwt_glslang.so with a
@@ -39,6 +39,12 @@ permissions:
   contents: write
 
 env:
+  # issue 211: what a player's folder does not need (the source is the release's "Source code" archive). runtime/ stays
+  # whole: the prebuilt runtime is used only while its sources hash as built (wtbuild link.rs), and a Mac builds from them.
+  # Removed here and not by export-ignore, which would take them out of GitHub's source archives too.
+  TRIM: >-
+    .github .claude .mcp.json .gitattributes .gitignore docs scripts tests tools
+    launcher/src launcher/CMakeLists.txt launcher/macos launcher/win32 launcher/README.md lifter/README.md
   SDL_TAG: release-3.4.18
   FFMPEG_TAG: n7.1.5
   GLSLANG_TAG: 16.6.0
@@ -188,7 +194,7 @@ jobs:
           name="${{ steps.version.outputs.name }}"
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
-          rm -rf "dist/$name/.github"
+          (cd "dist/$name" && rm -rf $TRIM)
           cp build/witch-time "dist/$name/build/"
           cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -409,7 +415,7 @@ jobs:
           p="dist/$name"
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
-          rm -rf "$p/.github"
+          (cd "$p" && rm -rf $TRIM)
           cp witch-time.exe "$p/"
           cp build/witch-time.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"
@@ -464,6 +470,7 @@ jobs:
           name="${{ steps.version.outputs.name }}"
           (cd dist && sha256sum -c "$name.zip.sha256" && unzip -q "$name.zip")
           p="$PWD/dist/$name"
+          mkdir -p "$p/tools/wtbuild" && cp -r tools/wtbuild/testdata "$p/tools/wtbuild/"  # the smoke test's stand-in modules, not shipped
           "$p/build/wtbuild.exe" smoke --repo "$p" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll"
 
       - name: Release
@@ -517,7 +524,7 @@ jobs:
           name="${{ steps.version.outputs.name }}"
           mkdir -p "dist/$name/build" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
-          rm -rf "dist/$name/.github"
+          (cd "dist/$name" && rm -rf $TRIM)
           cp build/witch-time tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -R "build/Witch Time.app" "dist/$name/build/"
           cp build/launcher/_deps/rmlui-src/LICENSE.txt "dist/$name/licenses/RmlUi.txt"
@@ -530,6 +537,7 @@ jobs:
       - name: Smoke test of the link step
         run: |
           p="$PWD/dist/${{ steps.version.outputs.name }}"
+          mkdir -p "$p/tools/wtbuild" && cp -r tools/wtbuild/testdata "$p/tools/wtbuild/"  # the stand-in modules, not shipped (the archive is already made)
           "$p/build/wtbuild" smoke --repo "$p"
 
       - uses: actions/upload-artifact@v4
