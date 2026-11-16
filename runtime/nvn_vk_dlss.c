@@ -167,7 +167,7 @@ static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset)
 }
 static void dlss_present(void) {                   /* fsr_present: replaced features whose frames are done; the one in use when DLSS was turned off */
     if (DL.ok != 1) return;
-    if (DL.h && g_rs_mode < 6) dlss_retire();
+    if (DL.h && (g_rs_mode < 6 || g_rs_mode > 10)) dlss_retire();
     for (int i = 0; i < 8; i++) if (DL.old[i].h && F.frame - DL.old[i].frame > 4) { DL.release(DL.old[i].h); DL.old[i].h = NULL; }
 }
 static void dlss_shutdown(void) {                  /* fsr_shutdown: the GPU is idle */

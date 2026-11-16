@@ -932,10 +932,10 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
   as written. They are now plain sampler bindings pushed with every pass. Also: AMD's `ComputeMinimumDifference` read
   `fSamples[5]` of a 5-element array (clamped, no result changes); a lost device prints the driver's `VK_EXT_device_fault`
   report (`nvn_vk_fault:`), and `WT_VK_CHECKPOINTS=1` names FSR's pass. Not confirmed on NVIDIA yet.
-- **FSR 4 and frame generation**: FSR 4.1.2 on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000
-  and newer); Adrenalin does not upgrade a Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping
-  them: at most a DLL the player adds. AMD's frame-generation swapchain wants four queues and its own present thread, against
-  display.c's pacing (issue 119 waits on this).
+- **FSR 4 and frame generation**: FSR 4 runs with the player's own DLLs, see "FSR 4 with the player's DLLs" below. FSR 4.1.2
+  on Vulkan exists only as the SDK 2.4.0 signed Windows DLLs (2026-10-28; RX 6000 and newer); Adrenalin does not upgrade a
+  Vulkan FSR 3.1, and the GPL code in runtime/ (ssbu-recomp, suyu) rules out shipping them. AMD's frame-generation swapchain
+  wants four queues and its own present thread, against display.c's pacing (issue 119 waits on this).
 
 ## FSR 3.1 quality modes (issue 118, step 3; 2026-11-03; experimental)
 
@@ -990,7 +990,7 @@ resolution. `fsr3` stays native AA.
 ## DLSS / DLAA with the player's DLL (2026-11-12; issue 190; NOT RUN on an NVIDIA GPU yet)
 
 `upscaler = dlaa | dlss_quality | dlss_balanced | dlss_performance | dlss_ultra_performance` (graphics.ini, the PC settings
-row "FSR 3.1 / DLSS"; `WT_UPSCALER` wins). `runtime/nvn_vk_dlss.c`.
+row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_dlss.c`.
 
 - **Nothing of NVIDIA's is here or in a release**: no SDK header, no SDK library, no DLL. The player copies `nvngx_dlss.dll`
   from a game that has DLSS to the folder of `witch-time.exe` (or beside `witch-time-game.exe`). The calls go to the NGX
@@ -1012,6 +1012,42 @@ row "FSR 3.1 / DLSS"; `WT_UPSCALER` wins). `runtime/nvn_vk_dlss.c`.
   jitter's and the vectors' signs are FSR's (`WT_DLSS_JSIGN` bits 0 / 1 and `WT_DLSS_MVSIGN=1` flip them for a test build);
   the output in the scene's R11G11B10 format may be refused; each dynamic-resolution level makes a new feature (a hitch).
   Windows and Proton only; the in-game Options tab and the launcher do not list the values yet (they show "Custom").
+
+## FSR 4 with the player's DLLs (2026-11-16; NOT RUN yet)
+
+`upscaler = fsr4 | fsr4_quality | fsr4_balanced | fsr4_performance | fsr4_ultra_performance` (graphics.ini, the PC settings
+row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_fsr4.c`, built like DLSS above.
+
+- **Which DLLs**: `amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` of AMD's FSR SDK 2.4.0 or newer
+  (`Kits/FidelityFX/signedbin` of the SDK on GitHub, or a Vulkan game that has FSR 4), both in the folder of
+  `witch-time.exe` (or beside `witch-time-game.exe`). **Not `amdxcffx64.dll`**: that is the driver's DirectX 12 library
+  ("DX12 AMD Driver Based FidelityFX Library", it takes D3D12 devices and resources), which a Vulkan renderer cannot call.
+- **Nothing of AMD's binaries is here or in a release**: the DLLs' licence is binary-only, this program is GPL. The interface
+  is AMD's own MIT headers, copied unchanged to `runtime/third_party/ffx_api` (`ffx_api.h`, `ffx_api_types.h`,
+  `vk/ffx_api_vk.h`, `ffx_upscale.h`; SDK v2.4.0, commit `7539ae8`).
+- **It takes FSR 3.1's place inside `fsr_run`**, as DLSS does: modes 11 .. 15 draw at the scale of the FSR 3.1 mode of the
+  same rank (`fsr_ratio`), with the same jitter, motion vectors (`FI_MV`), dither phases and output image (`FI_OUT`). Where
+  FSR 4 cannot run (not an AMD GPU, no DLLs, an old driver, a call that fails) FSR 3.1 runs in the same frame and the log
+  says why, once (`nvn_vk_fsr4: FSR 4 is off, FSR 3.1 takes its place: ...`).
+- **Whether FSR 4 can run is AMD's answer**: the version list is asked for this device (`ffxQueryDescGetVersions`), and the
+  first version named 4.x is the one the context is made with (`ffxOverrideVersion`). AMD: Radeon RX 6000 or newer and
+  Adrenalin 26.10.1 or newer. The log prints every version offered.
+- **The device** gets `VK_KHR_cooperative_matrix`, `VK_EXT_shader_float8` and `VK_KHR_compute_shader_derivatives` (those
+  the driver has) only on an AMD GPU with the loader DLL in place, so nobody else's device changes: AMD's sample turns them
+  on for the FSR 4 models, and AMD's backend reads what the GPU can do, not what the device has on. The 1.1 - 1.3 features
+  it also uses (16-bit floats, 8-bit integers, integer dot product, subgroup size control) are already on. Putting the DLLs
+  there needs a restart.
+- **One context for every size**: made with `FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION` for the largest sizes seen, so the game's
+  resolution levels and a change of mode make no new one. A larger size or a change between HDR and SDR colour does; the
+  replaced one is destroyed four frames later.
+- **Inputs**: HDR colour, depth 0 near (D24S8 goes as AMD's helper sends it: R32_UINT with the depth and stencil usages),
+  vectors at the scene's size without jitter in UV (scale = the scene's size), AMD's own exposure, no sharpening, the
+  camera's near, far and angle back from FSR 3.1's constants.
+- **Not known**: whether any of it works. Written on Linux, where AMD ships no FSR 4; the Windows block is compiled only
+  against Wine's headers with a stub harness. Open: whether the signed DLL takes the scene's R11G11B10 output, whether its
+  dispatch leaves our images in the layouts it found them in, the jitter's and vectors' signs (FSR 3.1's, which AMD's own
+  port shares), and the cost of making the context (a stop at the first frame). The in-game Options tab and the launcher
+  do not list the values (they show "Custom"), as with DLSS.
 
 ## Object motion vectors (2026-11-11; with FSR, experimental)
 

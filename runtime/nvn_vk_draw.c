@@ -70,6 +70,7 @@ static int vk_gpl_mode(void) { static int m = -1; if (m < 0) { const char *e = g
 
 /* ---------------------------------------------------------------- device features */
 static void dlss_device_exts(const VkExtensionProperties *dext, uint32_t ndext);      /* nvn_vk_dlss.c */
+static void **fsr4_device_exts(const VkExtensionProperties *dext, uint32_t ndext, void **tail);      /* nvn_vk_fsr4.c */
 static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties *dext, uint32_t ndext) {
     void **tail;
     vkGetPhysicalDeviceFeatures2 = vk_sym("vkGetPhysicalDeviceFeatures2");
@@ -110,6 +111,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
         if (e && atoi(e)) printf("nvn_vk: WT_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
     }
     dlss_device_exts(dext, ndext);                 /* [witchtime] issue 190 (nvn_vk_dlss.c) */
+    tail = fsr4_device_exts(dext, ndext, tail);    /* [witchtime] FSR 4 (nvn_vk_fsr4.c) */
     if (has_name(dext, ndext, "VK_EXT_memory_budget")) { D.has_budget = 1; D.exts[D.next++] = "VK_EXT_memory_budget"; }      /* [issue 153] vmem_report */
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("WT_VK_PUSH") && !atoi(getenv("WT_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
@@ -851,7 +853,7 @@ static LONG64 g_rs_bytes;                          /* PR #8 review: device memor
  * The upscaler mode is latched here with both scales, so a change applies with rs_apply (the PC panel's A_SCALE rows). */
 static float g_rs_r = -1.0f;                        /* render scale: rs_scale() / FSR's ratio, never below 1.0 (fs5548 and fs1693 store kept
                                                        images at the game's pixels: a raster smaller than the game's leaves texels out) */
-static int g_rs_mode;                               /* gfx_options()->upscaler as latched: 0 off, 1 FSR native, 2 .. 5 quality .. ultra performance */
+static int g_rs_mode;                               /* gfx_options()->upscaler as latched: 0 off, 1 FSR native, 2 .. 5 quality .. ultra performance; 6 .. 10 DLSS, 11 .. 15 FSR 4 in the same order */
 static float fsr_ratio(int mode);                   /* nvn_vk_fsr.c */
 static float rs_scale(void) {
     if (g_rs < 0) {

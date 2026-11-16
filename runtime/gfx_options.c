@@ -162,6 +162,12 @@ static const char *const k_default_ini =
 ";   NVIDIA DLSS in FSR's place at the same scales (dlaa: at the internal resolution). NVIDIA RTX on Windows only, and it\r\n"
 ";   needs your own copy of nvngx_dlss.dll beside witch-time.exe (take it from a game that has DLSS; it is not shipped\r\n"
 ";   here). Without it, or on another GPU, the FSR 3.1 mode of the same name runs instead.\r\n"
+"; upscaler = ... | fsr4 | fsr4_quality | fsr4_balanced | fsr4_performance | fsr4_ultra_performance      (experimental, untested)\r\n"
+";   AMD FSR 4 in FSR 3.1's place at the same scales (fsr4: at the internal resolution). AMD Radeon RX 6000 or newer on\r\n"
+";   Windows with Adrenalin 26.10.1 or newer, and it needs your own copies of amd_fidelityfx_loader_vk.dll and\r\n"
+";   amd_fidelityfx_upscaler_vk.dll beside witch-time.exe (from AMD's FSR SDK 2.4.0 or newer, or a Vulkan game that has\r\n"
+";   FSR 4; they are not shipped here; the driver's amdxcffx64.dll is for DirectX 12 and does not work). Without them,\r\n"
+";   or on another GPU, the FSR 3.1 mode of the same name runs instead.\r\n"
 ";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
 "\r\n"
@@ -236,8 +242,9 @@ static void opt_path(char *out) {
 }
 static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
     static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance",
-                                    "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance"};      /* [witchtime] issue 190: 6 .. 10 (nvn_vk_dlss.c) */
-    for (int i = 1; i < 11; i++) if (!_stricmp(v, k[i])) return i;
+                                    "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance",      /* [witchtime] issue 190: 6 .. 10 (nvn_vk_dlss.c) */
+                                    "fsr4", "fsr4_quality", "fsr4_balanced", "fsr4_performance", "fsr4_ultra_performance"};      /* [witchtime] 11 .. 15 (nvn_vk_fsr4.c) */
+    for (int i = 1; i < 16; i++) if (!_stricmp(v, k[i])) return i;
     return 0;
 }
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
