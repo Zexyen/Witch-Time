@@ -428,6 +428,18 @@ Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
 - **Page filter in `buf_ref`** (`cb_pf_*`): 20,000 ranges a frame each walked the live and about 170 kept compute buffers, 16
   ms a frame. A hashed bit per page of those buffers answers 98.6 % of the ranges without a walk. `WT_VK_CBPF=0` off,
   `=2` test: the walks run as well and a miss prints `nvn_vk_cbpf: FAILED`; none in 17 M ranges on the ride and 63.7 M in Shibuya.
+- **Every walk filtered, and the lists sorted (2026-11-16, #156)**: with the rides at frame_rate the chapter 1 heliport
+  fight held 60 of 120 fps, and a later stretch of a hand run 32-43: the render thread, not the GPU (wait 0.1 ms).
+  A profile (`WT_LPROF`) had half of it in walks of the about 600 live and kept compute buffers of a ride, one walk for
+  each vertex stream and indirect draw of the frame (`vrc_cb_touch`, `cb_inside`, `cb_overlap`, `indirect_src`,
+  `gpu_written`): only `buf_ref` asked the filter. Now all of them do (`cb_pf_skip`), the live and the kept list are
+  sorted by address and searched from the first buffer that can reach the range (`cb_live_from`, `cb_kept_from`), and
+  `cb_inside` tries the buffer it found last. Heliport fight, about 2,330 draws, 720p at frame_rate 120, RX 9070 XT,
+  RADV, hidden, alone: replay 15.4 -> 10.4 (filter) -> 8.0 (live list) -> 7.2-8.3 ms (kept list), 60 -> 106-120 fps.
+  `WT_VK_CBPF=2` now also compares the sorted walks with walks of the whole lists and reports a range inside two live
+  buffers: no line in three runs of that fight (one with inputs, 100 s). Not measured: the later stretch of the hand
+  run, a whole ride, other scenes' frame rates, Windows, other GPUs. The profile is flat after it (the stream ring's
+  memcpy 12 %, `draw_prepare` itself 11 %).
 - **ASTC decoded ahead of the first draw** (`nvn_front_tex_prep`, `WT_TEXPREP_THREADS`, default 3): at the draw, decodes
   took 5.5 s of the render thread in 100 s of the ride, while 94 % of those textures had been known for 30 frames or more.
   Now 0.73 s; `tex_ahead` makes the image when the decode is done, in fights too. A job keeps a copy of the bytes it
@@ -618,14 +630,36 @@ cutscenes in the game's 60 fps mode.
     is the game's in every mode (`scene_even`, `scene_step.h`), and a frame that owes a whole even step runs both logic
     steps of a console frame; pairs start only where the turns allow one. Elsewhere late frames keep `scene_step`.
     Flag 16 is not only eva142: 17 sites set it, the Gomorrah and Malphas rides among them. Fixed-step frames of those
-    (not measured) take this step too, so a machine below 30 fps lags there instead of keeping real time.
+    took this step too until 2026-11-16 (#156); now only eva142 does, the others keep real time with `scene_step`.
     Above 30 fps debt from a stall on the ride is paid, not forgiven: an unpressed prompt is 245 steps, 4.08 s at 60 fps, as
     the evaluator slows the event to 0.05, and pairs can at most halve that in real time (a model: 3.85 s after 236 ms, the
     worst of #67's log; 3.08 s after 1 s). Forgiving it would leave the ride behind the sound for good. At cutscene_fps 30 a
     frame already runs both steps, so nothing can pay it and the next plain frame drops it, as on the console.
-  - **Rates**: cutscene_fps = 60 runs the whole ride at 60, the plain frames (`0x00810000`, measured) too. Above 60 the
-    ride is not forced: mode 1 is 2 ticks of frame_rate, 60 fps at 120 and 45 at 90, where pair frames make up the 60 steps
-    a second. A counter named in `fps_counters.txt` would not let the ride run at frame_rate: the steps have to be 1.0.
+  - **Rates** (until 2026-11-16; "Rides at the game's frame rate" below replaces this): cutscene_fps = 60 ran the whole
+    ride at 60, the plain frames (`0x00810000`, measured) too. Above 60 the ride was not forced: mode 1 is 2 ticks of
+    frame_rate, 60 fps at 120 and 45 at 90, where pair frames make up the 60 steps a second.
+  - **Rides at the game's frame rate (2026-11-16, #156)**: a ride set piece is gameplay, and players saw its 30 (the
+    default), or 45 at frame_rate 90, as a drop. Flag 16 now runs at frame_rate whatever cutscene_fps says
+    (`h_fps_mode_set`): its plain frames have the measured step and need nothing more; its fixed-step scenes (`0x5081xxxx`:
+    eva103, eva104, eva108 on the chapter 1 Gomorrah ride) take `scene_step` as any cutscene does, so they keep real time
+    below the frame rate too. The one exception is eva142, the spider ride's prompt scene, found by its number in the
+    scene slots (`scene_playing`: slot +56 the scene, +8 its header, +4 the number of `ev%04x`): its steps stay exactly
+    1.0, 60 a second, so above 60 fps it alone keeps mode 1 (60 fps at 120, 45 at 90 with pairs) while the ride around it
+    runs at frame_rate. **Timers**: the rides never ran above 60 before, so a census at 60 and 120 of six ride phases
+    (debug `phase` from the title: p100_GomoraSlider1, p100_GomoraWaterSkiing, p140_Heli1, p140_3JumpEvent,
+    p380_MalphasRide_ChasePart, p460_Gomo_Ride_Battle; forward held and the attack keys in turn, 100 s each) gave 96
+    frame-locked sites the first fight census (2026-10-27) had not; 14 plain countdowns of a constant a frame are
+    listed in `fps_counters.txt` (two on the ridden demon, its drain of 0.2 a frame while a button holds, three timers in
+    seconds, a countdown of 400 steps); a census of the patched build at 120 has each add half as much a visit (ratio
+    1.92-2.00 where the run held 120). The others are counts, ring indices, fades and adds that take the step already,
+    two countdowns the check did not confirm, and about 60 sites not read (the list's last comments). **Measured** (RX 9070 XT, RADV, 720p, hidden and muted, p100_GomoraSlider1 with the same
+    keys at 60 and at 120): eva104 lasts 10.02 / 10.03 s, eva108 starts 51.73 / 51.69 s after it, its flag 10 comes
+    12.72 / 12.69 s later and eva10f 7.75 / 7.64 s after that; the spider's distance counter moves 75.4 / 75.6 m a
+    second. At 120 the heliport fight runs at 59-67 fps (2,250-2,450 draws: the render thread's CPU work, the 16 ms of
+    the 2026-11-09 runs) and the rest of the ride at 120. eva142 is found (`p140_3JumpEvent`: all its frames exact, 60 a
+    second at 120) and ends back in the ride. **Not done**: a ride played by hand at any rate, frame_rate 90, the spider
+    ride's prompts pressed on purpose (the keys were blind: one run at 120 died once and passed the second time, the run
+    at 60 passed), a jumped-to phase with its world loaded (p140 draws white: the spider runs in a void), Windows.
   - **Measured** (the bot through the crane event, 24.5 s, a build with test logging): 60 three times, cutscene_fps 30,
     frame_rate 120 and 90, 50 fps twice, 41 and 25 fps, a 300 ms and a 1 s stall, a pause and resume four times. All end on
     ProgressAct at cut 6 frame 294, no cut 7, and the steps take turns with no break. Every step with flag 16 is 1.0 but
