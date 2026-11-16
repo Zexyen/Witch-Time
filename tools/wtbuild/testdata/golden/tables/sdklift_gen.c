@@ -27,10 +27,10 @@ static void f_7500000664(Ctx *c);
 static void f_75000005a4(Ctx *c);
 
 static void f_7500000874(Ctx *c) {
-  c->fn = 0x7500000874ULL;
+  c->fn = (SDK_BASE + 0x00000874ULL);
 L_7500000874: c->x[8] = (uint32_t)(logic32(c, (uint32_t)c->x[1] & 0x3fULL));
 L_7500000878: if (cond(c, 0)) goto L_75000008b0;
-L_750000087c: c->x[9] = (uint64_t)(0x7500012000ULL);
+L_750000087c: c->x[9] = (uint64_t)((SDK_BASE + 0x00012000ULL));
 L_7500000880: { float t = fnan32((float)0.5); vzero(&c->v[2]); c->v[2].f[0] = t; }
 L_7500000884: {  uint64_t a = c->x[9] + 344ULL; c->v[3] = rdv(a, 8);  }
 L_7500000888: c->x[9] = (uint32_t)(0U | 0U);
@@ -52,7 +52,7 @@ L_75000008c0: return;
 }
 
 static void f_7500004ecc(Ctx *c) {
-  c->fn = 0x7500004eccULL;
+  c->fn = (SDK_BASE + 0x00004eccULL);
 L_7500004ecc: { c->x[31] += (uint64_t)-80LL; uint64_t a = c->x[31] + (uint64_t)0LL; wrv(a, &c->v[11], 8); wrv(a + 8, &c->v[10], 8);  }
 L_7500004ed0: {  uint64_t a = c->x[31] + (uint64_t)16LL; wrv(a, &c->v[9], 8); wrv(a + 8, &c->v[8], 8);  }
 L_7500004ed4: {  uint64_t a = c->x[31] + (uint64_t)32LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
@@ -63,7 +63,7 @@ L_7500004ee4: { float t = fnan32(c->v[1].f[0]); vzero(&c->v[8]); c->v[8].f[0] = 
 L_7500004ee8: { double t = fnan64(c->v[0].df[0]); vzero(&c->v[9]); c->v[9].df[0] = t; }
 L_7500004eec: c->x[19] = (uint64_t)(0ULL | c->x[1]);
 L_7500004ef0: c->x[20] = (uint64_t)(0ULL | c->x[0]);
-L_7500004ef4: c->x[30] = 0x7500004ef8ULL; sdk_host_call(c, 0);
+L_7500004ef4: c->x[30] = (SDK_BASE + 0x00004ef8ULL); sdk_host_call(c, 0);
 L_7500004ef8: c->x[9] = (uint64_t)(c->x[20] + (uint64_t)((uint64_t)(int64_t)(int32_t)c->x[0]));
 L_7500004efc: { double t = fnan64((double)7.0); vzero(&c->v[1]); c->v[1].df[0] = t; }
 L_7500004f00: c->x[11] = (uint32_t)(0x49ULL);
@@ -81,7 +81,7 @@ L_7500004f2c: { double t = fnan64(c->v[9].df[0] * c->v[0].df[0]); vzero(&c->v[11
 L_7500004f30: if (cond(c, 0)) goto L_7500004f74;
 L_7500004f34: { float t = fnan32(c->v[10].f[0]); vzero(&c->v[0]); c->v[0].f[0] = t; }
 L_7500004f38: { double t = fnan64(c->v[11].df[0]); vzero(&c->v[3]); c->v[3].df[0] = t; }
-L_7500004f3c: c->x[14] = (uint64_t)(0x7500012000ULL);
+L_7500004f3c: c->x[14] = (uint64_t)((SDK_BASE + 0x00012000ULL));
 L_7500004f40: { float t = fnan32((float)0.5); vzero(&c->v[1]); c->v[1].f[0] = t; }
 L_7500004f44: {  uint64_t a = c->x[14] + 256ULL; c->v[2] = rdv(a, 8);  }
 L_7500004f48: c->x[13] = (uint32_t)(0U | 0U);
@@ -105,7 +105,7 @@ L_7500004f8c: c->x[9] = (uint64_t)(c->x[9] + c->x[11]);
 L_7500004f90: c->x[19] = (uint64_t)(c->x[9] + c->x[12]);
 L_7500004f94: c->x[9] = (uint32_t)(0x1dULL);
 L_7500004f98: c->x[20] = (uint64_t)(c->x[19] ^ c->x[9]);
-L_7500004f9c: c->x[30] = 0x7500004fa0ULL; sdk_host_call(c, 0);
+L_7500004f9c: c->x[30] = (SDK_BASE + 0x00004fa0ULL); sdk_host_call(c, 0);
 L_7500004fa0: c->x[20] = (uint64_t)(c->x[20] + (uint64_t)((uint64_t)(int64_t)(int32_t)c->x[0]));
 L_7500004fa4: { double t = fnan64((double)7.0); vzero(&c->v[1]); c->v[1].df[0] = t; }
 L_7500004fa8: c->x[9] = (uint32_t)(0x2bULL);
@@ -119,7 +119,7 @@ L_7500004fc4: { float t = fnan32(c->v[10].f[0] + c->v[1].f[0]); vzero(&c->v[1]);
 L_7500004fc8: { double t = fnan64(c->v[11].df[0] + c->v[0].df[0]); vzero(&c->v[11]); c->v[11].df[0] = t; }
 L_7500004fcc: { double t = fnan64((double)0.75); vzero(&c->v[0]); c->v[0].df[0] = t; }
 L_7500004fd0: { double t = fnan64(c->v[11].df[0] * c->v[0].df[0]); vzero(&c->v[0]); c->v[0].df[0] = t; }
-L_7500004fd4: c->x[30] = 0x7500004fd8ULL; f_750000f558(c);
+L_7500004fd4: c->x[30] = (SDK_BASE + 0x00004fd8ULL); f_750000f558(c);
 L_7500004fd8: c->x[8] = (uint64_t)(f2s64(trunc((double)c->v[10].f[0])));
 L_7500004fdc: c->x[9] = (uint64_t)(f2s64(trunc((double)c->v[8].f[0])));
 L_7500004fe0: c->x[10] = (uint64_t)(f2s64(trunc((double)c->v[9].df[0])));
@@ -140,7 +140,7 @@ L_7500005014: return;
 }
 
 static void f_7500005098(Ctx *c) {
-  c->fn = 0x7500005098ULL;
+  c->fn = (SDK_BASE + 0x00005098ULL);
 L_7500005098: c->x[8] = (uint64_t)(0x6c73ULL);
 L_750000509c: { uint64_t s = c->x[1]; uint64_t bot = (0 & ~0xffffffffffffffffULL) | (ror64(s, 14) & 0xffffffffffffffffULL); uint64_t top = 0; c->x[9] = (uint64_t)((top & ~0x3ffffffffffffULL) | (bot & 0x3ffffffffffffULL)); }
 L_75000050a0: c->x[11] = (uint64_t)(f2s64(trunc((double)c->v[0].df[0])));
@@ -178,15 +178,15 @@ L_7500005118: return;
 }
 
 static void f_750001102c(Ctx *c) {
-  c->fn = 0x750001102cULL;
+  c->fn = (SDK_BASE + 0x0001102cULL);
 L_750001102c: { c->x[31] += (uint64_t)-32LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_7500011030: {  uint64_t a = c->x[31] + 16ULL; wr64(a, c->x[19]);  }
 L_7500011034: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
 L_7500011038: c->x[19] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_750001103c: c->x[0] = (uint32_t)((uint32_t)c->x[0] + 1ULL);
-L_7500011040: c->x[30] = 0x7500011044ULL; sdk_host_call(c, 1);
+L_7500011040: c->x[30] = (SDK_BASE + 0x00011044ULL); sdk_host_call(c, 1);
 L_7500011044: c->x[0] = (uint32_t)((uint32_t)c->x[19] - 1ULL);
-L_7500011048: c->x[30] = 0x750001104cULL; sdk_host_call(c, 1);
+L_7500011048: c->x[30] = (SDK_BASE + 0x0001104cULL); sdk_host_call(c, 1);
 L_750001104c: c->x[8] = (uint32_t)((uint32_t)c->x[19] + ((uint32_t)c->x[19] << 1));
 L_7500011050: { uint32_t s = (uint32_t)c->x[8]; uint32_t bot = (0 & ~0xfffffffeULL) | (ror32(s, 31) & 0xfffffffeULL); uint32_t top = 0; c->x[0] = (uint32_t)((top & ~0xffffffffULL) | (bot & 0xffffffffULL)); }
 L_7500011054: {  uint64_t a = c->x[31] + 16ULL; c->x[19] = (uint64_t)(rd64(a));  }
@@ -196,87 +196,87 @@ L_750001105c: return;
 }
 
 static void f_7500000028(Ctx *c) {
-  c->fn = 0x7500000028ULL;
+  c->fn = (SDK_BASE + 0x00000028ULL);
 L_7500000028: { c->x[31] += (uint64_t)-32LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_750000002c: {  uint64_t a = c->x[31] + 16ULL; wr64(a, c->x[19]);  }
 L_7500000030: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
 L_7500000034: (void)(adds32(c, (uint32_t)c->x[0], ~(uint32_t)4ULL, 1));
 L_7500000038: if (cond(c, 10)) goto L_7500000050;
-L_750000003c: c->x[30] = 0x7500000040ULL; sdk_host_call(c, 1);
+L_750000003c: c->x[30] = (SDK_BASE + 0x00000040ULL); sdk_host_call(c, 1);
 L_7500000040: c->x[0] = (uint32_t)(0U | 0U);
 L_7500000044: {  uint64_t a = c->x[31] + 16ULL; c->x[19] = (uint64_t)(rd64(a));  }
 L_7500000048: {  uint64_t a = c->x[31] + (uint64_t)0LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[29] = (uint64_t)(t1); c->x[30] = (uint64_t)(t2); c->x[31] += (uint64_t)32LL; }
 L_750000004c: return;
 L_7500000050: c->x[19] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_7500000054: c->x[0] = (uint32_t)(0x4ULL);
-L_7500000058: c->x[30] = 0x750000005cULL; sdk_host_call(c, 2);
+L_7500000058: c->x[30] = (SDK_BASE + 0x0000005cULL); sdk_host_call(c, 2);
 L_750000005c: {  uint64_t a = c->x[0] + 0ULL; wr32(a, (uint32_t)c->x[19]);  }
-L_7500000060: c->x[1] = (uint64_t)(0x750031c000ULL);
+L_7500000060: c->x[1] = (uint64_t)((SDK_BASE + 0x0031c000ULL));
 L_7500000064: c->x[2] = (uint64_t)(0ULL | 0ULL);
 L_7500000068: {  uint64_t a = c->x[1] + 1624ULL; c->x[1] = (uint64_t)(rd64(a));  }
-L_750000006c: c->x[30] = 0x7500000070ULL; sdk_host_call(c, 3);
-L_7500000070: c->x[30] = 0x7500000074ULL; sdk_host_call(c, 4);
+L_750000006c: c->x[30] = (SDK_BASE + 0x00000070ULL); sdk_host_call(c, 3);
+L_7500000070: c->x[30] = (SDK_BASE + 0x00000074ULL); sdk_host_call(c, 4);
 L_7500000074: {  uint64_t a = c->x[0] + 0ULL; c->x[8] = (uint64_t)(rd32(a));  }
 L_7500000078: { uint32_t s = (uint32_t)c->x[8]; uint32_t bot = (0 & ~0xfffffffeULL) | (ror32(s, 31) & 0xfffffffeULL); uint32_t top = 0; c->x[19] = (uint32_t)((top & ~0xffffffffULL) | (bot & 0xffffffffULL)); }
-L_750000007c: c->x[30] = 0x7500000080ULL; sdk_host_call(c, 5);
+L_750000007c: c->x[30] = (SDK_BASE + 0x00000080ULL); sdk_host_call(c, 5);
 L_7500000080: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
 L_7500000084: goto L_7500000044;
   return;
 }
 
 static void f_75000004b4(Ctx *c) {
-  c->fn = 0x75000004b4ULL;
+  c->fn = (SDK_BASE + 0x000004b4ULL);
 L_75000004b4: { c->x[31] += (uint64_t)-32LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_75000004b8: {  uint64_t a = c->x[31] + (uint64_t)16LL; wr64(a, c->x[20]); wr64(a + 8, c->x[19]);  }
 L_75000004bc: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
 L_75000004c0: c->x[19] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_75000004c4: if (((c->x[0] >> 0) & 1) != 0) goto L_75000004ec;
 L_75000004c8: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_75000004cc: c->x[30] = 0x75000004d0ULL; sdk_host_call(c, 1);
+L_75000004cc: c->x[30] = (SDK_BASE + 0x000004d0ULL); sdk_host_call(c, 1);
 L_75000004d0: c->x[20] = (uint32_t)(0U | (uint32_t)c->x[19]);
 L_75000004d4: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_75000004d8: c->x[30] = 0x75000004dcULL; sdk_host_call(c, 1);
+L_75000004d8: c->x[30] = (SDK_BASE + 0x000004dcULL); sdk_host_call(c, 1);
 L_75000004dc: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[20]);
 L_75000004e0: {  uint64_t a = c->x[31] + (uint64_t)16LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[20] = (uint64_t)(t1); c->x[19] = (uint64_t)(t2);  }
 L_75000004e4: {  uint64_t a = c->x[31] + (uint64_t)0LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[29] = (uint64_t)(t1); c->x[30] = (uint64_t)(t2); c->x[31] += (uint64_t)32LL; }
 L_75000004e8: return;
 L_75000004ec: c->x[0] = (uint32_t)(0x8ULL);
-L_75000004f0: c->x[30] = 0x75000004f4ULL; sdk_host_call(c, 2);
+L_75000004f0: c->x[30] = (SDK_BASE + 0x000004f4ULL); sdk_host_call(c, 2);
 L_75000004f4: c->x[8] = (uint64_t)(0x3ff8000000000000ULL);
 L_75000004f8: {  uint64_t a = c->x[0] + 0ULL; wr64(a, c->x[8]);  }
-L_75000004fc: c->x[1] = (uint64_t)(0x750031c000ULL);
+L_75000004fc: c->x[1] = (uint64_t)((SDK_BASE + 0x0031c000ULL));
 L_7500000500: c->x[2] = (uint64_t)(0ULL | 0ULL);
 L_7500000504: {  uint64_t a = c->x[1] + 1640ULL; c->x[1] = (uint64_t)(rd64(a));  }
-L_7500000508: c->x[30] = 0x750000050cULL; sdk_host_call(c, 3);
+L_7500000508: c->x[30] = (SDK_BASE + 0x0000050cULL); sdk_host_call(c, 3);
 L_750000050c: goto L_7500000548;
-L_7500000510: c->x[30] = 0x7500000514ULL; f_7500000654(c);
+L_7500000510: c->x[30] = (SDK_BASE + 0x00000514ULL); f_7500000654(c);
 L_7500000514: (void)(adds32(c, (uint32_t)c->x[1], ~(uint32_t)2ULL, 1));
 L_7500000518: c->x[20] = (uint64_t)(0ULL | c->x[0]);
 L_750000051c: if (cond(c, 0)) goto L_7500000534;
 L_7500000520: c->x[0] = (uint64_t)(0ULL | c->x[20]);
-L_7500000524: c->x[30] = 0x7500000528ULL; sdk_host_call(c, 4);
-L_7500000528: c->x[30] = 0x750000052cULL; sdk_host_call(c, 5);
+L_7500000524: c->x[30] = (SDK_BASE + 0x00000528ULL); sdk_host_call(c, 4);
+L_7500000528: c->x[30] = (SDK_BASE + 0x0000052cULL); sdk_host_call(c, 5);
 L_750000052c: c->x[20] = (uint32_t)(0U - (uint32_t)c->x[19]);
 L_7500000530: goto L_75000004d4;
 L_7500000534: c->x[0] = (uint64_t)(0ULL | c->x[20]);
-L_7500000538: c->x[30] = 0x750000053cULL; sdk_host_call(c, 4);
+L_7500000538: c->x[30] = (SDK_BASE + 0x0000053cULL); sdk_host_call(c, 4);
 L_750000053c: c->x[0] = (uint32_t)(~(0x0ULL));
-L_7500000540: c->x[30] = 0x7500000544ULL; sdk_host_call(c, 1);
-L_7500000544: c->x[30] = 0x7500000548ULL; sdk_host_call(c, 6);
+L_7500000540: c->x[30] = (SDK_BASE + 0x00000544ULL); sdk_host_call(c, 1);
+L_7500000544: c->x[30] = (SDK_BASE + 0x00000548ULL); sdk_host_call(c, 6);
 L_7500000548: c->x[20] = (uint64_t)(0ULL | c->x[0]);
-L_750000054c: c->x[30] = 0x7500000550ULL; sdk_host_call(c, 5);
+L_750000054c: c->x[30] = (SDK_BASE + 0x00000550ULL); sdk_host_call(c, 5);
 L_7500000550: goto L_7500000520;
 L_7500000554: c->x[20] = (uint64_t)(0ULL | c->x[0]);
 L_7500000558: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_750000055c: c->x[30] = 0x7500000560ULL; sdk_host_call(c, 1);
+L_750000055c: c->x[30] = (SDK_BASE + 0x00000560ULL); sdk_host_call(c, 1);
 L_7500000560: c->x[0] = (uint64_t)(0ULL | c->x[20]);
-L_7500000564: c->x[30] = 0x7500000568ULL; sdk_host_call(c, 7);
-L_7500000568: c->x[30] = 0x750000056cULL; f_7500000654(c);
+L_7500000564: c->x[30] = (SDK_BASE + 0x00000568ULL); sdk_host_call(c, 7);
+L_7500000568: c->x[30] = (SDK_BASE + 0x0000056cULL); f_7500000654(c);
   f_750000056c(c); return;
 }
 
 static void f_7500011224(Ctx *c) {
-  c->fn = 0x7500011224ULL;
+  c->fn = (SDK_BASE + 0x00011224ULL);
   uint64_t jt = 0;
 L_7500011224: c->x[31] = (uint64_t)(c->x[31] - 48ULL);
 L_7500011228: {  uint64_t a = c->x[31] + (uint64_t)16LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
@@ -287,13 +287,13 @@ L_7500011238: c->x[19] = (uint64_t)(0ULL | c->x[0]);
 L_750001123c: c->x[1] = (uint64_t)(c->x[29] - 4ULL);
 L_7500011240: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[20]);
 L_7500011244: {  uint64_t a = c->x[29] + (uint64_t)-4LL; wr32(a, 0U);  }
-L_7500011248: c->x[30] = 0x750001124cULL; f_7500011060(c);
+L_7500011248: c->x[30] = (SDK_BASE + 0x0001124cULL); f_7500011060(c);
 L_750001124c: c->x[8] = (uint32_t)((uint32_t)c->x[20] - 2ULL);
 L_7500011250: (void)(adds32(c, (uint32_t)c->x[8], ~(uint32_t)48ULL, 1));
 L_7500011254: if (cond(c, 8)) goto L_7500011284;
-L_7500011258: c->x[9] = (uint64_t)(0x7500312000ULL);
+L_7500011258: c->x[9] = (uint64_t)((SDK_BASE + 0x00312000ULL));
 L_750001125c: c->x[9] = (uint64_t)(c->x[9] + 1026ULL);
-L_7500011260: c->x[10] = (uint64_t)(0x7500011274ULL);
+L_7500011260: c->x[10] = (uint64_t)((SDK_BASE + 0x00011274ULL));
 L_7500011264: {  uint64_t a = c->x[9] + ((uint64_t)c->x[8]); c->x[11] = (uint64_t)(rd8(a));  }
 L_7500011268: c->x[10] = (uint64_t)(c->x[10] + (c->x[11] << 2));
 L_750001126c: c->x[0] = (uint32_t)(0x35ULL);
@@ -332,83 +332,83 @@ L_75000112ec: c->x[0] = (uint32_t)(0xffffULL);
 L_75000112f0: goto L_7500011274;
 L_75000112f4: c->x[0] = (uint32_t)(0x1ULL);
 L_75000112f8: goto L_7500011274;
-L_75000112fc: c->x[1] = (uint64_t)(0x7500312000ULL);
+L_75000112fc: c->x[1] = (uint64_t)((SDK_BASE + 0x00312000ULL));
 L_7500011300: c->x[1] = (uint64_t)(c->x[1] + 1076ULL);
-L_7500011304: c->x[2] = (uint64_t)(0x7500312000ULL);
+L_7500011304: c->x[2] = (uint64_t)((SDK_BASE + 0x00312000ULL));
 L_7500011308: c->x[2] = (uint64_t)(c->x[2] + 1188ULL);
-L_750001130c: c->x[3] = (uint64_t)(0x750031c000ULL);
+L_750001130c: c->x[3] = (uint64_t)((SDK_BASE + 0x0031c000ULL));
 L_7500011310: {  uint64_t a = c->x[3] + 1648ULL; c->x[3] = (uint64_t)(rd64(a));  }
 L_7500011314: c->x[23] = (uint32_t)(0x4ULL);
 L_7500011318: return;
   return;
 L_dispatch: switch (jt) {
-  case 0x7500011224ULL: goto L_7500011224;
-  case 0x7500011228ULL: goto L_7500011228;
-  case 0x750001122cULL: goto L_750001122c;
-  case 0x7500011230ULL: goto L_7500011230;
-  case 0x7500011234ULL: goto L_7500011234;
-  case 0x7500011238ULL: goto L_7500011238;
-  case 0x750001123cULL: goto L_750001123c;
-  case 0x7500011240ULL: goto L_7500011240;
-  case 0x7500011244ULL: goto L_7500011244;
-  case 0x7500011248ULL: goto L_7500011248;
-  case 0x750001124cULL: goto L_750001124c;
-  case 0x7500011250ULL: goto L_7500011250;
-  case 0x7500011254ULL: goto L_7500011254;
-  case 0x7500011258ULL: goto L_7500011258;
-  case 0x750001125cULL: goto L_750001125c;
-  case 0x7500011260ULL: goto L_7500011260;
-  case 0x7500011264ULL: goto L_7500011264;
-  case 0x7500011268ULL: goto L_7500011268;
-  case 0x750001126cULL: goto L_750001126c;
-  case 0x7500011270ULL: goto L_7500011270;
-  case 0x7500011274ULL: goto L_7500011274;
-  case 0x7500011278ULL: goto L_7500011278;
-  case 0x750001127cULL: goto L_750001127c;
-  case 0x7500011280ULL: goto L_7500011280;
-  case 0x7500011284ULL: goto L_7500011284;
-  case 0x7500011288ULL: goto L_7500011288;
-  case 0x750001128cULL: goto L_750001128c;
-  case 0x7500011290ULL: goto L_7500011290;
-  case 0x7500011294ULL: goto L_7500011294;
-  case 0x7500011298ULL: goto L_7500011298;
-  case 0x750001129cULL: goto L_750001129c;
-  case 0x75000112a0ULL: goto L_75000112a0;
-  case 0x75000112a4ULL: goto L_75000112a4;
-  case 0x75000112a8ULL: goto L_75000112a8;
-  case 0x75000112acULL: goto L_75000112ac;
-  case 0x75000112b0ULL: goto L_75000112b0;
-  case 0x75000112b4ULL: goto L_75000112b4;
-  case 0x75000112b8ULL: goto L_75000112b8;
-  case 0x75000112bcULL: goto L_75000112bc;
-  case 0x75000112c0ULL: goto L_75000112c0;
-  case 0x75000112c4ULL: goto L_75000112c4;
-  case 0x75000112c8ULL: goto L_75000112c8;
-  case 0x75000112ccULL: goto L_75000112cc;
-  case 0x75000112d0ULL: goto L_75000112d0;
-  case 0x75000112d4ULL: goto L_75000112d4;
-  case 0x75000112d8ULL: goto L_75000112d8;
-  case 0x75000112dcULL: goto L_75000112dc;
-  case 0x75000112e0ULL: goto L_75000112e0;
-  case 0x75000112e4ULL: goto L_75000112e4;
-  case 0x75000112e8ULL: goto L_75000112e8;
-  case 0x75000112ecULL: goto L_75000112ec;
-  case 0x75000112f0ULL: goto L_75000112f0;
-  case 0x75000112f4ULL: goto L_75000112f4;
-  case 0x75000112f8ULL: goto L_75000112f8;
-  case 0x75000112fcULL: goto L_75000112fc;
-  case 0x7500011300ULL: goto L_7500011300;
-  case 0x7500011304ULL: goto L_7500011304;
-  case 0x7500011308ULL: goto L_7500011308;
-  case 0x750001130cULL: goto L_750001130c;
-  case 0x7500011310ULL: goto L_7500011310;
-  case 0x7500011314ULL: goto L_7500011314;
-  case 0x7500011318ULL: goto L_7500011318;
+  case (SDK_BASE + 0x00011224ULL): goto L_7500011224;
+  case (SDK_BASE + 0x00011228ULL): goto L_7500011228;
+  case (SDK_BASE + 0x0001122cULL): goto L_750001122c;
+  case (SDK_BASE + 0x00011230ULL): goto L_7500011230;
+  case (SDK_BASE + 0x00011234ULL): goto L_7500011234;
+  case (SDK_BASE + 0x00011238ULL): goto L_7500011238;
+  case (SDK_BASE + 0x0001123cULL): goto L_750001123c;
+  case (SDK_BASE + 0x00011240ULL): goto L_7500011240;
+  case (SDK_BASE + 0x00011244ULL): goto L_7500011244;
+  case (SDK_BASE + 0x00011248ULL): goto L_7500011248;
+  case (SDK_BASE + 0x0001124cULL): goto L_750001124c;
+  case (SDK_BASE + 0x00011250ULL): goto L_7500011250;
+  case (SDK_BASE + 0x00011254ULL): goto L_7500011254;
+  case (SDK_BASE + 0x00011258ULL): goto L_7500011258;
+  case (SDK_BASE + 0x0001125cULL): goto L_750001125c;
+  case (SDK_BASE + 0x00011260ULL): goto L_7500011260;
+  case (SDK_BASE + 0x00011264ULL): goto L_7500011264;
+  case (SDK_BASE + 0x00011268ULL): goto L_7500011268;
+  case (SDK_BASE + 0x0001126cULL): goto L_750001126c;
+  case (SDK_BASE + 0x00011270ULL): goto L_7500011270;
+  case (SDK_BASE + 0x00011274ULL): goto L_7500011274;
+  case (SDK_BASE + 0x00011278ULL): goto L_7500011278;
+  case (SDK_BASE + 0x0001127cULL): goto L_750001127c;
+  case (SDK_BASE + 0x00011280ULL): goto L_7500011280;
+  case (SDK_BASE + 0x00011284ULL): goto L_7500011284;
+  case (SDK_BASE + 0x00011288ULL): goto L_7500011288;
+  case (SDK_BASE + 0x0001128cULL): goto L_750001128c;
+  case (SDK_BASE + 0x00011290ULL): goto L_7500011290;
+  case (SDK_BASE + 0x00011294ULL): goto L_7500011294;
+  case (SDK_BASE + 0x00011298ULL): goto L_7500011298;
+  case (SDK_BASE + 0x0001129cULL): goto L_750001129c;
+  case (SDK_BASE + 0x000112a0ULL): goto L_75000112a0;
+  case (SDK_BASE + 0x000112a4ULL): goto L_75000112a4;
+  case (SDK_BASE + 0x000112a8ULL): goto L_75000112a8;
+  case (SDK_BASE + 0x000112acULL): goto L_75000112ac;
+  case (SDK_BASE + 0x000112b0ULL): goto L_75000112b0;
+  case (SDK_BASE + 0x000112b4ULL): goto L_75000112b4;
+  case (SDK_BASE + 0x000112b8ULL): goto L_75000112b8;
+  case (SDK_BASE + 0x000112bcULL): goto L_75000112bc;
+  case (SDK_BASE + 0x000112c0ULL): goto L_75000112c0;
+  case (SDK_BASE + 0x000112c4ULL): goto L_75000112c4;
+  case (SDK_BASE + 0x000112c8ULL): goto L_75000112c8;
+  case (SDK_BASE + 0x000112ccULL): goto L_75000112cc;
+  case (SDK_BASE + 0x000112d0ULL): goto L_75000112d0;
+  case (SDK_BASE + 0x000112d4ULL): goto L_75000112d4;
+  case (SDK_BASE + 0x000112d8ULL): goto L_75000112d8;
+  case (SDK_BASE + 0x000112dcULL): goto L_75000112dc;
+  case (SDK_BASE + 0x000112e0ULL): goto L_75000112e0;
+  case (SDK_BASE + 0x000112e4ULL): goto L_75000112e4;
+  case (SDK_BASE + 0x000112e8ULL): goto L_75000112e8;
+  case (SDK_BASE + 0x000112ecULL): goto L_75000112ec;
+  case (SDK_BASE + 0x000112f0ULL): goto L_75000112f0;
+  case (SDK_BASE + 0x000112f4ULL): goto L_75000112f4;
+  case (SDK_BASE + 0x000112f8ULL): goto L_75000112f8;
+  case (SDK_BASE + 0x000112fcULL): goto L_75000112fc;
+  case (SDK_BASE + 0x00011300ULL): goto L_7500011300;
+  case (SDK_BASE + 0x00011304ULL): goto L_7500011304;
+  case (SDK_BASE + 0x00011308ULL): goto L_7500011308;
+  case (SDK_BASE + 0x0001130cULL): goto L_750001130c;
+  case (SDK_BASE + 0x00011310ULL): goto L_7500011310;
+  case (SDK_BASE + 0x00011314ULL): goto L_7500011314;
+  case (SDK_BASE + 0x00011318ULL): goto L_7500011318;
   default: call_indirect(c, jt); return; }
 }
 
 static void f_7500001000(Ctx *c) {
-  c->fn = 0x7500001000ULL;
+  c->fn = (SDK_BASE + 0x00001000ULL);
 L_7500001000: { float t = fnan32(fmaf(c->v[9].f[0], c->v[0].f[0], c->v[2].f[0])); vzero(&c->v[9]); c->v[9].f[0] = t; }
 L_7500001004: c->x[9] = (uint64_t)(c->x[9] + c->x[11]);
 L_7500001008: if (cond(c, 1)) { f_7500000fe8(c); return; }
@@ -416,7 +416,7 @@ L_750000100c: goto L_7500001050;
 L_7500001010: { double t = fnan64(-c->v[12].df[0]); vzero(&c->v[0]); c->v[0].df[0] = t; }
 L_7500001014: fcmp(c, (double)c->v[12].df[0], (double)0);
 L_7500001018: { double t = fnan64(cond(c, 4) ? c->v[0].df[0] : c->v[12].df[0]); vzero(&c->v[0]); c->v[0].df[0] = t; }
-L_750000101c: c->x[30] = 0x7500001020ULL; sdk_host_call(c, 8);
+L_750000101c: c->x[30] = (SDK_BASE + 0x00001020ULL); sdk_host_call(c, 8);
 L_7500001020: c->x[8] = (uint64_t)(0x15bULL);
 L_7500001024: c->x[9] = (uint32_t)(0x17aULL);
 L_7500001028: c->x[8] = (uint64_t)((c->x[8] & ~0xffff0000ULL) | 0x56b0000ULL);
@@ -454,17 +454,17 @@ L_75000010a0: return;
 }
 
 static void f_7500011324(Ctx *c) {
-  c->fn = 0x7500011324ULL;
+  c->fn = (SDK_BASE + 0x00011324ULL);
 L_7500011324: c->x[0] = (uint32_t)(0x7ULL);
 L_7500011328: return;
   return;
 }
 
 static void f_750001134c(Ctx *c) {
-  c->fn = 0x750001134cULL;
+  c->fn = (SDK_BASE + 0x0001134cULL);
 L_750001134c: { c->x[31] += (uint64_t)-16LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_7500011350: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
-L_7500011354: c->x[30] = 0x7500011358ULL; f_7500011364(c);
+L_7500011354: c->x[30] = (SDK_BASE + 0x00011358ULL); f_7500011364(c);
 L_7500011358: c->x[0] = (uint64_t)(c->x[0] + 256ULL);
 L_750001135c: {  uint64_t a = c->x[31] + (uint64_t)0LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[29] = (uint64_t)(t1); c->x[30] = (uint64_t)(t2); c->x[31] += (uint64_t)16LL; }
 L_7500011360: return;
@@ -472,21 +472,21 @@ L_7500011360: return;
 }
 
 static void f_7500011384(Ctx *c) {
-  c->fn = 0x7500011384ULL;
+  c->fn = (SDK_BASE + 0x00011384ULL);
 L_7500011384: {  uint64_t a = c->x[0] + 0ULL; c->x[0] = (uint64_t)(rd64(a));  }
 L_7500011388: return;
   return;
 }
 
 static void f_750001136c(Ctx *c) {
-  c->fn = 0x750001136cULL;
+  c->fn = (SDK_BASE + 0x0001136cULL);
 L_750001136c: c->x[0] = (uint32_t)(0x12bULL);
 L_7500011370: return;
   return;
 }
 
 static void f_750000f558(Ctx *c) {
-  c->fn = 0x750000f558ULL;
+  c->fn = (SDK_BASE + 0x0000f558ULL);
 L_750000f558: { c->x[31] += (uint64_t)-48LL; uint64_t a = c->x[31] + (uint64_t)0LL; wrv(a, &c->v[9], 8); wrv(a + 8, &c->v[8], 8);  }
 L_750000f55c: {  uint64_t a = c->x[31] + (uint64_t)16LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_750000f560: {  uint64_t a = c->x[31] + (uint64_t)32LL; wr64(a, c->x[20]); wr64(a + 8, c->x[19]);  }
@@ -506,7 +506,7 @@ L_750000f594: c->x[8] = (uint32_t)(0x4eULL);
 L_750000f598: c->x[8] = (uint64_t)(0ULL + c->x[0] * c->x[8]);
 L_750000f59c: c->x[0] = (uint32_t)(0x1ULL);
 L_750000f5a0: c->x[20] = (uint64_t)(c->x[8] + (c->x[19] >> 2));
-L_750000f5a4: c->x[30] = 0x750000f5a8ULL; sdk_host_call(c, 1);
+L_750000f5a4: c->x[30] = (SDK_BASE + 0x0000f5a8ULL); sdk_host_call(c, 1);
 L_750000f5a8: goto L_750000f680;
 L_750000f5ac: (void)(adds32(c, (uint32_t)c->x[8], ~(uint32_t)5ULL, 1));
 L_750000f5b0: if (cond(c, 12)) goto L_750000f5f4;
@@ -538,25 +538,25 @@ L_750000f614: c->x[8] = (uint32_t)(0x54ULL);
 L_750000f618: c->x[8] = (uint64_t)(0ULL + c->x[0] * c->x[8]);
 L_750000f61c: c->x[0] = (uint32_t)(0U | 0U);
 L_750000f620: c->x[20] = (uint64_t)(c->x[8] + (c->x[19] >> 32));
-L_750000f624: c->x[30] = 0x750000f628ULL; sdk_host_call(c, 1);
+L_750000f624: c->x[30] = (SDK_BASE + 0x0000f628ULL); sdk_host_call(c, 1);
 L_750000f628: goto L_750000f680;
 L_750000f62c: c->x[8] = (uint32_t)(0x13ULL);
 L_750000f630: c->x[8] = (uint64_t)(0ULL + c->x[0] * c->x[8]);
 L_750000f634: c->x[0] = (uint32_t)(0x4ULL);
 L_750000f638: c->x[20] = (uint64_t)(c->x[8] + (c->x[19] >> 1));
-L_750000f63c: c->x[30] = 0x750000f640ULL; sdk_host_call(c, 1);
+L_750000f63c: c->x[30] = (SDK_BASE + 0x0000f640ULL); sdk_host_call(c, 1);
 L_750000f640: goto L_750000f680;
 L_750000f644: c->x[8] = (uint32_t)(0x18ULL);
 L_750000f648: c->x[8] = (uint64_t)(0ULL + c->x[0] * c->x[8]);
 L_750000f64c: c->x[0] = (uint32_t)(0x2ULL);
 L_750000f650: c->x[20] = (uint64_t)(c->x[8] + (c->x[19] >> 27));
-L_750000f654: c->x[30] = 0x750000f658ULL; sdk_host_call(c, 1);
+L_750000f654: c->x[30] = (SDK_BASE + 0x0000f658ULL); sdk_host_call(c, 1);
 L_750000f658: goto L_750000f680;
 L_750000f65c: c->x[8] = (uint32_t)(0x45ULL);
 L_750000f660: c->x[8] = (uint64_t)(0ULL + c->x[0] * c->x[8]);
 L_750000f664: c->x[0] = (uint32_t)(0x6ULL);
 L_750000f668: c->x[20] = (uint64_t)(c->x[8] + (c->x[19] >> 20));
-L_750000f66c: c->x[30] = 0x750000f670ULL; sdk_host_call(c, 1);
+L_750000f66c: c->x[30] = (SDK_BASE + 0x0000f670ULL); sdk_host_call(c, 1);
 L_750000f670: goto L_750000f680;
 L_750000f674: c->x[8] = (uint32_t)(0xbe52ULL);
 L_750000f678: c->x[8] = (uint32_t)(((uint32_t)c->x[8] & ~0xffff0000ULL) | 0x5aed0000ULL);
@@ -574,42 +574,42 @@ L_750000f6a0: return;
 }
 
 static void f_7500000654(Ctx *c) {
-  c->fn = 0x7500000654ULL;
+  c->fn = (SDK_BASE + 0x00000654ULL);
 L_7500000654: { c->x[31] += (uint64_t)-16LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_7500000658: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
-L_750000065c: c->x[30] = 0x7500000660ULL; sdk_host_call(c, 4);
-L_7500000660: c->x[30] = 0x7500000664ULL; sdk_host_call(c, 9);
+L_750000065c: c->x[30] = (SDK_BASE + 0x00000660ULL); sdk_host_call(c, 4);
+L_7500000660: c->x[30] = (SDK_BASE + 0x00000664ULL); sdk_host_call(c, 9);
   f_7500000664(c); return;
 }
 
 static void f_750000056c(Ctx *c) {
-  c->fn = 0x750000056cULL;
+  c->fn = (SDK_BASE + 0x0000056cULL);
 L_750000056c: { c->x[31] += (uint64_t)-32LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_7500000570: {  uint64_t a = c->x[31] + (uint64_t)16LL; wr64(a, c->x[20]); wr64(a + 8, c->x[19]);  }
 L_7500000574: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
 L_7500000578: c->x[19] = (uint32_t)(0U | (uint32_t)c->x[0]);
-L_750000057c: c->x[30] = 0x7500000580ULL; sdk_host_call(c, 0);
+L_750000057c: c->x[30] = (SDK_BASE + 0x00000580ULL); sdk_host_call(c, 0);
 L_7500000580: c->x[20] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_7500000584: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_7500000588: c->x[30] = 0x750000058cULL; sdk_host_call(c, 1);
+L_7500000588: c->x[30] = (SDK_BASE + 0x0000058cULL); sdk_host_call(c, 1);
 L_750000058c: c->x[0] = (uint32_t)((uint32_t)c->x[20] + (uint32_t)c->x[19]);
 L_7500000590: {  uint64_t a = c->x[31] + (uint64_t)16LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[20] = (uint64_t)(t1); c->x[19] = (uint64_t)(t2);  }
 L_7500000594: {  uint64_t a = c->x[31] + (uint64_t)0LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[29] = (uint64_t)(t1); c->x[30] = (uint64_t)(t2); c->x[31] += (uint64_t)32LL; }
 L_7500000598: return;
-L_750000059c: c->x[30] = 0x75000005a0ULL; f_7500000654(c);
-L_75000005a0: c->x[30] = 0x75000005a4ULL; f_7500000654(c);
+L_750000059c: c->x[30] = (SDK_BASE + 0x000005a0ULL); f_7500000654(c);
+L_75000005a0: c->x[30] = (SDK_BASE + 0x000005a4ULL); f_7500000654(c);
   f_75000005a4(c); return;
 }
 
 static void f_7500011060(Ctx *c) {
-  c->fn = 0x7500011060ULL;
+  c->fn = (SDK_BASE + 0x00011060ULL);
   uint64_t jt = 0;
 L_7500011060: c->x[9] = (uint32_t)((uint32_t)c->x[0] - 1ULL);
 L_7500011064: (void)(adds32(c, (uint32_t)c->x[9], ~(uint32_t)68ULL, 1));
 L_7500011068: if (cond(c, 8)) goto L_7500011094;
-L_750001106c: c->x[10] = (uint64_t)(0x7500312000ULL);
+L_750001106c: c->x[10] = (uint64_t)((SDK_BASE + 0x00312000ULL));
 L_7500011070: c->x[10] = (uint64_t)(c->x[10] + 957ULL);
-L_7500011074: c->x[11] = (uint64_t)(0x7500011088ULL);
+L_7500011074: c->x[11] = (uint64_t)((SDK_BASE + 0x00011088ULL));
 L_7500011078: {  uint64_t a = c->x[10] + ((uint64_t)c->x[9]); c->x[12] = (uint64_t)(rd8(a));  }
 L_750001107c: c->x[11] = (uint64_t)(c->x[11] + (c->x[12] << 2));
 L_7500011080: c->x[8] = (uint32_t)(0x1000ULL);
@@ -719,124 +719,124 @@ L_750001121c: c->x[8] = (uint32_t)(0xb1aaULL);
 L_7500011220: goto L_7500011088;
   return;
 L_dispatch: switch (jt) {
-  case 0x7500011060ULL: goto L_7500011060;
-  case 0x7500011064ULL: goto L_7500011064;
-  case 0x7500011068ULL: goto L_7500011068;
-  case 0x750001106cULL: goto L_750001106c;
-  case 0x7500011070ULL: goto L_7500011070;
-  case 0x7500011074ULL: goto L_7500011074;
-  case 0x7500011078ULL: goto L_7500011078;
-  case 0x750001107cULL: goto L_750001107c;
-  case 0x7500011080ULL: goto L_7500011080;
-  case 0x7500011084ULL: goto L_7500011084;
-  case 0x7500011088ULL: goto L_7500011088;
-  case 0x750001108cULL: goto L_750001108c;
-  case 0x7500011090ULL: goto L_7500011090;
-  case 0x7500011094ULL: goto L_7500011094;
-  case 0x7500011098ULL: goto L_7500011098;
-  case 0x750001109cULL: goto L_750001109c;
-  case 0x75000110a0ULL: goto L_75000110a0;
-  case 0x75000110a4ULL: goto L_75000110a4;
-  case 0x75000110a8ULL: goto L_75000110a8;
-  case 0x75000110acULL: goto L_75000110ac;
-  case 0x75000110b0ULL: goto L_75000110b0;
-  case 0x75000110b4ULL: goto L_75000110b4;
-  case 0x75000110b8ULL: goto L_75000110b8;
-  case 0x75000110bcULL: goto L_75000110bc;
-  case 0x75000110c0ULL: goto L_75000110c0;
-  case 0x75000110c4ULL: goto L_75000110c4;
-  case 0x75000110c8ULL: goto L_75000110c8;
-  case 0x75000110ccULL: goto L_75000110cc;
-  case 0x75000110d0ULL: goto L_75000110d0;
-  case 0x75000110d4ULL: goto L_75000110d4;
-  case 0x75000110d8ULL: goto L_75000110d8;
-  case 0x75000110dcULL: goto L_75000110dc;
-  case 0x75000110e0ULL: goto L_75000110e0;
-  case 0x75000110e4ULL: goto L_75000110e4;
-  case 0x75000110e8ULL: goto L_75000110e8;
-  case 0x75000110ecULL: goto L_75000110ec;
-  case 0x75000110f0ULL: goto L_75000110f0;
-  case 0x75000110f4ULL: goto L_75000110f4;
-  case 0x75000110f8ULL: goto L_75000110f8;
-  case 0x75000110fcULL: goto L_75000110fc;
-  case 0x7500011100ULL: goto L_7500011100;
-  case 0x7500011104ULL: goto L_7500011104;
-  case 0x7500011108ULL: goto L_7500011108;
-  case 0x750001110cULL: goto L_750001110c;
-  case 0x7500011110ULL: goto L_7500011110;
-  case 0x7500011114ULL: goto L_7500011114;
-  case 0x7500011118ULL: goto L_7500011118;
-  case 0x750001111cULL: goto L_750001111c;
-  case 0x7500011120ULL: goto L_7500011120;
-  case 0x7500011124ULL: goto L_7500011124;
-  case 0x7500011128ULL: goto L_7500011128;
-  case 0x750001112cULL: goto L_750001112c;
-  case 0x7500011130ULL: goto L_7500011130;
-  case 0x7500011134ULL: goto L_7500011134;
-  case 0x7500011138ULL: goto L_7500011138;
-  case 0x750001113cULL: goto L_750001113c;
-  case 0x7500011140ULL: goto L_7500011140;
-  case 0x7500011144ULL: goto L_7500011144;
-  case 0x7500011148ULL: goto L_7500011148;
-  case 0x750001114cULL: goto L_750001114c;
-  case 0x7500011150ULL: goto L_7500011150;
-  case 0x7500011154ULL: goto L_7500011154;
-  case 0x7500011158ULL: goto L_7500011158;
-  case 0x750001115cULL: goto L_750001115c;
-  case 0x7500011160ULL: goto L_7500011160;
-  case 0x7500011164ULL: goto L_7500011164;
-  case 0x7500011168ULL: goto L_7500011168;
-  case 0x750001116cULL: goto L_750001116c;
-  case 0x7500011170ULL: goto L_7500011170;
-  case 0x7500011174ULL: goto L_7500011174;
-  case 0x7500011178ULL: goto L_7500011178;
-  case 0x750001117cULL: goto L_750001117c;
-  case 0x7500011180ULL: goto L_7500011180;
-  case 0x7500011184ULL: goto L_7500011184;
-  case 0x7500011188ULL: goto L_7500011188;
-  case 0x750001118cULL: goto L_750001118c;
-  case 0x7500011190ULL: goto L_7500011190;
-  case 0x7500011194ULL: goto L_7500011194;
-  case 0x7500011198ULL: goto L_7500011198;
-  case 0x750001119cULL: goto L_750001119c;
-  case 0x75000111a0ULL: goto L_75000111a0;
-  case 0x75000111a4ULL: goto L_75000111a4;
-  case 0x75000111a8ULL: goto L_75000111a8;
-  case 0x75000111acULL: goto L_75000111ac;
-  case 0x75000111b0ULL: goto L_75000111b0;
-  case 0x75000111b4ULL: goto L_75000111b4;
-  case 0x75000111b8ULL: goto L_75000111b8;
-  case 0x75000111bcULL: goto L_75000111bc;
-  case 0x75000111c0ULL: goto L_75000111c0;
-  case 0x75000111c4ULL: goto L_75000111c4;
-  case 0x75000111c8ULL: goto L_75000111c8;
-  case 0x75000111ccULL: goto L_75000111cc;
-  case 0x75000111d0ULL: goto L_75000111d0;
-  case 0x75000111d4ULL: goto L_75000111d4;
-  case 0x75000111d8ULL: goto L_75000111d8;
-  case 0x75000111dcULL: goto L_75000111dc;
-  case 0x75000111e0ULL: goto L_75000111e0;
-  case 0x75000111e4ULL: goto L_75000111e4;
-  case 0x75000111e8ULL: goto L_75000111e8;
-  case 0x75000111ecULL: goto L_75000111ec;
-  case 0x75000111f0ULL: goto L_75000111f0;
-  case 0x75000111f4ULL: goto L_75000111f4;
-  case 0x75000111f8ULL: goto L_75000111f8;
-  case 0x75000111fcULL: goto L_75000111fc;
-  case 0x7500011200ULL: goto L_7500011200;
-  case 0x7500011204ULL: goto L_7500011204;
-  case 0x7500011208ULL: goto L_7500011208;
-  case 0x750001120cULL: goto L_750001120c;
-  case 0x7500011210ULL: goto L_7500011210;
-  case 0x7500011214ULL: goto L_7500011214;
-  case 0x7500011218ULL: goto L_7500011218;
-  case 0x750001121cULL: goto L_750001121c;
-  case 0x7500011220ULL: goto L_7500011220;
+  case (SDK_BASE + 0x00011060ULL): goto L_7500011060;
+  case (SDK_BASE + 0x00011064ULL): goto L_7500011064;
+  case (SDK_BASE + 0x00011068ULL): goto L_7500011068;
+  case (SDK_BASE + 0x0001106cULL): goto L_750001106c;
+  case (SDK_BASE + 0x00011070ULL): goto L_7500011070;
+  case (SDK_BASE + 0x00011074ULL): goto L_7500011074;
+  case (SDK_BASE + 0x00011078ULL): goto L_7500011078;
+  case (SDK_BASE + 0x0001107cULL): goto L_750001107c;
+  case (SDK_BASE + 0x00011080ULL): goto L_7500011080;
+  case (SDK_BASE + 0x00011084ULL): goto L_7500011084;
+  case (SDK_BASE + 0x00011088ULL): goto L_7500011088;
+  case (SDK_BASE + 0x0001108cULL): goto L_750001108c;
+  case (SDK_BASE + 0x00011090ULL): goto L_7500011090;
+  case (SDK_BASE + 0x00011094ULL): goto L_7500011094;
+  case (SDK_BASE + 0x00011098ULL): goto L_7500011098;
+  case (SDK_BASE + 0x0001109cULL): goto L_750001109c;
+  case (SDK_BASE + 0x000110a0ULL): goto L_75000110a0;
+  case (SDK_BASE + 0x000110a4ULL): goto L_75000110a4;
+  case (SDK_BASE + 0x000110a8ULL): goto L_75000110a8;
+  case (SDK_BASE + 0x000110acULL): goto L_75000110ac;
+  case (SDK_BASE + 0x000110b0ULL): goto L_75000110b0;
+  case (SDK_BASE + 0x000110b4ULL): goto L_75000110b4;
+  case (SDK_BASE + 0x000110b8ULL): goto L_75000110b8;
+  case (SDK_BASE + 0x000110bcULL): goto L_75000110bc;
+  case (SDK_BASE + 0x000110c0ULL): goto L_75000110c0;
+  case (SDK_BASE + 0x000110c4ULL): goto L_75000110c4;
+  case (SDK_BASE + 0x000110c8ULL): goto L_75000110c8;
+  case (SDK_BASE + 0x000110ccULL): goto L_75000110cc;
+  case (SDK_BASE + 0x000110d0ULL): goto L_75000110d0;
+  case (SDK_BASE + 0x000110d4ULL): goto L_75000110d4;
+  case (SDK_BASE + 0x000110d8ULL): goto L_75000110d8;
+  case (SDK_BASE + 0x000110dcULL): goto L_75000110dc;
+  case (SDK_BASE + 0x000110e0ULL): goto L_75000110e0;
+  case (SDK_BASE + 0x000110e4ULL): goto L_75000110e4;
+  case (SDK_BASE + 0x000110e8ULL): goto L_75000110e8;
+  case (SDK_BASE + 0x000110ecULL): goto L_75000110ec;
+  case (SDK_BASE + 0x000110f0ULL): goto L_75000110f0;
+  case (SDK_BASE + 0x000110f4ULL): goto L_75000110f4;
+  case (SDK_BASE + 0x000110f8ULL): goto L_75000110f8;
+  case (SDK_BASE + 0x000110fcULL): goto L_75000110fc;
+  case (SDK_BASE + 0x00011100ULL): goto L_7500011100;
+  case (SDK_BASE + 0x00011104ULL): goto L_7500011104;
+  case (SDK_BASE + 0x00011108ULL): goto L_7500011108;
+  case (SDK_BASE + 0x0001110cULL): goto L_750001110c;
+  case (SDK_BASE + 0x00011110ULL): goto L_7500011110;
+  case (SDK_BASE + 0x00011114ULL): goto L_7500011114;
+  case (SDK_BASE + 0x00011118ULL): goto L_7500011118;
+  case (SDK_BASE + 0x0001111cULL): goto L_750001111c;
+  case (SDK_BASE + 0x00011120ULL): goto L_7500011120;
+  case (SDK_BASE + 0x00011124ULL): goto L_7500011124;
+  case (SDK_BASE + 0x00011128ULL): goto L_7500011128;
+  case (SDK_BASE + 0x0001112cULL): goto L_750001112c;
+  case (SDK_BASE + 0x00011130ULL): goto L_7500011130;
+  case (SDK_BASE + 0x00011134ULL): goto L_7500011134;
+  case (SDK_BASE + 0x00011138ULL): goto L_7500011138;
+  case (SDK_BASE + 0x0001113cULL): goto L_750001113c;
+  case (SDK_BASE + 0x00011140ULL): goto L_7500011140;
+  case (SDK_BASE + 0x00011144ULL): goto L_7500011144;
+  case (SDK_BASE + 0x00011148ULL): goto L_7500011148;
+  case (SDK_BASE + 0x0001114cULL): goto L_750001114c;
+  case (SDK_BASE + 0x00011150ULL): goto L_7500011150;
+  case (SDK_BASE + 0x00011154ULL): goto L_7500011154;
+  case (SDK_BASE + 0x00011158ULL): goto L_7500011158;
+  case (SDK_BASE + 0x0001115cULL): goto L_750001115c;
+  case (SDK_BASE + 0x00011160ULL): goto L_7500011160;
+  case (SDK_BASE + 0x00011164ULL): goto L_7500011164;
+  case (SDK_BASE + 0x00011168ULL): goto L_7500011168;
+  case (SDK_BASE + 0x0001116cULL): goto L_750001116c;
+  case (SDK_BASE + 0x00011170ULL): goto L_7500011170;
+  case (SDK_BASE + 0x00011174ULL): goto L_7500011174;
+  case (SDK_BASE + 0x00011178ULL): goto L_7500011178;
+  case (SDK_BASE + 0x0001117cULL): goto L_750001117c;
+  case (SDK_BASE + 0x00011180ULL): goto L_7500011180;
+  case (SDK_BASE + 0x00011184ULL): goto L_7500011184;
+  case (SDK_BASE + 0x00011188ULL): goto L_7500011188;
+  case (SDK_BASE + 0x0001118cULL): goto L_750001118c;
+  case (SDK_BASE + 0x00011190ULL): goto L_7500011190;
+  case (SDK_BASE + 0x00011194ULL): goto L_7500011194;
+  case (SDK_BASE + 0x00011198ULL): goto L_7500011198;
+  case (SDK_BASE + 0x0001119cULL): goto L_750001119c;
+  case (SDK_BASE + 0x000111a0ULL): goto L_75000111a0;
+  case (SDK_BASE + 0x000111a4ULL): goto L_75000111a4;
+  case (SDK_BASE + 0x000111a8ULL): goto L_75000111a8;
+  case (SDK_BASE + 0x000111acULL): goto L_75000111ac;
+  case (SDK_BASE + 0x000111b0ULL): goto L_75000111b0;
+  case (SDK_BASE + 0x000111b4ULL): goto L_75000111b4;
+  case (SDK_BASE + 0x000111b8ULL): goto L_75000111b8;
+  case (SDK_BASE + 0x000111bcULL): goto L_75000111bc;
+  case (SDK_BASE + 0x000111c0ULL): goto L_75000111c0;
+  case (SDK_BASE + 0x000111c4ULL): goto L_75000111c4;
+  case (SDK_BASE + 0x000111c8ULL): goto L_75000111c8;
+  case (SDK_BASE + 0x000111ccULL): goto L_75000111cc;
+  case (SDK_BASE + 0x000111d0ULL): goto L_75000111d0;
+  case (SDK_BASE + 0x000111d4ULL): goto L_75000111d4;
+  case (SDK_BASE + 0x000111d8ULL): goto L_75000111d8;
+  case (SDK_BASE + 0x000111dcULL): goto L_75000111dc;
+  case (SDK_BASE + 0x000111e0ULL): goto L_75000111e0;
+  case (SDK_BASE + 0x000111e4ULL): goto L_75000111e4;
+  case (SDK_BASE + 0x000111e8ULL): goto L_75000111e8;
+  case (SDK_BASE + 0x000111ecULL): goto L_75000111ec;
+  case (SDK_BASE + 0x000111f0ULL): goto L_75000111f0;
+  case (SDK_BASE + 0x000111f4ULL): goto L_75000111f4;
+  case (SDK_BASE + 0x000111f8ULL): goto L_75000111f8;
+  case (SDK_BASE + 0x000111fcULL): goto L_75000111fc;
+  case (SDK_BASE + 0x00011200ULL): goto L_7500011200;
+  case (SDK_BASE + 0x00011204ULL): goto L_7500011204;
+  case (SDK_BASE + 0x00011208ULL): goto L_7500011208;
+  case (SDK_BASE + 0x0001120cULL): goto L_750001120c;
+  case (SDK_BASE + 0x00011210ULL): goto L_7500011210;
+  case (SDK_BASE + 0x00011214ULL): goto L_7500011214;
+  case (SDK_BASE + 0x00011218ULL): goto L_7500011218;
+  case (SDK_BASE + 0x0001121cULL): goto L_750001121c;
+  case (SDK_BASE + 0x00011220ULL): goto L_7500011220;
   default: call_indirect(c, jt); return; }
 }
 
 static void f_7500000fe8(Ctx *c) {
-  c->fn = 0x7500000fe8ULL;
+  c->fn = (SDK_BASE + 0x00000fe8ULL);
 L_7500000fe8: { double t = (double)c->v[9].f[0]; vzero(&c->v[2]); c->v[2].df[0] = t; }
 L_7500000fec: { double t = fnan64(fma(c->v[10].df[0], c->v[1].df[0], c->v[2].df[0])); vzero(&c->v[10]); c->v[10].df[0] = t; }
 L_7500000ff0: { float t = (float)(uint32_t)c->x[12]; vzero(&c->v[2]); c->v[2].f[0] = t; }
@@ -847,14 +847,14 @@ L_7500000ffc: c->x[11] = (uint64_t)(f2s64(trunc((double)c->v[10].df[0])));
 }
 
 static void f_7500011364(Ctx *c) {
-  c->fn = 0x7500011364ULL;
+  c->fn = (SDK_BASE + 0x00011364ULL);
 L_7500011364: { uint64_t s = c->x[0]; uint64_t bot = (0 & ~0xfffffffffffffffcULL) | (ror64(s, 62) & 0xfffffffffffffffcULL); uint64_t top = 0; c->x[0] = (uint64_t)((top & ~0xffffffffffffffffULL) | (bot & 0xffffffffffffffffULL)); }
 L_7500011368: return;
   return;
 }
 
 static void f_7500000664(Ctx *c) {
-  c->fn = 0x7500000664ULL;
+  c->fn = (SDK_BASE + 0x00000664ULL);
 L_7500000664: { c->x[31] += (uint64_t)-32LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_7500000668: {  uint64_t a = c->x[31] + 16ULL; wr64(a, c->x[19]);  }
 L_750000066c: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
@@ -872,7 +872,7 @@ L_7500000698: goto L_75000006d4;
 L_750000069c: { double t = fnan64(-c->v[0].df[0]); vzero(&c->v[1]); c->v[1].df[0] = t; }
 L_75000006a0: fcmp(c, (double)c->v[0].df[0], (double)0);
 L_75000006a4: { double t = fnan64(cond(c, 4) ? c->v[1].df[0] : c->v[0].df[0]); vzero(&c->v[0]); c->v[0].df[0] = t; }
-L_75000006a8: c->x[30] = 0x75000006acULL; sdk_host_call(c, 8);
+L_75000006a8: c->x[30] = (SDK_BASE + 0x000006acULL); sdk_host_call(c, 8);
 L_75000006ac: c->x[8] = (uint64_t)(0x1aa3ULL);
 L_75000006b0: c->x[9] = (uint32_t)(0x15aULL);
 L_75000006b4: c->x[8] = (uint64_t)((c->x[8] & ~0xffff0000ULL) | 0x7660000ULL);
@@ -890,7 +890,7 @@ L_75000006dc: return;
 }
 
 static void f_75000005a4(Ctx *c) {
-  c->fn = 0x75000005a4ULL;
+  c->fn = (SDK_BASE + 0x000005a4ULL);
 L_75000005a4: { c->x[31] += (uint64_t)-48LL; uint64_t a = c->x[31] + (uint64_t)0LL; wr64(a, c->x[29]); wr64(a + 8, c->x[30]);  }
 L_75000005a8: {  uint64_t a = c->x[31] + 16ULL; wr64(a, c->x[21]);  }
 L_75000005ac: {  uint64_t a = c->x[31] + (uint64_t)32LL; wr64(a, c->x[20]); wr64(a + 8, c->x[19]);  }
@@ -898,17 +898,17 @@ L_75000005b0: c->x[29] = (uint64_t)(c->x[31] + 0ULL);
 L_75000005b4: c->x[19] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_75000005b8: (void)(adds32(c, (uint32_t)c->x[0], ~(uint32_t)10ULL, 1));
 L_75000005bc: if (cond(c, 10)) goto L_7500000604;
-L_75000005c0: c->x[30] = 0x75000005c4ULL; sdk_host_call(c, 0);
+L_75000005c0: c->x[30] = (SDK_BASE + 0x000005c4ULL); sdk_host_call(c, 0);
 L_75000005c4: c->x[20] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_75000005c8: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_75000005cc: c->x[30] = 0x75000005d0ULL; sdk_host_call(c, 1);
+L_75000005cc: c->x[30] = (SDK_BASE + 0x000005d0ULL); sdk_host_call(c, 1);
 L_75000005d0: c->x[0] = (uint32_t)(0U | (uint32_t)c->x[19]);
-L_75000005d4: c->x[30] = 0x75000005d8ULL; f_75000004b4(c);
+L_75000005d4: c->x[30] = (SDK_BASE + 0x000005d8ULL); f_75000004b4(c);
 L_75000005d8: c->x[21] = (uint32_t)(0U | (uint32_t)c->x[0]);
 L_75000005dc: c->x[0] = (uint32_t)(0x2ULL);
-L_75000005e0: c->x[30] = 0x75000005e4ULL; sdk_host_call(c, 1);
+L_75000005e0: c->x[30] = (SDK_BASE + 0x000005e4ULL); sdk_host_call(c, 1);
 L_75000005e4: c->x[0] = (uint32_t)(0x1ULL);
-L_75000005e8: c->x[30] = 0x75000005ecULL; sdk_host_call(c, 1);
+L_75000005e8: c->x[30] = (SDK_BASE + 0x000005ecULL); sdk_host_call(c, 1);
 L_75000005ec: c->x[8] = (uint32_t)((uint32_t)c->x[20] + (uint32_t)c->x[19]);
 L_75000005f0: c->x[0] = (uint32_t)((uint32_t)c->x[8] + (uint32_t)c->x[21]);
 L_75000005f4: {  uint64_t a = c->x[31] + (uint64_t)32LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[20] = (uint64_t)(t1); c->x[19] = (uint64_t)(t2);  }
@@ -916,25 +916,25 @@ L_75000005f8: {  uint64_t a = c->x[31] + 16ULL; c->x[21] = (uint64_t)(rd64(a)); 
 L_75000005fc: {  uint64_t a = c->x[31] + (uint64_t)0LL; uint64_t t1 = rd64(a), t2 = rd64(a + 8); c->x[29] = (uint64_t)(t1); c->x[30] = (uint64_t)(t2); c->x[31] += (uint64_t)48LL; }
 L_7500000600: return;
 L_7500000604: c->x[0] = (uint32_t)(0x4ULL);
-L_7500000608: c->x[30] = 0x750000060cULL; sdk_host_call(c, 2);
+L_7500000608: c->x[30] = (SDK_BASE + 0x0000060cULL); sdk_host_call(c, 2);
 L_750000060c: {  uint64_t a = c->x[0] + 0ULL; wr32(a, (uint32_t)c->x[19]);  }
-L_7500000610: c->x[1] = (uint64_t)(0x750031c000ULL);
+L_7500000610: c->x[1] = (uint64_t)((SDK_BASE + 0x0031c000ULL));
 L_7500000614: c->x[2] = (uint64_t)(0ULL | 0ULL);
 L_7500000618: {  uint64_t a = c->x[1] + 1624ULL; c->x[1] = (uint64_t)(rd64(a));  }
-L_750000061c: c->x[30] = 0x7500000620ULL; sdk_host_call(c, 3);
-L_7500000620: c->x[30] = 0x7500000624ULL; f_7500000654(c);
-L_7500000624: c->x[30] = 0x7500000628ULL; f_7500000654(c);
-L_7500000628: c->x[30] = 0x750000062cULL; f_7500000654(c);
-L_750000062c: c->x[30] = 0x7500000630ULL; f_7500000654(c);
+L_750000061c: c->x[30] = (SDK_BASE + 0x00000620ULL); sdk_host_call(c, 3);
+L_7500000620: c->x[30] = (SDK_BASE + 0x00000624ULL); f_7500000654(c);
+L_7500000624: c->x[30] = (SDK_BASE + 0x00000628ULL); f_7500000654(c);
+L_7500000628: c->x[30] = (SDK_BASE + 0x0000062cULL); f_7500000654(c);
+L_750000062c: c->x[30] = (SDK_BASE + 0x00000630ULL); f_7500000654(c);
 L_7500000630: c->x[19] = (uint64_t)(0ULL | c->x[0]);
 L_7500000634: c->x[0] = (uint32_t)(0x2ULL);
-L_7500000638: c->x[30] = 0x750000063cULL; sdk_host_call(c, 1);
+L_7500000638: c->x[30] = (SDK_BASE + 0x0000063cULL); sdk_host_call(c, 1);
 L_750000063c: c->x[0] = (uint32_t)(0x1ULL);
-L_7500000640: c->x[30] = 0x7500000644ULL; sdk_host_call(c, 1);
+L_7500000640: c->x[30] = (SDK_BASE + 0x00000644ULL); sdk_host_call(c, 1);
 L_7500000644: c->x[0] = (uint64_t)(0ULL | c->x[19]);
-L_7500000648: c->x[30] = 0x750000064cULL; sdk_host_call(c, 7);
-L_750000064c: c->x[30] = 0x7500000650ULL; f_7500000654(c);
-L_7500000650: c->x[30] = 0x7500000654ULL; f_7500000654(c);
+L_7500000648: c->x[30] = (SDK_BASE + 0x0000064cULL); sdk_host_call(c, 7);
+L_750000064c: c->x[30] = (SDK_BASE + 0x00000650ULL); f_7500000654(c);
+L_7500000650: c->x[30] = (SDK_BASE + 0x00000654ULL); f_7500000654(c);
   f_7500000654(c); return;
 }
 
@@ -953,26 +953,26 @@ const char *const sdk_host_names[] = {
   0};
 const int sdk_host_name_count = 10;
 const SdkFn sdk_fns[] = {
-  {0x7500000028ULL, f_7500000028, "caught"},
-  {0x75000004b4ULL, f_75000004b4, "nested"},
-  {0x750000056cULL, f_750000056c, "no_throw"},
-  {0x75000005a4ULL, f_75000005a4, "rethrow"},
-  {0x7500000654ULL, f_7500000654, "sub_654"},
-  {0x7500000664ULL, f_7500000664, "g0"},
-  {0x7500000874ULL, f_7500000874, "g3"},
-  {0x7500000fe8ULL, f_7500000fe8, "sub_fe8"},
-  {0x7500001000ULL, f_7500001000, "sub_1000"},
-  {0x7500004eccULL, f_7500004ecc, "g40"},
-  {0x7500005098ULL, f_7500005098, "g41"},
-  {0x750000f558ULL, f_750000f558, "g270"},
-  {0x750001102cULL, f_750001102c, "sdk_uses_helper"},
-  {0x7500011060ULL, f_7500011060, "sub_11060"},
-  {0x7500011224ULL, f_7500011224, "nvn_fake_get_integer"},
-  {0x7500011324ULL, f_7500011324, "nvnDeviceGetInteger"},
-  {0x750001134cULL, f_750001134c, "nvnTextureBuilderGetStorageSize"},
-  {0x7500011364ULL, f_7500011364, "sub_11364"},
-  {0x750001136cULL, f_750001136c, "hal_method0"},
-  {0x7500011384ULL, f_7500011384, "device_method1"},
+  {(SDK_BASE + 0x00000028ULL), f_7500000028, "caught"},
+  {(SDK_BASE + 0x000004b4ULL), f_75000004b4, "nested"},
+  {(SDK_BASE + 0x0000056cULL), f_750000056c, "no_throw"},
+  {(SDK_BASE + 0x000005a4ULL), f_75000005a4, "rethrow"},
+  {(SDK_BASE + 0x00000654ULL), f_7500000654, "sub_654"},
+  {(SDK_BASE + 0x00000664ULL), f_7500000664, "g0"},
+  {(SDK_BASE + 0x00000874ULL), f_7500000874, "g3"},
+  {(SDK_BASE + 0x00000fe8ULL), f_7500000fe8, "sub_fe8"},
+  {(SDK_BASE + 0x00001000ULL), f_7500001000, "sub_1000"},
+  {(SDK_BASE + 0x00004eccULL), f_7500004ecc, "g40"},
+  {(SDK_BASE + 0x00005098ULL), f_7500005098, "g41"},
+  {(SDK_BASE + 0x0000f558ULL), f_750000f558, "g270"},
+  {(SDK_BASE + 0x0001102cULL), f_750001102c, "sdk_uses_helper"},
+  {(SDK_BASE + 0x00011060ULL), f_7500011060, "sub_11060"},
+  {(SDK_BASE + 0x00011224ULL), f_7500011224, "nvn_fake_get_integer"},
+  {(SDK_BASE + 0x00011324ULL), f_7500011324, "nvnDeviceGetInteger"},
+  {(SDK_BASE + 0x0001134cULL), f_750001134c, "nvnTextureBuilderGetStorageSize"},
+  {(SDK_BASE + 0x00011364ULL), f_7500011364, "sub_11364"},
+  {(SDK_BASE + 0x0001136cULL), f_750001136c, "hal_method0"},
+  {(SDK_BASE + 0x00011384ULL), f_7500011384, "device_method1"},
 };
 const int sdk_fn_count = 20;
 static void sdk_call_indirect(Ctx *c, uint64_t a) { sdk_dispatch(c, a); }

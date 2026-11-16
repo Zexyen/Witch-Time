@@ -33,7 +33,7 @@ typedef struct {
     int fail; char why[200], failop[40];
     uint32_t cbufs, in_attr, out_attr, tex_units, clip_out, ssbos;
     uint8_t regs[256], preds[8], in_comp[32], in_mode[32];
-    int uses_gmem, uses_gstore, uses_cc, uses_layer_out, uses_vp_out, uses_psize, uses_lmem, insns, blocks, any_jump, uses_alpha;
+    int uses_gmem, uses_gstore, uses_cc, uses_layer_out, uses_vp_out, uses_psize, uses_lmem, insns, blocks, any_jump, uses_alpha, ifc, writes_depth;
     uint8_t *reach, *leader;
     const uint8_t *base;                      /* instruction word 0 (a scheduling word) */
     uint32_t gubos;                           /* compute: uniform buffers reached through global memory */
@@ -43,6 +43,8 @@ typedef struct {
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int nbar;                                 /* [issue 163] compute: BAR sites that leave the dispatcher (see MXOP_BAR) */
     int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
+    int nbk, nlp; unsigned bk[32][2], lp[32][2]; /* [witchtime] MxIn.seq_all 2: the jumps back (target, word), and the loops made of them: blocks [first, end) */
+    char seq_tail[112];
     int uses_quad;                            /* [issue 66] a fragment SHFL: the dispatcher runs wave-uniform and reads the quad at its header */
     uint8_t *qlead;                           /* [issue 66] a case that starts with a fragment SHFL: entered through the header only, never by falling through */
     uint8_t qidx[256]; int nqsrc;             /* [issue 66] register -> 1 + its snapshot bit (0: none) */
@@ -105,8 +107,9 @@ static void fail(Mx *e, const char *op, const char *fmt, ...) {
  * shortcut: the limit is a guess above the longest loop seen (that lighting stage: 2 x 32 lights x (32 bits + 2 BRX), about
  * 2,240 jumps back at most); raise it if a stage loses detail. */
 #define MX_LOOP_MAX 4096u
+static void back_edge(Mx *e, unsigned tgt, unsigned pc) { e->has_back = 1; if (e->nbk < 32) { e->bk[e->nbk][0] = tgt; e->bk[e->nbk][1] = pc; } e->nbk++; }
 static void loop_guard(Mx *e, int back) {
-    if (!back || e->in->stage == MX_COMPUTE || e->seq) return;
+    if (!back || e->in->stage == MX_COMPUTE || (e->seq && !e->nlp)) return;
     e->uses_guard = 1;
     if (e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ")) e->uses_spun = 1;
     emit(e, "if (++mx_back > %uu) { %spc = 0u; continue; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->uses_spun ? "mx_spun = true; " : "");
@@ -145,7 +148,7 @@ static const char *CB(Mx *e, uint64_t i) {                /* c[bits 34..38][bits
     }
     if (b == 0 && c0_unbacked(e)) return "0u";
     e->cbufs |= 1u << b;
-    return S(e, "c%u[%uu]", b, w);
+    return e->in->cb_ubo ? S(e, "c%u[%uu][%u]", b, w >> 2, w & 3) : S(e, "c%u[%uu]", b, w);
 }
 static const char *I20(Mx *e, uint64_t i) { uint32_t v = MXB(i, 20, 19); if (MXB(i, 56, 1)) v |= 0xfff80000u; return S(e, "0x%08xu", v); }
 static const char *F20(Mx *e, uint64_t i) { return S(e, "0x%08xu", (MXB(i, 20, 19) << 12) | (MXB(i, 56, 1) << 31)); }
@@ -217,7 +220,7 @@ static void setcc_int(Mx *e, const char *res) { e->uses_cc = 1; emit(e, " cz = %
 /* float result with optional saturation and condition code */
 static void fres(Mx *e, uint64_t i, const char *expr, int sat, int cc) {
     emit(e, "float f = %s;", expr);
-    if (sat) emit(e, " f = clamp(f, 0.0, 1.0);");
+    if (sat) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
     emit(e, " %s = U(f);", DST);
     if (cc) { e->uses_cc = 1; emit(e, " cz = f == 0.0 || isnan(f); cs = f < 0.0 || isnan(f); ccf = false; cov = false;"); }
 }
@@ -686,7 +689,7 @@ static const char *HX(Mx *e, const char *r, unsigned sw, int absv, int neg) {
 static void hres(Mx *e, uint64_t i, const char *expr, int sat, unsigned merge, int fmz_zero, const char *za, const char *zb, const char *zc) {
     emit(e, "vec2 h = %s;", expr);
     if (fmz_zero && !sat) emit(e, " h = mix(h, %s, bvec2(%s.x == 0.0 || %s.x == 0.0, %s.y == 0.0 || %s.y == 0.0));", zc, za, zb, za, zb);
-    if (sat) emit(e, " h = clamp(h, 0.0, 1.0);");
+    if (sat) emit(e, e->in->nan_exact ? " h = mix(clamp(h, 0.0, 1.0), vec2(0.0), isnan(h));" : " h = clamp(h, 0.0, 1.0);");
     unsigned rd = MXB(i, 0, 8);
     emit(e, " %s = HM(%s, h, %uu);", D(e, rd), X(e, rd), merge);
 }
@@ -970,6 +973,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_FMNMX_reg: case MXOP_FMNMX_cbuf: case MXOP_FMNMX_imm: {
         b = op == MXOP_FMNMX_reg ? R20 : op == MXOP_FMNMX_cbuf ? CB(e, i) : F20(e, i);
         const char *fa = FN(e, A8, MXB(i, 46, 1), MXB(i, 48, 1)), *fb = FN(e, b, MXB(i, 49, 1), MXB(i, 45, 1));
+        if (e->in->nan_exact)                   /* [witchtime] Maxwell's FMNMX: a NaN operand gives the other one (GLSL leaves it undefined) */
+            fres(e, i, S(e, "isnan(%s) ? %s : isnan(%s) ? %s : %s ? min(%s, %s) : max(%s, %s)", fa, fb, fb, fa, PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)), fa, fb, fa, fb), 0, MXB(i, 47, 1));
+        else
         fres(e, i, S(e, "%s ? min(%s, %s) : max(%s, %s)", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)), fa, fb, fa, fb), 0, MXB(i, 47, 1));
         break;
     }
@@ -1022,7 +1028,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (MXB(i, 45, 1)) src = S(e, "(-%s)", src);
         emit(e, "float f = %s;", src);
         if (ssz == dsz && rop >= 8) emit(e, " f = %s(f);", rnd[rop & 3]);
-        if (MXB(i, 50, 1)) emit(e, " f = clamp(f, 0.0, 1.0);");
+        if (MXB(i, 50, 1)) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
         if (dsz == 1) emit(e, " %s = packHalf2x16(vec2(f, 0.0));", DST); else emit(e, " %s = U(f);", DST);
         if (MXB(i, 47, 1)) { e->uses_cc = 1; emit(e, " cz = f == 0.0 || isnan(f); cs = f < 0.0 || isnan(f); ccf = false; cov = false;"); }
         break;
@@ -1201,7 +1207,15 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned ms = MXB(i, 37, 2);
         if (MXB(i, 47, 1) || MXB(i, 48, 2) || ms == 1) { fail(e, "SHF", "SHF with CC/X or undefined max shift"); break; }
         b = (op == MXOP_SHF_l_reg || op == MXOP_SHF_r_reg) ? R20 : I20(e, i);
-        emit(e, "uint sh = %s; sh = %s; uint64_t v = packUint2x32(uvec2(%s, %s));", b, MXB(i, 50, 1) ? (ms == 0 ? "sh & 31u" : "sh & 63u") : (ms == 0 ? "min(sh, 32u)" : "min(sh, 63u)"), A8, R39);
+        const char *shc = MXB(i, 50, 1) ? (ms == 0 ? "sh & 31u" : "sh & 63u") : (ms == 0 ? "min(sh, 32u)" : "min(sh, 63u)");
+        if (e->in->no_int64) {                              /* hi:lo shifted by 0..64, one word of it (a shift by 32 is undefined in GLSL) */
+            emit(e, "uint sh = %s; sh = %s; uint lo = %s, hi = %s;", b, shc, A8, R39);
+            if (!right) emit(e, " %s = sh == 0u ? hi : sh < 32u ? (hi << sh) | (lo >> (32u - sh)) : sh < 64u ? lo << (sh - 32u) : 0u;", DST);
+            else if (ms == 3) emit(e, " %s = sh == 0u ? lo : sh < 32u ? (lo >> sh) | (hi << (32u - sh)) : uint(int(hi) >> int(sh - 32u));", DST);
+            else emit(e, " %s = sh == 0u ? lo : sh < 32u ? (lo >> sh) | (hi << (32u - sh)) : sh < 64u ? hi >> (sh - 32u) : 0u;", DST);
+            break;
+        }
+        emit(e, "uint sh = %s; sh = %s; uint64_t v = packUint2x32(uvec2(%s, %s));", b, shc, A8, R39);
         if (!right) emit(e, " v = sh >= 64u ? 0ul : v << sh; %s = unpackUint2x32(v).y;", DST);
         else if (ms == 3) emit(e, " v = uint64_t(int64_t(v) >> sh); %s = unpackUint2x32(v).x;", DST);
         else emit(e, " v = sh >= 64u ? 0ul : v >> sh; %s = unpackUint2x32(v).x;", DST);
@@ -1273,14 +1287,17 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (mode != 0) { fail(e, "LDC.IS", "LDC mode %u", mode); break; }
         if (cb == 0 && c0_unbacked(e) && sz <= 5) { emit(e, "%s = 0u;", DST); if (sz == 5) emit(e, " %s = 0u;", D(e, rd == 255 ? 255 : rd + 1)); break; }      /* finding 124 */
         e->cbufs |= 1u << cb;
-        emit(e, "uint ad = %s + 0x%08xu, w = c%u[ad >> 2];", A8, (uint32_t)off, cb);
+        if (e->in->cb_ubo) emit(e, "uint ad = %s + 0x%08xu, w = c%u[ad >> 4][(ad >> 2) & 3u];", A8, (uint32_t)off, cb);
+        else emit(e, "uint ad = %s + 0x%08xu, w = c%u[ad >> 2];", A8, (uint32_t)off, cb);
         switch (sz) {
         case 0: emit(e, " %s = bitfieldExtract(w, int((ad & 3u) * 8u), 8);", DST); break;
         case 1: emit(e, " %s = uint(bitfieldExtract(int(w), int((ad & 3u) * 8u), 8));", DST); break;
         case 2: emit(e, " %s = bitfieldExtract(w, int((ad & 2u) * 8u), 16);", DST); break;
         case 3: emit(e, " %s = uint(bitfieldExtract(int(w), int((ad & 2u) * 8u), 16));", DST); break;
         case 4: emit(e, " %s = w;", DST); break;
-        case 5: emit(e, " %s = w; %s = c%u[(ad >> 2) + 1u];", DST, D(e, rd == 255 ? 255 : rd + 1), cb); break;
+        case 5: if (e->in->cb_ubo) emit(e, " %s = w; %s = c%u[(ad + 4u) >> 4][((ad >> 2) + 1u) & 3u];", DST, D(e, rd == 255 ? 255 : rd + 1), cb);
+                else emit(e, " %s = w; %s = c%u[(ad >> 2) + 1u];", DST, D(e, rd == 255 ? 255 : rd + 1), cb);
+                break;
         default: fail(e, "LDC", "LDC size %u", sz); break;
         }
         break;
@@ -1335,7 +1352,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             if (eff == 2 || eff == 0) emit(e, " f *= gl_FragCoord.w;");      /* hardware IPA returns attribute / w; the shader multiplies by w */
         }
         if (mode == 1) emit(e, " f *= F(%s);", R20);
-        if (MXB(i, 51, 1)) emit(e, " f = clamp(f, 0.0, 1.0);");
+        if (MXB(i, 51, 1)) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
         emit(e, " %s = U(f);", DST);
         break;
     }
@@ -1422,6 +1439,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned scale = cbuf ? MXB(i, 51, 5) : MXB(i, 28, 5), neg = cbuf ? MXB(i, 56, 1) : MXB(i, 37, 1), x = cbuf ? MXB(i, 57, 1) : MXB(i, 38, 1);
         if (x || MXB(i, 47, 1) || MXB(i, 48, 3) != 7) { fail(e, "LEA.HI X/CC/P", "LEA.HI with extend, condition code or predicate output"); break; }
         b = cbuf ? CB(e, i) : R20;
+        if (e->in->no_int64) {                              /* the 64-bit negate and shift in 32-bit halves */
+            emit(e, "uint lo = %s, hi = %s;%s %s = %s + %s;", A8, R39, neg ? " hi = ~hi + (lo == 0u ? 1u : 0u); lo = ~lo + 1u;" : "", DST, b,
+                 scale == 0 ? "hi" : S(e, "((lo >> %uu) | (hi << %uu))", 32 - scale, scale));
+            break;
+        }
         emit(e, "uint64_t lo = packUint2x32(uvec2(%s, %s));%s %s = %s + unpackUint2x32(lo >> %uu).x;", A8, R39, neg ? " lo = ~lo + 1ul;" : "", DST, b, 32 - scale);
         break;
     }
@@ -1704,7 +1726,7 @@ static void analyze(Mx *e) {
                 if (MXB(i, 5, 1)) { fail(e, "BRA.CC", "branch through a constant buffer"); break; }
                 if (ft == 0 || ft == 28) continue;                   /* flow test never true */
                 if (tgt >= e->words) { fail(e, "BRA", "branch target %u outside the code", tgt); break; }
-                e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
+                e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) back_edge(e, tgt, pc);
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)sid;
                 if (always && ft == 15) break;
@@ -1719,7 +1741,7 @@ static void analyze(Mx *e) {
                 if (ft == 0 || ft == 28) continue;
                 unsigned tgt = s.tgt[k];
                 s.n = k;
-                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) e->has_back = 1;
+                e->jt[pc] = tgt; e->leader[tgt] = 1; e->any_jump = 1; if (tgt <= pc) back_edge(e, tgt, pc);
                 if (tgt >= e->words) { fail(e, mx_op_name[op], "target outside the code"); break; }
                 if (nw >= cap) break;
                 wpc[nw] = tgt; wst[nw++] = (uint16_t)stk_id(e, &s);
@@ -1732,7 +1754,7 @@ static void analyze(Mx *e) {
                 if (n < 0) { fail(e, "BRX", n == -2 ? "BRX table not in constant buffer 1" : n == -3 ? "BRX table outside the constants" : "BRX table not found"); break; }
                 for (int k = 0; k < n; k++) {
                     if (tg[k] >= e->words) { fail(e, "BRX", "BRX target outside the code"); break; }
-                    e->leader[tg[k]] = 1; if (tg[k] <= pc) e->has_back = 1;
+                    e->leader[tg[k]] = 1; if (tg[k] <= pc) back_edge(e, tg[k], pc);
                     if (nw < cap) { wpc[nw] = tg[k]; wst[nw++] = (uint16_t)sid; }
                 }
                 e->any_jump = 1;
@@ -1837,7 +1859,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
             if (rt == 0) { e->uses_alpha = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "if (!mx_alpha_ok(frag0.a)) discard; "); }
         }
         if (flags & 1) { e->regs[reg] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_SampleMask[0] = int(r%u); ", reg); }
-        if (flags & 2) { e->regs[reg + 1] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_FragDepth = F(r%u); ", reg + 1); }
+        if (flags & 2) { e->writes_depth = 1; e->regs[reg + 1] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_FragDepth = F(r%u); ", reg + 1); }
         if (in->fragdebug && (omap & 15)) n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "frag0 = vec4(1.0, 0.0, 1.0, 1.0); ");
     }
 
@@ -1856,14 +1878,47 @@ int mx_translate(const MxIn *in, MxOut *out) {
      * this family, and a wrong quad read could then be anywhere in the game. */
     int chain = 0;
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) if (e->reach[pc]) chain += e->leader[pc];
-    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && chain >= 16));
+    e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && (chain >= 16 || in->seq_all)));
+    /* [witchtime] MxIn.seq_all 2 (test): a fragment stage with jumps back runs in order too. Each run of blocks a jump back spans
+     * (overlapping ones as one) sits in a for (;;) that repeats while pc is inside it; a jump is still `pc = target; continue`
+     * out of its block, and the blocks up to the target skip themselves. Adreno's compiler keeps every register live across the
+     * dispatcher's loop (the Shibuya lighting stages: 32 full registers); here only the loop's own blocks are in a loop.
+     * Not with a quad snapshot inside a loop: it is taken between blocks, where every lane must be. */
+    if (in->seq_all >= 2 && e->has_back && e->any_jump && !e->nbar && !e->fail && in->stage == MX_FRAGMENT && in->target == 1 && e->nbk <= 32) {
+        int n = e->nbk, ok = 1;
+        for (int k = 0; k < n; k++) {               /* [target, the first leader after the jump) */
+            unsigned end = e->bk[k][1] + 1;
+            while (end < e->words && !(e->reach[end] && e->leader[end])) end++;
+            e->lp[k][0] = e->bk[k][0]; e->lp[k][1] = end;
+        }
+        for (int a = 0; a < n; a++) for (int b = 0; b < n; b++)      /* overlapping: one loop */
+            if (a != b && e->lp[a][0] < e->lp[b][1] && e->lp[b][0] < e->lp[a][1]) {
+                if (e->lp[b][0] < e->lp[a][0]) e->lp[a][0] = e->lp[b][0];
+                if (e->lp[b][1] > e->lp[a][1]) e->lp[a][1] = e->lp[b][1];
+                e->lp[b][0] = e->lp[--n][0]; e->lp[b][1] = e->lp[n][1]; a = -1; break;
+            }
+        for (int k = 0; k < n && ok; k++) for (unsigned pc = e->lp[k][0]; pc < e->lp[k][1] && pc < e->words; pc++) if (e->qlead[pc]) ok = 0;
+        if (ok) { e->seq = 1; e->nlp = n; }
+    }
+    snprintf(e->seq_tail, sizeof e->seq_tail, " pc = 0u; } while (false);");
+    for (int k = 0; k < e->nlp; k++) if (e->lp[k][1] >= e->words) snprintf(e->seq_tail + strlen(e->seq_tail), sizeof e->seq_tail - strlen(e->seq_tail), " if (pc < %uu) break; }", e->lp[k][0]);
+    /* [witchtime] MxIn.no_switch: the plain dispatcher as an if-chain; the quad and barrier dispatchers keep their switch */
+    int quad = 0;
+    for (unsigned pc = 1; in->stage == MX_FRAGMENT && pc < e->words && !e->fail; pc++) if ((pc & 3) && e->reach[pc] && decode(MXW(pc)) == MXOP_SHFL) quad = 1;
+    e->ifc = in->no_switch && e->any_jump && !e->seq && !quad && !(e->nbar && !e->has_back);
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         if (e->leader[pc] && e->any_jump) {
             if (e->qlead[pc] && pc != 1 && !e->seq) emit(e, "{ pc = %uu; continue; }\n", pc);      /* [issue 66] through the header: the snapshot first */
-            if (!e->seq) emit(e, "case %uu:\n", pc);
+            if (e->ifc) {                           /* [witchtime] MxIn.no_switch: falls into the next block as the switch did */
+                if (e->blocks) emit(e, "pc = %uu; }\nif (pc == %uu) {\n", pc, pc);
+                else emit(e, "if (pc == %uu) {\n", pc);
+            }
+            else if (!e->seq) emit(e, "case %uu:\n", pc);
             else {
                 if (e->blocks) emit(e, " pc = %uu; } while (false);\n", pc);
+                for (int k = 0; k < e->nlp; k++) if (e->lp[k][1] == pc) emit(e, " if (pc < %uu || pc >= %uu) break; }\n", e->lp[k][0], pc);
+                for (int k = 0; k < e->nlp; k++) if (e->lp[k][0] == pc) emit(e, " for (;;) {\n");
                 if (e->qlead[pc]) {                 /* [issue 107] the sources of the block's leading SHFLs (analyze: no SHFL there reads another's result) */
                     uint8_t done[256] = {0};
                     for (unsigned q = pc; q < e->words; q++) {
@@ -1896,8 +1951,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
         const char *set0 = vk ? "set = 0, " : "", *set1 = vk ? "set = 1, " : "";
         /* [witchtime] SignedZeroInfNanPreserve: without it AMD's Windows driver may assume no NaN / Inf and fold away the isnan and
          * zero checks that model Maxwell (FMZ, saturate, NaN compares); an Inf / NaN pixel then reaches the bloom as a white blob */
-        if (vk) emit(&h, "#version 460\n#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_EXT_texture_shadow_lod : enable\n"
-                         "#extension GL_EXT_spirv_intrinsics : require\nspirv_execution_mode(extensions = [\"SPV_KHR_float_controls\"], capabilities = [4466], 4461, 32);\n");
+        if (vk) emit(&h, "#version 460\n#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_EXT_texture_shadow_lod : enable\n%s",
+                         in->no_fc ? "" : "#extension GL_EXT_spirv_intrinsics : require\nspirv_execution_mode(extensions = [\"SPV_KHR_float_controls\"], capabilities = [4466], 4461, 32);\n");
         else
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
@@ -1915,6 +1970,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
             for (int k = 0; k < e->nqcase; k++) if (e->qcase_mask[k]) emit(&h, " case %uu: return 0x%xu;", e->qcase_pc[k], e->qcase_mask[k]);
             emit(&h, " default: return 0u; } }\n");
         }
+        if (vk && in->stage == MX_FRAGMENT && in->early_z && !e->writes_depth) emit(&h, "layout(early_fragment_tests) in;\n");
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; float mx_fcs_y; };\n");      /* track O */
         else
         if (vk && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && e->uses_alpha))) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\n");
@@ -1928,7 +1984,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (vk && e->uses_tf) emit(&h, "ivec2 mx_tf(ivec2 p, ivec2 real, uint gw, uint gh) { ivec2 g = ivec2(int(gw), int(gh)); return (g.x <= 0 || g.y <= 0 || g == real) ? p : ivec2(floor((vec2(p) + 0.5) * vec2(real) / vec2(g))); }\n");
         if (vk && in->stage == MX_VERTEX) emit(&h, "float mx_psize;\n");
         for (int k = 0; vk && k < e->nsmp; k++) emit(&h, "layout(set = 1, binding = %u) uniform %s mx_t%u_%s;\n", (unsigned)e->smp[k].binding, e->smp[k].type, (unsigned)e->smp[k].unit, e->smp[k].type);
-        for (unsigned n = 0; n < 18; n++) if (e->cbufs >> n & 1) emit(&h, "layout(std430, %sbinding = %u) readonly buffer CB%u { uint c%u[]; };\n", set0, in->binding_base + n, n, n);
+        for (unsigned n = 0; n < 18; n++) if (e->cbufs >> n & 1) emit(&h, in->cb_ubo ? "layout(std140, %sbinding = %u) uniform CB%u { uvec4 c%u[4096]; };\n" : "layout(std430, %sbinding = %u) readonly buffer CB%u { uint c%u[]; };\n", set0, in->binding_base + n, n, n);
         if (tess_stage(e)) {                    /* [witchtime] input arrays; the control stage's outputs are arrays too */
             if (in->stage == MX_TESS_CONTROL) emit(&h, "layout(vertices = %u) out;\n", in->code[0x0b] ? in->code[0x0b] : 1u);      /* program header: threads per input primitive */
             else emit(&h, "layout(%s, %s, %s%s) in;\n", in->tess_prim == 7 ? "quads" : in->tess_prim == 4 ? "triangles" : "isolines",
@@ -1991,16 +2047,18 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (e->uses_lmem) emit(&h, "uint lmem[%u];\n", e->lmem_words);
         for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) emit(&h, "layout(std430, %sbinding = %u) %sbuffer SB%u { uint s%u[]; };\n", set0, in->ssbo_base + k, e->uses_gstore ? "" : "readonly ", k, k);
         if (e->uses_gstore && in->track_writes) emit(&h, "layout(std430, %sbinding = %u) buffer WM { uint mx_wm; };\n", set0, in->wmask_binding);
+        const char *const pick = in->no_switch ? " uint mx_b = ad >> 27;\n" : " switch (ad >> 27) {\n", *const hit = in->no_switch ? " if (mx_b == %uu) {" : " case %uu: {";   /* no_switch: not here either */
+        const char *const none = in->no_switch ? " return 0u; }\n" : " } return 0u; }\n";
         if (e->uses_gmem) {
-            emit(&h, "uint mx_ldg(uint ad) { uint o = (ad & 0x07ffffffu) >> 2; switch (ad >> 27) {\n");
-            for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) emit(&h, " case %uu: return s%u[o];\n", k + 1, k);
-            for (unsigned k = 0; k < 15; k++) if (e->gubos >> k & 1) emit(&h, " case %uu: return c%u[o];\n", 17 + k, 3 + k);
-            emit(&h, " } return 0u; }\n");
+            emit(&h, "uint mx_ldg(uint ad) { uint o = (ad & 0x07ffffffu) >> 2;\n%s%s", in->fs_test == 6 ? " if (o < 0x40000000u) return 0u;\n" : "", pick);
+            for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) { emit(&h, hit, k + 1); emit(&h, " return s%u[o]; }\n", k); }
+            for (unsigned k = 0; k < 15; k++) if (e->gubos >> k & 1) { emit(&h, hit, 17 + k); emit(&h, in->cb_ubo ? " return c%u[o >> 2][o & 3u]; }\n" : " return c%u[o]; }\n", 3 + k); }
+            emit(&h, "%s", none);
         }
         if (e->uses_gstore) {
-            emit(&h, "void mx_stg(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2; switch (ad >> 27) {\n");
-            for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) emit(&h, " case %uu: s%u[o] = v;%s break;\n", k + 1, k, in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : "");
-            emit(&h, " } }\n");
+            emit(&h, "void mx_stg(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2;\n%s", pick);
+            for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) { emit(&h, hit, k + 1); emit(&h, " s%u[o] = v;%s return; }\n", k, in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : ""); }
+            emit(&h, in->no_switch ? " }\n" : " } }\n");
         }
         for (unsigned bit = 0; bit < 33; bit++) {               /* [witchtime] global atomics: one function per op and class, the atomic on the block itself */
             if (!(e->gatom >> bit & 1)) continue;
@@ -2008,14 +2066,15 @@ int mx_translate(const MxIn *in, MxOut *out) {
             static const char *const direct[9] = {"atomicAdd", "atomicMin", "atomicMax", NULL, NULL, "atomicAnd", "atomicOr", "atomicXor", "atomicExchange"};
             const char *dfn = cls == 2 || (cls == 1 && (aop == 1 || aop == 2)) ? NULL : direct[aop];
             const char *expr = cls == 2 ? "U(F(ov) + F(v))" : aop == 1 ? "uint(min(int(ov), int(v)))" : aop == 2 ? "uint(max(int(ov), int(v)))" : aop == 3 ? "ov >= v ? 0u : ov + 1u" : "(ov == 0u || ov > v) ? v : ov - 1u";
-            emit(&h, "uint mx_atom%u_%u(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2; switch (ad >> 27) {\n", cls, aop);
+            emit(&h, "uint mx_atom%u_%u(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2;\n%s", cls, aop, pick);
             for (unsigned k = 0; k < 16; k++) {
                 if (!(e->ssbos >> k & 1)) continue;
                 const char *wm = in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : "";
-                if (dfn) emit(&h, " case %uu: {%s return %s(s%u[o], v); }\n", k + 1, wm, dfn, k);
-                else emit(&h, " case %uu: {%s uint ov = s%u[o]; for (;;) { uint nv = %s, r = atomicCompSwap(s%u[o], ov, nv); if (r == ov) return ov; ov = r; } }\n", k + 1, wm, k, expr, k);
+                emit(&h, hit, k + 1);
+                if (dfn) emit(&h, "%s return %s(s%u[o], v); }\n", wm, dfn, k);
+                else emit(&h, "%s uint ov = s%u[o]; for (;;) { uint nv = %s, r = atomicCompSwap(s%u[o], ov, nv); if (r == ov) return ov; ov = r; } }\n", wm, k, expr, k);
             }
-            emit(&h, " } return 0u; }\n");
+            emit(&h, "%s", none);
         }
         /* Motion vectors (MxIn.prev_cbufs): the code becomes mx_body(), and a copy that reads last frame's blocks runs first. A stage
          * that stores would store twice, so it gets no copy. */
@@ -2043,6 +2102,9 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (e->uses_guard) emit(&h, " uint mx_back = 0u;\n");
         if (e->uses_kill || in->stage == MX_FRAGMENT) emit(&h, " bool mx_kill = false;\n");
         if (e->uses_spun) emit(&h, " bool mx_spun = false;\n");
+        if (vk && in->stage == MX_FRAGMENT && in->fs_test && strstr(e->exitcode, "frag0 =") &&
+            (in->fs_test == 4 || (in->fs_test == 1 && e->uses_quad) || (in->fs_test == 2 && e->has_back) || (in->fs_test == 3 && !e->uses_quad && !e->has_back)))
+            emit(&h, " if (gl_FragCoord.x >= 0.0) { frag0 = vec4(0.4, %s, 0.2, 1.0); return; }\n", e->uses_quad ? "0.2" : e->has_back ? "0.4" : "0.6");
         /* [issue 26] every way out of the dispatcher (EXIT, KIL, the loop limit, a pc no case has) sets pc = 0 and leaves through the
          * loop's own exit; the outputs, the alpha test and KIL's discard happen once, after it. No return or discard inside the loop:
          * a quad whose pixels left it at different points hung NVIDIA's (kirikae #48) and AMD's (ScarletNX #512) Windows drivers. */
@@ -2054,7 +2116,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
             for (unsigned r = 0; r < 256; r++) if (e->qidx[r]) emit(&h, " uvec3 mq_r%u = uvec3(0u);\n", r);
         }
         else if (e->any_jump && e->uses_quad) {
-            emit(&h, " uint pc = 1u;\n while (subgroupAny(pc != 0u)) {\n  uint mq_need = subgroupOr(mx_qneed(pc));\n");
+            emit(&h, in->no_wave ? " uint pc = 1u;\n while (pc != 0u) {\n  uint mq_need = mx_qneed(pc);\n" : " uint pc = 1u;\n while (subgroupAny(pc != 0u)) {\n  uint mq_need = subgroupOr(mx_qneed(pc));\n");
             for (unsigned r = 0; r < 256; r++) if (e->qidx[r]) {
                 if (e->qidx[r] <= 32) emit(&h, "  uvec3 mq_r%u = uvec3(0u); if ((mq_need & 0x%xu) != 0u) mq_r%u = mx_quad3(r%u);\n", r, 1u << (e->qidx[r] - 1), r, r);
                 else emit(&h, "  uvec3 mq_r%u = mx_quad3(r%u);\n", r, r);
@@ -2063,13 +2125,13 @@ int mx_translate(const MxIn *in, MxOut *out) {
         }
         else if (e->nbar && !e->has_back)         /* [issue 163] see MXOP_BAR */
             emit(&h, " uint pc = 1u; bool mx_bar = false;\n for (uint mx_b = 0u; mx_b <= %uu; mx_b++) {\n  if (mx_b != 0u) { memoryBarrierShared(); memoryBarrierBuffer(); barrier(); }\n  mx_bar = false;\n  while (pc != 0u && !mx_bar) { switch (pc) {\n", (unsigned)e->nbar);
-        else if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
+        else if (e->any_jump) emit(&h, e->seq ? " uint pc = 1u;\n" : e->ifc ? " uint pc = 1u;\n while (pc != 0u) {\n" : " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 512;
         res = malloc(need);
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? " pc = 0u; } while (false);" : e->nbar && !e->has_back ? " default: pc = 0u; continue;\n } } }" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
+        if (e->any_jump) n += (size_t)sprintf(res + n, "%s\n%s %s%s\n%s}\n", e->seq ? e->seq_tail : e->ifc ? (e->blocks ? " }\n pc = 0u;\n }" : " pc = 0u;\n }") : e->nbar && !e->has_back ? " default: pc = 0u; continue;\n } } }" : " default: pc = 0u; continue;\n } }", e->uses_kill ? " if (mx_kill) discard; else {" : "",
                                               e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
         else n += (size_t)sprintf(res + n, "%s %s%s\n}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "", e->exitcode, e->uses_kill ? " }" : "");
         res[n] = 0;
@@ -2089,6 +2151,15 @@ int mx_translate(const MxIn *in, MxOut *out) {
         out->prev_cbufs = pv; out->prev_loc = ploc;
         free(h.s);
     }
+    if (in->fs_test == 5 && in->stage == MX_FRAGMENT)      /* TEST ONLY: every texture read is a constant (the text keeps its length) */
+        for (char *t = res; (t = strstr(t, " = texture")) != NULL; ) {
+            char *end = strchr(t, ';'), *q = t + 3;
+            int isf = t >= res + 2 && !strncmp(t - 2, "sv", 2), isu = t >= res + 8 && (!strncmp(t - 8, "uvec4 tv", 8) || !strncmp(t - 8, "ivec4 tv", 8));
+            if (!end) break;
+            int n = snprintf(q, (size_t)(end - q), "%s", isf ? "0.5" : isu ? (t[-8] == 'u' ? "uvec4(0u)" : "ivec4(0)") : "vec4(0.5)");
+            for (char *z = q + n; z < end; z++) *z = ' ';
+            t = end;
+        }
     out->glsl = res;
     out->cbufs = e->cbufs; out->in_attr = e->in_attr; out->out_attr = e->out_attr; out->tex_units = e->tex_units;
     out->int_dep = in->stage == MX_VERTEX ? e->in_attr : e->tex_units;

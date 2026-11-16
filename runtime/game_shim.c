@@ -33,9 +33,10 @@ void guest_trap(const char *what, uint64_t addr) { host.guest_trap(what, addr); 
 void guest_unimpl(uint64_t pc, uint32_t insn, const char *what) { host.guest_unimpl(pc, insn, what); }
 void guest_svc(Ctx *c, uint32_t number) { host.guest_svc(c, number); }
 void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, int bits) { host.stx_diag(c, a, expected, seen, v, bits); }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
 /* [witchtime] the lifted sdk (gen/sdklift_gen.c) is linked into game.dll with the player's other tables (runtime/split);
- * on Linux game.so finds these three in the runtime when it is loaded */
+ * on Linux game.so finds these three in the runtime when it is loaded. Android's linker resolves every symbol of game.so
+ * when the app loads it, before libwitchtime.so: so there too they go through the pointers */
 void sdk_dispatch(Ctx *c, uint64_t addr) { host.sdk_dispatch(c, addr); }
 void sdk_host_call(Ctx *c, int index) { host.sdk_host_call(c, index); }
 void sdk_trap_call(Ctx *c, const char *name) { host.sdk_trap_call(c, name); }

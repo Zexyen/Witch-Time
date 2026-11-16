@@ -344,7 +344,23 @@ static void wd_start(void) {
 }
 /* Session 13, TEST ONLY (WT_STACKS_AT=<seconds>, read in nvn_gl.c): the report of every thread once, with either renderer
  * (found with it: why WT_RENDERER=gl stood still at its start). The Vulkan fields of the report are zero under OpenGL. */
-static DWORD WINAPI wd_once(void *a) { Sleep((DWORD)(uintptr_t)a * 1000); wd_dump(0, 0); return 0; }
+static DWORD WINAPI wd_once(void *a) {
+    Sleep((DWORD)(uintptr_t)a * 1000);
+#ifdef _WIN32
+    wd_dump(0, 0);
+#else
+    void host_dump_stacks(void);                    /* [witchtime] hostrt.c: every thread's guest stack (the report's thread list is Windows only) */
+    host_dump_stacks();
+#endif
+    return 0;
+}
+static DWORD WINAPI wd_exit_at(void *a) {            /* [witchtime] TEST ONLY: WT_EXIT_AT=<seconds>: the end-of-run report, then exit (an app can't be closed from adb) */
+    Sleep((DWORD)(uintptr_t)a * 1000);
+    printf("\nWT_EXIT_AT: %u s reached\n", (unsigned)(uintptr_t)a);
+    report_and_exit(0);
+    return 0;
+}
+void nvn_vk_exit_at(int seconds) { HANDLE h = CreateThread(NULL, 0, wd_exit_at, (void *)(uintptr_t)seconds, 0, NULL); if (h) CloseHandle(h); }
 void nvn_vk_stacks_at(int seconds) { HANDLE h = CreateThread(NULL, 0, wd_once, (void *)(uintptr_t)seconds, 0, NULL); if (h) CloseHandle(h); }
 static void wd_stop(void) {
     g_wd_quit = 1;

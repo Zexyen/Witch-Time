@@ -506,13 +506,31 @@ void guest_unimpl(uint64_t pc, uint32_t insn, const char *what) {
 void guest_svc(Ctx *c, uint32_t number) { (void)c; guest_trap("svc (direct kernel call)", number); }
 
 #ifndef _WIN32
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#include <ucontext.h>
+static int backtrace(void **pcs, int n) { (void)pcs; (void)n; return 0; }   /* [witchtime] execinfo.h is Android 13+: no host chain in the report */
+#else
 #include <execinfo.h>
+#endif
 #include <signal.h>
 #include <dlfcn.h>
 /* Linux: the same report from a signal handler, on a stack of its own (a guest stack overflow lands here too) */
 static void crash_signal(int sig, siginfo_t *si, void *uc) {
     (void)uc;
     printf("\nHOST SIGNAL %d (%s) at address 0x%llx\n", sig, strsignal(sig), (unsigned long long)(uintptr_t)si->si_addr);
+#ifdef __ANDROID__
+    {   /* [witchtime] no backtrace() there: at least the faulting instruction and its library (llvm-addr2line -e <lib> <offset>) */
+        void *pc = (void *)(uintptr_t)((ucontext_t *)uc)->uc_mcontext.pc, *lr = (void *)(uintptr_t)((ucontext_t *)uc)->uc_mcontext.regs[30];
+        for (int k = 0; k < 2; k++) {
+            void *a = k ? lr : pc;
+            Dl_info di;
+            if (dladdr(a, &di) && di.dli_fname)
+                printf("  %s %p = %s+0x%llx (%s)\n", k ? "lr" : "pc", a, di.dli_fname, (unsigned long long)((uintptr_t)a - (uintptr_t)di.dli_fbase), di.dli_sname ? di.dli_sname : "?");
+            else printf("  %s %p\n", k ? "lr" : "pc", a);
+        }
+    }
+#endif
 #ifdef __APPLE__
     {   /* macOS: the instruction that faulted (backtrace() from a handler starts at its caller) */
         void *pc = (void *)(uintptr_t)((ucontext_t *)uc)->uc_mcontext->__ss.__pc;
@@ -580,7 +598,15 @@ static void stacks_signal(int sig) {
     }
     if (d) closedir(d);
 }
+void host_dump_stacks(void) { stacks_signal(0); }   /* [witchtime] WT_STACKS_AT: Android's runtime takes SIGUSR1 itself */
+#else
+void host_dump_stacks(void) {}                      /* macOS: no /proc/self/task */
 #endif
+static void segv_signal(int sig, siginfo_t *si, void *uc) {
+    if (plat_ww_fault((uintptr_t)si->si_addr)) return;   /* [witchtime] the software write watch (plat_posix.c) */
+    signal(sig, SIG_DFL);                             /* SA_RESETHAND's effect, for the crash report */
+    crash_signal(sig, si, uc);
+}
 static void install_crash_handler(void) {
 #ifdef __linux__
     signal(SIGUSR1, stacks_signal);
@@ -591,7 +617,9 @@ static void install_crash_handler(void) {
     sigaltstack(&ss, NULL);
     struct sigaction sa = { .sa_sigaction = crash_signal, .sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND };
     sigemptyset(&sa.sa_mask);
-    for (int sig = 0, sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT }; sig < 5; sig++) sigaction(sigs[sig], &sa, NULL);
+    for (int sig = 0, sigs[] = { SIGBUS, SIGILL, SIGFPE, SIGABRT }; sig < 4; sig++) sigaction(sigs[sig], &sa, NULL);
+    sa.sa_sigaction = segv_signal; sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sigaction(SIGSEGV, &sa, NULL);
 }
 #else
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
@@ -758,6 +786,9 @@ int audit_trivial(ImportFn fn, long long *x0, int *sets_x0) {
     long long rax = 0;
     *x0 = 0; *sets_x0 = 0;
     if (!p) return 0;
+#ifndef __x86_64__
+    return 0;   /* [witchtime] reads x86-64 code; elsewhere (Android's AArch64) every handler counts as real code */
+#endif
     for (int hop = 0; hop < 4 && p[0] == 0xE9; hop++) p = p + 5 + *(const int *)(p + 1);      /* linker thunk / tail jump */
     for (int step = 0; step < 12; step++) {
         const unsigned char *q = p;

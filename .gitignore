@@ -6,6 +6,7 @@
 /cache/
 /deps/
 /prebuilt/
+/prebuilt-*/
 /userdata/
 /mods/
 /notes/
@@ -34,3 +35,6 @@
 *.a
 *.dll
 *.exe
+/android/.gradle/
+/android/app/build/
+/android/build/

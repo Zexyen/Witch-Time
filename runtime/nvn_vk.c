@@ -221,6 +221,19 @@ static int has_name(const VkExtensionProperties *e, uint32_t n, const char *name
 static void wait_last_submit(void);
 static int hdr_mode_want(void);                          /* nvn_vk_draw.c, finding 147: 0 SDR, 1 HDR10, 2 scRGB */
 static void hdr_views(int make);                         /* nvn_vk_draw.c: the swapchain images' views (1) / they and the 8-bit picture go (0) */
+/* [witchtime] Android answers VK_SUBOPTIMAL_KHR at every acquire and present while its compositor turns the picture (a
+ * portrait panel shown landscape: preTransform is IDENTITY, see swapchain_create). Taken as a reason to make the swapchain
+ * again, that was a wait for the whole GPU and a new swapchain every frame (an AYN Thor, a Shibuya street: 6 ms of each
+ * frame waiting, the game never a frame ahead of the GPU). There it counts only when the surface's size has changed. */
+static int swap_suboptimal(VkResult r) {
+    if (r != VK_SUBOPTIMAL_KHR) return 0;
+#ifdef __ANDROID__
+    VkSurfaceCapabilitiesKHR caps;
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.gpu, V.surface, &caps) == VK_SUCCESS && caps.currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR &&
+        caps.currentExtent.width == V.extent.width && caps.currentExtent.height == V.extent.height) return 0;
+#endif
+    return 1;
+}
 static void swapchain_destroy(void) {
     if (!V.swapchain) return;
     wait_last_submit();                                  /* also resets the fence for the next submit */
@@ -257,8 +270,11 @@ static int swapchain_create(void) {
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);      /* [witchtime] SRC: WT_PCMENU_SHOT reads the presented picture */
     g_sc_src = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ci.preTransform = caps.currentTransform;
-    ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    /* [witchtime] the compositor turns the picture for a display in another orientation (Android: a portrait panel shown
+     * landscape); currentTransform would declare it turned already. Desktops report IDENTITY: no change there */
+    ci.preTransform = caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : caps.currentTransform;
+    ci.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) || !caps.supportedCompositeAlpha ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+                      : (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);   /* Android: INHERIT only */
     ci.presentMode = V.mode;
     ci.clipped = VK_TRUE;
     r = vkCreateSwapchainKHR(V.device, &ci, NULL, &V.swapchain);
@@ -314,6 +330,57 @@ static void *vk_sym(const char *name) {
     return p;
 }
 
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#include <unistd.h>
+#include <SDL3/SDL_video.h>
+/* [witchtime] The Turnip the app carries in place of the phone's driver, on an Adreno GPU (graphics.ini gpu_driver; WT_VK_DRIVER=<a library in the
+ * app's native folder> names another, empty = the phone's). libadrenotools gives a private copy of the system's loader whose driver lookup is hooked.
+ * A start that never reached its first frames leaves driver_probe behind, and the next one uses the phone's driver.
+ * shortcut: a game closed in its first seconds counts as such a start; a crash later in the game does not (gpu_driver = system is the way out). */
+static char g_vk_probe[MAX_PATH + 16];              /* "": not probing */
+static void *vk_own_loader(void) {
+    typedef void *(*Open)(int, int, const char *, const char *, const char *, const char *, const char *, void **);
+    const char *name = getenv("WT_VK_DRIVER");
+    Dl_info di;
+    char dir[512], probe[sizeof g_vk_probe] = "";
+    if (!name) {
+        if (gfx_options()->system_gpu_driver || access("/dev/kgsl-3d0", F_OK)) return NULL;
+        snprintf(probe, sizeof probe, "%s", gfx_options()->path);
+        if (strrchr(probe, '/')) strcpy(strrchr(probe, '/') + 1, "driver_probe");
+        if (!access(probe, F_OK)) { unlink(probe); printf("nvn_vk: Turnip did not reach a frame at the last start: the phone's own driver this time\n"); fflush(stdout); return NULL; }
+        name = "libvulkan_turnip.so";
+    }
+    if (!*name) return NULL;
+    /* [witchtime] Turnip picks tiled or direct rendering per pass by its own measurements; with our many small passes that
+     * load and store every target it went for tiles where direct is faster (a 720p Shibuya street on an Adreno 740:
+     * GPU 20.1 -> 17.7 ms a frame, 46 -> 53 fps). Read by the driver when it loads; a TU_DEBUG of the player's stays. */
+    setenv("TU_DEBUG", "sysmem", 0);
+    void *at = dlopen("libadrenotools.so", RTLD_NOW | RTLD_LOCAL);
+    Open open = at ? (Open)dlsym(at, "adrenotools_open_libvulkan") : NULL;
+    if (open && dladdr((void *)vk_own_loader, &di) && strrchr(di.dli_fname, '/')) {
+        snprintf(dir, sizeof dir, "%s", di.dli_fname);
+        strrchr(dir, '/')[1] = 0;
+        void *lib = open(RTLD_NOW | RTLD_LOCAL, 1 /* ADRENOTOOLS_DRIVER_CUSTOM */, NULL, dir, dir, name, NULL, NULL);
+        if (lib) {
+            FILE *f = probe[0] ? fopen(probe, "wb") : NULL;
+            if (f) { fclose(f); strcpy(g_vk_probe, probe); }
+            printf("nvn_vk: Vulkan driver %s%s in place of the phone's\n", dir, name); fflush(stdout);
+            return lib;
+        }
+    }
+    printf("nvn_vk: Vulkan driver %s could not be loaded: the phone's own driver\n", name); fflush(stdout);
+    return NULL;
+}
+/* SDL's Vulkan library is the system loader, which does not know an instance of the private one */
+static void vk_own_surface(void *hwnd) {
+    struct { int sType; const void *pNext; uint32_t flags; void *window; } si = {1000008000 /* VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR */, NULL, 0, NULL};
+    VkResult (*create)(VkInstance, const void *, const void *, VkSurfaceKHR *) = (void *)vkGetInstanceProcAddr(V.instance, "vkCreateAndroidSurfaceKHR");
+    si.window = SDL_GetPointerProperty(SDL_GetWindowProperties((SDL_Window *)hwnd), SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL);
+    VkResult r = create && si.window ? create(V.instance, &si, NULL, &V.surface) : VK_ERROR_INITIALIZATION_FAILED;
+    if (r != VK_SUCCESS) vk_fatal("vkCreateAndroidSurfaceKHR", r);
+}
+#endif
 #ifdef __APPLE__
 static void SDLCALL vk_surface_on_main(void *hwnd) {
     if (!SDL_Vulkan_CreateSurface((SDL_Window *)hwnd, V.instance, NULL, &V.surface)) { V.surface = VK_NULL_HANDLE; snprintf(V.surface_error, sizeof V.surface_error, "%s", SDL_GetError()); }
@@ -326,7 +393,11 @@ int nvn_vk_init(void *hwnd) {
                                            "VK_EXT_index_type_uint8", "VK_EXT_full_screen_exclusive", "VK_EXT_blend_operation_advanced", "VK_KHR_pipeline_library"};
     VkResult r;
     V.hwnd = hwnd;
-    V.loader = LoadLibraryA("vulkan-1.dll");
+    V.loader = NULL;
+#ifdef __ANDROID__
+    int own_loader = (V.loader = vk_own_loader()) != NULL;
+#endif
+    if (!V.loader) V.loader = LoadLibraryA("vulkan-1.dll");
     if (!V.loader) { printf("nvn_vk: vulkan-1.dll cannot be loaded (error %lu): no Vulkan driver on this PC\n", GetLastError()); fflush(stdout); ExitProcess(5); }
 #define X(ret, name, args) name = vk_sym(#name);
     VKF(X)
@@ -411,6 +482,9 @@ int nvn_vk_init(void *hwnd) {
      * nvn_gl_start waits there for this thread and runs what is handed over */
     if (!SDL_RunOnMainThread(vk_surface_on_main, hwnd, true) || !V.surface) { printf("nvn_vk: SDL_Vulkan_CreateSurface: %s\n", V.surface_error); fflush(stdout); ExitProcess(5); }
 #else
+#ifdef __ANDROID__
+    if (own_loader) vk_own_surface(hwnd); else
+#endif
     if (!SDL_Vulkan_CreateSurface((SDL_Window *)hwnd, V.instance, NULL, &V.surface)) { printf("nvn_vk: SDL_Vulkan_CreateSurface: %s\n", SDL_GetError()); fflush(stdout); ExitProcess(5); }
 #endif
 
@@ -559,7 +633,7 @@ static void present_colour(const float rgba[4]) {
         r = vkAcquireNextImageKHR(V.device, V.swapchain, 1000000000ull, V.acquired, NULL, &index);
     }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { vk_ok("vkAcquireNextImageKHR", r); InterlockedIncrement64(&g_vk_skipped); return; }
-    int suboptimal = r == VK_SUBOPTIMAL_KHR;
+    int suboptimal = swap_suboptimal(r);
 
     VkCommandBufferBeginInfo bi;
     memset(&bi, 0, sizeof bi);
@@ -597,7 +671,7 @@ static void present_colour(const float rgba[4]) {
     pr.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pr.waitSemaphoreCount = 1; pr.pWaitSemaphores = &V.rendered; pr.swapchainCount = 1; pr.pSwapchains = &V.swapchain; pr.pImageIndices = &index;
     r = vkQueuePresentKHR(V.queue, &pr);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || suboptimal) { swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* made again at the next present */
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || swap_suboptimal(r) || suboptimal) { swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* made again at the next present */
     else vk_ok("vkQueuePresentKHR", r);
     InterlockedIncrement64(&g_vk_frames);
 }

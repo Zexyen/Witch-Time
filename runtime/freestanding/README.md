@@ -21,3 +21,6 @@ gives them. `wtbuild check-freestanding --target windows` checks those objects a
 
 On macOS (`__APPLE__`, Apple silicon) only `jmp_buf` differs: the system's 48 `int`s (192 bytes), with its `setjmp`. The
 other declarations are the same C functions in libSystem.
+
+On Android (`__ANDROID__`, `--target=aarch64-linux-android29`) `jmp_buf` is bionic's 32 longs (256 bytes) and `setjmp` its
+own function; checked by hand against the NDK's header (`sizeof(jmp_buf)` with both), not yet by `wtbuild check-freestanding`.

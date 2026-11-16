@@ -361,6 +361,7 @@ FILE *plat_fopen(const char *path, const char *mode);
 #define _putenv_s(k, v) setenv((k), (v), 1)
 static inline char *_strlwr(char *s) { for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p); return s; }
 
+int plat_ww_fault(uintptr_t addr);                     /* a write to a page the software write watch holds read-only: 1 = run it again */
 #ifdef __APPLE__
 /* macOS: no MAP_FIXED_NOREPLACE (mmap takes an address as a hint it need not follow): plat_map_at (plat_posix.c) asks
  * Mach for exactly that address, which fails when something is there. No MAP_NORESERVE or MAP_STACK either (memory is
@@ -375,7 +376,15 @@ static inline void *plat_map_fixed(uint64_t addr, size_t size) { return plat_map
 #define plat_mprotect mprotect
 static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    return p == (void *)(uintptr_t)addr ? p : NULL;   /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p == (void *)(uintptr_t)addr) return p;       /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p != MAP_FAILED) munmap(p, size);
+    FILE *m = fopen("/proc/self/maps", "r");          /* what holds the spot, for the log */
+    char line[512];
+    unsigned long long lo, hi;
+    while (m && fgets(line, sizeof line, m))
+        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && lo < addr + size && hi > addr) fprintf(stderr, "in the way of 0x%llx: %s", (unsigned long long)addr, line);
+    if (m) fclose(m);
+    return NULL;
 }
 #endif
 static inline void *plat_alloc(size_t size) {

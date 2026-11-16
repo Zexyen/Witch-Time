@@ -600,8 +600,11 @@ impl Fn {
             return Ok(";".into());
         }
         let m2 = w & 0xfffff0ff;
-        if m2 == 0xd503305f || m2 == 0xd50330bf || m2 == 0xd503309f || m2 == 0xd50330df {
-            return Ok(";".into());
+        if m2 == 0xd50330bf || m2 == 0xd503309f {
+            return Ok("host_dmb();".into()); // dmb / dsb (runtime.h: nothing on an x86-64 host)
+        }
+        if m2 == 0xd503305f || m2 == 0xd50330df {
+            return Ok(";".into()); // clrex / isb
         }
         un("system")
     }
@@ -753,9 +756,10 @@ impl Fn {
                 if size == 3 {
                     if load {
                         return Ok(format!(
-                            "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = rd64(a); c->ex_val2 = rd64(a + 8); \
+                            "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = rd64(a); c->ex_val2 = rd64(a + 8);{} \
                              uint64_t t1 = c->ex_val, t2 = c->ex_val2; {} {} }}",
                             xs(rn),
+                            if bits(w, 15, 15) != 0 { " host_dmb();" } else { "" },
                             set(rt, true, "t1"),
                             set(rt2, true, "t2")
                         ));
@@ -764,8 +768,9 @@ impl Fn {
                 }
                 if load {
                     return Ok(format!(
-                        "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = rd64(a); uint64_t t = c->ex_val; {} {} }}",
+                        "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = rd64(a); uint64_t t = c->ex_val;{} {} {} }}",
                         xs(rn),
+                        if bits(w, 15, 15) != 0 { " host_dmb();" } else { "" },
                         set(rt, true, "(uint32_t)t"),
                         set(rt2, true, "t >> 32")
                     ));
@@ -782,15 +787,17 @@ impl Fn {
                 ));
             }
             if o2 != 0 {
+                // ldar / stlr: acquire / release (runtime.h rda / wrl)
                 if load {
-                    return Ok(set(rt, true, &format!("rd{}({})", nb, xs(rn))));
+                    return Ok(set(rt, true, &format!("rda{}({})", nb, xs(rn))));
                 }
-                return Ok(format!("wr{}({}, {});", nb, xs(rn), r(rt, size == 3)));
+                return Ok(format!("wrl{}({}, {});", nb, xs(rn), r(rt, size == 3)));
             }
             if load {
                 return Ok(format!(
-                    "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = rd{}(a); {} }}",
+                    "{{ uint64_t a = {}; c->ex_addr = a; c->ex_val = {}{}(a); {} }}",
                     xs(rn),
+                    if bits(w, 15, 15) != 0 { "rda" } else { "rd" }, // ldaxr: an acquire load
                     nb,
                     set(rt, true, "c->ex_val")
                 ));

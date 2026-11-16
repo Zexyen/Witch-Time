@@ -80,6 +80,11 @@ Building the runtime yourself (a checkout, or a changed `runtime\`) needs llvm-m
 FFmpeg, glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-builds all of it on Linux
 (`.github/workflows/release.yml`, job `windows`): `wtbuild runtime --target windows --out prebuilt`.
 
+## Build (Android)
+
+In progress, not yet run on a phone: an app for AArch64 Android 10+ with Vulkan, which runs a game library your PC
+builds from your dump (`android/README.md`).
+
 ## Build (macOS)
 
 Experimental, from a checkout only (no release has macOS files yet): a Mac with Apple silicon. The game's AArch64 code
