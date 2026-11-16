@@ -46,7 +46,13 @@ void set(State st, const std::string& message)
 fs::path to_path(const std::string& s)
 {
 #ifdef _WIN32
-	return fs::path(widen(s));
+	// as \\?\C:\...: Windows then takes paths over 260 characters, which an update in a long folder reaches (#224).
+	// That form is taken as it is written, so it is made whole first ('\' only, no ".."); a network path stays as it was
+	std::wstring w = widen(s), full(32768, L'\0');
+	DWORD n = GetFullPathNameW(w.c_str(), DWORD(full.size()), full.data(), nullptr);
+	if (n > 2 && n < full.size() && full[1] == L':')
+		w = L"\\\\?\\" + full.substr(0, n);
+	return fs::path(w);
 #else
 	return fs::path(s);
 #endif
