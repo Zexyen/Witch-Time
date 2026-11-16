@@ -1052,8 +1052,9 @@ row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_fsr4.c`, buil
 
 ## Frame generation with the player's DLLs (2026-11-16; issue 119; generators NOT RUN yet)
 
-`frame_generation = off | fsr | dlss` (graphics.ini, the PC settings row "Frame generation"; `WT_FRAMEGEN` wins and also
-takes `test`). `runtime/nvn_vk_fg.c`; the present path is `vk_present2` in `runtime/nvn_vk_draw.c`.
+`frame_generation = off | on` and `frame_generator = fsr | dlss` (graphics.ini; the PC settings rows "Frame generation"
+and "Frame generation: type", also in the launcher; `WT_FRAMEGEN = off | on | fsr | dlss | test` wins). Off keeps the
+generator chosen. `runtime/nvn_vk_fg.c`; the present path is `vk_present2` in `runtime/nvn_vk_draw.c`.
 
 - **What the window gets**: when the game finishes frame N, the picture between N-1 and N is presented where N was until
   now (at its tick), and N itself half a game frame later. `vk_present2` runs its swapchain part twice (the crop, the
@@ -1088,7 +1089,7 @@ takes `test`). `runtime/nvn_vk_fg.c`; the present path is `vk_present2` in `runt
   the training room with `WT_FG_HUDSHOT=<frame>` (a test: the frame and the copy as two BMP files): the frame had a
   full-screen help page over it, the copy only the scene. Off: the generators get the finished frame only.
 - **Not done**: the generators see the 8-bit picture also with HDR on; the frame-pacing statistics count the generated
-  picture as the frame; the in-game Options tab does not list the two rows (the launcher and the PC panel do).
+  picture as the frame; the in-game Options tab does not list the three rows (the launcher and the PC panel do).
 
 ## Object motion vectors (2026-11-11; with FSR, experimental)
 

@@ -4,7 +4,8 @@
  * picture first; the real frame is kept in g_pend[1] and a timer thread here posts its present to the render thread).
  * The game's own clock and tick do not change; the real frame is on screen half a frame later than without this.
  *
- * frame_generation = fsr | dlss (graphics.ini; WT_FRAMEGEN wins, and has test: the real frame twice, to see the pacing).
+ * frame_generation = on with frame_generator = fsr | dlss (graphics.ini; WT_FRAMEGEN = off | on | fsr | dlss wins, and has
+ * test: the real frame twice, to see the pacing).
  * The generators are the PLAYER'S DLLs, as with DLSS and FSR 4 (nothing of AMD's or NVIDIA's is here or in a release):
  *   fsr:  amd_fidelityfx_loader_vk.dll + amd_fidelityfx_framegeneration_vk.dll (AMD FSR SDK 2.4.0), through AMD's MIT
  *         headers (third_party/ffx_api). Only AMD's frame generation context is used, with our own images: NOT its
