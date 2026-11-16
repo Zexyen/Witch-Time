@@ -537,6 +537,7 @@ jobs:
       - name: Smoke test of the link step
         run: |
           p="$PWD/dist/${{ steps.version.outputs.name }}"
+          mkdir -p "$p/tools/wtbuild" && cp -r tools/wtbuild/testdata "$p/tools/wtbuild/"  # the stand-in modules, not shipped (the archive is already made)
           "$p/build/wtbuild" smoke --repo "$p"
 
       - uses: actions/upload-artifact@v4
