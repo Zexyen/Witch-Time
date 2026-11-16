@@ -651,7 +651,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         if !missing.is_empty() {
             // issue 226: named, as a folder with more files than expected was told only "files are missing"
             return Err(Fail(format!(
-                "{}: {} not found directly in romfs/ (the folder must hold the game's .pkz archives as extracted, not unpacked; or not {})",
+                "{}: {} not found directly in romfs/ (the folder must hold this game's .pkz archives as extracted: not another game's RomFS, not unpacked; or not {})",
                 msg,
                 missing.join(", "),
                 VERSION
