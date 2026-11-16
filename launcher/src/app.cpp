@@ -1192,7 +1192,13 @@ void App::sound(int which)
 	if (!sound_stream)
 	{                                            // opened at the first sound: a launcher that only starts the game opens none
 		const SDL_AudioSpec spec = {SDL_AUDIO_F32, 1, 48000};
-		if (!SDL_InitSubSystem(SDL_INIT_AUDIO) || !(sound_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr)))
+		bool up = false;
+#ifdef __linux__
+		SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "pulseaudio");   // as the game does (runtime/plat_audio_sdl.c audio_init, issue 235)
+		if (!(up = SDL_InitSubSystem(SDL_INIT_AUDIO)))
+			SDL_ResetHint(SDL_HINT_AUDIO_DRIVER);            // no PulseAudio server: SDL's own order
+#endif
+		if (!(up || SDL_InitSubSystem(SDL_INIT_AUDIO)) || !(sound_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr)))
 		{
 			sound_failed = true;                 // no audio device: silent, and not tried at every move
 			return;
