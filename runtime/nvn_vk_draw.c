@@ -48,7 +48,7 @@ static struct {
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
     struct { VkStructureType sType; void *pNext; VkBool32 f[15]; } port;      /* [witchtime] VkPhysicalDevicePortabilitySubsetFeaturesKHR (vulkan_beta.h), macOS */
-    const char *exts[16]; uint32_t next;
+    const char *exts[24]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
     int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
@@ -69,6 +69,8 @@ static void vkd_fail(const char *fmt, ...) {
 static int vk_gpl_mode(void) { static int m = -1; if (m < 0) { const char *e = getenv("WT_VK_GPL"); m = e && e[0] ? atoi(e) : VK_GPL_DEFAULT; } return m; }
 
 /* ---------------------------------------------------------------- device features */
+static void dlss_device_exts(const VkExtensionProperties *dext, uint32_t ndext);      /* nvn_vk_dlss.c */
+static void **fsr4_device_exts(const VkExtensionProperties *dext, uint32_t ndext, void **tail);      /* nvn_vk_fsr4.c */
 static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties *dext, uint32_t ndext) {
     void **tail;
     vkGetPhysicalDeviceFeatures2 = vk_sym("vkGetPhysicalDeviceFeatures2");
@@ -108,6 +110,8 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
         if (g_ck_on) D.exts[D.next++] = "VK_NV_device_diagnostic_checkpoints";
         if (e && atoi(e)) printf("nvn_vk: WT_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
     }
+    dlss_device_exts(dext, ndext);                 /* [witchtime] issue 190 (nvn_vk_dlss.c) */
+    tail = fsr4_device_exts(dext, ndext, tail);    /* [witchtime] FSR 4 (nvn_vk_fsr4.c) */
     if (has_name(dext, ndext, "VK_EXT_memory_budget")) { D.has_budget = 1; D.exts[D.next++] = "VK_EXT_memory_budget"; }      /* [issue 153] vmem_report */
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("WT_VK_PUSH") && !atoi(getenv("WT_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
@@ -849,7 +853,7 @@ static LONG64 g_rs_bytes;                          /* PR #8 review: device memor
  * The upscaler mode is latched here with both scales, so a change applies with rs_apply (the PC panel's A_SCALE rows). */
 static float g_rs_r = -1.0f;                        /* render scale: rs_scale() / FSR's ratio, never below 1.0 (fs5548 and fs1693 store kept
                                                        images at the game's pixels: a raster smaller than the game's leaves texels out) */
-static int g_rs_mode;                               /* gfx_options()->upscaler as latched: 0 off, 1 FSR native, 2 .. 5 quality .. ultra performance */
+static int g_rs_mode;                               /* gfx_options()->upscaler as latched: 0 off, 1 FSR native, 2 .. 5 quality .. ultra performance; 6 .. 10 DLSS, 11 .. 15 FSR 4 in the same order */
 static float fsr_ratio(int mode);                   /* nvn_vk_fsr.c */
 static float rs_scale(void) {
     if (g_rs < 0) {

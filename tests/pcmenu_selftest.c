@@ -127,7 +127,10 @@ int main(int argc, char **argv) {
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3"));
     change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); assert(gfx_options()->upscaler == 5 && !strcmp(val_name(8), "Ultra Performance"));
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3_ultra_performance"));
-    for (int k = 0; k < 5; k++) change(8, -1, 0);
+    for (int i = 0; i < 10; i++) change(8, 1, 0);      /* DLSS (6 .. 10), then FSR 4 (11 .. 15): the last of the 16 values */
+    assert(gfx_options()->upscaler == 15 && !strcmp(val_name(8), "FSR 4 Ultra Performance"));
+    assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr4_ultra_performance"));
+    for (int k = 0; k < 15; k++) change(8, -1, 0);
     assert(!gfx_options()->upscaler);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);

@@ -679,3 +679,5 @@ int nvn_vk_hdr_on(void) { return V.hdr != 0; }             /* [witchtime] pcmenu
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
 #include "nvn_vk_pcmenu.c"                                 /* [witchtime] the PC settings menu on the screen */
 #include "nvn_vk_fsr.c"                                    /* [witchtime] issue 118: FSR 3.1 as anti-aliasing */
+#include "nvn_vk_dlss.c"                                   /* [witchtime] issue 190: DLSS / DLAA with the player's nvngx_dlss.dll */
+#include "nvn_vk_fsr4.c"                                   /* [witchtime] FSR 4 with the player's amd_fidelityfx_*_vk.dll */
