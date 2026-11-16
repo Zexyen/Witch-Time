@@ -43,11 +43,22 @@ static void SDLCALL pull(void *user, SDL_AudioStream *stream, int need, int tota
     if (done && w->event) SetEvent(w->event);
 }
 
+/* Linux: PulseAudio first (issue 235: SDL's own first choice, PipeWire, opened a device on SteamOS and nothing was heard),
+ * SDL's order when no PulseAudio server answers. SDL_AUDIO_DRIVER in the environment still decides (SDL ignores the hint). */
+static bool audio_init(void) {
+#ifdef __linux__
+    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "pulseaudio");
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO)) return true;
+    SDL_ResetHint(SDL_HINT_AUDIO_DRIVER);
+#endif
+    return SDL_InitSubSystem(SDL_INIT_AUDIO);
+}
+
 MMRESULT waveOutOpen(HWAVEOUT *out, UINT dev, const WAVEFORMATEX *f, DWORD_PTR cb, DWORD_PTR inst, DWORD flags) {
     (void)dev; (void)inst;
     *out = NULL;
     if (f->wFormatTag != WAVE_FORMAT_PCM || f->wBitsPerSample != 16) return 32;   /* WAVERR_BADFORMAT: the runtime asks for 16-bit PCM only */
-    if (!SDL_WasInit(SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO)) { printf("nn::audio: SDL audio cannot start: %s\n", SDL_GetError()); return MMSYSERR_NODRIVER; }
+    if (!SDL_WasInit(SDL_INIT_AUDIO) && !audio_init()) { printf("nn::audio: SDL audio cannot start: %s\n", SDL_GetError()); return MMSYSERR_NODRIVER; }
     WaveOut *w = SDL_calloc(1, sizeof *w);
     if (!w) return 7;                                  /* MMSYSERR_NOMEM */
     w->event = (flags & CALLBACK_EVENT) ? (HANDLE)cb : NULL;
