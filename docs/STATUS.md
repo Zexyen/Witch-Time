@@ -955,9 +955,15 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
 - **Not done**: Bayonetta's whipping hair and fast limbs smear a little (camera vectors only; per-object vectors would need the
   game's velocity vertex stage, `modelshadervelocitymap.vso`, drawn again, or a previous-position output in the translator).
   Each change of the game's dynamic-resolution level (8 sets, 1600x896 .. 640x360;
-  10 in 3.5 minutes of the route, mostly around the cutscene) makes the resources again and resets the history; making every
-  report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was taken
-  out. Upscaling: the next section. Not run on the Deck, Android or Intel.
+  10 in 3.5 minutes of the route, mostly around the cutscene) makes the scene-size images again and resets the history; making
+  every report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was
+  taken out. Since issue 245 the upscaler's output keeps the largest size seen (while the picture's scale and shape stay), so
+  the output-size images, DLSS's feature and FSR 4's context survive a level: below the top level the upscaler writes the top
+  level's size and one linear blit (`FI_LVL`) reduces the finished picture to the level's, which is what the bloom and the
+  tonemap read, at the size they always had. Before, an RTX 3070 with DLAA had a long frame at each of 344 levels in 28
+  minutes. `WT_FSR_FIXOUT=0`: the output follows the level, as before; `=125` (TEST): an output of 125 % of the level's;
+  `=1125` (TEST): that in every other 120 frames. Run on RADV only (FSR 3.1 native and quality, validation clean, one real
+  level change and the test switch); the DLSS and FSR 4 side is not run. Upscaling: the next section. Not run on the Deck, Android or Intel.
 - **NVIDIA (issue 140, 2026-11-05)**: on an RTX 4090 (Windows, driver 621.14, Quality at 2.4, a fresh save's title screen)
   v0.8.0 lost the device (`vkQueueSubmit`: VK_ERROR_DEVICE_LOST, exit code 5) after about 1100 FSR frames, with no hang
   first. Not reproduced on the RX 9070 XT (RADV; core, sync and GPU-assisted validation clean over 18,000 FSR frames). The
@@ -1042,10 +1048,12 @@ row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_dlss.c`.
 - **The device** gets `VK_NVX_binary_import` and `VK_NVX_image_view_handle` only on an NVIDIA GPU with the DLL in place, so
   nobody else's device changes. Putting the DLL there needs a restart.
 - **Inputs**: HDR colour, depth 0 near, vectors at the scene's size without jitter in UV (scale = the scene's size), DLSS's
-  own exposure, no sharpening. A feature is made per size pair and mode; a replaced one is released four frames later.
+  own exposure, no sharpening. One feature per output size and mode, made for the largest scene size seen; a smaller scene
+  goes in as the render subrect (issue 245). A replaced one is released four frames later.
 - **Not known**: whether any of it works. Written on an AMD machine, compiled for Windows only against Wine's headers. The
   jitter's and the vectors' signs are FSR's (`WT_DLSS_JSIGN` bits 0 / 1 and `WT_DLSS_MVSIGN=1` flip them for a test build);
-  the output in the scene's R11G11B10 format may be refused; each dynamic-resolution level makes a new feature (a hitch).
+  the output in the scene's R11G11B10 format may be refused; whether DLAA takes a scene smaller than its output (a lower
+  level of the game under a held output) is not known.
   Windows and Proton only; the in-game Options tab and the launcher do not list the values yet (they show "Custom").
 
 ## FSR 4 with the player's DLLs (2026-11-16; NOT RUN yet)

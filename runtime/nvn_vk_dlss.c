@@ -128,17 +128,23 @@ static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset)
     if (DL.ok < 0 || (DL.ok == 0 && !dlss_setup())) return 0;
     VTex *mv = F.img[FI_MV].vt, *out = F.img[FI_OUT].vt;
     if (jsign < 0) { const char *e = getenv("WT_DLSS_JSIGN"); jsign = e ? atoi(e) & 3 : 0; e = getenv("WT_DLSS_MVSIGN"); mvsign = e && atoi(e); }
-    if (!DL.h || DL.w != w || DL.h_ != h || DL.uw != uw || DL.uh != uh || DL.mode != g_rs_mode || DL.fmt != out->fmt) {
+    /* [issue 245] one feature for every scene size up to the largest seen, as FSR 4's context: the output's size is held
+     * (fsr_run) and the frame's scene size goes in as the render subrect, so the game's resolution levels make no new
+     * feature (a long frame each time). A larger scene, another output, mode or format does. */
+    if (!DL.h || w > DL.w || h > DL.h_ || DL.uw != uw || DL.uh != uh || DL.mode != g_rs_mode || DL.fmt != out->fmt) {
+        int mw = w, mh = h;
+        LONG64 t0 = tk(); LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+        if (DL.h && DL.uw == uw && DL.uh == uh) { if (mw < DL.w) mw = DL.w; if (mh < DL.h_) mh = DL.h_; }      /* never below the last one's */
         dlss_retire();
         ngx_set_u(DL.par, "CreationNodeMask", 1); ngx_set_u(DL.par, "VisibilityNodeMask", 1);
-        ngx_set_u(DL.par, "Width", (unsigned)w); ngx_set_u(DL.par, "Height", (unsigned)h); ngx_set_u(DL.par, "OutWidth", (unsigned)uw); ngx_set_u(DL.par, "OutHeight", (unsigned)uh);
+        ngx_set_u(DL.par, "Width", (unsigned)mw); ngx_set_u(DL.par, "Height", (unsigned)mh); ngx_set_u(DL.par, "OutWidth", (unsigned)uw); ngx_set_u(DL.par, "OutHeight", (unsigned)uh);
         ngx_set_i(DL.par, "PerfQualityValue", k_quality[g_rs_mode - 6]);
         ngx_set_i(DL.par, "DLSS.Feature.Create.Flags", 1 | 2 | 64);      /* HDR colour, motion vectors at the scene's size, exposure worked out by DLSS (depth 0 near: not inverted; vectors without jitter) */
         ngx_set_i(DL.par, "DLSS.Enable.Output.Subrects", 0);
         NgxResult r = DL.create1(V.device, R.cmd, 1, DL.par, &DL.h);
         if (r != 1 || !DL.h) { DL.h = NULL; dlss_off("the DLSS feature was not created", r); return 0; }
-        DL.w = w; DL.h_ = h; DL.uw = uw; DL.uh = uh; DL.mode = g_rs_mode; DL.fmt = out->fmt; reset = 1;
-        if (DL.made++ < 8 || DL.made % 64 == 0) printf("nvn_vk_dlss: feature %lld made: %dx%d to %dx%d, quality value %d, output format %d\n", (long long)DL.made, w, h, uw, uh, k_quality[g_rs_mode - 6], (int)out->fmt);
+        DL.w = mw; DL.h_ = mh; DL.uw = uw; DL.uh = uh; DL.mode = g_rs_mode; DL.fmt = out->fmt; reset = 1;
+        if (DL.made++ < 8 || DL.made % 64 == 0) printf("nvn_vk_dlss: feature %lld made: up to %dx%d to %dx%d, quality value %d, output format %d, %.1f ms\n", (long long)DL.made, mw, mh, uw, uh, k_quality[g_rs_mode - 6], (int)out->fmt, (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
     }
     vt_layout(mv, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);      /* NGX: inputs read-only, the output general (as FI_OUT is) */
     NgxRes rc, rd, rm, ro;

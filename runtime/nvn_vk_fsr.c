@@ -191,13 +191,13 @@ static void fsr_emit(FsrStr *s, const char *name, int top) {
 
 /* ---- resources (AMD's internal and shared resources, plus our motion vectors and output) */
 enum { FI_ACC1, FI_ACC2, FI_LUMA1, FI_LUMA2, FI_FP16X1, FI_SHADING, FI_LOCKS, FI_UP1, FI_UP2, FI_SPD, FI_FDMIP1, FI_LH1, FI_LH2, FI_ATOMIC,
-       FI_REACT, FI_LUT, FI_DEFR, FI_INFO, FI_DDEPTH, FI_DMV, FI_PREVD, FI_MV, FI_OUT, FI_SHARP, FI_N };      /* FI_SHARP: FI_OUT sharpened (fsr_run), as FI_OUT is made */
-static const struct { VkFormat f; uint8_t size; } k_fi[FI_N] = {      /* size: 0 the scene's (render), 1 half of it, 2 one texel, 3 the 128 x 1 LUT, 4 the output's (AMD's maxUpscaleSize) */
+       FI_REACT, FI_LUT, FI_DEFR, FI_INFO, FI_DDEPTH, FI_DMV, FI_PREVD, FI_MV, FI_OUT, FI_SHARP, FI_LVL, FI_N };      /* FI_SHARP: FI_OUT sharpened (fsr_run), as FI_OUT is made; FI_LVL: the finished picture reduced to the size of the game's resolution level (issue 245) */
+static const struct { VkFormat f; uint8_t size; } k_fi[FI_N] = {      /* size: 0 the scene's (render), 1 half of it, 2 one texel, 3 the 128 x 1 LUT, 4 the output's (AMD's maxUpscaleSize), 5 the level's output (one texel while it is the output's) */
     {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0},
     {VK_FORMAT_R8_UNORM, 1}, {VK_FORMAT_R8_UNORM, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4},
     {VK_FORMAT_R16G16_SFLOAT, 1}, {VK_FORMAT_R16_SFLOAT, 1}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0},
     {VK_FORMAT_R32_UINT, 2}, {VK_FORMAT_R8G8B8A8_UNORM, 0}, {VK_FORMAT_R16_SNORM, 3}, {VK_FORMAT_R8_UNORM, 2}, {VK_FORMAT_R32G32B32A32_SFLOAT, 2},
-    {VK_FORMAT_R32_SFLOAT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_R32_UINT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_UNDEFINED, 4}, {VK_FORMAT_UNDEFINED, 4},
+    {VK_FORMAT_R32_SFLOAT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_R32_UINT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_UNDEFINED, 4}, {VK_FORMAT_UNDEFINED, 4}, {VK_FORMAT_UNDEFINED, 5},
 };
 typedef struct { VTex *vt; VkImageView all, lvl[6]; } FImg;
 
@@ -242,6 +242,7 @@ static struct {
     Tex *depth; float c3[64]; int cam_jit;           /* cam_jit: the c3 kept this frame carries our jitter ([1][2] != 0: Halton(k, 3) - 0.5 never is) */
     VkImageView col_view, depth_view; VkImageLayout col_layout, depth_layout;
     LONG64 runs, resets;
+    int ow, oh, luw, luh; float oscale;            /* [issue 245] ow, oh: the output's size held over the game's resolution levels, of the picture's scale oscale; luw, luh: the output's size of the level of the last run (what the output's was before: the tonemap target's) */
 } F;
 
 static int fsr_want(void) { rs_scale(); return g_rs_mode >= 1 && F.ok >= 0; }      /* the mode as latched with the scales (rs_scale) */
@@ -348,14 +349,19 @@ static int fsr_setup(void) {                       /* render thread, once: sampl
 
 static int fsr_mv_on(void); static void fsr_mv_dump(Tex *depth, VTex *vd, int w, int h);      /* motion vectors, step 3 (below) */
 static void fsr_resize(int w, int h, int uw, int uh, VkFormat col) {      /* the scene's and the output's sizes: every resource made again, history reset */
-    for (int i = 0; i < FI_N; i++) if (F.img[i].vt) { vt_garbage(F.img[i].vt); F.img[i].vt = NULL; }
-    F.blit = !fmt_supported(col, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+    LONG64 t0 = tk(); int made = 0, lut_new = 0;
+    F.blit =!fmt_supported(col, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
     for (int i = 0; i < FI_N; i++) {
-        int s = k_fi[i].size, iw = s == 0 ? w : s == 4 ? uw : s == 1 ? w / 2 : s == 3 ? 128 : 1, ih = s == 0 ? h : s == 4 ? uh : s == 1 ? h / 2 : 1, lv = 1;
+        int s = k_fi[i].size, lvl = s == 5 && (F.luw != uw || F.luh != uh), iw = s == 0 ? w : s == 4 ? uw : s == 1 ? w / 2 : s == 3 ? 128 : lvl ? F.luw : 1, ih = s == 0 ? h : s == 4 ? uh : s == 1 ? h / 2 : lvl ? F.luh : 1, lv = 1;
         if (i == FI_SPD) { int m = iw > ih ? iw : ih; while (m > 1) { m >>= 1; lv++; } }      /* AMD: the whole chain */
-        fsr_img(&F.img[i], i == FI_OUT || i == FI_SHARP ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f, iw, ih, lv, i == FI_MV && fsr_mv_on() ? 3 : i != FI_LUT);      /* (size 4 also holds the locks and the history) */
+        VkFormat f = i == FI_OUT || i == FI_SHARP || i == FI_LVL ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f;
+        VTex *o = F.img[i].vt;
+        if (o && o->w == iw && o->h == ih && o->levels == lv && o->fmt == f) continue;      /* [issue 245] kept: at a resolution level of the game only the scene-size images change (fsr_run clears them all) */
+        if (o) vt_garbage(o);
+        made++; if (i == FI_LUT) lut_new = 1;
+        fsr_img(&F.img[i], f, iw, ih, lv,i == FI_MV && fsr_mv_on() ? 3 : i != FI_LUT);      /* (size 4 also holds the locks and the history) */
     }
-    {   /* AMD's Lanczos-2 table (fsr3upscalerCreate): bound by the accumulate pass */
+    if (lut_new) {   /* AMD's Lanczos-2 table (fsr3upscalerCreate): bound by the accumulate pass */
         int16_t lut[128];
         for (int i = 0; i < 128; i++) {
             double pi = 3.14159265358979, x = 2.0 * i / 127.0, y = x < 1e-6 ? 1.0 : (sin(pi * x) / (pi * x)) * (sin(0.5 * pi * x) / (0.5 * pi * x));
@@ -368,7 +374,8 @@ static void fsr_resize(int w, int h, int uw, int uh, VkFormat col) {      /* the
         vkCmdCopyBufferToImage(R.cmd, R.ring, F.img[FI_LUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     }
     F.w = w; F.h = h; F.uw = uw; F.uh = uh; F.fresh = 1;
-    printf("nvn_vk_fsr: resources for %dx%d, output %dx%d (%s)\n", w, h, uw, uh, F.blit ? "RGBA16F, blitted" : "in the scene's format");
+    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+    printf("nvn_vk_fsr: resources for %dx%d, output %dx%d (%s): %d of %d images made, %.1f ms\n", w, h, uw, uh, F.blit ? "RGBA16F, blitted" : "in the scene's format", made, (int)FI_N, (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
 }
 
 static void fsr_clear(int i, float v0, float v1, uint32_t u0) {
@@ -465,12 +472,31 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     if (vd->w != w || vd->h != h) return;
     if (vc->rs) rs_size(col->b.width, col->b.height, 1, &uw, &uh);      /* the output: as the tonemap's target, which has the scene's game size at the picture's scale */
     if (uw < w || uh < h) uw = w, uh = h;
+    int luw = uw, luh = uh;                        /* the output's size of this resolution level of the game: the tonemap target's */
+    {   /* [issue 245] the upscaler's output keeps the largest size seen while the picture's scale and shape stay: the game
+         * changes its resolution level every few seconds, and an output that followed it had every image and DLSS's feature
+         * made again each time (a long frame). Below the top level the finished picture is reduced to the level's size
+         * (FI_LVL, one linear step), so what reads it sees the size it always had. WT_FSR_FIXOUT=0: the output follows. */
+        static int fix = -1;
+        if (fix < 0) { const char *e = getenv("WT_FSR_FIXOUT"); fix = e ? atoi(e) : 1; }
+        VkFormat of = fmt_supported(vc->fmt, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) ? vc->fmt : VK_FORMAT_R16G16B16A16_SFLOAT;      /* FI_OUT's (fsr_resize) */
+        float s = rs_scale();
+        int d = uw * F.oh - uh * F.ow;
+        if (!F.ow || s != F.oscale || (d < 0 ? -d : d) * 20 > uw * F.oh || uw > F.ow || uh > F.oh) { F.ow = uw; F.oh = uh; F.oscale = s; }
+        if (fix >= 100) {   /* TEST ONLY (no switch makes the game change its level): WT_FSR_FIXOUT=125 holds an output of 125 % of the level's, 1125 does in every other 120 frames */
+            int pc = fix < 1000 ? fix : (F.frame / 120) % 2 ? fix - 1000 : 100;
+            F.ow = luw * pc / 100; F.oh = luh * pc / 100;
+        }
+        if (fix && fmt_supported(of, VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) uw = F.ow, uh = F.oh;
+    }
     if (F.ok == 0 && !fsr_setup()) { if (rs_render_scale() != rs_scale()) rs_apply(); return; }      /* a quality mode without FSR: the scene back at the picture's scale (fsr_ratio is 1 now) */
     pass_end();
     cmd_begin();
     pt_mark(w, h, 0, 0x118, 0, 0, 1);              /* WT_VK_PASSTIME: FSR (and its copy) as a kind of its own, "format 0x118" */
     fsr_barrier(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);      /* FI_OUT: an earlier tonemap's read, fsr_up_view's blit */
-    if (w != F.w || h != F.h || uw != F.uw || uh != F.uh || !F.img[FI_OUT].vt || (!F.blit && F.img[FI_OUT].vt->fmt != vc->fmt)) fsr_resize(w, h, uw, uh, vc->fmt);
+    int lvl_new = luw != F.luw || luh != F.luh;
+    F.luw = luw; F.luh = luh;
+    if (w != F.w || h != F.h || uw != F.uw || uh != F.uh || lvl_new || !F.img[FI_OUT].vt || (!F.blit && F.img[FI_OUT].vt->fmt != vc->fmt)) fsr_resize(w, h, uw, uh, vc->fmt);
     F.col = col;
     LONG64 now = tk();
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
@@ -577,6 +603,15 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
         fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);      /* DLSS's or FSR 4's write of FI_OUT */
         fsr_dispatch(P_SHARP, (uint32_t)(uw + 7) / 8, (uint32_t)(uh + 7) / 8);
         F.out = FI_SHARP;
+    }
+    if (uw != luw || uh != luh) {                  /* [issue 245] to the level's size: from here on as when the output had it */
+        VkImageBlit b; memset(&b, 0, sizeof b);
+        b.srcSubresource.aspectMask = b.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.srcSubresource.layerCount = b.dstSubresource.layerCount = 1;
+        b.srcOffsets[1].x = uw; b.srcOffsets[1].y = uh; b.dstOffsets[1].x = luw; b.dstOffsets[1].y = luh; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
+        fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        vkCmdBlitImage(R.cmd, F.img[F.out].vt->img, VK_IMAGE_LAYOUT_GENERAL, F.img[FI_LVL].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);      /* shortcut: one linear step, 2.5:1 at the game's lowest level; reduce in 2:1 steps if it shimmers there */
+        fsr_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
+        F.out = FI_LVL; uw = luw; uh = luh;
     }
     VTex *fo = F.img[F.out].vt;
 
@@ -691,7 +726,7 @@ static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const Vi
  * of the scene colour (the 2:1 bloom reads the scene colour at its own size, see fsr_run). In a frame FSR did not run, a linear
  * enlargement of the scene colour (counted: the 1800-run line). NULL: the game's image. */
 static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view) {
-    if (s != 1 || t != F.col || !F.img[FI_OUT].vt || (F.uw == F.w && F.uh == F.h) || !R.prog[1] || stage_fx(&R.prog[1]->st[1]) != FX_GRAIN || !R.ncol || !R.col[0].tex || !fsr_want()) return NULL;
+    if (s != 1 || t != F.col || !F.img[FI_OUT].vt || (F.luw == F.w && F.luh == F.h) || !R.prog[1] || stage_fx(&R.prog[1]->st[1]) != FX_GRAIN || !R.ncol || !R.col[0].tex || !fsr_want()) return NULL;
     Tex *c = R.col[0].tex;
     if (!rs_post_has(c) && !(c->vk && ((VTex *)c->vk)->post)) return NULL;      /* (a promoted target has no image until its pass) */
     EView e;
@@ -704,10 +739,11 @@ static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view) {
         vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         VkImageBlit b; memset(&b, 0, sizeof b);
         b.srcSubresource.aspectMask = b.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.srcSubresource.layerCount = b.dstSubresource.layerCount = 1;
-        b.srcOffsets[1].x = vt->w; b.srcOffsets[1].y = vt->h; b.dstOffsets[1].x = F.uw; b.dstOffsets[1].y = F.uh; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
-        vkCmdBlitImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);
+        int fin = F.luw != F.uw || F.luh != F.uh ? FI_LVL : FI_OUT;      /* [issue 245] the image of the level's size */
+        b.srcOffsets[1].x = vt->w; b.srcOffsets[1].y = vt->h; b.dstOffsets[1].x = F.luw; b.dstOffsets[1].y = F.luh; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
+        vkCmdBlitImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, F.img[fin].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);
         fsr_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-        F.up_frame = F.frame; F.missed++; F.out = FI_OUT;
+        F.up_frame = F.frame; F.missed++; F.out = fin;
     }
     return F.img[F.out].all;
 }
@@ -746,7 +782,7 @@ static void fsr_draw(VStage *fs) {
             if (t != c && t->b.width == F.depth->b.width && t->b.height == F.depth->b.height && fsr_hdr(t->vk) && ((VTex *)t->vk)->samples == 1) { fsr_run(t, F.depth, fx); break; }
         }
     /* upscaling: the target of a tonemap that reads FSR's scene colour goes to the picture's scale (before this draw's pass) */
-    if (fx == FX_GRAIN && c && !c->dead && c->vk && !((VTex *)c->vk)->post && F.col && (F.uw != F.w || F.uh != F.h) && fsr_reads(fs, F.col)) rs_promote(c);
+    if (fx == FX_GRAIN && c && !c->dead && c->vk && !((VTex *)c->vk)->post && F.col && (F.luw != F.w || F.luh != F.h) && fsr_reads(fs, F.col)) rs_promote(c);
 }
 /* Motion vectors, step 2 (mv_match.h). nvn_vk_draw.c draw_prepare: a draw of the depth pre-pass (the scene's depth, no colour)
  * whose vertex stage reads constant buffer 14, the object's bone palette or instance records: the block is kept for the next
