@@ -105,6 +105,19 @@ const UI_SIZE_SITES: &[(i64, u32)] = &[
 /// left and top edge (game_shim_eh.c wt_ui_mark) just before it is stored; the operand names the statement expected.
 const UI_MARK_SITES: &[(i64, u32, u32, &str)] = &[(0x71009a83e8, 1, 0, "&c->v[1]"), (0x71009b05fc, 8, 0, "&c->v[8]")];
 
+/// [witchtime] frame rates above 60: smoothings x += k (T - x) a frame, which closed in twice as fast at 120. The k (its
+/// float register) is made the k of this update's step just before the statement at pc (game_shim_eh.c, the function
+/// named); the text names the statement expected. The chapter select: 0x710091f1c8, the ring drawn (aim + 80) easing to
+/// the aim (aim + 16) at 0.3 a frame while the stick moves it, 0.05 .. 0.15 after a d-pad hop to a chapter; 0x7100626404,
+/// the camera manager's easing to its goal (0x7100626308: eye, target, up, roll at the mode's rate, +0x328 / +0x338, read
+/// just before; the map camera's is 0.15). That update serves every camera of the game, whose modes are not read yet:
+/// eased only while the chapter select's update (0x710091dba8, register -1) runs.
+const FPS_EASE_SITES: &[(i64, &str, i32, &str)] = &[
+    (0x710091f1c8, "fps_ease", 1, "&c->v[1], 0, F_MLA"),
+    (0x710091dba8, "fps_ease_map", -1, "c->x[31] +="),
+    (0x7100626404, "fps_ease_map", 0, "c->x[8] = (uint64_t)(c->x[19] + 496ULL);"),
+];
+
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
 
@@ -511,6 +524,11 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
                 if *stmt == format!("c->x[{}] = (uint32_t)({}ULL);", r, bits) {
                     *stmt = format!("{{ extern uint32_t {}(void); c->x[{}] = (uint64_t){}(); }}", f, r, f);
                 }
+            }
+        }
+        if let Some(&(_, f, r, want)) = FPS_EASE_SITES.iter().find(|s| s.0 == *pc) {
+            if stmt.contains(want) {
+                *stmt = format!("{{ extern void {}(Ctx *, int); {}(c, {}); }} {}", f, f, r, stmt);
             }
         }
         if let Some(&(_, x, y, want)) = UI_MARK_SITES.iter().find(|s| s.0 == *pc) {

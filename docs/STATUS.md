@@ -1259,6 +1259,18 @@ not changed; it is to be retired).
   0.233 s at 60, 0.084 / 0.145 s stock, 0.165 / 0.232 s patched. A 2-frame freeze ends about 4 ms early (the first
   visit moves 1). The other frame-locked event counters of that census are load waits, handle counts, a dead BGM
   countdown and cosmetic fades (a lighting crossfade `71007f2f30`, model fades `71007f0984`); not listed.
+- **The chapter select's ring and map (2026-11-16)**: "the pointer moves too fast above 60". The aim itself (`7100920570`,
+  aim + 16) takes the step already: 1.80 map units a second at 60 and at 120. Two smoothings x += k (T - x) a frame did
+  not: the ring drawn (aim + 80, `710091f1c8`) eases to the aim at 0.3 while the stick moves it and 0.05 .. 0.15 after a
+  d-pad hop to a chapter, and the camera manager (`7100626308`) eases to its goal at the mode's rate (+0x328, the map's
+  is 0.15). At 120 a hop's glide took 0.125 s to 90 % instead of 0.25 s and the ring led the screen's middle by 37 px
+  instead of 74. Each k is now 1 - (1 - k)^step (`fps_ease`, `lifter/eh.rs` `FPS_EASE_SITES`; stock at 60): at 120 the
+  glide takes 0.25 s, the ring leads by 74 px and is back in the middle as late as at 60 (scripted d-pad hops and stick
+  holds from the title, Linux, RADV; not played by hand). **The camera manager's easing serves every camera of the game**
+  and is as frame-locked in a fight above 60; there it is left alone (eased only while the chapter select's update
+  `710091dba8` runs): its modes set the rate in about 40 places, none read, some may take the step themselves. Not done:
+  the aim's snap to a chapter when the stick is let go (`71009202bc`, 6 frames of t += 0.2: 0.1 s at 60, 0.05 s at 120;
+  the ring's own easing hides it).
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
   the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
   smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other
