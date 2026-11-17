@@ -171,6 +171,12 @@ static const char *const k_default_ini =
 ";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
 "\r\n"
+"; sharpness = 0 .. 100      (with an upscaler mode above)\r\n"
+";   0: the picture as the upscaler gives it. Above 0 it is sharpened after the upscaler, FSR 3.1, DLSS or FSR 4 alike\r\n"
+";   (AMD's RCAS filter): 100 is the strongest. High values can show bright outlines and more noise. Applies while the\r\n"
+";   game runs.\r\n"
+"sharpness = 0\r\n"
+"\r\n"
 "; frame_generation = off | on      (Vulkan, Windows; experimental, untested)\r\n"
 ";   A generated picture is shown between every two frames of the game, so the screen gets twice the game's frame rate.\r\n"
 ";   It needs an upscaler mode above (any but off: that is where the motion vectors come from), your own DLLs beside\r\n"
@@ -311,6 +317,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
+        else if (!_stricmp(key, "sharpness")) { float v = (float)atof(val) / 100.0f; o->sharpness = v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }      /* [witchtime] issue 119 */
         else if (!_stricmp(key, "frame_generation_hud")) o->frame_gen_no_hud = !_stricmp(val, "off");      /* [witchtime] issue 119 */
         else if (!_stricmp(key, "frame_generation")) { int k = framegen_of(val); o->frame_gen_on = !_stricmp(val, "on") || k == 1 || k == 2; if (k == 1 || k == 2) o->frame_gen_kind = k; }      /* [witchtime] issue 119: off | on (fsr, dlss: on with that generator, as a test build wrote it) */
         else if (!_stricmp(key, "frame_generator")) { int k = framegen_of(val); if (k == 1 || k == 2) o->frame_gen_kind = k; }
@@ -333,6 +340,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
     if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
+    if (getenv("WT_SHARPNESS")) { float v = (float)atof(getenv("WT_SHARPNESS")) / 100.0f; o->sharpness = v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
     {   const char *e = getenv("WT_FRAMEGEN");      /* [witchtime] issue 119 */
         int kind = o->frame_gen_kind ? o->frame_gen_kind : 1;
         o->frame_gen = e ? (!_stricmp(e, "on") ? kind : framegen_of(e)) : o->frame_gen_on ? kind : 0;
@@ -551,7 +559,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
-    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler; g_opt.frame_gen = t.frame_gen; g_opt.frame_gen_on = t.frame_gen_on; g_opt.frame_gen_kind = t.frame_gen_kind; g_opt.frame_gen_no_hud = t.frame_gen_no_hud;
+    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler; g_opt.sharpness = t.sharpness; g_opt.frame_gen = t.frame_gen; g_opt.frame_gen_on = t.frame_gen_on; g_opt.frame_gen_kind = t.frame_gen_kind; g_opt.frame_gen_no_hud = t.frame_gen_no_hud;
     g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);

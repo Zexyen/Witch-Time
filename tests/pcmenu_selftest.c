@@ -125,20 +125,24 @@ int main(int argc, char **argv) {
     assert(!gfx_options()->upscaler && g_cur[8] == 0);      /* issue 118: not in the file: off */
     pcmenu_take_work(); change(8, 1, 0); assert(gfx_options()->upscaler == 1 && row_restart(8) && !(g_work & 4));      /* applies when the panel closes */
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3"));
-    change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); assert(gfx_options()->upscaler == 5 && !strcmp(val_name(8), "Ultra Performance"));
+    change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); assert(gfx_options()->upscaler == 5 && !strcmp(val_name(8), "FSR 3 Ultra Performance"));
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3_ultra_performance"));
     for (int i = 0; i < 10; i++) change(8, 1, 0);      /* DLSS (6 .. 10), then FSR 4 (11 .. 15): the last of the 16 values */
     assert(gfx_options()->upscaler == 15 && !strcmp(val_name(8), "FSR 4 Ultra Performance"));
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr4_ultra_performance"));
     for (int k = 0; k < 15; k++) change(8, -1, 0);
     assert(!gfx_options()->upscaler);
-    assert(!gfx_options()->frame_gen && g_cur[9] == 0);      /* issue 119: not in the file: off */
-    change(9, 1, 0); assert(gfx_options()->frame_gen == 1 && !row_restart(9) && !strcmp(val_name(9), "On"));      /* on: the generator's row decides which (fsr when not in the file); applies while the game runs */
+    assert(gfx_options()->sharpness == 0.0f && g_cur[9] == 0);      /* issue 119: not in the file: off */
+    change(9, 1, 0); change(9, 1, 0); assert(fabsf(gfx_options()->sharpness - 0.4f) < 1e-6f && !row_restart(9) && !strcmp(val_name(9), "40 %"));      /* applies while the game runs */
+    assert(gfx_ini_get("sharpness", buf, sizeof buf) && !strcmp(buf, "40"));
+    change(9, -1, 0); change(9, -1, 0); assert(gfx_options()->sharpness == 0.0f);
+    assert(!gfx_options()->frame_gen && g_cur[10] == 0);      /* issue 119: not in the file: off */
+    change(10, 1, 0); assert(gfx_options()->frame_gen == 1 && !row_restart(10) && !strcmp(val_name(10), "On"));      /* on: the generator's row decides which (fsr when not in the file); applies while the game runs */
     assert(gfx_ini_get("frame_generation", buf, sizeof buf) && !strcmp(buf, "on"));
-    change(10, 1, 0); assert(gfx_options()->frame_gen == 2 && !strcmp(val_name(10), "DLSS"));
-    change(9, -1, 0); assert(!gfx_options()->frame_gen && gfx_options()->frame_gen_kind == 2);      /* off keeps the choice */
-    change(9, 1, 0); assert(gfx_options()->frame_gen == 2);
-    change(9, -1, 0); change(10, -1, 0); assert(!gfx_options()->frame_gen);
+    change(11, 1, 0); assert(gfx_options()->frame_gen == 2 && !strcmp(val_name(11), "DLSS"));
+    change(10, -1, 0); assert(!gfx_options()->frame_gen && gfx_options()->frame_gen_kind == 2);      /* off keeps the choice */
+    change(10, 1, 0); assert(gfx_options()->frame_gen == 2);
+    change(10, -1, 0); change(11, -1, 0); assert(!gfx_options()->frame_gen);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
     pcmenu_take_work(); change(5, 1, 0); assert(row_restart(5) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */

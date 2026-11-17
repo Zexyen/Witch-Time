@@ -1081,8 +1081,26 @@ row "FSR 3.1 / DLSS / FSR 4"; `WT_UPSCALER` wins). `runtime/nvn_vk_fsr4.c`, buil
 - **Not known**: whether any of it works. Written on Linux, where AMD ships no FSR 4; the Windows block is compiled only
   against Wine's headers with a stub harness. Open: whether the signed DLL takes the scene's R11G11B10 output, whether its
   dispatch leaves our images in the layouts it found them in, the jitter's and vectors' signs (FSR 3.1's, which AMD's own
-  port shares), and the cost of making the context (a stop at the first frame). The in-game Options tab and the launcher
-  do not list the values (they show "Custom"), as with DLSS.
+  port shares), and the cost of making the context (a stop at the first frame). The in-game Options tab does not
+  list the values (it shows "Custom"), as with DLSS.
+
+## Sharpness, the row "Upscaling", the launcher's fourth section (2026-11-16; issue 119; the pass NOT RUN in the game yet)
+
+- **`sharpness = 0 .. 100`** (graphics.ini; the PC settings row "Sharpness" and the launcher: Off, 20 .. 100 %;
+  `WT_SHARPNESS` wins; 0 by default; applies while the game runs). A compute pass of our own after the upscaler, FSR 3.1,
+  DLSS or FSR 4 alike (`fsr_run` in `runtime/nvn_vk_fsr.c`, pass `P_SHARP`, `FI_OUT` to `FI_SHARP`): AMD's RCAS filter
+  (FSR 1, MIT) without its noise term, on the HDR colour brought into 0 .. 1 by c / (1 + max(c)). The lobe's scale is
+  FSR 2's, 2^(2s - 2). AMD's limiter lets a result reach 1.0, which is infinitely bright on the way back, so the peak here
+  is about twice the brightest of the five texels. It needs an upscaler mode, as the pass lives in `fsr_run`; the bloom
+  reads the sharpened picture too. One more image of the output's size while an upscaler is on.
+- **Checked**: the GLSL through glslangValidator; the formula on 300,000 random crosses in Python (finite, between 0 and
+  the peak, a flat area unchanged); `nvn_vk.c` compiles on Linux; `tests/pcmenu_selftest.c`. **Not run in the game**: no
+  picture of it exists yet, and the validation layer has not seen the pass.
+- **The row is "Upscaling"** in the PC panel and the launcher (it was "FSR 3.1 / DLSS / FSR 4" and "FSR 3.1"), and its
+  FSR 3.1 values carry their name ("FSR 3 Quality"), as DLSS's and FSR 4's did.
+- **The launcher** lists all 16 upscaler values (it showed `fsr4_balanced` as written in the file), and its settings have
+  a fourth section, "Upscaling" (the upscaler, sharpness, the three frame generation rows): Graphics had 13 rows and the
+  converted textures' row where 10 fit, so the last ones were under the window's edge and out of the mouse's reach.
 
 ## Frame generation with the player's DLLs (2026-11-16; issue 119; generators NOT RUN yet)
 
