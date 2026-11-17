@@ -571,6 +571,19 @@ float fps_fs(Ctx *c, uint64_t key, uint64_t field) {
     r->f = f; r->U = n; r->S = fc_gtab[n & 255];
     return f;
 }
+/* a smoothing x += k (T - x) a frame (lifter/eh.rs FPS_EASE_SITES; k in s<r>): k becomes 1 - (1 - k)^step, what frames of
+ * this update's length add up to in the same time; unchanged at a step of 1.0. Off: stock. */
+void fps_ease(Ctx *c, int r) {
+    float k = c->v[r].f[0], st = fc_stab[__atomic_load_n(&g_upd, __ATOMIC_ACQUIRE) & 255];
+    if (fc_sites_on() && st != 1.0f && k > 0.0f && k < 1.0f) c->v[r].f[0] = 1.0f - powf(1.0f - k, st);
+}
+/* the same for a site of shared code, only while the chapter select runs: r < 0 is its update (once an update), else the
+ * k is eased when that ran in this update or the one before (the two are not ordered here). */
+void fps_ease_map(Ctx *c, int r) {
+    static uint64_t map_upd = ~(uint64_t)0 - 1;
+    uint64_t n = __atomic_load_n(&g_upd, __ATOMIC_ACQUIRE);
+    if (r < 0) map_upd = n; else if (n - map_upd <= 1) fps_ease(c, r);
+}
 /* f_71007077d0(w0): the game's set / clear of flag 28, called by a scene's start (0x7100bb1bf4) and end (0x7100bb2a6c, after it
  * zeroes the movie handle at +168). A movie scene left without it plays on with the subtitles of a 30 fps scene (#72), so it is
  * set again here. Not seen on Linux; the line in the log tells whether that is what a reporter's PC does. */
