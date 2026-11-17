@@ -138,6 +138,28 @@ static const char k_fsr_mv[] =
     "  vec4 q = u.m * vec4(ndc, texelFetch(depth_tex, p, 0).r, 1.0);\n  vec2 pn = q.xy / q.w;\n"
     "  imageStore(mv_out, p, vec4((pn.x - ndc.x) * 0.5, (ndc.y - pn.y) * 0.5, 0.0, 0.0));\n}\n";
 
+/* our pass: sharpening of the upscaled picture (sharpness, any upscaler mode), FI_OUT to FI_SHARP. The filter is AMD's RCAS
+ * (FidelityFX FSR 1, ffx_fsr1.h FsrRcasF, MIT: third_party/fsr3/LICENSE.txt) without its noise term, written out here: a
+ * cross of five texels, the negative lobe limited so the result stays between 0 and a peak. It works on the HDR colour
+ * brought into 0 .. 1 by c / (1 + max(c)) and taken back after. AMD's peak is 1.0, which is infinitely bright on the way
+ * back (a lone bright texel at full strength reaches it), so the peak here is 2M / (1 + M) with M the cross's brightest:
+ * about twice as bright as that. k = (lobe scale, width, height). */
+static const char k_fsr_sharp[] =
+    "#version 450\n#extension GL_EXT_samplerless_texture_functions : require\nlayout(local_size_x = 8, local_size_y = 8) in;\n"
+    "layout(set = 0, binding = 0) uniform texture2D src;\nlayout(set = 0, binding = 1) writeonly uniform image2D dst;\n"
+    "layout(set = 0, binding = 2, std140) uniform U { vec4 k; } u;\n"
+    "vec3 ld(ivec2 p) {\n  vec3 c = max(texelFetch(src, clamp(p, ivec2(0), ivec2(u.k.yz) - 1), 0).rgb, vec3(0.0));\n"
+    "  return c / (1.0 + max(c.r, max(c.g, c.b)));\n}\n"
+    "void main() {\n  ivec2 p = ivec2(gl_GlobalInvocationID.xy);\n  if (p.x >= int(u.k.y) || p.y >= int(u.k.z)) return;\n"
+    "  vec3 b = ld(p + ivec2(0, -1)), d = ld(p + ivec2(-1, 0)), e = ld(p), f = ld(p + ivec2(1, 0)), h = ld(p + ivec2(0, 1));\n"
+    "  vec3 mn = min(min(b, d), min(f, h)), mx = max(max(b, d), max(f, h));\n"
+    "  vec3 m = max(mx, e), pk = 2.0 * m / (1.0 + m);\n"
+    "  vec3 lo = min(mn, e) / max(4.0 * mx, vec3(1e-6)), hi = (pk - m) / min(4.0 * mn - 4.0 * pk, vec3(-1e-6));\n"
+    "  vec3 lv = max(-lo, hi);\n  float lobe = max(-0.1875, min(max(lv.r, max(lv.g, lv.b)), 0.0)) * u.k.x;\n"
+    "  vec3 c = max((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), vec3(0.0));\n"
+    "  c /= max(1.0 - max(c.r, max(c.g, c.b)), 1.0 / 65536.0);\n"
+    "  imageStore(dst, p, vec4(c, texelFetch(src, p, 0).a));\n}\n";
+
 static const char *fsr_file(const char *name) {
     for (size_t i = 0; i < sizeof k_fsr_files / sizeof k_fsr_files[0]; i++) if (!strcmp(k_fsr_files[i].name, name)) return k_fsr_files[i].text;
     return NULL;
@@ -169,20 +191,20 @@ static void fsr_emit(FsrStr *s, const char *name, int top) {
 
 /* ---- resources (AMD's internal and shared resources, plus our motion vectors and output) */
 enum { FI_ACC1, FI_ACC2, FI_LUMA1, FI_LUMA2, FI_FP16X1, FI_SHADING, FI_LOCKS, FI_UP1, FI_UP2, FI_SPD, FI_FDMIP1, FI_LH1, FI_LH2, FI_ATOMIC,
-       FI_REACT, FI_LUT, FI_DEFR, FI_INFO, FI_DDEPTH, FI_DMV, FI_PREVD, FI_MV, FI_OUT, FI_N };
+       FI_REACT, FI_LUT, FI_DEFR, FI_INFO, FI_DDEPTH, FI_DMV, FI_PREVD, FI_MV, FI_OUT, FI_SHARP, FI_N };      /* FI_SHARP: FI_OUT sharpened (fsr_run), as FI_OUT is made */
 static const struct { VkFormat f; uint8_t size; } k_fi[FI_N] = {      /* size: 0 the scene's (render), 1 half of it, 2 one texel, 3 the 128 x 1 LUT, 4 the output's (AMD's maxUpscaleSize) */
     {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R8_UNORM, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0}, {VK_FORMAT_R16_SFLOAT, 0},
     {VK_FORMAT_R8_UNORM, 1}, {VK_FORMAT_R8_UNORM, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4}, {VK_FORMAT_R16G16B16A16_SFLOAT, 4},
     {VK_FORMAT_R16G16_SFLOAT, 1}, {VK_FORMAT_R16_SFLOAT, 1}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0}, {VK_FORMAT_R16G16B16A16_SFLOAT, 0},
     {VK_FORMAT_R32_UINT, 2}, {VK_FORMAT_R8G8B8A8_UNORM, 0}, {VK_FORMAT_R16_SNORM, 3}, {VK_FORMAT_R8_UNORM, 2}, {VK_FORMAT_R32G32B32A32_SFLOAT, 2},
-    {VK_FORMAT_R32_SFLOAT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_R32_UINT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_UNDEFINED, 4},
+    {VK_FORMAT_R32_SFLOAT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_R32_UINT, 0}, {VK_FORMAT_R16G16_SFLOAT, 0}, {VK_FORMAT_UNDEFINED, 4}, {VK_FORMAT_UNDEFINED, 4},
 };
 typedef struct { VTex *vt; VkImageView all, lvl[6]; } FImg;
 
 /* ---- passes: bindings as AMD's pass files define them (checked against the SPIR-V) */
 enum { K_SRV, K_UAV, K_CB };
-enum { R_COLOR = FI_N, R_DEPTH, R_ACC_S, R_ACC_U, R_UP_S, R_UP_U, R_LH_S, R_LH_U, R_LUMA_C, R_LUMA_P, R_SPD0, R_CB_FSR = R_SPD0 + 6, R_CB_SPD, R_CB_MV };
-enum { P_MV, P_PREP, P_LUMA, P_SCPYR, P_SC, P_REACT, P_INST, P_ACC, P_N };
+enum { R_COLOR = FI_N, R_DEPTH, R_ACC_S, R_ACC_U, R_UP_S, R_UP_U, R_LH_S, R_LH_U, R_LUMA_C, R_LUMA_P, R_SPD0, R_CB_FSR = R_SPD0 + 6, R_CB_SPD, R_CB_MV, R_CB_SHARP };
+enum { P_MV, P_PREP, P_LUMA, P_SCPYR, P_SC, P_REACT, P_INST, P_ACC, P_SHARP, P_N };
 typedef struct { const char *file; uint8_t n; struct { uint8_t b, k, r; } b[15]; } FPass;
 #define S_(b, r) {b, K_SRV, r}
 #define U_(b, r) {b, K_UAV, r}
@@ -201,6 +223,7 @@ static const FPass k_fpass[P_N] = {
                                                         U_(8, FI_FP16X1), C_(9, R_CB_FSR)}},
     {"ffx_fsr3upscaler_accumulate_pass.glsl", 13, {S_(0, FI_INFO), S_(1, FI_REACT), S_(2, FI_DMV), S_(3, R_UP_S), S_(4, FI_LUT), S_(5, FI_FDMIP1), S_(6, R_LUMA_C), S_(7, FI_FP16X1),
                                                   S_(8, R_COLOR), U_(9, R_UP_U), U_(10, FI_OUT), U_(11, FI_LOCKS), C_(12, R_CB_FSR)}},
+    {NULL, 3, {S_(0, FI_OUT), U_(1, FI_SHARP), C_(2, R_CB_SHARP)}},
 };
 #undef S_
 #undef U_
@@ -209,8 +232,9 @@ static const FPass k_fpass[P_N] = {
 static struct {
     int ok;                                        /* 0 not tried, 1 ready, -1 not available here (logged once) */
     VkPipeline pipe[P_N]; VkPipelineLayout pl[P_N]; VkDescriptorSetLayout dl[P_N]; VkSampler smp[2];
-    VkBuffer ubo; VMem ubo_mem; uint32_t ubo_pos, ubo_al, cb_off[3];
-    int w, h, uw, uh, blit; FImg img[FI_N];        /* w, h: the scene's (render) size; uw, uh: the output's; blit: the output is RGBA16F (no storage for the scene's format) */
+    VkBuffer ubo; VMem ubo_mem; uint32_t ubo_pos, ubo_al, cb_off[4];
+    int w, h, uw, uh, blit, out; FImg img[FI_N];      /* out: FI_OUT or FI_SHARP, the finished picture of the last run */
+           /* w, h: the scene's (render) size; uw, uh: the output's; blit: the output is RGBA16F (no storage for the scene's format) */
     Tex *col; LONG64 up_frame, missed;             /* col: the scene colour of the last run; up_frame: FI_OUT filled from it without FSR (fsr_up_view) */
     FsrConst k; uint32_t res_index; int fresh;    /* fresh: resources just made: clear them, reset */
     double prev_vp[16]; float prev_fwd[3], prev_pos[3]; int have_prev;
@@ -274,7 +298,7 @@ static const char *fsr_unable(void) {               /* what the device lacks for
     if (!fmt_supported(VK_FORMAT_R32_UINT, VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT)) return "no image atomics on R32_UINT";
     return NULL;
 }
-static int fsr_setup(void) {                       /* render thread, once: samplers, the uniform ring, the 8 pipelines */
+static int fsr_setup(void) {                       /* render thread, once: samplers, the uniform ring, the 9 pipelines */
     const char *why = fsr_unable();
     if (why) { fsr_off(why); return 0; }
     LONG64 t0 = tk();
@@ -304,9 +328,9 @@ static int fsr_setup(void) {                       /* render thread, once: sampl
         pli.setLayoutCount = 1; pli.pSetLayouts = &F.dl[p];
         VKC(vkCreatePipelineLayout(V.device, &pli, NULL, &F.pl[p]));
         FsrStr src = {0};
-        if (k_fpass[p].file) fsr_emit(&src, k_fpass[p].file, 1); else fsr_put(&src, k_fsr_mv, sizeof k_fsr_mv - 1);
+        if (k_fpass[p].file) fsr_emit(&src, k_fpass[p].file, 1); else if (p == P_SHARP) fsr_put(&src, k_fsr_sharp, sizeof k_fsr_sharp - 1); else fsr_put(&src, k_fsr_mv, sizeof k_fsr_mv - 1);
         uint64_t h;
-        char what[96]; snprintf(what, sizeof what, "FSR pass %s", k_fpass[p].file ? k_fpass[p].file : "camera motion vectors");
+        char what[96]; snprintf(what, sizeof what, "FSR pass %s", k_fpass[p].file ? k_fpass[p].file : p == P_SHARP ? "sharpening" : "camera motion vectors");
         VkShaderModule mod = src.p ? module_from_glsl(5, src.p, what, &h) : NULL;
         free(src.p);
         if (!mod) { fsr_off("a pass did not compile (the line before names it)"); return 0; }
@@ -317,7 +341,7 @@ static int fsr_setup(void) {                       /* render thread, once: sampl
         if (r != VK_SUCCESS) { fsr_off("vkCreateComputePipelines failed"); return 0; }
     }
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
-    printf("nvn_vk_fsr: FSR 3.1.4 ready (8 compute pipelines, %.0f ms)\n", (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
+    printf("nvn_vk_fsr: FSR 3.1.4 ready (9 compute pipelines, %.0f ms)\n", (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart);
     F.ok = 1;
     return 1;
 }
@@ -329,7 +353,7 @@ static void fsr_resize(int w, int h, int uw, int uh, VkFormat col) {      /* the
     for (int i = 0; i < FI_N; i++) {
         int s = k_fi[i].size, iw = s == 0 ? w : s == 4 ? uw : s == 1 ? w / 2 : s == 3 ? 128 : 1, ih = s == 0 ? h : s == 4 ? uh : s == 1 ? h / 2 : 1, lv = 1;
         if (i == FI_SPD) { int m = iw > ih ? iw : ih; while (m > 1) { m >>= 1; lv++; } }      /* AMD: the whole chain */
-        fsr_img(&F.img[i], i == FI_OUT ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f, iw, ih, lv, i == FI_MV && fsr_mv_on() ? 3 : i != FI_LUT);      /* (size 4 also holds the locks and the history) */
+        fsr_img(&F.img[i], i == FI_OUT || i == FI_SHARP ? (F.blit ? VK_FORMAT_R16G16B16A16_SFLOAT : col) : k_fi[i].f, iw, ih, lv, i == FI_MV && fsr_mv_on() ? 3 : i != FI_LUT);      /* (size 4 also holds the locks and the history) */
     }
     {   /* AMD's Lanczos-2 table (fsr3upscalerCreate): bound by the accumulate pass */
         int16_t lut[128];
@@ -546,27 +570,36 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     fsr_dispatch(P_ACC, (uint32_t)(uw + 7) / 8, (uint32_t)(uh + 7) / 8);      /* at the output's size (AMD: dispatchDst) */
     F.res_index = (F.res_index + 1) % 16;
     }
+    F.out = FI_OUT;
+    if (gfx_options()->sharpness > 0.0f) {         /* issue 119: after any of the three upscalers; the lobe's scale as FSR 2 has it, 2 stops down at 0 */
+        float u[4] = {exp2f(2.0f * gfx_options()->sharpness - 2.0f), (float)uw, (float)uh, 0.0f};
+        F.cb_off[3] = fsr_ubo(u, sizeof u);
+        fsr_barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);      /* DLSS's or FSR 4's write of FI_OUT */
+        fsr_dispatch(P_SHARP, (uint32_t)(uw + 7) / 8, (uint32_t)(uh + 7) / 8);
+        F.out = FI_SHARP;
+    }
+    VTex *fo = F.img[F.out].vt;
 
     /* the result into the scene's colour: the bloom reads it there (a 2 x 2 gather that needs the scene's size); at another size
      * the tonemap reads FI_OUT itself (fsr_up_view) and this is a linear reduction */
     VkImageSubresourceLayers sl = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     if (uw != w || uh != h) {
-        if (fmt_supported(vc->fmt, VK_FORMAT_FEATURE_BLIT_DST_BIT) && rs_filter(F.img[FI_OUT].vt) == VK_FILTER_LINEAR) {      /* shortcut: one linear step also above 2:1 (Ultra Performance): bloom may shimmer a little there; reduce in 2:1 steps if it shows */
+        if (fmt_supported(vc->fmt, VK_FORMAT_FEATURE_BLIT_DST_BIT) && rs_filter(fo) == VK_FILTER_LINEAR) {      /* shortcut: one linear step also above 2:1 (Ultra Performance): bloom may shimmer a little there; reduce in 2:1 steps if it shows */
             vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             VkImageBlit b; memset(&b, 0, sizeof b);
             b.srcSubresource = b.dstSubresource = sl; b.srcOffsets[1].x = uw; b.srcOffsets[1].y = uh; b.dstOffsets[1].x = w; b.dstOffsets[1].y = h; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
-            vkCmdBlitImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+            vkCmdBlitImage(R.cmd, fo->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
         }
     } else if (F.blit) {
         vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageBlit b; memset(&b, 0, sizeof b);
         b.srcSubresource = b.dstSubresource = sl; b.srcOffsets[1].x = b.dstOffsets[1].x = w; b.srcOffsets[1].y = b.dstOffsets[1].y = h; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
-        vkCmdBlitImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
+        vkCmdBlitImage(R.cmd, fo->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
     } else {
         vt_layout(vc, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageCopy c; memset(&c, 0, sizeof c);
         c.srcSubresource = c.dstSubresource = sl; c.extent.width = (uint32_t)w; c.extent.height = (uint32_t)h; c.extent.depth = 1;
-        vkCmdCopyImage(R.cmd, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        vkCmdCopyImage(R.cmd, fo->img, VK_IMAGE_LAYOUT_GENERAL, vc->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     }
     game_fsr_w = w; game_fsr_h = h;
     if (F.runs++ == 0) printf("nvn_vk_fsr: first run at %dx%d to %dx%d (%d jitter phases) before a %s draw, jitter %.3f, %.3f px\n", w, h, uw, uh, game_fsr_phases, fx == FX_DOWN ? "bloom downsample" : "tonemap",
@@ -674,9 +707,9 @@ static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view) {
         b.srcOffsets[1].x = vt->w; b.srcOffsets[1].y = vt->h; b.dstOffsets[1].x = F.uw; b.dstOffsets[1].y = F.uh; b.srcOffsets[1].z = b.dstOffsets[1].z = 1;
         vkCmdBlitImage(R.cmd, vt->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, F.img[FI_OUT].vt->img, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);
         fsr_barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-        F.up_frame = F.frame; F.missed++;
+        F.up_frame = F.frame; F.missed++; F.out = FI_OUT;
     }
-    return F.img[FI_OUT].all;
+    return F.img[F.out].all;
 }
 static int fsr_reads(VStage *fs, Tex *want) {      /* the fragment stage samples this texture at some unit */
     for (int i = 0; fs && i < fs->nsmp; i++) {

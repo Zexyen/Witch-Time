@@ -61,7 +61,7 @@ const char* phase_of(const std::string& step)
 struct SettingDef {
 	const char *key, *name, *note;
 	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
-	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls
+	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Upscaling, 3 Controls
 	const char *dflt = nullptr;                                 // the reader's value when the key is not in the file; else the first option
 	const char *file = "/graphics.ini", *section = "";
 };
@@ -83,11 +83,15 @@ const std::vector<SettingDef>& setting_defs()
 			1, "1.0"},
 		{"model_lod", "Model detail", "Highest keeps the finest detail at any distance", {{"game", "Game"}, {"highest", "Highest"}}, 1},
 		{"film_grain", "Film grain", "The game's moving noise; the vignette stays", {{"on", "On"}, {"off", "Off"}}, 1},
-		{"upscaler", "FSR 3.1", "Smooths edges; Quality and below upscale (experimental)",
-			{{"off", "Off"}, {"fsr3", "Native AA"}, {"fsr3_quality", "Quality"}, {"fsr3_balanced", "Balanced"}, {"fsr3_performance", "Performance"}, {"fsr3_ultra_performance", "Ultra Performance"}}, 1},
-		{"frame_generation", "Frame generation", "A generated picture between frames; needs FSR on and your own DLLs (experimental)", {{"off", "Off"}, {"on", "On"}}, 1},
-		{"frame_generator", "Frame generation: type", "FSR (AMD's DLLs) or DLSS (NVIDIA's, RTX 40 or newer)", {{"fsr", "FSR"}, {"dlss", "DLSS"}}, 1},
-		{"frame_generation_hud", "Frame generation: HUD", "On keeps the HUD sharp on generated pictures", {{"on", "On"}, {"off", "Off"}}, 1},
+		{"upscaler", "Upscaling", "DLSS and FSR 4 need your own DLLs",
+			{{"off", "Off"}, {"fsr3", "FSR 3 Native AA"}, {"fsr3_quality", "FSR 3 Quality"}, {"fsr3_balanced", "FSR 3 Balanced"}, {"fsr3_performance", "FSR 3 Performance"}, {"fsr3_ultra_performance", "FSR 3 Ultra Performance"},
+			 {"dlaa", "DLAA"}, {"dlss_quality", "DLSS Quality"}, {"dlss_balanced", "DLSS Balanced"}, {"dlss_performance", "DLSS Performance"}, {"dlss_ultra_performance", "DLSS Ultra Performance"},
+			 {"fsr4", "FSR 4 Native AA"}, {"fsr4_quality", "FSR 4 Quality"}, {"fsr4_balanced", "FSR 4 Balanced"}, {"fsr4_performance", "FSR 4 Performance"}, {"fsr4_ultra_performance", "FSR 4 Ultra Performance"}}, 2},
+		{"sharpness", "Sharpness", "Sharpens the picture after the upscaler; needs Upscaling on",
+			{{"0", "Off"}, {"20", "20 %"}, {"40", "40 %"}, {"60", "60 %"}, {"80", "80 %"}, {"100", "100 %"}}, 2},
+		{"frame_generation", "Frame generation", "A generated picture between frames; needs Upscaling on and your own DLLs", {{"off", "Off"}, {"on", "On"}}, 2},
+		{"frame_generator", "Frame generation: type", "FSR (AMD's DLLs) or DLSS (NVIDIA's, RTX 40 or newer)", {{"fsr", "FSR"}, {"dlss", "DLSS"}}, 2},
+		{"frame_generation_hud", "Frame generation: HUD", "On keeps the HUD sharp on generated pictures", {{"on", "On"}, {"off", "Off"}}, 2},
 		{"hdr", "HDR", "Auto follows the desktop's HDR; lights go above white", {{"auto", "Auto"}, {"off", "Off"}, {"on", "On"}}, 1},
 		{"hdr_paper_white", "HDR white", "The game's white with HDR on; Auto is the desktop's",
 			{{"auto", "Auto"}, {"100", "100 nits"}, {"150", "150 nits"}, {"200", "200 nits"}, {"250", "250 nits"}, {"300", "300 nits"}, {"400", "400 nits"}}, 1},
@@ -97,8 +101,8 @@ const std::vector<SettingDef>& setting_defs()
 		{"aspect_ratio", "Aspect ratio", "Unlocked takes the window's shape; next start", {{"16:9", "Fixed"}, {"auto", "Unlocked"}}, 1},
 		{"hud_area", "HUD layout", "Wider than 16:9: HUD at the edges, or centred", {{"screen", "Full Screen"}, {"16:9", "Centered"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
-			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 3, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 3, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -219,7 +223,7 @@ bool App::init(int argc, char** argv)
 	refresh_build();
 	update::check(paths);
 	if (const char* t = std::getenv("WITCHTIME_TAB"))       // test aid: the settings' section
-		tab = std::atoi(t) % 3;
+		tab = std::atoi(t) % 4, model.DirtyVariable("tab");   // (the model was made with section 0)
 	if (const char* s = std::getenv("WITCHTIME_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -1149,7 +1153,7 @@ void App::refresh_settings(int bumped)
 
 void App::set_tab(int t)
 {
-	tab = (t + 3) % 3;
+	tab = (t + 4) % 4;
 	model.DirtyVariable("tab");
 	refresh_settings();
 	want_focus = true;

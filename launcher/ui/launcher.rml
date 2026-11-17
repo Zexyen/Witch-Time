@@ -216,14 +216,16 @@
 		<p>The game's PC Settings panel (F1, or Start + Select) has these settings too, and more.</p>
 		<p data-if="tab == 0">The window, the display and the frame rate.</p>
 		<p data-if="tab == 1">What the game draws and how sharply.</p>
-		<p data-if="tab == 2">Prompts and menu buttons. Every button of gameplay is rebound in the game's panel, under Controls.</p>
+		<p data-if="tab == 2">Upscalers, sharpening and frame generation. All experimental.</p>
+		<p data-if="tab == 3">Prompts and menu buttons. Every button of gameplay is rebound in the game's panel, under Controls.</p>
 		<p class="small" data-if="tab == 1">{{ tex_note }}</p>
 	</div>
 	<div class="tabs">
 		<img class="gl" data-attr-src="glyph_tab_l" data-event-click="tab(tab - 1)"/>
 		<div class="tab" data-class-on="tab == 0" data-event-click="tab(0)"><div>Display</div></div>
 		<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
-		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
+		<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Upscaling</div></div>
+		<div class="tab" data-class-on="tab == 3" data-event-click="tab(3)"><div>Controls</div></div>
 		<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
 	</div>
 	<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-nav-up="i == 0 ? 'none' : 'vertical'" data-style-left="(620 + row_step * i) + 'dp'" data-style-top="(110 + row_pitch * i) + 'dp'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * i) + 's cubic-out stair-in-r' + tab">
