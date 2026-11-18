@@ -132,9 +132,14 @@ void run_update(Paths paths, std::string tag, std::string url, std::string sha25
 	if (code)
 		return set(State::failed, "Download failed: " + (out.empty() ? "is curl installed?" : out));
 	set(State::working, "Checking " + tag + "...");
-	std::string got = run_capture({paths.build + "/wtbuild" WT_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
-	if (code || got != sha256)
-		return set(State::failed, "The download is damaged (checksum mismatch); try again");
+	std::string got = run_capture({paths.build + "/wtbuild" WT_EXE, "sha256", archive}, paths.build, &code);
+	got.erase(got.find_last_not_of("\r\n") + 1);
+	if (size_t at = got.find(archive + ": "); at != std::string::npos)
+		got.erase(at, archive.size() + 2);    // wtbuild names the file first, and the band has room for the reason only
+	if (code)    // #248: not a damaged download: the file could not be read, or wtbuild did not run
+		return set(State::failed, "Cannot check the download: " + (got.empty() ? "build/wtbuild" WT_EXE " did not start" : got));
+	if (got.substr(0, 64) != sha256)    // the size tells a cut or replaced download (a few KB) from changed bytes
+		return set(State::failed, "The download is damaged (checksum mismatch, " + std::to_string(fs::file_size(to_path(archive), ec)) + " bytes); try again");
 	set(State::working, "Unpacking " + tag + "...");
 	out = run_capture({"tar", "-xf", archive, "-C", dir + "/new"}, paths.build, &code);
 	if (code)
