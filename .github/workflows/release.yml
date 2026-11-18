@@ -366,9 +366,10 @@ jobs:
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           # intel_tex_2 packs its encoder for MSVC only: the same archives under the names it asks for on this target, the
           # C++ half of its ASTC encoder and MSVC's libraries empty (only BC7 is called; msvc_shim in src/texpack.rs)
+          # (-MT or -MD by whether the Rust on the runner reports crt-static to build scripts: it stopped on 2026-11-18)
           ispc="$(ls -d ~/.cargo/registry/src/*/intel_tex_2-*/src/ispc)"; libs="$RUNNER_TEMP/ispc-gnullvm"; mkdir -p "$libs"
           for k in kernel kernel_astc; do cp "$ispc/${k}x86_64-pc-windows-msvc.lib" "$libs/lib${k}x86_64-pc-windows-gnullvm.a"; done
-          for e in ispc_texcomp_astcx86_64-pc-windows-gnullvm-MT LIBCMT OLDNAMES libcpmt; do llvm-ar rcs "$libs/lib$e.a"; done
+          for e in ispc_texcomp_astcx86_64-pc-windows-gnullvm-MT ispc_texcomp_astcx86_64-pc-windows-gnullvm-MD LIBCMT OLDNAMES libcpmt; do llvm-ar rcs "$libs/lib$e.a"; done
           export CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS="-C target-feature=+crt-static -L native=$libs"
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml --target x86_64-pc-windows-gnullvm
 
