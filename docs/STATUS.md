@@ -758,6 +758,13 @@ halved in 2:1 steps first).
   520x360 class is now drawn in the scene's pixels (`rs_extra_scale`, 1440 / 520 times the scale; 7.7 times the pixels of
   the pass, 604 MB of scaled images against 403 MB at 1.6). Tested on RADV at 1.6 as patches on the v0.9.3 tree; not on
   NVIDIA, Windows, Metal, or with FSR.
+- **Issue 259, the cloud sea of Chapter 6's boss at a scale** (2026-11-19). That fight (`p2c0_Boss_battle_game`, Verse 11)
+  draws its clouds into 800x420 targets, not 520x360: not in `rs_extra_class`, so never scaled. The sky's draws (fs #2607,
+  #2623, #5757, #6141, #5577) read the 800x420x3 array at gl_FragCoord / the scene's size and also sample a small texture
+  (a 32x32 cube, 16x16, 4x4), so the dither's own-pixels rule (`g_fs_small` without `g_fs_screen`) gave them the image's
+  pixels: the clouds were magnified by the scale and cut off at 1 / scale of the picture, streaks beyond. A colour array
+  the game has drawn into (`VTex.drawn`) now counts as a screen image in that rule. Reproduced and checked on RADV at 1.2
+  and 1.6; the 800x420 pass itself still draws at the game's size at any scale (the console's sharpness).
 - **Measurements later on 2026-10-25 were taken with other programs loading the machine** (a game in Java at about two
   cores and the GPU, two long-running emulator processes): 4K runs then gave 75-81 % of frames at 60 whatever the setting
   (the 96 % above was an idle machine). Only A/B runs interleaved under the same load are compared.
