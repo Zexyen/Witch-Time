@@ -1,0 +1,68 @@
+name: Bug report
+description: Something fails or looks wrong in setup, the launcher or the game
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Witch Time version
+      placeholder: v0.12.2
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it happens
+      options:
+        - Setup or build (check dump, build steps, update)
+        - Launcher
+        - In the game
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux
+        - SteamOS (Steam Deck or another handheld)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card and driver version
+      placeholder: RX 6700 XT, Adrenalin 25.10.2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: >-
+        What you see and what you expected. For the game: the chapter and verse, and the exit code if the launcher shows one.
+        For setup: the step that fails and its full message. A picture or a short video helps a lot with graphics problems.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The steps from the start of the game or the launcher. Say if it happens every time. A save file close to the place helps.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >-
+        Drag the file in here, from the folder Witch Time is installed in. Game: `build/run/witch-time-game.log`, taken right
+        after the problem (the next start of the game replaces it). Setup or build: the files in `build/logs/`.
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: Mods and changed settings
+      description: Mods in use, and what you changed in the settings (frame rate, resolution, upscaling, HDR) or attach `config/graphics.ini`.
