@@ -830,6 +830,7 @@ struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
     int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
+    int drawn;                                     /* [witchtime] issue 259: has been the colour target of a pass */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
     int post;                                      /* [witchtime] issue 118: of the picture's scale (after FSR), not the scene's (rs_size) */
     VView *views; VTex *next, *prev;
@@ -1908,7 +1909,7 @@ static int pass_begin(void) {
         if (!t || t->dead) continue;
         VTex *vt = vt_get(t);
         if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { nvn_vk_missing("a depth format bound as colour target"); continue; }
-        t->gpu_written = 1;
+        t->gpu_written = 1; vt->drawn = 1;
         vt_layout(vt, vt->feedback ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         ca[i].imageView = target_view(&R.col[i], vt); ca[i].imageLayout = vt->layout;
         if (!w) { w = lvl_(vt->w, target_level(&R.col[i])); h = lvl_(vt->h, target_level(&R.col[i])); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
@@ -2122,7 +2123,10 @@ static int g_filter_draw;
  * game's pixels (mx_fcs), so at a ratio that is not a whole number (21:9: 1600 game pixels over 2100) neighbouring pixels
  * read the pattern unevenly and it shows as a coarser grid of crosses. A draw whose fragment stage samples no screen-class
  * image (scaled, or kept at the game's size: those are read by screen position) and samples a small texture (64 x 64 or
- * less: a pattern) gets the image's own pixels instead (mx_fcs 1): the pattern is even, at the image's resolution. */
+ * less: a pattern) gets the image's own pixels instead (mx_fcs 1): the pattern is even, at the image's resolution.
+ * [issue 259] A colour array the game draws into is a screen image too, scaled or not: the cloud pass of a stage whose size
+ * is not in rs_extra_class (Chapter 6's boss: 800x420x3) is read at gl_FragCoord / the scene's size by the sky's draws, which
+ * also sample a 32x32 cube: with the image's own pixels the clouds were cut off at 1 / scale of the picture, streaks beyond. */
 static int g_fs_screen, g_fs_small;
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
@@ -2149,7 +2153,7 @@ static void resolve_sampler(int s, VStage *v, int i) {
         VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's phase of the dither while FSR runs (may end the pass) */
         if (!dither) dither = fsr_up_view(s, t, vt, &view);           /* [witchtime] issue 118: FSR's output for a tonemap at the picture's scale (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
-        if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
+        if (s == 1) { if (vt->rs || rs_keep_has(t) || (vt->drawn && t->b.target == 4)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
         EView e;
         int attached = R.depth.tex == t, dim = v->smp[i].dim;
         for (int k = 0; k < R.ncol; k++) attached |= R.col[k].tex == t;
