@@ -618,6 +618,24 @@ void h_model_lod(Ctx *c) {
     if (!game_model_lod) { const char *e = getenv("WT_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
     if (game_model_lod == 2 && (*out > 0 || (*out == -1 && levels > 0))) *out = 0;
 }
+/* [witchtime] issue 245: DLAA takes no scene smaller than its output, so the game's resolution levels are held at the top,
+ * for every player. 71006d3bb4, once a frame, picks the scene's target set (8 sets, 1600x896 .. 640x360; 0 and 1 are both 1600x896).
+ * In play (no flag at G + 0x4a44 / 0x4a38, G = *0x710249c4a8) the set is table[min(n, cap) + 3] of {1, 1, 2, 3, 4, 5, 6}
+ * (0x710183beb4), n = the int at G + 0x4a34 plus a global's and a flag's part: 0 gives set 3, 1440x816, and -3 or less the
+ * first entry, 1600x896. The int at G + 0xd610 (-1 as a rule) only moves the second index the function makes. Held: the
+ * selector runs with -8 there and the game's own number is put back.
+ * Not covered: set 7 (640x360), picked without n when *(*0x710249d0d8 + 816) is 1; never seen in a run. */
+B3_FN void f_71006d3bb4(Ctx *c);
+void h_res_select(Ctx *c) {
+    static int hold = -1;      /* WT_RES_HOLD=0: the game's own levels (TEST) */
+    if (hold < 0) { const char *e = getenv("WT_RES_HOLD"); hold = !e || atoi(e); }
+    uint64_t g; memcpy(&g, (void *)(uintptr_t)0x710249c4a8ull, 8);
+    if (!hold || !g) { f_71006d3bb4(c); return; }
+    int32_t *n = (int32_t *)(uintptr_t)(g + 0x4a34), was = *n;
+    *n = -8;
+    f_71006d3bb4(c);
+    *n = was;
+}
 /* TEST ONLY: RECOMPS_TEST_WITCHTIME=<s>[,<s>...]: Witch Time starts at those seconds after the first frame, as a dodge at the
  * last moment starts it: 0x71007a2894(manager *0x710249c470, w1..w5 0, speed s0 0.02, length s1 180 frames, s2 0; the
  * dodge's caller 0x710039d86c), called from the main loop's clock (the game's thread, between frames) with the guest's

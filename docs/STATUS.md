@@ -956,8 +956,10 @@ pipelines, 0.5 s once, then the SPIR-V cache), and a host of our own (`runtime/n
   game's velocity vertex stage, `modelshadervelocitymap.vso`, drawn again, or a previous-position output in the translator).
   Each change of the game's dynamic-resolution level (8 sets, 1600x896 .. 640x360;
   10 in 3.5 minutes of the route, mostly around the cutscene) makes the scene-size images again and resets the history; making
-  every report of a frame carry one timestamp did not stop them (the game seems to measure from frame to frame), so it was
-  taken out. Since issue 245 the upscaler's output keeps the largest size seen (while the picture's scale and shape stay), so
+  every report of a frame carry one timestamp did not stop them (the level is not timed: `0x71006d3bb4` picks the set from
+  numbers the scene sets), so it was taken out. The game is now held at its top level for every player (`h_res_select`,
+  `game_shim_eh.c`; `WT_RES_HOLD=0` gives the game's own levels, TEST): DLAA fails on a scene smaller than its output
+  (NGX 0xbad00005, issue 245), and a level change resets the upscaler's history. Since issue 245 the upscaler's output keeps the largest size seen (while the picture's scale and shape stay), so
   the output-size images, DLSS's feature and FSR 4's context survive a level: below the top level the upscaler writes the top
   level's size and one linear blit (`FI_LVL`) reduces the finished picture to the level's, which is what the bloom and the
   tonemap read, at the size they always had. Before, an RTX 3070 with DLAA had a long frame at each of 344 levels in 28

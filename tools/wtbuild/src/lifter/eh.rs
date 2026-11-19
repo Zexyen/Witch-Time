@@ -59,6 +59,7 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100aa4de4, "tabs_dtor"),
     (0x7100aa5718, "tabs_select"),
     (0x7100a32390, "options_list"),
+    (0x71006d3bb4, "res_select"),
 ];
 
 /// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as

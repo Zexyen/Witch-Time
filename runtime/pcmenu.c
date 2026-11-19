@@ -279,6 +279,13 @@ static int fonts_init(void) {
            stbtt_InitFont(&g_f_ui, k_font_ui, stbtt_GetFontOffsetForIndex(k_font_ui, 0)) &&
            stbtt_InitFont(&g_f_uib, k_font_uib, stbtt_GetFontOffsetForIndex(k_font_uib, 0));
 }
+/* Under g_lock, before anything is drawn. The fonts have their own test: the Options screen's rows (pcmenu_key_get) call
+ * menu_init without them, and a hint drawn after that read a font that was never set up (issue #245). */
+static int draw_ready(void) {
+    if (!g_f_ui.data && !fonts_init()) return 0;
+    if (!g_inited) menu_init();
+    return 1;
+}
 static void put(int x, int y, Rgb c, float a) {
     if (x < 0 || y < 0 || x >= g_pw || y >= g_ph || a <= 0) return;
     if (g_to) { if (a > 1) a = 1; layer_blend(x, y, c.b * a, c.g * a, c.r * a, a); return; }
@@ -880,7 +887,7 @@ static void draw_prep(int W, int H) {
 /* the render thread (nvn_vk_draw.c): the first-start screen's numbers; reading: the game data is still being read */
 void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info) {
     AcquireSRWLockExclusive(&g_lock);
-    if (!g_inited && fonts_init()) menu_init();
+    draw_ready();
     if (!g_prep.on || g_prep.pct != pct || g_prep.done != done || g_prep.total != total || g_prep.eta != eta || g_prep.reading != reading) g_ver++;
     g_prep.on = 1; g_prep.pct = pct; g_prep.done = done; g_prep.total = total; g_prep.eta = eta; g_prep.reading = reading;
     snprintf(g_prep.info, sizeof g_prep.info, "%s", info ? info : "");
@@ -911,8 +918,8 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
     }
     if (g_open || !ms || (shown && _stricmp(when, "always"))) return;
     shown = 1;
-    if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && fonts_init()) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
-    if (!g_inited) return;
+    AcquireSRWLockExclusive(&g_lock); int ok = draw_ready(); ReleaseSRWLockExclusive(&g_lock);
+    if (!ok) return;
     g_hint_until = GetTickCount64() + (ULONGLONG)ms;
     printf("pcmenu: the game's pause menu opened: the hint is shown for %d s\n", ms / 1000);
     nvn_front_post_pcmenu();                               /* its pixels into the staging buffer; the game's presents copy them */
