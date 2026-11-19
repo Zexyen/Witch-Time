@@ -1,0 +1,26 @@
+name: Feature request
+description: A setting or feature Witch Time should have
+labels: [Feature Request]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Witch Time is a port of the game as it shipped. Requests that change the game's own rules or content (cheats, new
+        moves, balance) are usually left to mods.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you want
+      description: What it should do, and where it would be (launcher, PC Settings panel, the game's Options).
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem it solves for you. If another port or game has it, name it.
+  - type: input
+    id: version
+    attributes:
+      label: Witch Time version
+      placeholder: v0.12.2
