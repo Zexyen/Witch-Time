@@ -1942,6 +1942,15 @@ The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
   6.18-6.33 ms a frame before, 5.54-5.68 after (a tenth less); the frame rate is at its cap either way on this PC.
   `WT_VK_TEXMEMO=2` and `WT_VK_CBPF=2` (both paths, compared) over the ride and 170 s of Shibuya: no difference found.
   Not run: Windows, NVIDIA and Intel, other chapters, a play by hand.
+- **Texture write-watch questions by frame (2026-11-20, issue 257)** (`nvn_gl.c` `tcl_build`; `WT_VK_TEXCLUSTER=2` as
+  before): the clusters a batch asks about whole were made of the ranges the batch before had checked. A frame of B3 is
+  two or three batches that draw with different textures, so a batch found almost none of its textures in them and each
+  asked for itself. They are now made of the ranges checked in this frame and the one before. The ride at
+  `frame_rate = 120` (`WT_VK_PREPTIME=1`): 505-534 questions a frame before, 122-135 after (own questions 455-480 to
+  under 1), `GetWriteWatch` 0.50-0.53 ms a frame to 0.21-0.22; the render thread's replay, three runs each way in turn,
+  5.49-5.52 ms to 5.26-5.29. A movie (ev6106, jumped to with `phase pc80_MOVIE_ev7010`) plays and advances both ways.
+  Not run: Windows (its `GetWriteWatch` refuses a range over the edge of an allocation; such a cluster asks texture by
+  texture as before), NVIDIA and Intel, a play by hand.
 
 | Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
 |---|---|---|---|---|---|---|
