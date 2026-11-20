@@ -4,7 +4,7 @@
 #include "tex_decode.h"
 static int lay_of(TexLayout *L, int target, int fmt, int w, int h, int d, int mips, int layout) {
     int b0 = layout & 255, b1 = layout >> 8 & 255;
-    return tex_layout(L, target, fmt, w, h, d, mips, 0, 0, b0 <= 4 ? b0 : -1, b1);
+    return tex_layout(L, target, fmt, w, h, d, mips, 0, 0, b0 <= 5 ? b0 : -1, b1);
 }
 long long tx_info(int target, int fmt, int w, int h, int d, int mips, int layout, int *levels, int *layers) {
     TexLayout L;

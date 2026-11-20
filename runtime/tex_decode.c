@@ -281,7 +281,7 @@ int tex_layout(TexLayout *L, int target, int nf, int width, int height, int dept
         int hb0 = (L->height + f->bh - 1) / f->bh;
         /* 3D textures use one-GOB-high blocks and stack slices instead (seen on the game's 16x16x16 colour
          * grading tables: only bh 0 / bd 16 gives an ordered cube; same rule as the tegra_swizzle crate) */
-        L->bh_log2 = packaged_bh_log2 >= 0 && packaged_bh_log2 <= 4 ? packaged_bh_log2 : L->is3d ? 0 : tex_rule_block_height_log2(hb0);
+        L->bh_log2 = packaged_bh_log2 >= 0 && packaged_bh_log2 <= 5 ? packaged_bh_log2 : L->is3d ? 0 : tex_rule_block_height_log2(hb0);
         L->bd_log2 = L->is3d ? tex_rule_block_depth_log2(L->depth) : 0;
     }
     {
