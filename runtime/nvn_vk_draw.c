@@ -2128,13 +2128,44 @@ static int g_filter_draw;
  * is not in rs_extra_class (Chapter 6's boss: 800x420x3) is read at gl_FragCoord / the scene's size by the sky's draws, which
  * also sample a 32x32 cube: with the image's own pixels the clouds were cut off at 1 / scale of the picture, streaks beyond. */
 static int g_fs_screen, g_fs_small;
+/* #257: nvn_front_handle for the handle bound at a unit, with the pools set now. The answer is kept while the pools and
+ * the handle stay as they were (nvn_front_pool_gen): a bind asks, and the draws that follow, most of which bind nothing
+ * new, read it here. Asking the pools for every sampler of every draw (a ride: 17,000 a frame, each entry out of the
+ * cache after the frame's ring copies) was 8 % of the render thread. WT_VK_TEXMEMO=0: asked every time; =2 (test): both,
+ * compared. Render thread only. */
+static int tex_lookup(int s, unsigned u, Tex **t, View *view, SamplerParams *sp) {
+    static struct { TexPool *tp; SamplerPool *sp; uint64_t nh; LONG64 gen1; Tex *t; View view; SamplerParams smp; int r; } memo[6][32], *m;
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("WT_VK_TEXMEMO"); on = e ? atoi(e) : 1; }
+    LONG64 gen1 = nvn_front_pool_gen() + 1;
+    uint64_t nh = R.nvn_tex[s][u];
+    int r;
+    m = &memo[s][u];
+    *t = NULL;
+    if (on && m->gen1 == gen1 && m->tp == R.tpool && m->sp == R.spool && m->nh == nh) {
+        r = m->r; *view = m->view; *sp = m->smp;
+        if ((r & 1) && !m->t->dead) *t = m->t; else r &= ~1;
+        if (on == 2) {
+            Tex *t2 = NULL; View v2 = *view; SamplerParams s2 = *sp;
+            int r2 = nvn_front_handle(R.tpool, R.spool, nh, &t2, &v2, &s2);
+            static int said;
+            if ((r2 != r || t2 != *t || ((r & 1) && memcmp(&v2, view, sizeof v2)) || ((r & 2) && memcmp(&s2, sp, sizeof s2))) && !said++) printf("nvn_vk_texmemo: FAILED: stage %d unit %u handle %llx: kept %d %p, the pools say %d %p\n", s, u, (unsigned long long)nh, r, (void *)*t, r2, (void *)t2);
+        }
+        return r;
+    }
+    r = nvn_front_handle(R.tpool, R.spool, nh, t, view, sp);
+    m->gen1 = gen1; m->tp = R.tpool; m->sp = R.spool; m->nh = nh; m->t = *t; m->r = r;
+    if (r & 1) m->view = *view;
+    if (r & 2) m->smp = *sp;
+    return r;
+}
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
     Tex *t = NULL;
     View view;
     SamplerParams sp;
     LONG64 rt0 = g_ptm_on > 0 ? tk() : 0;
-    int r = u < 32 ? nvn_front_handle(R.tpool, R.spool, R.nvn_tex[s][u], &t, &view, &sp) : 0;
+    int r = u < 32 ? tex_lookup(s, u, &t, &view, &sp) : 0;
     if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[0] += x - rt0; rt0 = x; }
     if ((r & 1) && s == 1 && t->b.format == 0x1 && t->b.target == 1 && t->b.height == g_rs_bh && t->b.width * 9 == t->b.height * 16) g_movie_y = 1;      /* [witchtime] a movie's Y plane */
     g_dtex[g_ndtex].view = g_dummy.v[v->smp[i].dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -2463,6 +2494,7 @@ static CB g_cb[CB_N];
 static CDisp g_cdisp[2048];
 static int g_ncdisp, g_cb_live, g_cb_pending, g_cb_cached = -1;
 static int g_live_idx[CB_N], g_live_n;                /* [witchtime] the entries made live in this batch (cb_live_add) */
+static uint64_t g_live_end[CB_N];                     /* #257: where each entry ended when it was added: the walks skip an entry that cannot hold or meet the range without reading its buffer */
 static uint64_t g_live_key[CB_N], g_live_max;         /* #156: the list is sorted by the address each entry was added with; the largest size added since it was empty */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
 /* WT_VK_CBKEEP: the buffer's bytes go to guest memory. With the snapshot of the fill (WT_VK_CBMERGE, the default) only
@@ -2993,14 +3025,15 @@ static int cb_live_from(uint64_t addr) {
 static void cb_live_add(CB *c) {
     if (g_live_n == CB_N) {                        /* full of entries that left state 1: keep the live ones */
         int n = 0;
-        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) { g_live_idx[n] = g_live_idx[i]; g_live_key[n++] = g_live_key[i]; }
+        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) { g_live_idx[n] = g_live_idx[i]; g_live_end[n] = g_live_end[i]; g_live_key[n++] = g_live_key[i]; }
         g_live_n = n;
     }
     if (!g_live_n) g_live_max = 0;
     int at = cb_live_from(c->addr);
     memmove(&g_live_idx[at + 1], &g_live_idx[at], (size_t)(g_live_n - at) * sizeof g_live_idx[0]);
     memmove(&g_live_key[at + 1], &g_live_key[at], (size_t)(g_live_n - at) * sizeof g_live_key[0]);
-    g_live_idx[at] = (int)(c - g_cb); g_live_key[at] = c->addr; g_live_n++;
+    memmove(&g_live_end[at + 1], &g_live_end[at], (size_t)(g_live_n - at) * sizeof g_live_end[0]);
+    g_live_idx[at] = (int)(c - g_cb); g_live_key[at] = c->addr; g_live_end[at] = c->addr + c->size; g_live_n++;
     if (c->size > g_live_max) g_live_max = c->size;
     cb_pf_set(c->addr, c->size);
 }
@@ -3018,8 +3051,15 @@ static CB *cb_inside(uint64_t addr, uint64_t size) {
     static CB *last;                               /* #156: the indirect draws of a pass read their counts from one buffer */
     int hit = last && last->state == 1 && addr >= last->addr && addr + size <= last->addr + last->size;
     if (hit && g_cb_pf_mode != 2) return last;
+    if (g_cb_pf_mode == 2) {                       /* test: the whole list finds a holder when, and only when, the walk below does */
+        static int said; int all = 0, walk = 0;
+        for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) all = 1; }
+        for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] <= addr; n++) { CB *c = &g_cb[g_live_idx[n]]; if (g_live_end[n] >= addr + size && c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) walk = 1; }
+        if (all != walk && !said++) printf("nvn_vk_cbpf: FAILED: cb_inside: range %llx +%llx: the sorted walk says %d, the whole list %d\n", (unsigned long long)addr, (unsigned long long)size, walk, all);
+    }
     if (cb_pf_skip(addr, size)) return NULL;
-    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) {
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] <= addr; n++) {      /* #257: a buffer that holds the range starts at or below it */
+        if (g_live_end[n] < addr + size) continue;      /* an entry keeps the extent it was added with (cb_live_from) */
         CB *c = &g_cb[g_live_idx[n]];
         if (c->state != 1 || addr < c->addr || addr + size > c->addr + c->size) continue;
         cb_pf_hit(addr, size, "cb_inside");
@@ -3035,9 +3075,9 @@ static void cb_live_check(uint64_t addr, uint64_t size, int found, const char *w
     if (all != found && !said++) printf("nvn_vk_cbpf: FAILED: %s: range %llx +%llx: the sorted walk says %d, the whole list %d\n", who, (unsigned long long)addr, (unsigned long long)size, found, all);
 }
 static int cb_overlap(uint64_t addr, uint64_t size) {
-    if (g_cb_pf_mode == 2) { int f = 0; for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; } cb_live_check(addr, size, f, "cb_overlap"); }
+    if (g_cb_pf_mode == 2) { int f = 0; for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (g_live_end[n] > addr && c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; } cb_live_check(addr, size, f, "cb_overlap"); }
     if (cb_pf_skip(addr, size)) return 0;
-    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { if (g_live_end[n] <= addr) continue; CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
     return 0;
 }
 /* [witchtime] 1 = the range overlaps a compute buffer of this batch (state 1) or one the GPU may still write from the batch
@@ -4018,10 +4058,14 @@ static int draw_prepare(unsigned prim) {
         }
         PT(8);
         if (p->nb[1]) {
-            uint64_t key = fnv(0xcbf29ce484222325ULL, &p->dl[1], sizeof p->dl[1]);
+            /* #257: a word at a time (TSK): the key lives as long as its command buffer and a hit is confirmed below, so only its speed counts (a byte at a time was 6 % of the render thread's own time in a ride) */
+#define TSK(v) (key = (key ^ (uint64_t)(v)) * 0x9E3779B97F4A7C15ull, key ^= key >> 29)
+            uint64_t key = 0xcbf29ce484222325ULL;
             unsigned slot;
-            if (p->dl[1] == g_udl[1]) for (int j = 0; j < nsv; j++) { VStage *v = sv[j]; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
-            for (int i = 0; i < g_ndtex; i++) { key = fnv(key, &g_dtex[i].view, sizeof g_dtex[i].view); key = fnv(key, &g_dtex[i].smp, sizeof g_dtex[i].smp); key = fnv(key, &g_dtex[i].layout, sizeof g_dtex[i].layout); }
+            TSK((uintptr_t)p->dl[1]);
+            if (p->dl[1] == g_udl[1]) for (int j = 0; j < nsv; j++) { VStage *v = sv[j]; for (int i = 0; i < v->nsmp; i++) TSK(v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
+            for (int i = 0; i < g_ndtex; i++) { TSK((uintptr_t)g_dtex[i].view); TSK((uintptr_t)g_dtex[i].smp); TSK(g_dtex[i].layout); }
+#undef TSK
             if (!key) key = 1;
             for (slot = (unsigned)key & 4095; g_tset[slot].gen == g_tset_gen && g_tset[slot].key != key; slot = (slot + 1) & 4095) {}
             /* session 4: a hash hit is confirmed by comparing the whole list (layout, views, samplers, image layouts); a
@@ -4555,7 +4599,7 @@ static void exec(const Cmd *m, int depth) {
             SamplerParams sp;
             memcpy(&h, blob + i * 8, 8);
             R.nvn_tex[stage][u] = h;
-            if (nvn_front_handle(R.tpool, R.spool, h, &t, &v, &sp) & 1) {      /* what TXQ reports, and whether the shader must use an integer sampler (resolve_handle's rules) */
+            if (tex_lookup(stage, u, &t, &v, &sp) & 1) {      /* what TXQ reports, and whether the shader must use an integer sampler (resolve_handle's rules) */
                 int glevels = nvn_front_tex_levels(t), l0 = (v.set & 0x81) == 0x81 ? v.lvl0 : 0, nl = (v.set & 0x81) == 0x81 && v.nlvl > 0 ? v.nlvl : glevels - l0, is3d = t->b.target == 2;
                 int layers = (v.set & 0x82) == 0x82 && v.nlay > 0 ? v.nlay : nvn_front_tex_layers(t), nf = (v.set & 0x84) == 0x84 && v.format ? v.format : t->b.format, k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
                 dims[0] = (uint32_t)lvl_(t->b.width, l0); dims[1] = (uint32_t)lvl_(t->b.height, l0);
