@@ -131,6 +131,7 @@ static void fga_prepare(VTex *vd, int w, int h, int reset) {
     ffxReturnCode_t r = A4.configure(&GA.c, &cf.header);
     if (r != FFX_API_RETURN_OK) { fga_off("AMD's frame generation took no setup without its swapchain", r); return; }
     struct ffxDispatchDescFrameGenerationPrepareV2 p; memset(&p, 0, sizeof p);
+    rc_flush();                                    /* the SDK records into the command buffer itself */
     p.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2; p.frameID = G.id; p.commandList = R.cmd;
     p.renderSize.width = (uint32_t)w; p.renderSize.height = (uint32_t)h;
     p.jitterOffset.x = F.k.jitterOffset[0]; p.jitterOffset.y = F.k.jitterOffset[1]; p.motionVectorScale.x = (float)w; p.motionVectorScale.y = (float)h;      /* as FSR 4 takes them (nvn_vk_fsr4.c) */
@@ -153,6 +154,7 @@ static int fga_run(VTex *vt, VTex *out, int reset) {
     int bad = 0;
     if (GA.ok != 1 || !GA.c || GA.prep != G.scene_frame || GA.dw != vt->w || GA.dh != vt->h || GA.fmt != vt->fmt) return 0;      /* (a new window size: the context follows at the next scene) */
     struct ffxDispatchDescFrameGeneration d; memset(&d, 0, sizeof d);
+    rc_flush();
     d.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION; d.commandList = R.cmd;
     vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); vt_layout(out, VK_IMAGE_LAYOUT_GENERAL); vt_layout(G.hud.vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     d.presentColor = fsr4_res(vt, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad); d.presentColor.description.usage &= ~(uint32_t)FFX_API_RESOURCE_USAGE_UAV;
@@ -197,6 +199,7 @@ static int fgd_run(Tex *t, VTex *vt, VTex *out, int reset) {
         ngx_set_u(GD.par, "CreationNodeMask", 1); ngx_set_u(GD.par, "VisibilityNodeMask", 1);
         ngx_set_u(GD.par, "Width", (unsigned)vt->w); ngx_set_u(GD.par, "Height", (unsigned)vt->h);
         ngx_set_u(GD.par, "DLSSG.BackbufferFormat", (unsigned)vt->fmt);
+        rc_flush();
         NgxResult r = DL.create1(V.device, R.cmd, 11, GD.par, &GD.h);      /* feature 11: frame generation */
         if (r != 1 || !GD.h) { GD.h = NULL; fgd_off("the frame generation feature was not created (RTX 40 or newer, and a driver that has it)", r); return 0; }
         GD.w = vt->w; GD.h_ = vt->h; GD.fmt = vt->fmt; reset = 1;
@@ -233,6 +236,7 @@ static int fgd_run(Tex *t, VTex *vt, VTex *out, int reset) {
     ngx_set_f(GD.par, "DLSSG.MvecScaleX", (float)G.scene_w); ngx_set_f(GD.par, "DLSSG.MvecScaleY", (float)G.scene_h);      /* ours are in UV, to the previous position */
     ngx_set_f(GD.par, "DLSSG.JitterOffsetX", F.k.jitterOffset[0]); ngx_set_f(GD.par, "DLSSG.JitterOffsetY", F.k.jitterOffset[1]);
     ngx_set_f(GD.par, "DLSSG.CameraFOV", fov); ngx_set_f(GD.par, "DLSSG.CameraNear", zn); ngx_set_f(GD.par, "DLSSG.CameraFar", zf);
+    rc_flush();
     NgxResult r = DL.evaluate(R.cmd, GD.h, GD.par, NULL);
     R.pipe_bound = NULL; dsh_forget(); R.dyn_dirty = R.vi_dirty = R.dyn3_dirty = 1;      /* NGX leaves bindings of its own in the command buffer */
     vt_layout(mv, VK_IMAGE_LAYOUT_GENERAL);
