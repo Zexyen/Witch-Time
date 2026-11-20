@@ -1932,6 +1932,16 @@ The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
   at `frame_rate = 120` (118.8-119.7 against 117.1-118.8); the log's `nvn_vk_sync:` line counts 0.5-1.9 such answers a
   frame. `WT_VK_CBKEEP=2` (a touch of a kept range ends the run on Linux) over 150 s of the street and a 9 minute run
   at 120: nothing. Not run: a fight with enemies, cutscenes, Windows, NVIDIA and Intel.
+- **Less work per draw (2026-11-20, issue 257)**: three cuts found with the sampler (`WT_LPROF`) in the Chapter 1 ride
+  (about 2,340 draws a frame at `frame_rate = 120`). The walks of the live compute buffers keep each entry's end beside
+  its start and skip an entry that cannot hold or meet the range without reading its buffer (`g_live_end`; `cb_inside`
+  stops at the first entry that starts above the range). The key of a texture descriptor set is mixed a word at a time
+  instead of a byte at a time. And what the texture and sampler pools answer for a unit is kept while the pools and the
+  handle stay as they were (`tex_lookup`, `nvn_front_pool_gen`; `WT_VK_TEXMEMO=0` asks every time): the bind command
+  asks, the draws that follow read it. Linux, RX 9070 XT, three runs each way in turn: the render thread's replay
+  6.18-6.33 ms a frame before, 5.54-5.68 after (a tenth less); the frame rate is at its cap either way on this PC.
+  `WT_VK_TEXMEMO=2` and `WT_VK_CBPF=2` (both paths, compared) over the ride and 170 s of Shibuya: no difference found.
+  Not run: Windows, NVIDIA and Intel, other chapters, a play by hand.
 
 | Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
 |---|---|---|---|---|---|---|

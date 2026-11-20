@@ -531,6 +531,7 @@ static void *hnew(uint64_t g, uint32_t kind, size_t size) {
  * nvn_front.h (seam step S1) */
 
 static SRWLOCK g_pool_lock = SRWLOCK_INIT;
+static volatile LONG64 g_pool_gen;                     /* #257: counts every change of a texture or sampler pool (nvn_front_pool_gen) */
 static Tex *volatile g_all_tex;            /* every texture, newest first (never unlinked: host records of textures are not freed) */
 static volatile LONG g_tex_dead_gen;       /* textures finalized so far (nvn_gl_memory_written's index) */
 void nvn_label_set(uint64_t obj, const char *text);
@@ -4418,6 +4419,7 @@ static void spool_register(Ctx *c) {                   /* (pool, id, sampler) or
     AcquireSRWLockExclusive(&g_pool_lock);
     memcpy(&sp->e[(uint32_t)A1], P(A2), sizeof(SamplerParams));
     sp->used[(uint32_t)A1] = 1;
+    g_pool_gen++;
     ReleaseSRWLockExclusive(&g_pool_lock);
 }
 
@@ -4586,6 +4588,7 @@ static void tpool_register(Ctx *c) {                   /* (pool, id, texture, vi
     if (A3) memcpy(&e.view, P(A3), sizeof e.view);
     AcquireSRWLockExclusive(&g_pool_lock);
     tp->e[(uint32_t)A1] = e;
+    g_pool_gen++;
     ReleaseSRWLockExclusive(&g_pool_lock);
 }
 
@@ -5418,6 +5421,7 @@ static void spool_finalize(Ctx *c) {
     if (!sp) return;
     AcquireSRWLockExclusive(&g_pool_lock);
     sp->count = 0;                                      /* the record itself stays: recorded SetSamplerPool commands may still name it */
+    g_pool_gen++;
     ReleaseSRWLockExclusive(&g_pool_lock);
     wr32(A0 + 8, 0);
     nvn_label_drop(A0);
@@ -5541,6 +5545,7 @@ static void tpool_finalize(Ctx *c) {
     if (!tp) return;
     AcquireSRWLockExclusive(&g_pool_lock);
     tp->count = 0;                                      /* the record itself stays: recorded SetTexturePool commands may still name it */
+    g_pool_gen++;
     ReleaseSRWLockExclusive(&g_pool_lock);
     wr32(A0 + 8, 0);
     nvn_label_drop(A0);
@@ -6033,6 +6038,9 @@ encode:
     free(pack);
     return 1;
 }
+/* #257: what nvn_front_handle answers for a pool pair and a handle stays the same while this number does (the texture's
+ * `dead` apart): the Vulkan renderer asks once per binding, not once per draw (resolve_sampler). */
+LONG64 nvn_front_pool_gen(void) { return g_pool_gen; }
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p) {
     uint32_t tid = (uint32_t)nh & 0xfffff, sid = (uint32_t)(nh >> 20) & 0xfff;
     int r = 0;

@@ -140,6 +140,7 @@ void nvn_front_tex_prep_drop(Tex *t);
 void nvn_front_tex_prep_report(void);
 /* Texture pool / sampler pool lookup of an NVN texture handle: returns bit 0 = live texture (*t, *v), bit 1 = sampler (*p). */
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p);
+LONG64 nvn_front_pool_gen(void);
 /* Present bookkeeping shared by the back ends: counts the frame, prints the frame-rate line, feeds the scripted input,
  * collects old command lists. Returns the number of the frame just presented. */
 long long nvn_front_frame_end(long long draws, long long skipped, long long clears);
