@@ -19,6 +19,9 @@ namespace {
 std::string program_dir(int program) { return program ? "/program" + std::to_string(program) : ""; }
 std::string main_elf(const Paths& paths, int program = 0) { return paths.repo + "/targets" + program_dir(program) + "/exefs/main.elf"; }
 std::string program_build(const Paths& paths, int program) { return paths.build + program_dir(program); }
+// The picture book's program has a log of its own: Bayonetta 3 starts again when the book closes, and its log would
+// replace the one that says what went wrong in the book (#261)
+std::string game_log(const Paths& paths, int program) { return paths.run + (program ? "/witch-time-book.log" : "/witch-time-game.log"); }
 
 // the save folder, where the runtime leaves the switch file (runtime/b3_imports.c switch_path; ..\userdata from build/run)
 std::string switch_file(const Paths& paths)
@@ -36,11 +39,11 @@ volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the
 bool g_relaunch = true;                       // the launcher starts again when the game ends (not with --play)
 int g_out = -1, g_err = -1;                   // the launcher's own stdout / stderr while the game writes to its log
 
-// The game's output goes to build/run/witch-time-game.log, as on Windows: a launcher started from a desktop entry has no
+// The game's output goes to build/run/witch-time-game.log (game_log), as on Windows: a launcher started from a desktop entry has no
 // terminal, and the log is what a bug report needs
-void log_to_file(const Paths& paths)
+void log_to_file(const Paths& paths, int program)
 {
-	std::string log = paths.run + "/witch-time-game.log";
+	std::string log = game_log(paths, program);
 	std::fprintf(stderr, "witch-time: the game's output goes to %s\n", log.c_str());
 	std::fflush(nullptr);
 	int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
@@ -155,7 +158,7 @@ int run_child(const Paths& paths, SDL_Window* window, int program)
 	// its output goes to build/run/witch-time-game.log: this program has no console to show it in
 	ChildProcess game;
 	int code = -1;
-	if (game.start({program_build(paths, program) + "/" + GAME_EXE, main_elf(paths, program)}, paths.run, paths.run + "/witch-time-game.log"))
+	if (game.start({program_build(paths, program) + "/" + GAME_EXE, main_elf(paths, program)}, paths.run, game_log(paths, program)))
 		while (!game.wait(&code, 50))
 			SDL_PumpEvents();
 	SDL_ShowWindow(window);
@@ -175,7 +178,7 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", window);
 	std::string exe = program_build(paths, start.program) + "/witch-time-game", elf = main_elf(paths, start.program);
 	char* argv[] = {exe.data(), elf.data(), nullptr};
-	log_to_file(paths);
+	log_to_file(paths, start.program);
 	int code = host_main(2, argv);
 	on_game_exit(code);
 	std::fflush(nullptr);
@@ -190,7 +193,7 @@ int run_child(const Paths& paths, SDL_Window* window, int program)
 	pid_t pid = fork();
 	if (pid == 0)
 	{
-		log_to_file(paths);
+		log_to_file(paths, program);
 		execl(exe.c_str(), exe.c_str(), elf.c_str(), (char*)nullptr);
 		_exit(127);
 	}
