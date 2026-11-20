@@ -32,6 +32,7 @@ VKD(X)
 static PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT;
 static PFN_vkCmdDrawIndexedIndirectCount vkCmdDrawIndexedIndirectCount_; static PFN_vkCmdDrawIndirectCount vkCmdDrawIndirectCount_;      /* [witchtime] issues 132, 133: g_gpucount */
 static PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR;
+#include "nvn_vk_rec.c"                            /* [witchtime] issue 257, TEST (WT_VK_REC=1): the per-draw commands on a recording thread */
 static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
 static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
 static PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties;
@@ -6045,6 +6046,7 @@ swap: ;
           if (n1 != l1) printf("nvn_vk_sync: frames %lld..%lld per frame: %.2f fence reads answered as finished without the job, %.2f of them with compute buffers live or kept or GPU copies in flight (WT_VK_SYNCJOB=1: those wait for the job, as before)\n",
                                (long long)frame - 300, (long long)frame, (double)(n0 - l0) / 300.0, (double)(n1 - l1) / 300.0);
           l0 = n0; l1 = n1; }
+        if (g_rc_on > 0) { static LONG64 r0, r1, r2; printf("nvn_vk_rec: TEST: frames %lld..%lld per frame: %.0f commands through the queue, %.0f waits for it to empty before another call (%.0f of them found it not empty)\n", (long long)frame - 300, (long long)frame, (double)(g_rc_n - r0) / 300.0, (double)(g_rc_flushes - r1) / 300.0, (double)(g_rc_waits - r2) / 300.0); r0 = g_rc_n; r1 = g_rc_flushes; r2 = g_rc_waits; }
         if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
             static LONG64 lc, ld, lf;
             static LONG64 lz, lr, lx, lom, lop, low, lod, los;

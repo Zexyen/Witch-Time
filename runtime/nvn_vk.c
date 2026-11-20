@@ -97,6 +97,7 @@ void display_before_present(void);
     X(void, vkDestroyFence, (VkDevice, VkFence, const VkAllocationCallbacks *)) \
     X(VkResult, vkWaitForFences, (VkDevice, uint32_t, const VkFence *, VkBool32, uint64_t)) \
     X(VkResult, vkResetFences, (VkDevice, uint32_t, const VkFence *))
+static void rc_flush(void);                             /* nvn_vk_rec.c (included by nvn_vk_draw.c) */
 #define X(ret, name, args) static ret (VKAPI_PTR *name) args;
 VKF(X)
 #undef X
@@ -564,6 +565,7 @@ static void present_colour(const float rgba[4]) {
     VkCommandBufferBeginInfo bi;
     memset(&bi, 0, sizeof bi);
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO; bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    rc_flush();                                     /* nvn_vk_rec.c: this buffer is of the pool the recording thread writes into */
     vk_ok("vkResetCommandBuffer", vkResetCommandBuffer(V.cmd, 0));
     vk_ok("vkBeginCommandBuffer", vkBeginCommandBuffer(V.cmd, &bi));
     VkImageMemoryBarrier b;

@@ -2017,6 +2017,18 @@ The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
   30 (before), 50 (after) and a steady 60 fps. Polls per run 6,000-10,000 both ways (the first form, an answer without
   a wait, made 32 million). Not run: Windows, NVIDIA and Intel, a display lock (the runs are hidden windows on our own
   clock), `latency = low / lowest`, a play by hand.
+- **A recording thread (2026-11-20, issue 257; `WT_VK_REC=1`, off by default: a test)** (`nvn_vk_rec.c`): in the ride a
+  quarter of the render thread's time is the driver's (RADV), most of it in the draw calls and the binds just before
+  them. With the switch on, those calls and the simple state changes (15 + 14 functions, about 17,700 calls a frame) go
+  through a single-writer queue to a second thread that makes them in order; every other call that records into,
+  begins, ends or resets a command buffer first waits until the queue is empty (`rc_flush`, about 470 times a frame, a
+  fifth of them find it not empty), and so do the DLSS, FSR 4 and frame generation hand-overs. The queue's counters sit
+  on cache lines of their own and the writer hands over once per draw: without that it gained nothing. The ride at
+  `frame_rate = 120`, off and on in turn: replay 5.93 / 5.54 / 5.61 ms a frame against 4.93 / 5.14 / 5.08. The
+  recording thread spins while the render thread works (most of a core) and sleeps when the queue stays empty. With the
+  validation layer: the ride, Shibuya, and Shibuya with `upscaler = fsr3`: no message but the old
+  ShaderOutputNotConsumed one. Not run: Windows, NVIDIA and Intel (the driver's share differs there), DLSS, FSR 4, frame
+  generation, a play by hand.
 
 | Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
 |---|---|---|---|---|---|---|
