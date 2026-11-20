@@ -542,7 +542,7 @@ static int g_origin_mode = 1, g_depth_mode = 1;        /* what the game asks for
  * Rules, storage sizes and de-swizzling come from tex_decode.c (tex_layout / tex_deswizzle_level), which was
  * checked against the game's packaged textures; in particular 3D textures use block height 1 and a block depth. */
 static void tex_lay(const TexBuilder *b, TexLayout *L) {
-    tex_layout(L, b->target, b->format, b->width, b->height, b->depth, b->levels, b->flags & ~0x50, 0, b->has_layout && b->layout[0] <= 4 ? b->layout[0] : -1, b->has_layout ? b->layout[1] : 0);
+    tex_layout(L, b->target, b->format, b->width, b->height, b->depth, b->levels, b->flags & ~0x50, 0, b->has_layout && b->layout[0] <= 5 ? b->layout[0] : -1, b->has_layout ? b->layout[1] : 0);
 }
 static int tex_layers(const TexBuilder *b) {
     switch (b->target) {

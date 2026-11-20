@@ -122,7 +122,7 @@ typedef struct TexLayout {
     int linear;                    /* 1: pitch-linear (TEX_FLAG_LINEAR*), a single level, rows of `stride` bytes */
     size_t stride;                 /* linear only: row pitch in bytes */
     int is3d;                      /* depth is a dimension (TEX_TARGET_3D), not a layer count */
-    int bh_log2, bd_log2;          /* GOB block height / depth (log2) of level 0, each 0..4  */
+    int bh_log2, bd_log2;          /* GOB block height / depth (log2) of level 0, each 0..4; a packaged layout may give height 5 */
     /* per level, inside one layer */
     int lvl_w[TEX_MAX_LEVELS], lvl_h[TEX_MAX_LEVELS], lvl_d[TEX_MAX_LEVELS];          /* texels / slices */
     int lvl_wb[TEX_MAX_LEVELS], lvl_hb[TEX_MAX_LEVELS];                               /* blocks (compressed footprint) */

@@ -13,6 +13,11 @@ static double psnr(const uint8_t *a, const uint8_t *b, size_t n) {
 int main(void) {
     static const int sz[][2] = {{64, 64}, {13, 7}, {1, 1}, {3, 5}};
     int bad = 0;
+    {   /* issue 262: a packaged layout may say block height 32 (byte 0 = 5), above the 16 the size rule stops at */
+        TexLayout L;
+        tex_layout(&L, 1, 0x1, 1024, 1024, 1, 1, 0, 0, 5, 2);
+        if (L.lvl_bh_log2[0] != 5 || L.data_size != 1024 * 1024) { printf("layout: block height 32 not taken (%d, %zu bytes)\n", L.lvl_bh_log2[0], (size_t)L.data_size); bad++; }
+    }
     srand(1);
     for (int s = 0; s < 4; s++)
         for (int kind = 0; kind < 4; kind++) {
