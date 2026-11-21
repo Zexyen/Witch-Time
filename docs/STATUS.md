@@ -1951,6 +1951,29 @@ The changes (`runtime/nvn_vk_draw.c`, one switch each, all on by default):
   5.49-5.52 ms to 5.26-5.29. A movie (ev6106, jumped to with `phase pc80_MOVIE_ev7010`) plays and advances both ways.
   Not run: Windows (its `GetWriteWatch` refuses a range over the edge of an allocation; such a cluster asks texture by
   texture as before), NVIDIA and Intel, a play by hand.
+- **A late frame no longer waits for one more tick, and the game's fence poll no longer stands behind the replay
+  (2026-11-21, issues 156 and 257)**. Two waits of the game's threads that the logs of both reporters showed
+  (`nvn_perf: ... pace`, `nvn_jobwait: ... with a timeout under 1 s`), each with its switch:
+  - `display.c` `display_present_plan` (`WT_PACE_LATE=0` as before): after a frame that missed its tick the game was
+    released at the NEXT tick, as behind a display with vsync and two buffers, so a game thread a little over n ticks
+    per frame got n + 1 ticks: 30 fps for 17 ms at 60, 60 fps for 13 ms at `frame_rate = 120` (the 120 / 60 / 40 steps
+    issue 156 describes), 20 fps for 34 ms in a 30 fps cutscene. It is released at once now; the next frame is due one
+    interval after the missed tick, so nothing changes for a game that keeps its ticks.
+  - `nvn_gl.c` `sync_poll_here` (`WT_SYNC_POLL=0` as before): B3's draw thread (MainDraw) spins on
+    `SyncWait(sync, 0)` until an object's fence has finished (`0x7100b986d4`). Each question was a job of the render
+    thread and stood behind the batch being replayed: 3.9 ms of every frame in issue 156's ride, 5.7 ms here with a
+    slowed replay, and 398 jobs a frame with issue 257's GPU behind. While the render thread is busy the caller now
+    waits on its own thread for the render thread's count of finished submissions to move, 1 ms at most, and answers.
+  Measured on Linux, RX 9070 XT, the Chapter 1 ride (`phase p100_GomoraSlider1`, about 2,350 draws), two runs each way
+  in turn, with test switches that are not in the tree (replay made 2.3 times longer, the game's thread 5 or 14 ms
+  longer per frame; `~/.cache/wt-257`): at 120 with the slow replay 61.1-64.4 fps before and 71.2-72.4 after (frame
+  time 13.9-14.1 ms on a replay of 13.7-13.9: the render thread alone sets it); with the game's thread slowed too
+  62.3-62.8 before, 62.0-62.4 with the poll alone, 64.3-65.1 with the late frame alone, 69.5-69.8 with both; at 60 with
+  a 20 ms game thread 30.0 before (15.5 ms of each frame asleep) and 50.2-50.3 after; scale 3.0 at 120 102-105 before,
+  107.6-108.4 after. The game's speed is the same: the player moved 1185 / 1196 / 1190 units in 15 s of the ride at
+  30 (before), 50 (after) and a steady 60 fps. Polls per run 6,000-10,000 both ways (the first form, an answer without
+  a wait, made 32 million). Not run: Windows, NVIDIA and Intel, a display lock (the runs are hidden windows on our own
+  clock), `latency = low / lowest`, a play by hand.
 
 | Shibuya, 200 s | fps | at 60 | 1 %-low | p90 / p99 ms | GPU ms p50 | render: replay / GPU wait ms a frame |
 |---|---|---|---|---|---|---|

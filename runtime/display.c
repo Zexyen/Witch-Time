@@ -1195,14 +1195,24 @@ static void l1_report(FILE *out) {
 
 /* Session 14, game thread, BEFORE the present job goes to the render thread (Vulkan only; OpenGL keeps the path above):
  * the refresh that shows this frame, by the same rule as frame_queued, and whether the present is held for it. A frame
- * queued before the tick it is due at (on time) is held until that tick; a late one is presented at once. */
+ * queued before the tick it is due at (on time) is held until that tick; a late one is presented at once.
+ * Issue 257: and the game goes on at once after a late frame. It used to wait for the tick after its present, as behind
+ * a display with vsync and two buffers, so a game thread that needs a little more than n ticks per frame got n + 1: the
+ * ride of Chapter 1 at 60 with a game thread made 14 ms slower (20 ms a frame) ran at 30.0 fps, 15.5 ms of every frame
+ * asleep here, and runs at 50 now; a 13 ms frame at frame_rate 120 took two ticks, 60 fps. The next frame is due one
+ * interval after the tick this one missed, so a game that is fast again is back on the ticks at once. B3 steps by real
+ * time, not by ticks: the ride moved the player 1185 / 1196 / 1190 units in 15 s at 30 (before), 50 (now) and a steady
+ * 60 fps. WT_PACE_LATE=0: as before. */
 void display_present_plan(int vulkan) {
     if (!vulkan || old_pacing()) return;
     pace_options();
     LONG64 now_n = g_vsync_n, iv = eff_interval(), prev = g_latch, at = now_n + 1;
     int on_time = iv && now_n < prev + iv && prev + iv - now_n <= 6;
+    static int late_go = -1;
+    if (late_go < 0) late_go = !(getenv("WT_PACE_LATE") && !atoi(getenv("WT_PACE_LATE")));
     if (!iv) at = now_n;
     else if (at < prev + iv) at = prev + iv;
+    else if (late_go && now_n >= prev + iv) at = now_n;      /* issue 257: a late frame does not wait for one more tick (see the comment above) */
     g_latch = at;
     InterlockedExchange(&g_latch_pending, iv != 0);
     if (iv && !on_time) g_hold_late++;
