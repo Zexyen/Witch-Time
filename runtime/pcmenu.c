@@ -25,6 +25,7 @@
  * A second page, Controls, has the buttons of gameplay by character (docs/RE_NOTES.md section 9): A on a row, then the button
  * to use for it, or left / right to go through them (for a player without a pad to press). A button already in use changes
  * places with the row's: a layout stays one button per action. From the game's Options, Controller, Controls it opens by itself.
+ * The last row of the first page, Quit to desktop (issues 212, 277): A twice ends the game as closing its window does (display_quit).
  * Test aids: WT_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), WT_PCMENU_OPEN=<seconds> opens it that long after the first pad
  * read (for scripted runs without keys), WT_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
@@ -61,6 +62,7 @@ int nvn_front_post_pcmenu(void);                           /* nvn_gl.c: 0 = not 
 int nvn_vk_hdr_on(void);                                   /* nvn_vk.c: the picture goes out as HDR now */
 void display_vsync_apply(void);                            /* display.c */
 int display_window_apply(void);
+void display_quit(void);                                   /* the window's close, asked from here */
 void display_mouse_want(int on);
 int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
 const char *nnpad_prompts_setting(void);
@@ -76,8 +78,8 @@ int nnpad_bind_get(int ch, unsigned char *out);
 int nnpad_bind_set(int ch, const unsigned char *b);
 int options_control_type(int ch);                          /* options_row.c */
 
-/* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; from A_CHAR on its rows */
-enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_CHAR, A_PRESET, A_BIND };
+/* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; A_QUIT: ends the game; from A_CHAR on the Controls page's rows */
+enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_CHAR, A_PRESET, A_BIND };
 #define ROW_VALUES 16
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -137,6 +139,8 @@ static const Row k_rows[] = {
      {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}},
     {"controls", "Controls", "Rebind every button of gameplay, for Bayonetta and for Viola. Menus keep theirs, and the game's prompts show yours.", NULL, "open", A_PAGE, 0,
      {"open"}, {"Open"}},
+    {"quit", "Quit to desktop", "Ends the game, as closing its window does. Progress since the last save is lost. A asks once more first.", NULL, "quit", A_QUIT, 0,
+     {"quit"}, {"Quit"}},      /* issues 212, 277: a pad-only player in fullscreen had no way out */
     {"bind_character", "Character", "Each character keeps a layout.", NULL, "bayonetta", A_CHAR, 0, {"bayonetta", "viola"}, {"Bayonetta", "Viola"}},
     {"bind_preset", "Preset", "The game's four control types, as a start. Game's setting: no layout, what the save had.", NULL, "game", A_PRESET, 0,
      {"game", "a", "b", "c", "d"}, {"Game's setting", "Type A", "Type B", "Type C", "Type D"}},
@@ -159,6 +163,7 @@ static char g_raw[NROW][32];                               /* a value of the fil
 static unsigned g_ver;
 static int g_env_cut, g_env_set[NROW];
 static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
+static int g_quit_ask;                                    /* the Quit row was pressed once: the next press on it ends the game */
 static int g_page, g_direct;                               /* 1 = Controls, the rows from A_CHAR on; g_direct: opened there, so back closes */
 static int g_ch, g_cap = -1, g_fam, g_letter;              /* the character shown; the row that waits for a button; the button names */
 static uint8_t g_b[2][16];                                 /* the layouts shown: as saved, else the game's type */
@@ -202,7 +207,7 @@ static int bind_assign(int slot, int button) {             /* the button that ha
     return nnpad_bind_set(g_ch, r);
 }
 static void page_go(int page) {
-    g_page = page; g_cap = -1;
+    g_page = page; g_cap = -1; g_quit_ask = 0;
     g_sel = 0;
     while (g_sel < NROW - 1 && !row_on(g_sel)) g_sel++;
 }
@@ -614,6 +619,7 @@ static const char *row_label(int i) {                      /* the words of the g
 }
 static const char *val_name(int i) {
     if (i == g_cap) return "Press a button\xE2\x80\xA6";
+    if (k_rows[i].apply == A_QUIT && g_quit_ask) return "Press again to quit";
     if (k_rows[i].apply == A_BIND) return pad_name(g_cur[i]);
     return g_cur[i] >= 0 ? k_rows[i].name[g_cur[i]] : g_raw[i];
 }
@@ -1099,6 +1105,12 @@ static ULONGLONG g_cap_t;
 static int g_cap_armed;
 static int activate(int i, int dir) {                      /* A or a click on a row; 1 = it took the press and the row's value is not what changes */
     if (k_rows[i].apply == A_PAGE) { page_go(1); return 1; }
+    if (k_rows[i].apply == A_QUIT) {
+        if (!g_quit_ask) { g_quit_ask = 1; return 1; }
+        printf("pcmenu: Quit to desktop chosen\n");
+        display_quit();                                    /* the window thread sets g_display_close: this panel closes, and nn::oe decides as for the window */
+        return 1;
+    }
     if (k_rows[i].apply == A_BIND) { g_cap = i; g_cap_t = GetTickCount64(); g_cap_armed = 0; return 1; }
     change(i, dir, 1);
     return 0;
@@ -1192,6 +1204,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
             if (click && px >= g_close_r[0] && px < g_close_r[0] + g_close_r[2] && py >= g_close_r[1] && py < g_close_r[1] + g_close_r[3]) back = 1, prev_back = 0;
         }
         mx0 = mx; my0 = my;
+        if (g_sel != was_sel) g_quit_ask = 0;              /* asked on another row since: from the start */
         if (g_sel != was_sel || memcmp(was_cur, g_cur, sizeof g_cur)) g_ver++;
         ReleaseSRWLockExclusive(&g_lock);
         if (g_log && (step || (ok && !prev_ok) || (back && !prev_back) || click)) printf("pcmenu: input: %s%s%s%s -> row %d (%s)\n", step ? (dir == 1 ? "up " : dir == 2 ? "down " : dir == 3 ? "left " : "right ") : "", ok && !prev_ok ? "A " : "", back && !prev_back ? "B " : "", click ? "click " : "", g_sel, k_rows[g_sel].key);

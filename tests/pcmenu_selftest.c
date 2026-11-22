@@ -16,6 +16,8 @@ int nvn_front_post_pcmenu(void) { return 1; }
 int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) { g_vsync_applied++; }
 int display_window_apply(void) { g_win_applied++; return 1; }
+static int g_quits;
+void display_quit(void) { g_quits++; }
 void display_mouse_want(int on) { (void)on; }
 int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
 static const char *g_prompts = "playstation";
@@ -153,6 +155,16 @@ int main(int argc, char **argv) {
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
     g_sel = 2; g_ver++;
     panel(dir, "pcmenu_1920x1080", 1920, 1080);
+    /* Quit to desktop (issues 212, 277): the first press asks, a move away forgets it, the second press quits; left / right do nothing */
+    int quit = row_of("quit");
+    assert(quit >= 0 && row_on(quit) && !strcmp(val_name(quit), "Quit"));
+    change(quit, 1, 0); change(quit, -1, 0); assert(!g_quits && !g_quit_ask && !row_restart(quit));
+    assert(activate(quit, 1) && !g_quits && !strcmp(val_name(quit), "Press again to quit"));
+    AcquireSRWLockExclusive(&g_lock); page_go(0); ReleaseSRWLockExclusive(&g_lock);
+    assert(!g_quit_ask && activate(quit, 1) && !g_quits && activate(quit, 1) && g_quits == 1);
+    g_sel = quit; g_ver++;
+    panel(dir, "quit_1280x720", 1280, 720);
+    AcquireSRWLockExclusive(&g_lock); page_go(0); g_ver++; ReleaseSRWLockExclusive(&g_lock);
     /* the Controls page. No layout yet: the game's type shows; a change makes a layout from it, and the button that had it moves */
     int row[16], preset = -1, chr = -1;
     for (int i = 0; i < NROW; i++) { if (k_rows[i].apply == A_BIND) row[k_rows[i].slot] = i; if (k_rows[i].apply == A_PRESET) preset = i; if (k_rows[i].apply == A_CHAR) chr = i; }
