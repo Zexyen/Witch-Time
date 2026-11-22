@@ -86,6 +86,8 @@ static void fs_lock(void) {
 static void fs_unlock(void) { LeaveCriticalSection(&g_fs_lock); }
 
 static void rom_mods_init(void);
+static void rom_mods_layers(const char *dir, const char *prompt);
+static int g_pkz_tops;
 static void fs_roots(void) {
     if (g_rom_root[0]) return;
     const char *env = getenv("WT_ROMFS"), *user = getenv("WT_USERDATA");
@@ -93,6 +95,7 @@ static void fs_roots(void) {
     strncpy(g_user_root, user && user[0] ? user : "..\\userdata", MAX_PATH - 1);
     CreateDirectoryA(g_user_root, NULL);
     rom_mods_init();
+    if (!g_pkz_tops) rom_mods_layers("", "");             /* #278: no mods folder, or none on: the archives' names are still hidden */
 }
 
 static void join(char *out, const char *root, const char *rel) { if (rel[0]) snprintf(out, MAX_PATH, "%s\\%s", root, rel); else snprintf(out, MAX_PATH, "%s", root); }
@@ -509,8 +512,18 @@ static void prompt_places_by_letter(void) {
 /* what each mod's files do, and the views of the archives they touch; `dir` = the mods folder, `prompt` = the button prompt mod's romfs or "" */
 static void rom_mods_layers(const char *dir, const char *prompt) {
     int files[ROM_MOD_MAX] = {0}, repl[ROM_MOD_MAX] = {0};
-    if (!g_rom_mods) return;
-    pkz_index();
+    pkz_index();                                          /* #278: with no mod too: fs_rom_hidden needs the names */
+    {                                                     /* #278: unpacked archives in the game's own folder: hidden as a mod's are, and said */
+        char pat[MAX_PATH], first[64] = ""; WIN32_FIND_DATAA fd; int n = 0;
+        snprintf(pat, sizeof pat, "%s\\*", g_rom_root);
+        HANDLE h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do if (pkz_top(fd.cFileName) && !n++) snprintf(first, sizeof first, "%s", fd.cFileName); while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+        if (n) printf("romfs: %d files or folders in %s are not the game's (the first: %s; unpacked archives?): not shown to the game, "
+                      "whose name pool they would fill (#46); the game reads its .pkz archives\n", n, g_rom_root, first);
+    }
     for (int i = 0; i < g_rom_mods; i++) {
         ModFiles *mf = &g_mod_files[i];
         for (int j = 0; j < mf->n; j++) free(mf->f[j]);
@@ -1554,6 +1567,8 @@ int nnfs_selftest(Ctx *c) {
                 "the single files are listed to the game (its name pool, #46), or something else is hidden");
         PKCHECK(st_read_is(c, "strom:/movie/b.webm", "a whole file, as before"), "a mod's whole file outside the archives is not read");
         PKCHECK(g_mod_files[1].n == 2 && g_mod_files[1].used[0] + g_mod_files[1].used[1] == 1, "the single file with no entry is not reported as unused");
+        g_rom_mods = 0; rom_mods_layers("", "");             /* #278: unpacked archives in the game's own folder, no mod on */
+        PKCHECK(fs_rom_hidden("strom:/", "x") && !fs_rom_hidden("strom:/", "movie") && !g_pkz_views, "with no mod on the archives' names are listed to the game");
         c->x[0] = (uint64_t)(uintptr_t)"strom"; fs_Unmount(c);
         strcpy(g_rom_root, saved_rom); strcpy(g_rom_mod[0], saved_mod[0]); strcpy(g_rom_mod[1], saved_mod[1]);
         g_rom_mods = saved_mods;
