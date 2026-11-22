@@ -180,7 +180,7 @@ jobs:
           export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
           export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
           export WTBUILD_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
-          tools/wtbuild/target/release/wtbuild runtime --out prebuilt
+          WT_VERSION="${{ steps.version.outputs.version }}" tools/wtbuild/target/release/wtbuild runtime --out prebuilt
           strip prebuilt/libwt_glslang.so
           readelf -d prebuilt/libwitchtime.so | grep -E 'NEEDED|RUNPATH'
           ls -la prebuilt
@@ -405,7 +405,7 @@ jobs:
           export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
           export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
           export WTBUILD_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
-          tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
+          WT_VERSION="${{ steps.version.outputs.version }}" tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
           llvm-strip prebuilt/wt_glslang.dll
           llvm-readobj --coff-imports prebuilt/witch-time-game.exe | grep 'Name:' | sort -u
           ls -la prebuilt

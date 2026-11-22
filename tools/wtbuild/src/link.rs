@@ -367,6 +367,12 @@ pub fn build_runtime(
         "-Ddyn_syms=(*game_dyn_syms_p)",
         "-Ddyn_sym_count=(*game_dyn_sym_count_p)",
     ]));
+    // the release's name for the "version:" line of the game's log (gfx_options.c); the environment, so not in the sources' hash
+    if let Ok(v) = std::env::var("WT_VERSION") {
+        if !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
+            flags.push(format!("-DWT_VERSION=\"{}\"", v));
+        }
+    }
     if t.windows() {
         // mingw-w64 defaults to Windows 7; every thread-local must stay one (finding 100)
         flags.extend(strs(&["-D_WIN32_WINNT=0x0A00", "-Werror=unknown-attributes"]));
