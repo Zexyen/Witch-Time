@@ -31,7 +31,7 @@ const CLREX: u32 = 0xd503305f;
 const NOP: u32 = 0xd503201f;
 
 /// (mask, value, name, what its statement must contain): test_ext.py's forms
-const FORMS: [(u32, u32, &str, &str); 8] = [
+const FORMS: [(u32, u32, &str, &str); 16] = [
     (0xBF20FC00, 0x0E20C000, "smull", "v_long3("),        // SMULL{2} <Vd>.<Ta>, <Vn>.<Tb>, <Vm>.<Tb> (U=0, opcode 1100)
     (0xBF20FC00, 0x0E20A000, "smlsl", "v_long3("),        // SMLSL{2} (opcode 1010)
     (0xBF3FFC00, 0x0E214800, "sqxtn", "v_qxtn("),         // SQXTN{2} (U=0)
@@ -40,6 +40,15 @@ const FORMS: [(u32, u32, &str, &str); 8] = [
     (0xBF80FC00, 0x0F002400, "srshr", "v_rshr("),         // SRSHR (vector), immh != 0
     (0xBFFF8000, 0x887F8000, "ldaxp", "c->ex_addr = a;"), // LDAXP <Rt>, <Rt2>, [<Xn>]
     (0xBFE08000, 0x88208000, "stlxp", "(stx"),            // STLXP <Ws>, <Rt>, <Rt2>, [<Xn>]
+    // issue 281: the picture book's movie decoder
+    (0xBF3FFC00, 0x2E212800, "sqxtun", "v_qxtn("),        // SQXTUN{2} (U=1, opcode 10010)
+    (0xBF3FFC00, 0x2E213800, "shll", "v_shll("),          // SHLL{2}
+    (0x9F20FC00, 0x0E200400, "hadd", "v_i3x("),           // SHADD / UHADD
+    (0x9F20FC00, 0x0E201400, "rhadd", "v_i3x("),          // SRHADD / URHADD
+    (0x9F20FC00, 0x0E207400, "abd", "v_i3x("),            // SABD / UABD
+    (0xBF20FC00, 0x0E20B400, "sqdmulh", "v_i3x("),        // SQDMULH (vector)
+    (0xBF80F400, 0x2F008400, "sqshrun", "v_sqshrn("),     // SQSHRUN / SQRSHRUN{2}, immh != 0
+    (0x9F80FC00, 0x0F003400, "rsra", "v_rsra("),          // SRSRA / URSRA (vector), immh != 0
 ];
 
 /// test_b3.py's [witchtime] AdvSIMD helpers
@@ -61,12 +70,12 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
-/// the FORMS entry of w (immh = 0 makes the three shifts an AdvSIMD modified immediate)
+/// the FORMS entry of w (immh = 0 makes the shifts by immediate an AdvSIMD modified immediate)
 fn form(w: u32) -> Option<usize> {
     FORMS
         .iter()
         .position(|&(m, v, ..)| w & m == v)
-        .filter(|&i| !(3..6).contains(&i) || w >> 19 & 0xf != 0)
+        .filter(|&i| FORMS[i].1 & 0x1F800000 != 0x0F000000 || w >> 19 & 0xf != 0)
 }
 
 /// a statement of test_b3.py's NEW: a [witchtime] helper, orr / bic (vector, immediate) or scalar addp
