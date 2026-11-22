@@ -385,6 +385,17 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
         o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
     }
+    {   /* issue 156: which build wrote this log. The runtime's name comes from the release (WT_VERSION, release.yml); the file is
+         * the launcher that last built the game's code here (launcher/src/platform.h BUILT_VERSION): a newer runtime than
+         * that after unpacking an archive over an install means Rebuild was not pressed */
+#ifndef WT_VERSION
+#define WT_VERSION "built here from source"
+#endif
+        char built[64] = "";
+        FILE *bf = fopen("../built_version", "rb");
+        if (bf) { built[fread(built, 1, sizeof built - 1, bf)] = 0; fclose(bf); built[strcspn(built, "\r\n")] = 0; }
+        printf("version: runtime %s; the game's code was last built by launcher %s\n", WT_VERSION, built[0] ? built : "(not recorded)");
+    }
     printf("graphics profile: %s\n", o->profile == 1 ? "low (weak or integrated GPU): resolution_scale=" GFX_LOW_SCALE_TEXT ", the game's own texture filtering, vsync=clock; these keys of the file are not used"
                                                      : "custom (every key of graphics.ini as written; 'profile = low' is the set for a weak or integrated GPU)");
     static const char *const k_win[3] = {"windowed", "borderless", "fullscreen"}, *const k_vs[6] = {"clock", "on", "off", "mailbox", "display", "auto"};
