@@ -1730,6 +1730,46 @@ fragment stage family (#5318 .. #5438: 3D-noise octaves with hand-made derivativ
   as much as main against main (MAE 110-155 of 65535, the same pixels), so the clouds match within the game's own variation. The
   cloud wall in the fight looks the same. 0 Vulkan call failures.
 - Not run on AMD's Windows driver (the reporter's), NVIDIA or Intel. `WT_VK_CLOUD_SCALE` still caps the clouds' scale.
+## The volume light and the dispatcher (2026-11-21; issue 257)
+
+A GTX 1660 Ti at 900p waits for its GPU in play and in cutscenes (20 to 30 ms a frame in the reporter's log). Per pass
+(`WT_VK_PASSTIME`), the Chapter 1 ride on an RX 9070 XT spends 0.44 ms of a 3.35 ms frame in ONE draw into a 256x144
+target: vs #33 / fs #1710, drawn every frame from the title screen on (the pair the clouds' table above already shows as
+a large one). fs #1710 is the volume light: 22 samples of a 3D texture and of cube maps at an explicit level and 17
+gathers, in loops (4 jumps back), 75 dispatcher cases and 122 jumps, 156 KB of text.
+- **Fragment stages with jumps back run in order** when they have no shuffle (`mx_translate.c`, `loop_regions`): each
+  stretch of blocks that a jump back covers is a `for (;;)` around its blocks, a loop inside a loop a `for` inside a
+  `for`. A jump back sets `pc` and leaves its block, the rest of the stretch skips itself and the stretch runs again;
+  the `for` ends when `pc` points outside it. One trip is one turn of the game's loop; the dispatcher made one trip per
+  block. The step-back limit counts as before. 54 of the fragment stages a first run prepares change; all compile
+  (8,024 variations, no refusal). `MX_VK_VERSION` 22: every player's stages are translated again at the next start.
+  `WT_MX_LOOPS=0` (with a `WT_VK_CACHE` of its own): the dispatcher, as before.
+- **Left alone**: fragment stages with a shuffle and a jump back, the larger family (about 1,300 of the variations a
+  first run prepares): their quad snapshots are taken at the dispatcher's header with every lane of the wave in the
+  loop, and a lane that left a `for` is gone; they need a wave-uniform `for`. Vertex and compute stages: 12 vertex and
+  1 compute stage with a jump back, and 45 compute stages with only forward jumps, were tried in order and changed no
+  pass's time in the ride, so they keep the dispatcher.
+- **Measured** (Linux, RX 9070 XT, RADV; the ride, `phase p100_GomoraSlider1`, about 2,350 draws at 1600x900, old and
+  new in turn on caches of their own, second runs):
+
+  | GPU ms a frame | dispatcher | in order |
+  |---|---|---|
+  | the frame (`WT_VK_GPUTIME`) | 3.35, 3.35 | 2.51, 2.50 |
+  | pass 256x144, 2 colour (the volume light, 1 draw) | 0.431, 0.435 | 0.024, 0.025 |
+  | pass 100x56, no colour (1 draw) | 0.094, 0.104 | 0.022, 0.021 |
+  | pass 133x74, 1 colour | 0.038, 0.038 | 0.005, 0.005 |
+  | compute dispatches | 0.460, 0.462 | 0.462, 0.453 |
+  | pass 1600x896, 1 colour + depth (616 draws) | 0.901, 0.910 | 0.903, 0.894 |
+
+  Earlier pairs of the same two forms gave the same (3.32-3.35 against 2.50-2.52). The training room: the volume light
+  0.106 to 0.010 ms; the shop: the frame 1.87 to 1.70 ms.
+- **Picture**: two still scenes shot every 300 frames at 60, ten shots a run, old and new twice each. The training
+  room: old against old differs by 0.36 of 255 a pixel on average (0.9 % of the pixels by more than 24: the grain),
+  new against old by 0.34 and 0.37. The shop (it moves a little): old against old 2.2 to 3.5, new against old 0.7 to
+  1.2. The ride moves too fast for that (old against old 8 to 32); two frames side by side look the same, and the mean
+  colour per shot stays inside the spread between two old runs. No device loss in the 30 runs.
+- Not run on NVIDIA, Intel or AMD's Windows driver. The reporter's GPU time was not measured: whether this draw is as
+  large a share there is not known.
 ## Launcher and in-game look (2026-11-01)
 
 One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's
