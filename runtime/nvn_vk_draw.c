@@ -3863,6 +3863,9 @@ static int draw_prepare(unsigned prim) {
      * which hashed the machine code each time). */
     VStage *cur = R.prog[0]->st[0].vk;
     VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, 0), *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
+    /* mx_translate: early fragment tests with the alpha test's discard are right only while the alpha function passes everything
+     * (0 off, 8 always, mx_alpha_ok): a draw whose alpha test can discard takes the variant translated without them */
+    if (fs && fs->early == 2 && R.alpha_func > 0 && R.alpha_func < 8) fs = vstage_get(R.prog[1], 1, key1, MX_FO_NO_EARLY);
     VStage *tcs = NULL, *tes = NULL;
     if (tess_mark && fs) {                         /* TEST ONLY (WT_VK_TESS_ALT=2) */
         static VStage *mag;

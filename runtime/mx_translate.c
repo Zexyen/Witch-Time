@@ -49,6 +49,7 @@ typedef struct {
     unsigned qcase_pc[256]; uint32_t qcase_mask[256]; int nqcase; unsigned cur_case;      /* [issue 66] the snapshot bits each shuffle case needs */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / WT_VK_LOOPDEBUG's "limit hit" flag */
+    int has_kil, writes_depth, writes_mask;   /* fragment: a KIL anywhere; gl_FragDepth / gl_SampleMask written (early fragment tests) */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
@@ -1508,6 +1509,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
          * values it computes. Its stores are suppressed from here on (kg), as a helper invocation's are, and its outputs
          * discarded after the loop. A stage without a dispatcher (so without a fragment SHFL) discards at the KIL: glslang
          * makes that a demote, the pixel runs on as a helper. */
+        e->has_kil = 1;
         if (e->any_jump) { e->uses_kill = 1; emit(e, "if (%s) mx_kill = true;", FLOW(e, MXB(i, 0, 5))); }
         else emit(e, "if (%s) discard;", FLOW(e, MXB(i, 0, 5)));
         break;
@@ -1836,8 +1838,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
             n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "); ");
             if (rt == 0) { e->uses_alpha = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "if (!mx_alpha_ok(frag0.a)) discard; "); }
         }
-        if (flags & 1) { e->regs[reg] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_SampleMask[0] = int(r%u); ", reg); }
-        if (flags & 2) { e->regs[reg + 1] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_FragDepth = F(r%u); ", reg + 1); }
+        if (flags & 1) { e->writes_mask = 1; e->regs[reg] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_SampleMask[0] = int(r%u); ", reg); }
+        if (flags & 2) { e->writes_depth = 1; e->regs[reg + 1] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_FragDepth = F(r%u); ", reg + 1); }
         if (in->fragdebug && (omap & 15)) n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "frag0 = vec4(1.0, 0.0, 1.0, 1.0); ");
     }
 
@@ -1974,6 +1976,21 @@ int mx_translate(const MxIn *in, MxOut *out) {
                 if (!vk) emit(&h, "layout(location = 0) uniform uvec2 mx_alpha;\n");
                 emit(&h, "bool mx_alpha_ok(float a) { uint f = mx_alpha.x; float r = F(mx_alpha.y);\n"
                          "  return f == 0u || f >= 8u ? true : f == 1u ? false : f == 2u ? a < r : f == 3u ? a == r : f == 4u ? a <= r : f == 5u ? a > r : f == 6u ? a != r : a >= r; }\n");
+            }
+            {   /* Early fragment tests for a stage that stores to memory (WT_VK_EARLYZ=0 turns them off). Without them a fragment stage
+                 * with a store runs before the depth test, so every hidden fragment is shaded and stores. The depth prepass marks each
+                 * object visible this way ("The render thread and the GPU overlap" in docs/STATUS.md): its most drawn stage stores
+                 * 0xffff at the object's slot and nothing else, so every object counted as visible, and its fragments all stored to
+                 * the same address. Asked for only where they cannot change the picture: no KIL, no depth or sample-mask output. The
+                 * alpha test's discard (mx_alpha_ok) is allowed, though early tests write depth before the shader runs: right while
+                 * the draw's alpha function passes everything (as in the prepass); draw_prepare takes the variant without them
+                 * (MX_FO_NO_EARLY) for a draw whose alpha test can discard. */
+                static int ez = -1;
+                if (ez < 0) ez = !getenv("WT_VK_EARLYZ") || atoi(getenv("WT_VK_EARLYZ"));
+                if (vk && ez && !(in->force_out & MX_FO_NO_EARLY) && !e->has_kil && !e->uses_kill && !e->writes_depth && !e->writes_mask && (e->uses_gstore || e->images_written)) {
+                    emit(&h, "layout(early_fragment_tests) in;\n");
+                    out->early_tests = e->uses_alpha ? 2 : 1;
+                }
             }
         }
         if (in->stage == MX_COMPUTE) {

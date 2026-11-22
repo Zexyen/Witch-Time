@@ -26,9 +26,10 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
     volatile LONG warm;                            /* [witchtime] a pipeline was made with this stage: the driver has compiled it (warm_main) */
+    int early;                                     /* fragment: MxOut.early_tests (2: a draw whose alpha test can discard takes the MX_FO_NO_EARLY variant) */
 } VStage;
-#define MX_VK_VERSION 21u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
-typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
+#define MX_VK_VERSION 22u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; int32_t early; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
 typedef struct { int stage, code_len, serial, rs, nograin; uint32_t hdr; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess); rs: a fragment stage translated for a scale other than 1.0, kept here because a worker may build it after the scale changed */
@@ -182,6 +183,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
+    if (o->stage == 1 && getenv("WT_VK_EARLYZ") && !atoi(getenv("WT_VK_EARLYZ"))) h = fnv(h, "ez0", 3);      /* mx_translate: fragment stages without early fragment tests are another translation */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
     if (vk_lone_lane(o->stage)) h = fnv(h, "ll1", 3);      /* [witchtime] MxIn.lone_lane is another translation; where the GPU has subgroups in the stage the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs3", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
@@ -239,6 +241,7 @@ static void vstage_from_rec(VStage *v, const StageRec *r, uint64_t vh, VkShaderM
     v->cbufs = r->cbufs; v->ssbos = r->ssbos; v->ssbo_w = r->ssbo_w; v->images = r->images; v->dep = r->dep; v->tex_units = r->tex_units; v->in_attr = r->in_attr; v->out_attr = r->out_attr;
     v->uses_alpha = r->uses_alpha; v->nsmp = r->nsmp; memcpy(v->smp, r->smp, sizeof v->smp);
     memcpy(v->img_fmt, r->img_fmt, sizeof v->img_fmt); memcpy(v->img_type, r->img_type, sizeof v->img_type);
+    v->early = r->early;
     v->mod = mod; v->ok = 1;
 }
 static int key_fits(int s, const uint32_t *want, const uint32_t *have, uint32_t dep, uint32_t tex) {
@@ -437,7 +440,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
             v->mod = module_from_glsl(s, out.glsl, what, &spv_hash);
             module_name(v->mod, src);
             v->cbufs = out.cbufs; v->ssbos = out.ssbos; v->ssbo_w = out.ssbo_written; v->images = out.images; v->in_attr = out.in_attr; v->out_attr = out.out_attr;
-            v->dep = s == 0 ? out.int_dep : 0; v->tex_units = out.tex_units; v->uses_alpha = out.uses_alpha; v->nsmp = out.nsmp;
+            v->dep = s == 0 ? out.int_dep : 0; v->tex_units = out.tex_units; v->uses_alpha = out.uses_alpha; v->nsmp = out.nsmp; v->early = out.early_tests;
             memcpy(v->img_fmt, out.image_gl_format, sizeof v->img_fmt); memcpy(v->img_type, out.image_type, sizeof v->img_type);
             for (int i = 0; i < out.nsmp && i < 64; i++) {
                 const char *ty = out.smp[i].type;
@@ -454,7 +457,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
                 memset(&r, 0, sizeof r);
                 r.magic = STAGEREC_MAGIC; r.stage = s; r.code_len = v->code_len; memcpy(r.key, v->key, 16); r.fo = v->fo; r.spv = spv_hash; r.hb = v->hb;
                 r.cbufs = v->cbufs; r.ssbos = v->ssbos; r.ssbo_w = v->ssbo_w; r.images = v->images; r.dep = v->dep; r.tex_units = v->tex_units; r.in_attr = v->in_attr; r.out_attr = v->out_attr;
-                r.uses_alpha = v->uses_alpha; r.nsmp = v->nsmp; memcpy(r.smp, v->smp, sizeof r.smp);
+                r.uses_alpha = v->uses_alpha; r.nsmp = v->nsmp; memcpy(r.smp, v->smp, sizeof r.smp); r.early = v->early;
                 memcpy(r.img_fmt, v->img_fmt, sizeof r.img_fmt); memcpy(r.img_type, v->img_type, sizeof r.img_type);
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.st", vkc_dir(), s, (unsigned long long)v->h);
                 if ((fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }
