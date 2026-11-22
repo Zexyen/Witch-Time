@@ -1426,6 +1426,14 @@ impl Fn {
                         (1, 0x05) => Some("X_UQSUB"),
                         (0, 0x12) => Some("X_MLA"),
                         (1, 0x12) => Some("X_MLS"),
+                        // issue 281: the picture book's movie decoder
+                        (0, 0x00) if !scalar && size < 3 => Some("X_SHADD"),
+                        (1, 0x00) if !scalar && size < 3 => Some("X_UHADD"),
+                        (0, 0x02) if !scalar && size < 3 => Some("X_SRHADD"),
+                        (1, 0x02) if !scalar && size < 3 => Some("X_URHADD"),
+                        (0, 0x0e) if !scalar && size < 3 => Some("X_SABD"),
+                        (1, 0x0e) if !scalar && size < 3 => Some("X_UABD"),
+                        (0, 0x16) if size == 1 || size == 2 => Some("X_SQDMULH"),
                         _ => None,
                     };
                     if let Some(op) = op {
@@ -1466,6 +1474,14 @@ impl Fn {
                 }
                 if opc == 0x14 && !scalar && size < 3 {
                     return Ok(format!("v_qxtn({}, {}, {}, {}, {});", v(rd), v(rn), size, q, u));
+                }
+                // SQXTUN{2} (issue 281: the picture book's movie decoder): signed source, unsigned result
+                if (u, opc) == (1, 0x12) && !scalar && size < 3 {
+                    return Ok(format!("v_qxtn({}, {}, {}, {}, 2);", v(rd), v(rn), size, q));
+                }
+                // SHLL{2}: widen and shift left by the element size
+                if (u, opc) == (1, 0x13) && !scalar && size < 3 {
+                    return Ok(format!("v_shll({}, {}, {}, {}, 1, {});", v(rd), v(rn), 8 << size, size, q));
                 }
                 // [witchtime] rt_ext.h: FRINTN/M/P/Z/A (vector), FCVTAS/FCVTAU, {S,U}ADDLP, {S,U}ADALP
                 let mode = match (u, a, opc) {
@@ -1714,6 +1730,13 @@ impl Fn {
         }
         if matches!(opc, 0x12 | 0x13) && u == 0 && !scalar && es < 3 {
             return Ok(format!("v_sqshrn({}, {}, {}, {}, {}, {});", v(rd), v(rn), right, es, q, opc & 1));
+        }
+        // issue 281: SQSHRUN / SQRSHRUN{2}, {S,U}RSRA
+        if matches!(opc, 0x10 | 0x11) && u != 0 && !scalar && es < 3 {
+            return Ok(format!("v_sqshrn({}, {}, {}, {}, {}, {});", v(rd), v(rn), right, es, q, (opc & 1) + 2));
+        }
+        if opc == 0x06 {
+            return Ok(format!("v_rsra({}, {}, {}, {}, {}, {});", v(rd), v(rn), right, es, u, icount(es)));
         }
         if opc == 0x02 {
             return Ok(format!("v_sra({}, {}, {}, {}, {}, {});", v(rd), v(rn), right, es, u, icount(es)));

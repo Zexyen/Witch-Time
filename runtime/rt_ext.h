@@ -43,14 +43,16 @@ static inline void v_long3(V128 *d, const V128 *n, const V128 *m, int op, int es
     *d = r;
 }
 
-/* SQXTN/UQXTN{2}: narrow each 2x-wide element of n with saturation; q = 1 writes the upper half and keeps the lower. */
+/* SQXTN (u 0) / UQXTN (1) / SQXTUN (2: signed source, unsigned result){2}: narrow each 2x-wide element of n with
+ * saturation; q = 1 writes the upper half and keeps the lower. */
 static inline void v_qxtn(V128 *d, const V128 *n, int es, int q, int u) {
     V128 r = *d;
     int cnt = 8 >> es;
     if (!q) r.d[1] = 0;
     for (int i = 0; i < cnt; i++) {
         uint64_t x = vget(n, es + 1, i);
-        vset(&r, es, i + q * cnt, u ? sat_u(x, es) : sat_s(vsext(x, es + 1), es));
+        int64_t sx = vsext(x, es + 1);
+        vset(&r, es, i + q * cnt, u == 2 ? (sx < 0 ? 0 : sat_u((uint64_t)sx, es)) : u ? sat_u(x, es) : sat_s(sx, es));
     }
     *d = r;
 }
@@ -67,16 +69,17 @@ static inline void v_rshr(V128 *d, const V128 *n, int sh, int es, int u, int cou
     *d = r;
 }
 
-/* SQSHRN (round 0) / SQRSHRN (round 1){2}: signed 2x-wide source, shift right by sh, saturate to es; q as v_qxtn. */
+/* SQSHRN (round 0) / SQRSHRN (round 1){2}: signed 2x-wide source, shift right by sh, saturate to es; q as v_qxtn.
+ * round + 2 = SQSHRUN / SQRSHRUN: the result is unsigned. */
 static inline void v_sqshrn(V128 *d, const V128 *n, int sh, int es, int q, int round) {
     V128 r = *d;
     int cnt = 8 >> es;
     if (!q) r.d[1] = 0;
     for (int i = 0; i < cnt; i++) {
         __int128 v = vsext(vget(n, es + 1, i), es + 1);       /* 128-bit: rounding a 64-bit source cannot overflow */
-        if (round) v += (__int128)1 << (sh - 1);
+        if (round & 1) v += (__int128)1 << (sh - 1);
         v >>= sh;                                            /* now fits in es + 1 bits, so in int64 */
-        vset(&r, es, i + q * cnt, sat_s((int64_t)v, es));
+        vset(&r, es, i + q * cnt, round & 2 ? (v < 0 ? 0 : sat_u((uint64_t)v, es)) : sat_s((int64_t)v, es));
     }
     *d = r;
 }
@@ -122,7 +125,9 @@ static inline uint64_t shl_reg(uint64_t x, int8_t sh, int es, int u, int round, 
     return (uint64_t)(v >> r);
 }
 enum { X_SMAX, X_UMAX, X_SMIN, X_UMIN, X_SSHL, X_USHL, X_SRSHL, X_URSHL, X_SQSHL, X_UQSHL, X_SQADD, X_UQADD, X_SQSUB, X_UQSUB,
-       X_MLA, X_MLS };
+       X_MLA, X_MLS,
+       /* the picture book's movie decoder (issue 281); the halving adds and differences are for es < 3 */
+       X_SHADD, X_UHADD, X_SRHADD, X_URHADD, X_SABD, X_UABD, X_SQDMULH };
 static inline void v_i3x(V128 *d, const V128 *n, const V128 *m, int op, int es, int count) {
     V128 r; vzero(&r);
     uint64_t mask = es == 3 ? ~0ull : (1ull << (8 << es)) - 1;
@@ -142,6 +147,13 @@ static inline void v_i3x(V128 *d, const V128 *n, const V128 *m, int op, int es, 
         case X_UQSUB: z = x > y ? x - y : 0; break;
         case X_MLA: z = vget(d, es, i) + x * y; break;
         case X_MLS: z = vget(d, es, i) - x * y; break;
+        case X_SHADD: z = (uint64_t)((sx + sy) >> 1); break;
+        case X_UHADD: z = (x + y) >> 1; break;
+        case X_SRHADD: z = (uint64_t)((sx + sy + 1) >> 1); break;
+        case X_URHADD: z = (x + y + 1) >> 1; break;
+        case X_SABD: z = (uint64_t)(sx > sy ? sx - sy : sy - sx); break;
+        case X_UABD: z = x > y ? x - y : y - x; break;
+        case X_SQDMULH: z = sat128(((__int128)sx * sy * 2) >> (8 << es), es); break;
         }
         vset(&r, es, i, z);
     }
@@ -240,6 +252,14 @@ static inline void v_sra(V128 *d, const V128 *n, int sh, int es, int u, int coun
         vset(&r, es, i, vget(d, es, i) + y);
     }
     *d = r;
+}
+
+/* {S,U}RSRA: rounding shift right by sh and add to d. */
+static inline void v_rsra(V128 *d, const V128 *n, int sh, int es, int u, int count) {
+    V128 t;
+    v_rshr(&t, n, sh, es, u, count);
+    for (int i = 0; i < count; i++) vset(&t, es, i, vget(d, es, i) + vget(&t, es, i));
+    *d = t;
 }
 
 /* SHRN / RSHRN{2}: 2x-wide source shifted right by sh, truncated to es; q as v_qxtn. */
