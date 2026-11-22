@@ -33,7 +33,7 @@ typedef struct {
     int fail; char why[200], failop[40];
     uint32_t cbufs, in_attr, out_attr, tex_units, clip_out, ssbos;
     uint8_t regs[256], preds[8], in_comp[32], in_mode[32];
-    int uses_gmem, uses_gstore, uses_cc, uses_layer_out, uses_vp_out, uses_psize, uses_lmem, insns, blocks, any_jump, uses_alpha;
+    int uses_gmem, uses_gstore, uses_cc, uses_layer_out, uses_vp_out, uses_psize, uses_lmem, insns, blocks, any_jump, uses_alpha, alpha_elided;
     uint8_t *reach, *leader;
     const uint8_t *base;                      /* instruction word 0 (a scheduling word) */
     uint32_t gubos;                           /* compute: uniform buffers reached through global memory */
@@ -1855,6 +1855,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
     if (in->stage == MX_TESS_EVAL && !(in->tess_prim == 4 || in->tess_prim == 7 || in->tess_prim == 0x8e7a)) fail(e, "tessellation mode", "primitive mode 0x%x", in->tess_prim);
 
     /* the code that ends the shader (EXIT): fragment outputs from the registers, alpha test, depth */
+    static int ez_mode = -1;
+    if (ez_mode < 0) { const char *e_ez = getenv("WT_VK_EARLYZ"); ez_mode = e_ez ? atoi(e_ez) : 2; }
     if (in->stage == MX_FRAGMENT) {
         uint32_t omap, flags;
         unsigned reg = 0;
@@ -1868,7 +1870,12 @@ int mx_translate(const MxIn *in, MxOut *out) {
                 else n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "0.0%s", k < 3 ? ", " : "");
             }
             n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "); ");
-            if (rt == 0) { e->uses_alpha = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "if (!mx_alpha_ok(frag0.a)) discard; "); }
+            if (rt == 0) {
+                /* When alpha test is off / always (99.9%+ of draws), omitting the dynamic discard lets every GPU run
+                 * hardware Early-Z / Hi-Z; draws with alpha_func 1..7 take the MX_FO_NO_EARLY variant (early_tests = 2). */
+                if (in->target == 1 && ez_mode >= 2 && !(in->force_out & MX_FO_NO_EARLY)) e->alpha_elided = 1;
+                else { e->uses_alpha = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "if (!mx_alpha_ok(frag0.a)) discard; "); }
+            }
         }
         if (flags & 1) { e->writes_mask = 1; e->regs[reg] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_SampleMask[0] = int(r%u); ", reg); }
         if (flags & 2) { e->writes_depth = 1; e->regs[reg + 1] = 1; n += (size_t)snprintf(e->exitcode + n, sizeof e->exitcode - n, "gl_FragDepth = F(r%u); ", reg + 1); }
@@ -1888,35 +1895,38 @@ int mx_translate(const MxIn *in, MxOut *out) {
      * [issue 100] And a long chain with no shuffle: the gold cracks' 16-step parallax march (#7760 and its variants, 31 blocks) cost an
      * RX 9070 XT 0.59 ns a fragment that way, 0.06 like this. Shorter stages stay: all 1,644 of them in order gave no clear gain outside
      * this family, and a wrong quad read could then be anywhere in the game. */
-    int chain = 0, shfl = 0;
+    int chain = 0, shfl = 0, vote = 0;
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
         chain += e->leader[pc];
         if ((pc & 3) == 0) continue;
         int op = decode(MXW(pc));
-        if (op == MXOP_SHFL || op == MXOP_VOTE) shfl = 1;      /* what a lane gets there depends on which lanes run with it */
+        if (op == MXOP_SHFL) shfl = 1;
+        else if (op == MXOP_VOTE) vote = 1;
     }
     e->seq = e->any_jump && !e->has_back && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && in->target == 1 && chain >= 16));
-    /* [issue 257] And a fragment stage WITH jumps back and no shuffle: its blocks run in order too, and each stretch of blocks a
-     * jump back covers is a for (;;) (loop_regions; a loop inside a loop is a for inside a for). A jump back sets pc and leaves
-     * its block, the rest of the stretch skips itself and the stretch runs again from its first block (the blocks before the
-     * target skip themselves); the for ends when pc points outside the stretch. One trip of the for is one turn of the game's
-     * loop, where the dispatcher made one trip of its while per BLOCK, each through a switch that every lane takes its own way.
-     * The volume light (fragment program #1710: 75 cases, 4 jumps back, 22 3D-texture and cube samples at an explicit level and
-     * 17 gathers; one 256x144 draw a frame from the title screen on) took 0.44 ms of an RX 9070 XT's 3.35 ms frame in the
-     * Chapter 1 ride and takes 0.025 like this; the frame takes 2.50. Every target is known (analyze fails otherwise), and the
-     * step-back limit (loop_guard) counts as before.
-     * Not for a stage with a shuffle: its quad snapshots are taken at the dispatcher's header, with every lane of the wave in
-     * the loop (issue 66), and a lane that left a for is gone; that is the larger family (about 1,300 of the variations a first
-     * run prepares). In a for that the wave leaves together (subgroupAny) the ride ran at 63 fps for 120, so they keep the
-     * dispatcher. Vertex and compute stages with a jump back keep it too: 12 and 1
-     * of them in the same run, and in order they changed no pass's time in the ride (nor did the 45 compute stages with only
-     * forward jumps). WT_MX_LOOPS=0: the dispatcher, as before (with a cache of its own, WT_VK_CACHE: the stage hash does not
-     * know the switch). */
+    /* [issue 257] Fragment stages WITH jumps back run in order too (each looped stretch is a for (;;)), including stages
+     * with quad SHFLs as long as NO SHFL or VOTE lies inside any loop stretch: the quad snapshots run between top-level
+     * blocks (where all four lanes of every quad reconverge, as in issue 107), while the loops themselves run per-lane
+     * without wave-uniform subgroupAny / subgroupOr / switch overhead. WT_MX_LOOPS=0: dispatcher, =1: non-shuffle only,
+     * =2 (default): also shuffle stages whose shuffles are all outside loops. */
     {
         static int loops_on = -1;
-        if (loops_on < 0) loops_on = !(getenv("WT_MX_LOOPS") && !atoi(getenv("WT_MX_LOOPS")));
-        if (loops_on && in->stage == MX_FRAGMENT && in->target == 1 && e->has_back && !shfl && !e->fail) { e->loops = e->seq = 1; loop_regions(e); }
+        if (loops_on < 0) { const char *e_lp = getenv("WT_MX_LOOPS"); loops_on = e_lp ? atoi(e_lp) : 2; }
+        if (loops_on && in->stage == MX_FRAGMENT && in->target == 1 && e->has_back && !vote && !e->fail) {
+            if (!shfl) { e->loops = e->seq = 1; loop_regions(e); }
+            else if (loops_on >= 2) {
+                loop_regions(e);
+                int in_loop = 0;
+                for (unsigned pc = 1; pc < e->words && !in_loop; pc++) {
+                    if (!e->reach[pc]) continue;
+                    if (!e->qlead[pc] && ((pc & 3) == 0 || decode(MXW(pc)) != MXOP_SHFL)) continue;
+                    for (int a = 0; a < e->nreg; a++) if (pc >= e->r_lo[a] && pc < e->r_hi[a]) { in_loop = 1; break; }
+                }
+                if (!in_loop) e->loops = e->seq = 1;
+                else { free(e->rstk); e->rstk = NULL; e->r_lo = e->r_hi = NULL; e->nreg = 0; }
+            }
+        }
     }
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
@@ -1969,17 +1979,19 @@ int mx_translate(const MxIn *in, MxOut *out) {
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
         if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
         if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
-        if (vk && e->uses_quad) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_vote : require\n#extension GL_KHR_shader_subgroup_arithmetic : require\n");
+        if (vk && e->uses_quad && !e->seq) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_vote : require\n#extension GL_KHR_shader_subgroup_arithmetic : require\n");
         emit(&h, "%s", k_prelude);
         if (e->uses_quad) {                      /* [issue 66] the values of the three other lanes of this quad (x across, y down, z diagonal). Derivatives, not subgroup
                                                   * quad swaps (green on an RX 6700 XT, issue 54): 16-bit halves as floats, so the differences are exact for any bits.
-                                                  * mx_qneed: the snapshot bits a shuffle case reads. */
+                                                  * mx_qneed: the snapshot bits a shuffle case reads (dispatcher only). */
             emit(&h, "uvec3 mx_quad3(uint v) { vec2 h = vec2(float(v & 0xffffu), float(v >> 16)), sx = vec2((uint(gl_FragCoord.x) & 1u) != 0u ? -1.0 : 1.0), sy = vec2((uint(gl_FragCoord.y) & 1u) != 0u ? -1.0 : 1.0);\n"
                      " vec2 x = h + sx * dFdxFine(h), y = h + sy * dFdyFine(h), d = x + sy * dFdyFine(x);\n"
-                     " return uvec3(uint(x.x + 0.5) | uint(x.y + 0.5) << 16, uint(y.x + 0.5) | uint(y.y + 0.5) << 16, uint(d.x + 0.5) | uint(d.y + 0.5) << 16); }\n"
-                     "uint mx_qneed(uint p) { switch (p) {");
-            for (int k = 0; k < e->nqcase; k++) if (e->qcase_mask[k]) emit(&h, " case %uu: return 0x%xu;", e->qcase_pc[k], e->qcase_mask[k]);
-            emit(&h, " default: return 0u; } }\n");
+                     " return uvec3(uint(x.x + 0.5) | uint(x.y + 0.5) << 16, uint(y.x + 0.5) | uint(y.y + 0.5) << 16, uint(d.x + 0.5) | uint(d.y + 0.5) << 16); }\n");
+            if (!e->seq) {
+                emit(&h, "uint mx_qneed(uint p) { switch (p) {");
+                for (int k = 0; k < e->nqcase; k++) if (e->qcase_mask[k]) emit(&h, " case %uu: return 0x%xu;", e->qcase_pc[k], e->qcase_mask[k]);
+                emit(&h, " default: return 0u; } }\n");
+            }
         }
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; float mx_fcs_y; };\n");      /* track O */
         else
@@ -2049,11 +2061,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
                  * alpha test's discard (mx_alpha_ok) is allowed, though early tests write depth before the shader runs: right while
                  * the draw's alpha function passes everything (as in the prepass); draw_prepare takes the variant without them
                  * (MX_FO_NO_EARLY) for a draw whose alpha test can discard. */
-                static int ez = -1;
-                if (ez < 0) ez = !getenv("WT_VK_EARLYZ") || atoi(getenv("WT_VK_EARLYZ"));
-                if (vk && ez && !(in->force_out & MX_FO_NO_EARLY) && !e->has_kil && !e->uses_kill && !e->writes_depth && !e->writes_mask && (e->uses_gstore || e->images_written)) {
+                if (vk && ez_mode && !(in->force_out & MX_FO_NO_EARLY) && !e->has_kil && !e->uses_kill && !e->writes_depth && !e->writes_mask && (e->uses_gstore || e->images_written)) {
                     emit(&h, "layout(early_fragment_tests) in;\n");
-                    out->early_tests = e->uses_alpha ? 2 : 1;
+                    out->early_tests = (e->uses_alpha || e->alpha_elided) ? 2 : 1;
+                } else if (e->alpha_elided) {
+                    out->early_tests = 2;
                 }
             }
         }

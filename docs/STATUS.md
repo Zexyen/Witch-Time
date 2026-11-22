@@ -1773,6 +1773,66 @@ gathers, in loops (4 jumps back), 75 dispatcher cases and 122 jumps, 156 KB of t
   colour per shot stays inside the spread between two old runs. No device loss in the 30 runs.
 - Not run on NVIDIA, Intel or AMD's Windows driver. The reporter's GPU time was not measured: whether this draw is as
   large a share there is not known.
+## Shuffle-outside-loops shaders, alpha-test discard elision, and render-thread CPU (2026-11-22)
+
+Two GPU shader-translator changes (`MX_VK_VERSION` 24) and a set of Vulkan render-thread CPU changes:
+
+- **Fragment stages with shuffles AND jumps back (`mx_translate.c`, `WT_MX_LOOPS=2` default)**: inspecting all 4,383
+  fragment stages prepared on a first run showed that 1,267 have both a jump back and `SHFL`, and **zero** of those
+  1,267 have any `SHFL` or `VOTE` inside a loop stretch. When `loop_regions` confirms no `SHFL`/`qlead` lies inside any
+  `[r_lo, r_hi)` stretch, the stage now runs in order (`e->loops = e->seq = 1`): top-level `qlead` blocks take their
+  `mx_quad3` snapshots between blocks (as in issue 107) while each loop runs per-lane in a plain `for (;;)` with no
+  `subgroupAny`/`subgroupOr`/`mx_qneed`/`switch (pc)`. `WT_MX_LOOPS=1` keeps them on the dispatcher; `=0` disables all
+  loop regions.
+- **Elide unused alpha-test `discard` in the default Vulkan fragment variant (`mx_translate.c`, `WT_VK_EARLYZ=2`
+  default)**: 3,645 of 4,383 fragment stages emitted `if (!mx_alpha_ok(frag0.a)) discard;` with no `KIL`/depth/mask
+  write, inhibiting hardware Early-Z / Hi-Z even when alpha test is off or `ALWAYS`. The default Vulkan variant omits
+  that check and marks `out->early_tests = 2`, so `draw_prepare` selects the `MX_FO_NO_EARLY` variant whenever
+  `R.alpha_func` is `1..7` or `R.ms[1] != 0`.
+- **Vulkan render-thread CPU (`nvn_vk_draw.c`, `nvn_vk_m4.c`, `nvn_vk_pcmenu.c`, `nvn_gl.c`, `nvn_front.h`)**:
+  - **4,096-entry direct-mapped texture handle cache** (`g_tex_hc`) shared across `tex_lookup`, `resolve_sampler`, and
+    `OP_TEXTURES`, caching `VkSampler` (with `g_smp_gen` reset on PC-menu aniso/bias changes and a hash-indexed
+    `sampler_get`), `dims`/`isint`, and the fully resolved `(VTex*, VkImageView, VkSampler)` gated by per-target
+    `VTex.attach_gen` and `VTex.touch_gen` (`WT_VK_TEXMEMO=0` off, `=2` verifies every hit).
+  - **O(log N) disjoint-interval CB lookups**: `cb_inside`, `cb_overlap`, `cb_kept_from`, `cb_kept_discard`, and
+    `cb_new` use upper/lower-bound binary search on sorted non-overlapping live/kept intervals instead of walking from
+    `addr - g_live_max` or scanning `0..g_cb_hi`; replaced `qsort` in `cb_kept_index` with inline shell-sort, skipped
+    steady-state `qsort` in `tcl_build`, and removed duplicate `cb_pf_any`/`cb_live_upper` calls in `buf_ref` and
+    `vrc_cb_touch` (`WT_VK_CBPF=2` checks exact equivalence).
+  - **Split `R.gen` and targeted range invalidation** (`WT_VK_RING_RANGE=0` reverts to full invalidation): separated
+    `R.ring_gen` (`c2_ref`), `R.tex_mem_gen` (bumped only when a write overlaps a texture cluster via
+    `nvn_front_tex_cluster_hit`), and `R.vrc_gen`; targeted guest-memory writes (`OP_UPDATE_UBO`, `OP_CLEAR_BUF`,
+    `OP_COPY_BUF_BUF`, counter reports, CB landings) invalidate only overlapping `R.acache` slots via tombstones instead
+    of flushing all 8,192 entries. Static index buffers in `OP_DRAW_ELEMENTS` / `OP_DRAW_INDIRECT` now use `vrc_ref`
+    (`WT_VK_VRC_IB=0` off).
+  - **State shadowing and `draw_prepare` / `scan_list` cleanup**: cached `vin_describe` and vertex attribute masks with
+    a 256-entry `vertex_vkfmt` LUT and no-op filtering in `OP_VATTR`/`OP_VSTREAM`; shadowed `vkCmdSetVertexInputEXT`,
+    `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, Set-1 `vkCmdBindDescriptorSets`, and `vkCmdPushConstants` under
+    `dsh_on()` / `dsh_forget()`; added a 512-entry render-thread cache in `pipe_get`, `__builtin_ctz` bit-loops and
+    cached per-stage Set-1 binding hashes in `draw_prepare`, and word-wise hashing + `D.has_vids` skipping in
+    `scan_list`/`scan_draw`.
+- **Measured** (Linux, Ryzen 7 7800X3D + RX 9070 XT RADV, `g120.ini`, interleaved against `33ece63` on warm caches):
+
+  | Scene (`>1800 draws`) | Metric | Baseline (`33ece63`) | New | Change |
+  |---|---|---|---|---|
+  | Ride 900p (`p100_GomoraSlider1`, ~2,370 draws) | Batch replay (CPU) | 5.26, 5.30 ms | 3.37, 3.30 ms | **-36.8%** |
+  | Ride 900p | Draw preparation (CPU) | 3.41, 3.44 ms | 2.11, 2.03 ms | **-39.6%** |
+  | Ride 900p | Render thread busy (`WT_LPROF`) | 63.4% | 38.0% | **-40.1%** |
+  | Ride 900p | Stream-ring copied / resets | 5,849 / 5,772 KB (8.8 rst) | 1,584 / 1,587 KB (2.0 rst) | **-72.7%** |
+  | Shibuya 4K (`p120_ShibuyaScramble`, scale 2.4, ~2,110 draws) | GPU time (`WT_VK_GPUTIME`) | 6.98, 6.98 ms | 4.98 ms | **-28.7%** |
+  | Shibuya 4K | Main lighting pass `3456x1958` (1,100 draws) | 0.896 ms | 0.344 ms | **-61.6%** |
+  | Shibuya 4K | Batch replay (CPU) | 5.16, 5.29 ms | 3.33 ms | **-36.3%** |
+  | Shibuya 4K | Stream-ring copied / resets | 6,507 / 6,697 KB (10.1 rst) | 2,203 KB (1.7 rst) | **-66.6%** |
+
+  Isolation at 4K Shibuya (`>1800 draws`): `WT_MX_LOOPS=2` alone cut GPU time from `7.06` to `5.45 ms` (`-22.8%`), and
+  adding `WT_VK_EARLYZ=2` brought it to `5.24 ms` (`-25.8%`). Local-variable `mx_wm` batching in compute shaders was
+  also tested and reverted after regressing compute dispatch time (`0.447 -> 0.567 ms` on Ride, `0.399 -> 0.418 ms` at
+  4K Shibuya).
+- **Checks**: 0 failures on `WT_VK_CBPF=2 WT_VK_TEXMEMO=2`, 0 runtime Vulkan validation errors (`WT_VK_VALIDATE=1`),
+  all C translator tests (`mx_loop_guard_test` including new A1/A2 cases, `mx_quad_test`, `mx_prev_test`) and 54/54
+  `wtbuild` Rust tests pass. Still-scene screenshots (`p9a0_training`, `p9a0_shop`, 60 fps): `p9a0_training` matches to
+  0.0006/255 (max 2) outside the two horizontally scrolling Enochian rune strips (0.36/255 full frame, matching
+  old-against-old); `p9a0_shop` matches to 0.39–0.48/255 (0.21–0.36% >24). Not tested on Windows, NVIDIA, or Intel.
 ## Launcher and in-game look (2026-11-01)
 
 One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's

@@ -294,7 +294,7 @@ void nvn_vk_pcmenu_job(void *arg) {
         if (g_nsmp_old + g_nsmp <= (int)(sizeof g_smp_old / sizeof g_smp_old[0])) {
             for (int i = 0; i < g_nsmp; i++) g_smp_old[g_nsmp_old++] = g_smp[i].s;
             printf("pcmenu: %d samplers made again from now on (anisotropic_filtering %d, texture_lod_bias %.2f)\n", g_nsmp, gfx_options()->aniso, gfx_options()->texture_lod_bias);
-            g_nsmp = 0;
+            sampler_table_reset();
         } else printf("pcmenu: too many samplers kept already: anisotropic_filtering applies to new samplers only (all at the next start)\n");
     }
     if (work & 2) { present_mode_pick(); if (V.swapchain) swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
