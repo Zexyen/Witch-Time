@@ -175,6 +175,7 @@ static int fsr4_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset)
     }
     vt_layout(mv, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);      /* AMD: inputs read-only, the output general (as FI_OUT is) */
     struct ffxDispatchDescUpscale d; memset(&d, 0, sizeof d);
+    rc_flush();                                    /* the SDK records into the command buffer itself */
     d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE; d.commandList = R.cmd;
     d.color = fsr4_res(vc, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad); d.depth = fsr4_res(vd, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad);
     d.motionVectors = fsr4_res(mv, FFX_API_RESOURCE_STATE_COMPUTE_READ, &bad); d.output = fsr4_res(out, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, &bad);

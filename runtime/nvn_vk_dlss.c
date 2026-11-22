@@ -141,6 +141,7 @@ static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset)
         ngx_set_i(DL.par, "PerfQualityValue", k_quality[g_rs_mode - 6]);
         ngx_set_i(DL.par, "DLSS.Feature.Create.Flags", 1 | 2 | 64);      /* HDR colour, motion vectors at the scene's size, exposure worked out by DLSS (depth 0 near: not inverted; vectors without jitter) */
         ngx_set_i(DL.par, "DLSS.Enable.Output.Subrects", 0);
+        rc_flush();                                /* NGX records into the command buffer itself */
         NgxResult r = DL.create1(V.device, R.cmd, 1, DL.par, &DL.h);
         if (r != 1 || !DL.h) { DL.h = NULL; dlss_off("the DLSS feature was not created", r); return 0; }
         DL.w = mw; DL.h_ = mh; DL.uw = uw; DL.uh = uh; DL.mode = g_rs_mode; DL.fmt = out->fmt; reset = 1;
@@ -162,6 +163,7 @@ static int dlss_run(VTex *vc, VTex *vd, int w, int h, int uw, int uh, int reset)
     ngx_set_u(DL.par, "DLSS.Render.Subrect.Dimensions.Width", (unsigned)w); ngx_set_u(DL.par, "DLSS.Render.Subrect.Dimensions.Height", (unsigned)h);
     ngx_set_f(DL.par, "Sharpness", 0.0f); ngx_set_f(DL.par, "DLSS.Pre.Exposure", 1.0f); ngx_set_f(DL.par, "DLSS.Exposure.Scale", 1.0f);
     ngx_set_i(DL.par, "Reset", reset);
+    rc_flush();
     NgxResult r = DL.evaluate(R.cmd, DL.h, DL.par, NULL);
     R.pipe_bound = NULL; dsh_forget(); R.dyn_dirty = R.vi_dirty = R.dyn3_dirty = 1;      /* NGX leaves bindings of its own in the command buffer */
     vt_layout(mv, VK_IMAGE_LAYOUT_GENERAL);
