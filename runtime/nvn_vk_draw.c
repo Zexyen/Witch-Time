@@ -3862,8 +3862,13 @@ static int draw_prepare(unsigned prim) {
     /* fragment inputs the vertex code never writes are declared by a vertex variant of their own, left at (0, 0, 0, 1). Session 4:
      * the variant the program used last is asked for first (session 3 asked for the plain one at every draw of such a pair,
      * which hashed the machine code each time). */
-    VStage *cur = R.prog[0]->st[0].vk;
-    VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, 0), *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
+    VStage *cur = R.prog[0]->st[0].vk, *cur1 = depth_only ? NULL : R.prog[1]->st[1].vk;
+    int no_early = (R.alpha_func > 0 && R.alpha_func < 8) || R.ms[1] != 0;
+    VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, no_early && cur1 && cur1->fo == MX_FO_NO_EARLY ? MX_FO_NO_EARLY : 0);
+    VStage *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
+    /* mx_translate: early fragment tests with frag0 / alpha test are right only while neither the alpha function (0 off, 8 always,
+     * mx_alpha_ok) nor alpha-to-coverage (R.ms[1]) can discard: a draw where either can discard takes the variant translated without them */
+    if (fs && fs->early == 2 && no_early) fs = vstage_get(R.prog[1], 1, key1, MX_FO_NO_EARLY);
     VStage *tcs = NULL, *tes = NULL;
     if (tess_mark && fs) {                         /* TEST ONLY (WT_VK_TESS_ALT=2) */
         static VStage *mag;

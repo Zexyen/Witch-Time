@@ -104,7 +104,12 @@ typedef struct {
     int nsmp;
     uint32_t prev_cbufs;             /* the buffers of MxIn.prev_cbufs the code reads; 0: no previous position (none read, the code stores, or no free location) */
     int prev_loc;                    /* location of mx_prev when prev_cbufs is not 0 */
+    int early_tests;                 /* fragment: 0 none; 1 early fragment tests asked for (WT_VK_EARLYZ); 2 asked for, and the code writes
+                                     * frag0 / has the alpha test's discard: right only while neither alpha test nor alpha-to-coverage can discard */
 } MxOut;
+/* MxIn.force_out of a FRAGMENT stage (not used there otherwise): the variant for draws whose alpha test or alpha-to-coverage
+ * can discard, translated without early fragment tests (nvn_vk_draw.c draw_prepare) */
+#define MX_FO_NO_EARLY 0x80000000u
 
 /* Returns 1 on success. out->glsl must be freed by the caller. */
 int mx_translate(const MxIn *in, MxOut *out);
