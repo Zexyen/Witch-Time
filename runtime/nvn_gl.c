@@ -285,7 +285,7 @@ static volatile LONG64 g_jw[JW_N][7];
 static void (*volatile g_rt_cur)(void *);              /* the job the render thread runs now (NULL: idle) */
 static _Thread_local LONG64 t_jw[7];                    /* the last gl_run of this thread, as one row of g_jw */
 static int g_fastsync;                                  /* WT_FASTSYNC and its counters (at sync_wait) */
-static volatile LONG64 g_fs[11];
+static volatile LONG64 g_fs[12];
 static void jw_add(int k, const LONG64 *v) { for (int i = 0; i < 7; i++) InterlockedExchangeAdd64(&g_jw[k][i], v[i]); }
 static int jw_kind(void (*fn)(void *)) {
     for (int k = 5; k < JW_N; k++) {
@@ -3787,11 +3787,11 @@ static void pf_frame_mark(LONG64 frame) {
                    (double)(d[1] + d[2] + d[3]) * ms, (double)d[1] * ms, (double)d[2] * ms, (double)d[3] * ms, (double)d[4] / 300.0, (double)d[5] / 300.0, (double)d[6] / 300.0);
             if (!strcmp(name, "other")) printf(" (job %p)", (void *)(uintptr_t)fn);
         }
-        static LONG64 lf[11];
-        LONG64 f[11];
-        for (int i = 0; i < 11; i++) { f[i] = g_fs[i] - lf[i]; lf[i] += f[i]; }
-        printf(" || answered on the game's thread (WT_FASTSYNC=%d): SyncWait window %.2f, SyncWait finished %.2f, QueueWaitSync never fenced %.2f, finished %.2f; SyncWait on a fence run but not finished, waited for there %.2f (%.2f ms) | jobs all the same: SyncWait on a fence not run yet %.2f, run but not finished %.2f (by then the jobs posted before it had run, or the render thread was idle), with a timeout under 1 s %.2f, other %.2f, QueueWaitSync %.2f\n",
-               g_fastsync > 0, (double)f[0] / 300.0, (double)f[1] / 300.0, (double)f[2] / 300.0, (double)f[3] / 300.0, (double)f[8] / 300.0, (double)f[9] * ms, (double)f[4] / 300.0, (double)f[5] / 300.0, (double)f[10] / 300.0, (double)f[6] / 300.0, (double)f[7] / 300.0);
+        static LONG64 lf[12];
+        LONG64 f[12];
+        for (int i = 0; i < 12; i++) { f[i] = g_fs[i] - lf[i]; lf[i] += f[i]; }
+        printf(" || answered on the game's thread (WT_FASTSYNC=%d): SyncWait window %.2f, SyncWait finished %.2f, QueueWaitSync never fenced %.2f, finished %.2f; SyncWait on a fence run but not finished, waited for there %.2f (%.2f ms), polls with timeout 0 answered there %.2f | jobs all the same: SyncWait on a fence not run yet %.2f, run but not finished %.2f (by then the jobs posted before it had run, or the render thread was idle), with a timeout under 1 s %.2f, other %.2f, QueueWaitSync %.2f\n",
+               g_fastsync > 0, (double)f[0] / 300.0, (double)f[1] / 300.0, (double)f[2] / 300.0, (double)f[3] / 300.0, (double)f[8] / 300.0, (double)f[9] * ms, (double)f[11] / 300.0, (double)f[4] / 300.0, (double)f[5] / 300.0, (double)f[10] / 300.0, (double)f[6] / 300.0, (double)f[7] / 300.0);
     }
     {
         static int on = -1;
@@ -5194,7 +5194,7 @@ static void queue_fence_sync(Ctx *c) {                  /* (queue, sync, conditi
  * Anything else (a list submitted twice: unsafe; a sync finalized; never fenced and not the window's) is a job as before.
  * Counted in the "nvn_jobwait:" line (answered at once, waited for here, and why the others took a job). */
 static int g_fastsync = -1;
-static volatile LONG64 g_fs[11];     /* answered without a job: 0 SyncWait window, 1 SyncWait done, 2 QueueWaitSync never fenced, 3 QueueWaitSync done; jobs: 4 SyncWait on a fence not run yet, 5 run, not finished, 6 never fenced (not the window) / unsafe / finalized, 7 QueueWaitSync; 8 SyncWait waited for on the game's thread (sync_wait_here), 9 its ticks; 10 job: run, not finished, a timeout under 1 s */
+static volatile LONG64 g_fs[12];     /* answered without a job: 0 SyncWait window, 1 SyncWait done, 2 QueueWaitSync never fenced, 3 QueueWaitSync done; jobs: 4 SyncWait on a fence not run yet, 5 run, not finished, 6 never fenced (not the window) / unsafe / finalized, 7 QueueWaitSync; 8 SyncWait waited for on the game's thread (sync_wait_here), 9 its ticks; 10 job: run, not finished, a timeout under 1 s; 11 a poll (timeout 0) of such a fence answered here (sync_poll_here) */
 static int fastsync_on(void) { if (g_fastsync < 0) g_fastsync = !strcmp(g_rb->name, "vk") && !(getenv("WT_FASTSYNC") && !atoi(getenv("WT_FASTSYNC"))); return g_fastsync; }
 int nvn_vk_sync_done(const SyncObj *o);                 /* nvn_vk_draw.c */
 static int sync_fast_done(const SyncObj *o) { return !o->dead && !o->unsafe && o->posted && o->posted == o->ran && nvn_vk_sync_done(o); }      /* ran is read before s (nvn_vk_draw.c sync_ran) */
@@ -5233,6 +5233,27 @@ static int sync_wait_here(SyncObj *o, uint64_t timeout_ns) {
     InterlockedDecrement(&g_dw_waiters);
     return done;
 }
+/* Issue 257: a poll, SyncWait with timeout 0. B3 spins on one, with nothing between the calls, until an object's fence
+ * has finished (0x7100b986d4: while (!f_7100d02e80(x)), which calls SyncWait(sync, 0) and takes 0 or 1 as yes): once a
+ * frame in play, and for as long as the GPU needs when it is behind. As a job each question stood behind the batch being
+ * replayed (a Chapter 1 ride at 120: 3.9 ms of the game's thread per frame, with the fence finished long before; a GTX
+ * 1660 Ti behind in a cutscene: 398 jobs a frame). The fence has run and R.done says its submission has not finished:
+ * the caller waits here for R.done to move (the render thread keeps it current during a replay and wakes the waiters,
+ * nvn_front_done_moved), 1 ms at most, and gets 0, signalled, or 2, timeout expired. Only while the render thread is busy:
+ * idle, nobody moves R.done, and the job asks the driver at once. -1: the job. WT_SYNC_POLL=0: always the job, as before. */
+static int sync_poll_here(const SyncObj *o) {
+    static int on = -1;
+    if (on < 0) on = !(getenv("WT_SYNC_POLL") && !atoi(getenv("WT_SYNC_POLL")));
+    if (!on || o->dead || o->unsafe || !o->posted || o->posted != o->ran) return -1;
+    if (!*(Job *volatile *)&g_job_head && !g_rt_cur) return -1;
+    InterlockedIncrement(&g_dw_waiters);
+    AcquireSRWLockExclusive(&g_dw_lock);
+    int done = sync_fast_done(o);
+    if (!done) { SleepConditionVariableSRW(&g_dw_cv, &g_dw_lock, 1, 0); done = sync_fast_done(o); }
+    ReleaseSRWLockExclusive(&g_dw_lock);
+    InterlockedDecrement(&g_dw_waiters);
+    return done ? 0 : 2;
+}
 static void job_sync_wait(void *arg) {
     SyncJob *j = arg;
     if (!j->o->s) { j->result = 3; return; }            /* never fenced: NVN_SYNC_WAIT_RESULT_FAILED */
@@ -5244,8 +5265,10 @@ static void sync_wait(Ctx *c) {                         /* (sync, timeoutNs) -> 
     SyncObj *o = hobj(A0, K_SYNC);
     SyncJob j = {o, 0, A1, 3};
     LONG64 sw0 = 0;
+    int poll;
     if (o && fastsync_on() && o == g_window_sync && !o->posted) { j.result = 3; InterlockedIncrement64(&g_fs[0]); }      /* finding 138: see fastsync_on */
     else if (o && fastsync_on() && o != g_window_sync && sync_fast_done(o)) { j.result = 0; InterlockedIncrement64(&g_fs[1]); }
+    else if (o && fastsync_on() && o != g_window_sync && !A1 && (poll = sync_poll_here(o)) >= 0) { j.result = poll; InterlockedIncrement64(&g_fs[11]); }
     else if (o && fastsync_on() && o != g_window_sync && (sw0 = pf_now(), sync_wait_here(o, A1))) { j.result = 1; InterlockedIncrement64(&g_fs[8]); InterlockedExchangeAdd64(&g_fs[9], pf_now() - sw0); }
     else if (o) {
         if (fastsync_on() && o != g_window_sync) InterlockedIncrement64(&g_fs[o->dead || o->unsafe || !o->posted ? 6 : o->posted != o->ran ? 4 : A1 < 1000000000ull ? 10 : 5]);
