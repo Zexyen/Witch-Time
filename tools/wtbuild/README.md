@@ -23,8 +23,9 @@ and the link step splits the runtime from the player's tables (below).
 
 ```
 cargo build --release --manifest-path tools/wtbuild/Cargo.toml
-tools/wtbuild/target/release/wtbuild setup --dump <your dump folder> [--jobs N] [--only <step> | --from <step>]
-                                           [--status] [--accept-modified] [--move-dump] [--mods <folder>] [--llvm <folder>]
+tools/wtbuild/target/release/wtbuild setup --dump <folder|.nsp|.xci> [--update <.nsp|.xci>] [--keys <prod.keys>]
+                                           [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified]
+                                           [--move-dump] [--mods <folder>] [--llvm <folder>]
 ```
 
 `--jobs N` defaults to half the logical CPUs (at most 24), for `compile` and `textures` too.
@@ -34,22 +35,23 @@ where it was never built, the launcher says to run the `cargo build` line above.
 
 ## Steps
 
-Your dump is one folder with what you extracted from your own console and copy of Bayonetta 3 with your own tools (this
-project decrypts nothing and reads no keys): `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files)
-and `romfs/` (the `.pkz` archives and `movie/`). Every step derives its files from the dump into `targets/` and `build/`
-(both ignored by git; never upload them). A finished step is skipped; `--from <step>` repeats it and the rest.
+Your dump can be either your own Switch **NSP / XCI** packages (base + Update 1.2.0, a merged XCI/NSP, or a folder holding
+both) together with your own console `prod.keys` (`src/switch/`; no keys or game data are ever shipped), or an already-extracted
+folder holding `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files), `romfs/` (the `.pkz` archives and
+`movie/`), and optionally `program1/`. Every step derives its files from the dump into `targets/` and `build/` (both ignored
+by git; never upload them). A finished step is skipped; `--from <step>` repeats it and the rest.
 
 | step | what |
 |---|---|
 | deps | the compiler (`deps/llvm` or the system's clang and lld) and, when the runtime is not prebuilt, its libraries (always runs) |
-| verify | the dump is the exact version this port handles (SHA-256, NSO build ID, RomFS manifest; `src/setup.rs`); explains a mismatch |
-| convert | main, sdk, subsdk0 (NSO) -> `targets/exefs/*.elf` (LZ4, segment hashes checked); the dump's romfs into `targets/romfs` (copied, hard links on the same drive, or moved with `--move-dump`) |
+| verify | the dump is the exact version this port handles (SHA-256, NSO build ID, RomFS manifest, and Program 1 for NSP/XCI; `src/setup.rs`); explains a mismatch |
+| convert | extracts Program 0 (`targets/exefs`, `targets/romfs`) and Program 1 (`targets/program1`) when given NSP/XCI, or places an extracted folder into `targets/`; converts `main`, `sdk`, `subsdk0` (NSO) -> `targets/exefs/*.elf` (LZ4, segment hashes checked) |
 | mods | optional: code mods (`*.pchtxt`, `*.ips`) patched into `targets/exefs/main.elf` ("Mods" below; always runs, to notice a changed mods folder) |
 | tables | `runtime/gen/` from your sdk and main (layout, imports, lifted SDK functions, SDK constants), plus the copies of `runtime/gen_static/` |
 | lift | your main.elf -> `build/gen_eh` (C) |
 | compile | `build/gen_eh` -> `build/obj` (clang -O2; the longest step). For this PC's own processor: `-march=x86-64-v3` with AVX2 and FMA, `-march=x86-64-v2` with SSE4.2, neither on an older one (`Target::cpu_level`; `WT_CPU_LEVEL=1\|2\|3` forces one). A build copied to an older processor must be compiled again there |
 | link | `build/game.so` with the runtime (prebuilt, or built here); `game.dll` and `witch-time-game.exe` on Windows |
-| book | the Old Picture Book's program (program 1, README "The picture book"), when the dump has a `program1/` folder: checked by size and SHA-256, then convert, tables, lift, compile and link on `targets/program1` and `build/program1` (`src/layout.rs`; `--program 1` runs the developer commands on them); skipped without it |
+| book | the Old Picture Book's program (program 1, README "The picture book"), automatically extracted from NSP/XCI or read from a `program1/` folder: checked by size and SHA-256, then convert, tables, lift, compile and link on `targets/program1` and `build/program1` (`src/layout.rs`; `--program 1` runs the developer commands on them); skipped without it |
 | text | the labels and values of the PC settings rows in the game's own text, as `mods/witchtime-pc-settings/` (from your dump's `ui_000.pkz`) |
 | check | skipped: the lifter's check against Unicorn is `tools/lifter-check` ("Regression tests" below) |
 
@@ -57,6 +59,8 @@ and `romfs/` (the `.pkz` archives and `movie/`). Every step derives its files fr
 
 Mostly for developers; `--repo <folder>` names the checkout (default: the current folder).
 
+- `extract <base.nsp|.xci|folder> [<update.nsp>] [--keys <prod.keys>] --out <folder>`: standalone extraction of Program 0 (`exefs/`, `romfs/`) and Program 1 (`program1/exefs/`, `program1/romfs/`) from your own Switch packages.
+- `find-keys [--dump <path>] [--update <path>]`: prints the path to an auto-discovered `prod.keys` file if one exists.
 - `nso2elf <in> <out>`, `lift <main.elf> <outdir> [--no-patches]`, `tables <repo>`, `compile [--jobs N]`, `link`: one step on its own.
 - `lift-words`: lines `<word> <pc> <entry> <end>` (hex) on stdin, one lifted statement a line out.
 - `runtime --out <dir>` (the prebuilt runtime, CI).

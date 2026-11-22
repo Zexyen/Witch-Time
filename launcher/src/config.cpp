@@ -200,6 +200,8 @@ SetupState SetupState::read(const std::string& build_dir)
 	ss << f.rdbuf();
 	const std::string text = ss.str();
 	st.dump = json_string(text, "dump");
+	st.update = json_string(text, "update");
+	st.keys = json_string(text, "keys");
 	st.mods_dir = json_string(text, "mods_dir");
 	size_t d = text.find("\"done\"");
 	size_t open = d == std::string::npos ? d : text.find('{', d), close = open == std::string::npos ? open : text.find('}', open);
@@ -312,4 +314,19 @@ std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir,
 			error = f[2];
 	}
 	return mods;
+}
+
+std::string find_prod_keys(const Paths& paths, const std::string& hint_path)
+{
+	std::vector<std::string> argv = build_command(paths.repo, "find-keys");
+	if (argv.empty())
+		return "";
+	if (!hint_path.empty())
+	{
+		argv.push_back("--dump");
+		argv.push_back(hint_path);
+	}
+	int code = 0;
+	std::string out = trim(run_capture(argv, paths.repo, &code));
+	return code == 0 && !out.empty() && file_exists(out) ? out : "";
 }

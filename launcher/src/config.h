@@ -17,7 +17,9 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 
 // build/setup_state.json, as the build (wtbuild setup) leaves it
 struct SetupState {
-	std::string dump;                  // the dump folder an earlier run used
+	std::string dump;                  // the dump folder or NSP/XCI package an earlier run used
+	std::string update;                // optional update NSP/XCI package an earlier run used
+	std::string keys;                  // prod.keys path an earlier run used
 	std::string mods_dir;              // a mods folder given with --mods (else <repo>/mods)
 	std::vector<std::string> done;     // finished steps
 	bool has(const std::string& step) const;
@@ -32,6 +34,8 @@ struct ModEntry {
 };
 // wtbuild mods-tree: the mods the build would use. error: what went wrong, or empty.
 std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir, std::string& error);
+// wtbuild find-keys: locates the player's own prod.keys if present (beside hint_path, repo, or standard Switch folders).
+std::string find_prod_keys(const Paths& paths, const std::string& hint_path = "");
 
 bool file_exists(const std::string& path);
 // The build tool and the arguments before a command's own: wtbuild (tools/wtbuild; the release ships it in build/).

@@ -14,6 +14,7 @@
 //!   check    skipped: the lifter against Unicorn is a developer's tool (tools/lifter-check)
 
 use crate::compile::{self, which};
+use crate::switch::{self, DumpSource, TitleSet};
 use crate::target::{self, Target};
 use crate::util::{fmt_secs, py_repr, sha256_file};
 use crate::{lifter, link, nso, pchtxt, tables, text};
@@ -68,7 +69,7 @@ const ROMFS_FILES: [(&str, u64, &str); 3] = [
     ("chapter_000.pkz", 39040, "dac504642db7b44018613a0c8aef968208ab65f7d54bfd54dab77c48aa05209e"),
 ];
 const ROMFS_MANIFEST: (usize, u64, &str) = (552, 15047510227, "4926189e02ad8f4a385ac36f21fd62a914926fd70778869bec2f4bd19afab741");
-const ENCRYPTED: [&str; 5] = [".nsp", ".xci", ".nca", ".nsz", ".xcz"];
+const UNSUPPORTED_ENCRYPTED: [&str; 3] = [".nca", ".nsz", ".xcz"];
 
 /// the system libraries the link step uses when it builds the runtime: (what, a header the runtime includes, linker flags)
 const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
@@ -107,9 +108,9 @@ const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
 ];
 
-const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
+const USAGE: &str = "usage: wtbuild setup [--dump <folder|.nsp|.xci>] [--update <.nsp|.xci>] [--keys <prod.keys>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
                      [--mods <folder>] [--llvm <folder>] [--repo <folder>]
-steps: deps verify convert mods tables lift compile link text check (tools/wtbuild/README.md, \"Steps\", describes them)";
+steps: deps verify convert mods tables lift compile link book text check (tools/wtbuild/README.md, \"Steps\", describes them)";
 
 struct Fail(String);
 
@@ -120,6 +121,8 @@ fn say(msg: impl AsRef<str>) {
 
 struct Args {
     dump: Option<String>,
+    update: Option<String>,
+    keys: Option<String>,
     jobs: Option<usize>,
     only: Option<String>,
     from: Option<String>,
@@ -134,6 +137,8 @@ struct Args {
 fn parse(args: &[String]) -> Result<Args, String> {
     let mut a = Args {
         dump: None,
+        update: None,
+        keys: None,
         jobs: None,
         only: None,
         from: None,
@@ -158,6 +163,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
         };
         match k {
             "--dump" => a.dump = Some(val()?),
+            "--update" => a.update = Some(val()?),
+            "--keys" => a.keys = Some(val()?),
             "--jobs" => a.jobs = Some(val()?.parse().map_err(|_| "argument --jobs: invalid int value".to_string())?),
             "--only" | "--from" => {
                 let v = val()?;
@@ -228,6 +235,8 @@ struct Ctx {
     state_file: PathBuf,
     state: Map<String, Value>,
     dump: Option<String>,
+    update: Option<String>,
+    keys: Option<String>,
     jobs: usize,
     clang: String,
 }
@@ -235,6 +244,26 @@ struct Ctx {
 impl Ctx {
     fn root(&self) -> &Path {
         Path::new(&self.repo)
+    }
+
+    fn dump_source(&self) -> Result<Option<DumpSource>, Fail> {
+        let Some(dump) = self.dump.as_deref() else {
+            return Ok(None);
+        };
+        let upd = self.update.as_deref().map(Path::new);
+        switch::classify_dump(Path::new(dump), upd).map(Some).map_err(Fail)
+    }
+
+    fn is_package_dump(&self) -> bool {
+        if self.update.is_some() {
+            return true;
+        }
+        let Some(dump) = self.dump.as_deref() else {
+            return false;
+        };
+        let p = Path::new(dump);
+        switch::is_package_file(p)
+            || matches!(switch::classify_dump(p, None), Ok(DumpSource::Packages(_)))
     }
 
     fn save(&self) {
@@ -558,11 +587,151 @@ fn romfs_manifest(root: &Path) -> ((usize, u64, String), HashMap<String, u64>) {
     ((sizes.len(), sizes.values().sum(), crate::util::hex(&h.finalize())), sizes)
 }
 
+fn step_verify_packages(cx: &mut Ctx, dump: &str, pkg_files: &[PathBuf]) -> Result<(), Fail> {
+    let ts = TitleSet::open(pkg_files, cx.keys.as_deref().map(Path::new), Some(cx.root())).map_err(Fail)?;
+    say(format!("  keys: {}", ts.keys_path.display()));
+    let exefs = ts.open_prog0_exefs().map_err(Fail)?;
+    let mut warnings = Vec::new();
+    for (name, _size, digest, bid) in EXEFS {
+        let Some(data) = exefs.read_file(name).map_err(Fail)? else {
+            if REQUIRED.contains(&name) {
+                return Err(Fail(format!(
+                    "exefs/{} is missing from the update NSP/XCI (expected main, sdk, subsdk0, rtld, main.npdm)",
+                    name
+                )));
+            }
+            warnings.push(format!("exefs/{} is missing", name));
+            continue;
+        };
+        let magic: &[u8] = if name == "main.npdm" { b"META" } else { b"NSO0" };
+        if data.get(..4) != Some(magic) {
+            return Err(Fail(format!(
+                "exefs/{} is not a plain {} file (magic {}): check your prod.keys and NSP/XCI files",
+                name,
+                if name == "main.npdm" { "NPDM" } else { "NSO" },
+                crate::py::repr_bytes(&data[..data.len().min(4)])
+            )));
+        }
+        let sha = crate::util::hex(&Sha256::digest(&data));
+        if sha == digest {
+            continue;
+        }
+        let got = if data.len() >= 0x54 && &data[..4] == b"NSO0" {
+            Some(crate::util::hex(&data[0x40..0x54]))
+        } else {
+            None
+        };
+        if bid.is_some() && got.as_deref() == bid {
+            say(format!(
+                "  exefs/{}: same build ID, different file (recompressed?); segment hashes are checked in convert",
+                name
+            ));
+        } else if name == "main" || name == "sdk" {
+            return Err(Fail(format!(
+                "exefs/{} is a different version (another update or region), or a modified file (build ID {}). This port handles only {} (main build ID {}).",
+                name,
+                got.unwrap_or_else(|| "None".into()),
+                VERSION,
+                EXEFS[0].3.unwrap()
+            )));
+        } else {
+            warnings.push(format!("exefs/{} differs from the expected version (modified or other version)", name));
+        }
+    }
+
+    let romfs = ts.open_prog0_romfs().map_err(Fail)?;
+    let ((count, total, digest), sizes) = romfs.manifest();
+    if digest != ROMFS_MANIFEST.2 {
+        let missing: Vec<&str> = ROMFS_FILES.iter().map(|(p, _, _)| *p).filter(|p| !sizes.contains_key(*p)).collect();
+        let msg = format!("romfs: {} files / {} bytes, expected {} / {}", count, total, ROMFS_MANIFEST.0, ROMFS_MANIFEST.1);
+        if !missing.is_empty() {
+            return Err(Fail(format!(
+                "{}: {} not found in RomFS (wrong game or not {})",
+                msg,
+                missing.join(", "),
+                VERSION
+            )));
+        }
+        if count < ROMFS_MANIFEST.0 {
+            return Err(Fail(format!("{}: files are missing (incomplete package, or not {})", msg, VERSION)));
+        }
+        warnings.push(format!("{}: the file list differs (other version, or modded)", msg));
+    }
+    for (rel, size, want) in ROMFS_FILES {
+        let ok = match romfs.find(rel) {
+            Some(f) if f.size == size => romfs.sha256_file(f).map_err(Fail)? == want,
+            _ => false,
+        };
+        if !ok {
+            warnings.push(format!("romfs/{} differs (corrupt, wrong prod.keys, other version, or modded)", rel));
+        }
+    }
+
+    // Verify Program 1 (The Old Picture Book / Bayonetta Origins prologue) so it is guaranteed included
+    let mut has_prog1_ok = false;
+    if ts.has_prog1() {
+        let p1_exefs = ts.open_prog1_exefs().map_err(Fail)?.unwrap();
+        let p1_romfs = ts.open_prog1_romfs().map_err(Fail)?.unwrap();
+        let mut p1_bad = false;
+        for (name, size, want) in PROGRAM1_EXEFS {
+            match p1_exefs.read_file(name).map_err(Fail)? {
+                Some(bytes) if bytes.len() as u64 == size && crate::util::hex(&Sha256::digest(&bytes)) == want => {}
+                _ => {
+                    warnings.push(format!("program1/exefs/{} differs from the expected version", name));
+                    p1_bad = true;
+                }
+            }
+        }
+        if p1_romfs.find("root_000.pkz").is_none() {
+            warnings.push("program1/romfs/root_000.pkz is missing".into());
+            p1_bad = true;
+        }
+        if !p1_bad {
+            has_prog1_ok = true;
+            say(format!(
+                "  program 1 (The Old Picture Book prologue): ok ({} RomFS files)",
+                p1_romfs.files.len()
+            ));
+        }
+    } else {
+        warnings.push(
+            "Program 1 (The Old Picture Book prologue) was not found in the NSP/XCI files; Update 1.2.0 should include it".into(),
+        );
+    }
+
+    for w in &warnings {
+        say(format!("  warning: {}", w));
+    }
+    if !warnings.is_empty() && !cx.a.accept_modified {
+        return Err(Fail(format!(
+            "the NSP/XCI package differs from the supported version, {} (above). Fix it, or run again with --accept-modified to continue at your own risk (mods are not blocked, but are unsupported).",
+            VERSION
+        )));
+    }
+    cx.state.insert("dump".into(), json!(dump));
+    if let Some(upd) = &cx.update {
+        cx.state.insert("update".into(), json!(upd));
+    } else {
+        cx.state.remove("update");
+    }
+    cx.state.insert("keys".into(), json!(ts.keys_path.to_string_lossy()));
+    say(format!(
+        "  exefs{} and romfs match the supported version: {} ({} RomFS files)",
+        if has_prog1_ok { ", program 1," } else { "" },
+        VERSION,
+        count
+    ));
+    Ok(())
+}
+
 fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
     let Some(dump) = cx.dump.clone() else {
-        return Err(Fail("--dump <folder> is required".into()));
+        return Err(Fail("--dump <folder|.nsp|.xci> is required".into()));
     };
-    // encrypted packages anywhere outside romfs/
+    if let Some(DumpSource::Packages(pkg_files)) = cx.dump_source()? {
+        return step_verify_packages(cx, &dump, &pkg_files);
+    }
+    // unsupported encrypted packages anywhere outside romfs/
     fn scan(d: &Path) -> Result<(), Fail> {
         let Ok(rd) = fs::read_dir(d) else { return Ok(()) };
         let mut dirs = Vec::new();
@@ -573,13 +742,13 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
                 if n.to_lowercase() != "romfs" && !e.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
                     dirs.push(e.path());
                 }
-            } else if bad.is_none() && ENCRYPTED.iter().any(|x| n.to_lowercase().ends_with(x)) {
+            } else if bad.is_none() && UNSUPPORTED_ENCRYPTED.iter().any(|x| n.to_lowercase().ends_with(x)) {
                 bad = Some(n);
             }
         }
         if let Some(b) = bad {
             return Err(Fail(format!(
-                "{}: encrypted packages are not accepted ({}). Give the extracted ExeFS and RomFS folders (README, \"What you extract from your own console\").",
+                "{}: unsupported package format ({}). Give a .nsp/.xci file (with prod.keys), or extracted ExeFS and RomFS folders (README, \"What you extract from your own console\").",
                 d.display(),
                 crate::py::repr_str(&b)
             )));
@@ -678,6 +847,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         )));
     }
     cx.state.insert("dump".into(), json!(dump));
+    cx.state.remove("update");
     say(format!("  exefs and romfs match the supported version: {} ({} RomFS files)", VERSION, count));
     Ok(())
 }
@@ -766,10 +936,71 @@ fn convert_nso(src: &Path, dst: &Path) -> Result<Vec<u8>, String> {
     Ok(c.elf)
 }
 
+fn step_convert_packages(cx: &mut Ctx, pkg_files: &[PathBuf]) -> Result<(), Fail> {
+    let ts = TitleSet::open(pkg_files, cx.keys.as_deref().map(Path::new), Some(cx.root())).map_err(Fail)?;
+    let out = cx.targets.join("exefs");
+    let n_exe = ts.extract_prog0_exefs(&out).map_err(Fail)?;
+    say(format!("  extracted {} ExeFS files -> targets/exefs", n_exe));
+    for name in ["main", "sdk", "subsdk0"] {
+        convert_nso(&out.join(name), &out.join(format!("{}.elf", name))).map_err(|e| {
+            Fail(format!(
+                "{}: NSO segment hash mismatch or conversion error: corrupt or modified file\n{}",
+                name, e
+            ))
+        })?;
+        say(format!("  {} -> targets/exefs/{}.elf, segment hashes ok", name, name));
+    }
+    let romfs_dst = cx.targets.join("romfs");
+    if fs::symlink_metadata(&romfs_dst).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        target::remove_dir_link(&romfs_dst).map_err(|e| Fail(e.to_string()))?;
+    }
+    say("  extracting RomFS from NSP/XCI into targets/romfs (resumes if interrupted)...");
+    let mut last_report = Instant::now();
+    let (total_f, extracted_f) = ts
+        .extract_prog0_romfs(&romfs_dst, &mut |done_f, tot_f, done_b, tot_b| {
+            if done_f == tot_f || last_report.elapsed().as_millis() >= 750 {
+                say(format!(
+                    "  extracting romfs: [{}/{}] {:.2} / {:.2} GB",
+                    done_f,
+                    tot_f,
+                    done_b as f64 / (1u64 << 30) as f64,
+                    tot_b as f64 / (1u64 << 30) as f64
+                ));
+                last_report = Instant::now();
+            }
+        })
+        .map_err(Fail)?;
+    say(format!(
+        "  targets/romfs: {} files ({} extracted from NSP/XCI)",
+        total_f, extracted_f
+    ));
+    if ts.has_prog1() {
+        let targets1 = crate::layout::folders(cx.root(), 1).0;
+        let p1_romfs = targets1.join("romfs");
+        if fs::symlink_metadata(&p1_romfs).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            target::remove_dir_link(&p1_romfs).map_err(|e| Fail(e.to_string()))?;
+        }
+        let (p1_exe, p1_tot, p1_ext) = ts.extract_prog1(&targets1, &mut |_, _, _, _| {}).map_err(Fail)?;
+        say(format!(
+            "  targets/program1: {} ExeFS files, {} RomFS files ({} extracted) [The Old Picture Book prologue]",
+            p1_exe, p1_tot, p1_ext
+        ));
+    }
+    if cx.targets.join("sysdata").join("fonts").is_dir() {
+        say("  targets/sysdata/fonts: in place");
+    } else {
+        say("  no sysdata/fonts in the dump: a font of this PC will stand in for the console's system fonts (BUILDING.md)");
+    }
+    Ok(())
+}
+
 fn step_convert(cx: &mut Ctx) -> Result<(), Fail> {
     let Some(dump) = cx.dump.clone() else {
-        return Err(Fail("the dump folder is not known: run with --dump <folder>".into()));
+        return Err(Fail("the dump folder is not known: run with --dump <folder|.nsp|.xci>".into()));
     };
+    if let Some(DumpSource::Packages(pkg_files)) = cx.dump_source()? {
+        return step_convert_packages(cx, &pkg_files);
+    }
     let out = cx.targets.join("exefs");
     let d = exefs_source(Path::new(&dump), &cx.targets);
     fs::create_dir_all(&out).map_err(|e| Fail(e.to_string()))?;
@@ -1003,17 +1234,43 @@ const PROGRAM1_EXEFS: [(&str, u64, &str); 3] = [
 fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
     let repo = cx.root().to_path_buf();
     let (targets1, build1, _) = crate::layout::folders(&repo, 1);
-    // the dump's program1/; when the dump folder itself is gone (moved, deleted, its drive unplugged), the copy a
-    // finished book step left in targets/program1: an update redoes this step, and no other step it redoes needs the
-    // dump. A dump without program1/ skips it, so taking the folder out gets past a book that fails
-    let dump = cx.dump.as_deref().map(Path::new).filter(|d| d.is_dir());
     let built = link_outputs(Target::host()).iter().all(|f| build1.join(f).is_file());
-    let src = match dump {
-        Some(d) if d.join("program1").join("exefs").join("main").is_file() => d.join("program1"),
-        None if built && targets1.join("exefs").join("main").is_file() => targets1.clone(),
-        _ => {
-            say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
+    let src = if cx.is_package_dump() {
+        if targets1.join("exefs").join("main").is_file() && targets1.join("romfs").join("root_000.pkz").is_file() {
+            targets1.clone()
+        } else if let Ok(Some(DumpSource::Packages(pkg_files))) = cx.dump_source() {
+            let ts = TitleSet::open(&pkg_files, cx.keys.as_deref().map(Path::new), Some(cx.root())).map_err(Fail)?;
+            if ts.has_prog1() {
+                let p1_romfs = targets1.join("romfs");
+                if fs::symlink_metadata(&p1_romfs).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                    target::remove_dir_link(&p1_romfs).map_err(|e| Fail(e.to_string()))?;
+                }
+                let (p1_exe, p1_tot, p1_ext) = ts.extract_prog1(&targets1, &mut |_, _, _, _| {}).map_err(Fail)?;
+                say(format!(
+                    "  targets/program1: {} ExeFS files, {} RomFS files ({} extracted) [The Old Picture Book prologue]",
+                    p1_exe, p1_tot, p1_ext
+                ));
+                targets1.clone()
+            } else {
+                say("  skipped: no Program 1 found in the NSP/XCI files, so the Old Picture Book cannot open (README, \"The picture book\")");
+                return Ok(());
+            }
+        } else {
+            say("  skipped: the NSP/XCI package is not accessible and targets/program1 is missing");
             return Ok(());
+        }
+    } else {
+        // the dump's program1/; when the dump folder itself is gone (moved, deleted, its drive unplugged), the copy a
+        // finished book step left in targets/program1: an update redoes this step, and no other step it redoes needs the
+        // dump. A dump without program1/ skips it, so taking the folder out gets past a book that fails
+        let dump = cx.dump.as_deref().map(Path::new).filter(|d| d.is_dir());
+        match dump {
+            Some(d) if d.join("program1").join("exefs").join("main").is_file() => d.join("program1"),
+            None if built && targets1.join("exefs").join("main").is_file() => targets1.clone(),
+            _ => {
+                say("  skipped: the dump has no program1 folder, so the Old Picture Book cannot open (README, \"The picture book\")");
+                return Ok(());
+            }
         }
     };
     for (name, size, sha) in PROGRAM1_EXEFS {
@@ -1036,10 +1293,11 @@ fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
     r
 }
 
-/// the dump has the picture book's program, and build1 (build/program1) has no finished link of it
-fn book_not_built(dump: Option<&str>, build1: &Path) -> bool {
-    dump.map_or(false, |d| Path::new(d).join("program1").join("exefs").join("main").is_file())
-        && link_outputs(Target::host()).iter().any(|f| !build1.join(f).is_file())
+/// the dump (or extracted targets/program1) has the picture book's program, and build1 (build/program1) has no finished link of it
+fn book_not_built(dump: Option<&str>, targets1: &Path, build1: &Path) -> bool {
+    let has_p1 = dump.map_or(false, |d| Path::new(d).join("program1").join("exefs").join("main").is_file())
+        || targets1.join("exefs").join("main").is_file();
+    has_p1 && link_outputs(Target::host()).iter().any(|f| !build1.join(f).is_file())
 }
 
 fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
@@ -1052,6 +1310,8 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
             copy2(&src.join("exefs").join(name), &exefs.join(name)).map_err(|e| Fail(format!("program1/exefs/{}: {}", name, e)))?;
         }
         say(format!("  targets/program1/romfs: {}", place_folder(&targets.join("romfs"), &src.join("romfs"), cx.a.move_dump)?));
+    } else if cx.is_package_dump() {
+        say("  targets/program1: extracted from NSP/XCI");
     } else {
         say("  targets/program1: from the last build (the dump folder is gone)");
     }
@@ -1166,11 +1426,29 @@ pub fn main(args: &[String]) -> i32 {
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|v| if let Value::Object(m) = v { Some(m) } else { None })
         .unwrap_or_default();
-    let dump = a
-        .dump
-        .as_deref()
-        .map(abspath)
-        .or_else(|| state.get("dump").and_then(|v| v.as_str()).map(String::from));
+    let old_dump = state.get("dump").and_then(|v| v.as_str()).map(String::from);
+    let old_update = state
+        .get("update")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let dump = a.dump.as_deref().map(abspath).or_else(|| old_dump.clone());
+    let dump_changed = a.dump.is_some() && dump != old_dump;
+    let update = match a.update.as_deref() {
+        Some("") => None,
+        Some(u) => Some(abspath(u)),
+        None if dump_changed => None,
+        None => old_update.clone(),
+    };
+    let keys = match a.keys.as_deref() {
+        Some("") => None,
+        Some(k) => Some(abspath(k)),
+        None => state
+            .get("keys")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+    };
     let jobs = a.jobs.filter(|j| *j > 0).unwrap_or_else(crate::util::default_jobs);
     let mut cx = Ctx {
         repo: repo.clone(),
@@ -1180,6 +1458,8 @@ pub fn main(args: &[String]) -> i32 {
         state_file,
         state,
         dump,
+        update,
+        keys,
         jobs,
         clang: String::new(),
         a,
@@ -1200,12 +1480,10 @@ pub fn main(args: &[String]) -> i32 {
         }
         return 0;
     }
-    if cx.a.dump.is_some() {
-        if let (Some(d), Some(old)) = (&cx.dump, cx.state.get("dump").and_then(|v| v.as_str())) {
-            if d != old {
-                cx.done().clear(); // another dump: everything is made again
-            }
-        }
+    if (cx.a.dump.is_some() && old_dump.is_some() && cx.dump != old_dump)
+        || (cx.a.update.is_some() && cx.update != old_update)
+    {
+        cx.done().clear(); // another dump or update package: everything is made again
     }
     let todo: Vec<&str> = match &cx.a.only {
         Some(o) => STEPS.iter().filter(|s| ALWAYS.contains(s) || *s == o).cloned().collect(),
@@ -1242,8 +1520,9 @@ pub fn main(args: &[String]) -> i32 {
             done.remove(*s);
         }
     }
-    // a book step that found no program1 folder is done, so one put in the dump since then is built at the next run
-    if cx.done().contains_key("book") && book_not_built(cx.dump.as_deref(), &crate::layout::folders(Path::new(&repo), 1).1) {
+    // a book step that found no program1 folder is done, so one put in the dump (or extracted from NSP/XCI) is built at the next run
+    let (targets1, build1, _) = crate::layout::folders(Path::new(&repo), 1);
+    if cx.done().contains_key("book") && book_not_built(cx.dump.as_deref(), &targets1, &build1) {
         cx.done().remove("book");
     }
     let t_all = Instant::now();
@@ -1365,18 +1644,52 @@ mod tests {
     #[test]
     fn book_added_after_a_build() {
         let t = std::env::temp_dir().join(format!("wtbuild_book_{}", std::process::id()));
-        let (dump, build1) = (t.join("dump"), t.join("build").join("program1"));
+        let (dump, targets1, build1) = (
+            t.join("dump"),
+            t.join("targets").join("program1"),
+            t.join("build").join("program1"),
+        );
         fs::create_dir_all(&build1).unwrap();
         let d = dump.to_str();
-        assert!(!book_not_built(None, &build1)); // no dump known: nothing to build
-        assert!(!book_not_built(d, &build1)); // a dump without program1
+        assert!(!book_not_built(None, &targets1, &build1)); // no dump known: nothing to build
+        assert!(!book_not_built(d, &targets1, &build1)); // a dump without program1
         fs::create_dir_all(dump.join("program1").join("exefs")).unwrap();
         fs::write(dump.join("program1").join("exefs").join("main"), b"m").unwrap();
-        assert!(book_not_built(d, &build1)); // put in the dump after the build
+        assert!(book_not_built(d, &targets1, &build1)); // put in the dump after the build
         for f in link_outputs(Target::host()) {
             fs::write(build1.join(f), b"x").unwrap();
         }
-        assert!(!book_not_built(d, &build1)); // built
+        assert!(!book_not_built(d, &targets1, &build1)); // built
+        // Also detected when extracted into targets/program1 from an NSP/XCI
+        fs::remove_dir_all(&build1).unwrap();
+        fs::create_dir_all(&build1).unwrap();
+        fs::remove_dir_all(dump.join("program1")).unwrap();
+        assert!(!book_not_built(d, &targets1, &build1));
+        fs::create_dir_all(targets1.join("exefs")).unwrap();
+        fs::write(targets1.join("exefs").join("main"), b"m").unwrap();
+        assert!(book_not_built(d, &targets1, &build1));
         fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn parse_package_flags() {
+        let args: Vec<String> = vec![
+            "--dump",
+            "base.xci",
+            "--update",
+            "upd.nsp",
+            "--keys",
+            "prod.keys",
+            "--only",
+            "verify",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let a = parse(&args).unwrap();
+        assert_eq!(a.dump.as_deref(), Some("base.xci"));
+        assert_eq!(a.update.as_deref(), Some("upd.nsp"));
+        assert_eq!(a.keys.as_deref(), Some("prod.keys"));
+        assert_eq!(a.only.as_deref(), Some("verify"));
     }
 }

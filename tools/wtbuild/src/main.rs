@@ -16,6 +16,7 @@ mod py;
 mod sdklift;
 mod setup;
 mod smoke;
+mod switch;
 mod tables;
 mod target;
 mod text;
@@ -229,6 +230,30 @@ fn main() {
             print_all(Ok(lprof::report(&String::from_utf8_lossy(&d), count(1, 6), count(2, 25), &mut lprof::file_syms)));
         }
         Some("perf-bench") => perf_bench::main(&args[1..]),
+        Some("extract") => {
+            let repo = repo_root(&args);
+            switch::main_extract(&args[1..], &repo).unwrap_or_else(|e| die(e));
+        }
+        Some("find-keys") => {
+            let repo = repo_root(&args);
+            let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(PathBuf::from);
+            let mut hints: Vec<PathBuf> = Vec::new();
+            for k in ["--dump", "--update"] {
+                if let Some(p) = opt(k) {
+                    if p.is_dir() {
+                        hints.push(p);
+                    } else if let Some(par) = p.parent() {
+                        if !par.as_os_str().is_empty() {
+                            hints.push(par.to_path_buf());
+                        }
+                    }
+                }
+            }
+            let refs: Vec<&Path> = hints.iter().map(PathBuf::as_path).collect();
+            if let Some(k) = switch::keys::discover_prod_keys(&refs, Some(&repo)) {
+                println!("{}", k.display());
+            }
+        }
         Some("sha256") if args.len() == 2 => {
             // the launcher's updater checks a downloaded release with it
             println!("{}", util::sha256_file(Path::new(&args[1])).unwrap_or_else(|e| die(format!("{}: {}", args[1], e))));

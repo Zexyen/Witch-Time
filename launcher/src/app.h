@@ -66,7 +66,8 @@ private:
 	std::vector<MenuRow> menu;
 	Rml::String update_tag;            // a newer release to install, or empty
 	bool stale = false;                // built by another release than this launcher
-	Rml::String dump;
+	int dump_mode = 1;                 // setup: 0 extracted folder, 1 NSP / XCI packages
+	Rml::String dump, update_pkg, prod_keys;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
 	bool dump_modified = false;    // the last check found files that differ from the supported version
@@ -107,7 +108,8 @@ private:
 	bool typed = false;                // the dump folder's box was typed or clicked in since the screen opened
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
-	std::string picked_folder;         // from the folder dialog (another thread)
+	std::string picked_folder;         // from the file/folder dialog (another thread)
+	int picked_target = 0;             // 0 = dump, 1 = update_pkg, 2 = prod_keys
 	bool picked = false;
 	SDL_AudioStream* sound_stream = nullptr;   // navigation sounds (issue 141): open from the first one until Play
 	bool sound_failed = false;
@@ -136,6 +138,7 @@ private:
 	void refresh_mods();
 	void refresh_settings(int bumped = -1);
 	void set_tab(int t);
+	void set_dump_mode(int mode);
 	void step_setting(int index, int dir);
 	void convert_textures();
 	void remove_textures();
@@ -143,7 +146,7 @@ private:
 	void toggle_mod(int index);
 	void check_dump();
 	void start_build();
-	void browse();
+	void browse(int target = 0);
 	void play();
 	void release_window();
 	void sound(int which);

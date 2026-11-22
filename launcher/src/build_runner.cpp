@@ -111,6 +111,8 @@ void BuildRunner::line(const std::string& l)
 			current = name;
 			if (name == "textures")
 				std::sscanf(l.c_str(), "[%d/%d]", &compiled, &to_compile);
+			else
+				compiled = to_compile = 0;
 			if (name == "compile")                   // only what this run writes counts (the log is appended to)
 			{
 				std::ifstream f(repo + "/build/logs/compile.log", std::ios::binary | std::ios::ate);
@@ -118,6 +120,18 @@ void BuildRunner::line(const std::string& l)
 			}
 		}
 		return;
+	}
+	if (current == "convert")
+	{
+		if (const size_t at = l.find("extracting romfs: ["); at != std::string::npos)
+		{
+			int n = 0, total = 0;
+			if (std::sscanf(l.c_str() + at, "extracting romfs: [%d/%d]", &n, &total) == 2 && total > 0)
+			{
+				compiled = n;
+				to_compile = total;
+			}
+		}
 	}
 	lines.push_back(l);
 	if (lines.size() > 200)
