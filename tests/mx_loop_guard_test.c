@@ -117,6 +117,53 @@ int main(int argc, char **argv) {
         int nok = sc && !strstr(t, "switch (pc)");
         if (!nok && t) puts(t);
         ok = ok && nok;
+
+        /* A1: fragment stage with a loop and SHFL outside the loop runs in order (snapshots before qlead blocks,
+         * no subgroupAny / switch); SHFL inside the loop stays on the wave-uniform dispatcher. */
+        uint64_t shfl_op = 0xef10000000000000ull | 7ull << 16 | 2 | 1ull << 8 | 1ull << 20 | 3ull << 28 | 3ull << 30 | 0x1c03ull << 34; /* SHFL.XOR R2, R1, 1, 0x1c03 */
+        uint8_t sbuf[0x50 + 8 * 8];
+        uint64_t so[8] = {0,
+            shfl_op,                                                        /* 1: SHFL outside loop */
+            0x50b0000000000f00ull | 7ull << 16,                             /* 2: NOP (loop header) */
+            0xe24000000000000full | (uint64_t)(-16 & 0xffffff) << 20,       /* 3: @P0 BRA to 2 */
+            0,
+            0xe30000000000000full | 7ull << 16, 0, 0};                      /* 5: EXIT */
+        memset(sbuf, 0, sizeof sbuf);
+        memcpy(sbuf + 0x50, so, sizeof so);
+        char *sout = translate(1, sbuf, sizeof sbuf, 0);
+        int sok = sout && !strstr(sout, "subgroupAny") && !strstr(sout, "switch (pc)") &&
+                  strstr(sout, "mq_r1 = mx_quad3(r1);") && strstr(sout, " for (;;) {\n do { if (pc != 2u) continue;");
+        if (!sok && sout) puts(sout);
+        ok = ok && sok;
+
+        uint64_t si[8] = {0,
+            shfl_op,                                                        /* 1: SHFL inside loop */
+            0xe24000000000000full | (uint64_t)(-16 & 0xffffff) << 20,       /* 2: @P0 BRA to 1 */
+            0xe30000000000000full | 7ull << 16,                             /* 3: EXIT */
+            0, 0, 0, 0};
+        memset(sbuf, 0, sizeof sbuf);
+        memcpy(sbuf + 0x50, si, sizeof si);
+        char *sin = translate(1, sbuf, sizeof sbuf, 0);
+        int siok = sin && strstr(sin, "while (subgroupAny(pc != 0u)) {") && strstr(sin, "switch (pc)");
+        if (!siok && sin) puts(sin);
+        ok = ok && siok;
+
+        /* A2: default Vulkan fragment stage elides mx_alpha_ok discard (early_tests = 2); MX_FO_NO_EARLY restores it */
+        uint8_t af[0x50 + 4 * 8];
+        uint64_t aw[4] = {0, 0x50b0000000000f00ull | 7ull << 16, 0xe30000000000000full | 7ull << 16, 0};
+        memset(af, 0, sizeof af);
+        af[0x48] = 0x0f; /* omap: frag0 RGBA */
+        memcpy(af + 0x50, aw, sizeof aw);
+        MxIn ain; MxOut aout, aout_ne;
+        memset(&ain, 0, sizeof ain); memset(&aout, 0, sizeof aout); memset(&aout_ne, 0, sizeof aout_ne);
+        ain.stage = 1; ain.code = af; ain.code_len = sizeof af; ain.target = 1;
+        mx_translate(&ain, &aout);
+        ain.force_out = MX_FO_NO_EARLY;
+        mx_translate(&ain, &aout_ne);
+        int aok = aout.glsl && aout.early_tests == 2 && !strstr(aout.glsl, "mx_alpha_ok") && !strstr(aout.glsl, "discard") &&
+                  aout_ne.glsl && aout_ne.early_tests == 0 && strstr(aout_ne.glsl, "if (!mx_alpha_ok(frag0.a)) discard;");
+        if (!aok) { if (aout.glsl) puts(aout.glsl); if (aout_ne.glsl) puts(aout_ne.glsl); }
+        ok = ok && aok;
     }
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;

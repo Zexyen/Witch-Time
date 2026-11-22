@@ -799,20 +799,20 @@ uint64_t nvn_front_mem_now(void) { ww_init(); return g_ww_stamp; }
 static struct { uint64_t lo, hi; uint32_t frame, serial; } g_tcl_seen[TCL_N];      /* the ranges checked lately, one entry per check until the next batch sorts them */
 static struct { uint64_t lo, hi; } g_tcl[TCL_N];                        /* their clusters */
 static struct { uint32_t serial, gen; int bad; } g_tcl_q[TCL_N];        /* a cluster's last question; bad: Windows refused it */
-static int g_tcl_nseen, g_tcl_n, g_tcl_on = -1;
+static int g_tcl_nseen, g_tcl_sorted, g_tcl_n, g_tcl_on = -1;
 static uint32_t g_tcl_serial;
 int nvn_vk_cutc_live(void);                        /* nvn_vk_draw.c: TEST ONLY WT_VK_CUTC_ALT */
 static int tcl_cmp(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
 static void tcl_build(void) {                      /* a new batch: the clusters of the ranges checked in this frame and the last */
     uint32_t now = (uint32_t)g_st.frames;
     int n = 0;
-    qsort(g_tcl_seen, (size_t)g_tcl_nseen, sizeof g_tcl_seen[0], tcl_cmp);
+    if (g_tcl_nseen > g_tcl_sorted) qsort(g_tcl_seen, (size_t)g_tcl_nseen, sizeof g_tcl_seen[0], tcl_cmp);
     for (int i = 0; i < g_tcl_nseen; i++) {        /* one entry a range, with its newest check; a range not checked since the frame before last goes */
         if (g_tcl_on == 2 ? g_tcl_seen[i].serial != g_tcl_serial : now - g_tcl_seen[i].frame > 1) continue;
         if (n && g_tcl_seen[n - 1].lo == g_tcl_seen[i].lo && g_tcl_seen[n - 1].hi == g_tcl_seen[i].hi) { if (g_tcl_seen[i].frame - g_tcl_seen[n - 1].frame < 0x80000000u) g_tcl_seen[n - 1] = g_tcl_seen[i]; continue; }
         g_tcl_seen[n++] = g_tcl_seen[i];
     }
-    g_tcl_nseen = n;
+    g_tcl_nseen = g_tcl_sorted = n;
     g_tcl_n = 0;
     for (int i = 0; i < g_tcl_nseen; i++) {
         if (g_tcl_n && g_tcl_seen[i].lo <= g_tcl[g_tcl_n - 1].hi + TCL_GAP) { if (g_tcl_seen[i].hi > g_tcl[g_tcl_n - 1].hi) g_tcl[g_tcl_n - 1].hi = g_tcl_seen[i].hi; }
@@ -825,6 +825,16 @@ static int tcl_find(uint64_t lo, uint64_t hi) {   /* the cluster holding [lo, hi
     while (a <= b) { int m = (a + b) / 2; if (g_tcl[m].lo <= lo) { r = m; a = m + 1; } else b = m - 1; }
     return r >= 0 && hi <= g_tcl[r].hi ? r : -1;
 }
+int nvn_front_tex_cluster_hit(uint64_t addr, uint64_t size) {   /* 1 if [addr, addr + size) may overlap any active texture cluster (or clusters not built) */
+    if (!g_tcl_n || !size) return 1;
+    uint64_t hi = addr + size;
+    if (hi <= g_tcl[0].lo || addr >= g_tcl[g_tcl_n - 1].hi) return 0;
+    int lo = 0, r = g_tcl_n;
+    while (lo < r) { int m = (lo + r) / 2; if (g_tcl[m].lo <= addr) lo = m + 1; else r = m; }
+    if (lo > 0 && g_tcl[lo - 1].hi > addr) return 1;
+    if (lo < g_tcl_n && g_tcl[lo].lo < hi) return 1;
+    return 0;
+}
 static uint64_t ww_tex_newest(const uint8_t *p, size_t n, uint64_t seen, uint64_t *at, uint32_t gen) {
     ww_init();
     if (g_tcl_on < 0) g_tcl_on = getenv("WT_VK_TEXCLUSTER") ? atoi(getenv("WT_VK_TEXCLUSTER")) : 1;
@@ -833,7 +843,12 @@ static uint64_t ww_tex_newest(const uint8_t *p, size_t n, uint64_t seen, uint64_
     uint64_t lo = (uint64_t)(uintptr_t)p, hi = lo + n;
     int c, asked = 0;
     if (g_tcl_serial != g_serial) { tcl_build(); g_tcl_serial = g_serial; }
-    if (g_tcl_nseen < TCL_N) { g_tcl_seen[g_tcl_nseen].lo = lo; g_tcl_seen[g_tcl_nseen].hi = hi; g_tcl_seen[g_tcl_nseen].frame = (uint32_t)g_st.frames; g_tcl_seen[g_tcl_nseen++].serial = g_serial; }
+    {   int a = 0, b = g_tcl_sorted, hit = 0;
+        while (a < b) { int m = (a + b) / 2; if (g_tcl_seen[m].lo < lo) a = m + 1; else b = m; }
+        for (int m = a; m < g_tcl_sorted && g_tcl_seen[m].lo == lo; m++)
+            if (g_tcl_seen[m].hi == hi) { g_tcl_seen[m].frame = (uint32_t)g_st.frames; g_tcl_seen[m].serial = g_serial; hit = 1; break; }
+        if (!hit && g_tcl_nseen < TCL_N) { g_tcl_seen[g_tcl_nseen].lo = lo; g_tcl_seen[g_tcl_nseen].hi = hi; g_tcl_seen[g_tcl_nseen].frame = (uint32_t)g_st.frames; g_tcl_seen[g_tcl_nseen++].serial = g_serial; }
+    }
     if ((c = tcl_find(lo, hi)) >= 0 && !g_tcl_q[c].bad) {
         if (g_tcl_q[c].serial != g_serial || g_tcl_q[c].gen != gen) {
             g_tcl_q[c].serial = g_serial; g_tcl_q[c].gen = gen;

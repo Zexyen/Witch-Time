@@ -27,8 +27,9 @@ typedef struct VStage {
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
     volatile LONG warm;                            /* [witchtime] a pipeline was made with this stage: the driver has compiled it (warm_main) */
     int early;                                     /* fragment: MxOut.early_tests (2: a draw whose alpha test or alpha-to-coverage can discard takes the MX_FO_NO_EARLY variant) */
+    uint64_t tbind_hash; int tbind_ok;             /* cached Set-1 binding-number hash for g_tset lookup */
 } VStage;
-#define MX_VK_VERSION 23u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 24u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; int32_t early; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
@@ -1470,11 +1471,19 @@ static Pipe *tess_pipe_get(const PKey *k, VStage *vs, VStage *tcs, VStage *tes, 
     return p;
 }
 static Pipe *pipe_get(const PKey *k, VStage *vs, VStage *fs) {
-    /* [Recomps#1] finding 93: the pipeline of the draw before, when the key is the same and it is made and used: what the
-     * lookup below returns then, without the byte-wise hash of the key and the lock (render thread only; pipelines live
-     * until shutdown) */
-    static Pipe *last;
+    /* [Recomps#1] finding 93 + render-thread direct-mapped cache: hits skip byte-wise FNV and g_sh_lock
+     * even when alternating between pipelines within a pass (render thread only; pipelines live until shutdown). */
+    static Pipe *last, *rt_cache[512];
     if (last && last->state == 2 && last->used && !memcmp(&last->k, k, sizeof *k)) return last;
+    uint64_t rh = 0xcbf29ce484222325ULL;
+    {   const uint8_t *kp = (const uint8_t *)k;
+        size_t i = 0;
+        for (; i + 8 <= sizeof *k; i += 8) { uint64_t w; memcpy(&w, kp + i, 8); rh = (rh ^ w) * 0x9E3779B97F4A7C15ull; rh ^= rh >> 29; }
+        for (; i < sizeof *k; i++) rh = (rh ^ kp[i]) * 0x100000001B3ULL;
+    }
+    unsigned rslot = (unsigned)(rh >> 23) & 511;
+    Pipe *rc = rt_cache[rslot];
+    if (rc && rc->state == 2 && rc->used && !memcmp(&rc->k, k, sizeof *k)) { last = rc; return rc; }
     uint64_t h = fnv(0xcbf29ce484222325ULL, k, sizeof *k);
     int mine = 0, waited = 0;
     LONG64 t0 = 0;
@@ -1529,6 +1538,7 @@ static Pipe *pipe_get(const PKey *k, VStage *vs, VStage *fs) {
         if (!p->recorded) { piperec_append(k, vs, fs, 0); p->recorded = 1; }
     }
     last = p;
+    if (p->state == 2 && p->used) rt_cache[rslot] = p;
     return p;
 }
 /* Any thread: the compute pipeline of a stage. Returns 1 when this call made it, 2 when it waited for another thread, 0 when it was there. */
@@ -2175,9 +2185,16 @@ static void scan_draw(Scan *s, unsigned prim) {
             if (nf == 0x6A) { s->ints |= 1u << i; s->sints |= 1u << i; }
         }
     }
-    uint64_t w[6] = {(uint64_t)(uintptr_t)p0->st[0].code ^ ((uint64_t)p0->serial << 44), p1 ? (uint64_t)(uintptr_t)p1->st[1].code ^ ((uint64_t)p1->serial << 44) : 0, s->sig_tag, tclass[prim] | (uint64_t)s->logic << 8 | (uint64_t)(p1 ? p1->sample_shading & 1 : 0) << 16,
-                     (uint64_t)s->ints << 32 | s->sints, (uint64_t)R.tex_int[0] << 32 | R.tex_int[1]};
-    uint64_t tag = fnv(0xcbf29ce484222325ULL, w, sizeof w) | 1;
+    uint64_t tag = 0xcbf29ce484222325ULL;
+#define SCK(v) (tag = (tag ^ (uint64_t)(v)) * 0x9E3779B97F4A7C15ull, tag ^= tag >> 29)
+    SCK((uint64_t)(uintptr_t)p0->st[0].code ^ ((uint64_t)p0->serial << 44));
+    SCK(p1 ? (uint64_t)(uintptr_t)p1->st[1].code ^ ((uint64_t)p1->serial << 44) : 0);
+    SCK(s->sig_tag);
+    SCK(tclass[prim] | (uint64_t)s->logic << 8 | (uint64_t)(p1 ? p1->sample_shading & 1 : 0) << 16);
+    SCK((uint64_t)s->ints << 32 | s->sints);
+    SCK((uint64_t)R.tex_int[0] << 32 | R.tex_int[1]);
+#undef SCK
+    tag |= 1;
     uint32_t vl = 0;
     if (!D.has_vids) {                             /* finding 116: the vertex layout the draw will have is part of its key */
         VkVertexInputBindingDescription2EXT bd[17];
@@ -2247,8 +2264,8 @@ static void scan_list(uint64_t handle, int depth, Scan *s) {
             break;
         }
         case OP_VATTR: s->nattr = (int)a[0] < 32 ? (int)a[0] : 32; memcpy(s->vattr, BLOB(m), (size_t)s->nattr * 4); s->attr_new = 1; break;
-        case OP_VBUF: for (int i = 0; i < (int)a[1] && (int)a[0] + i < 32; i++) { uint64_t r2[2]; memcpy(r2, BLOB(m) + i * 16, 16); if (r2[0] && r2[1]) s->vbuf_on |= 1u << (a[0] + i); else s->vbuf_on &= ~(1u << (a[0] + i)); } break;
-        case OP_VSTREAM: for (int i = 0; i < (int)a[0] && i < 32; i++) memcpy(&s->vstream[i * 2], BLOB(m) + i * 8, 8); break;
+        case OP_VBUF: if (!D.has_vids) for (int i = 0; i < (int)a[1] && (int)a[0] + i < 32; i++) { uint64_t r2[2]; memcpy(r2, BLOB(m) + i * 16, 16); if (r2[0] && r2[1]) s->vbuf_on |= 1u << (a[0] + i); else s->vbuf_on &= ~(1u << (a[0] + i)); } break;
+        case OP_VSTREAM: if (!D.has_vids) for (int i = 0; i < (int)a[0] && i < 32; i++) memcpy(&s->vstream[i * 2], BLOB(m) + i * 8, 8); break;
         case OP_COLOR: s->logic = ((const uint8_t *)&a[0])[1]; break;
         case OP_DRAW_ARRAYS: case OP_DRAW_ELEMENTS: scan_draw(s, (unsigned)a[0]); break;
         case OP_CALL: for (int i = 0; i < (int)a[0]; i++) { uint64_t h; memcpy(&h, BLOB(m) + i * 8, 8); if (depth < 8) scan_list(h, depth + 1, s); } break;
