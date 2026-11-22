@@ -26,9 +26,9 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
     volatile LONG warm;                            /* [witchtime] a pipeline was made with this stage: the driver has compiled it (warm_main) */
-    int early;                                     /* fragment: MxOut.early_tests (2: a draw whose alpha test can discard takes the MX_FO_NO_EARLY variant) */
+    int early;                                     /* fragment: MxOut.early_tests (2: a draw whose alpha test or alpha-to-coverage can discard takes the MX_FO_NO_EARLY variant) */
 } VStage;
-#define MX_VK_VERSION 22u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 23u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; int32_t early; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
@@ -173,6 +173,11 @@ static int vk_lone_lane(int stage) {
     static const uint32_t bit[6] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, 0, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_COMPUTE_BIT};
     return D.sg_known && stage >= 0 && stage < 6 && stage != 1 && stage != 5 && bit[stage] && !(D.sg_stages & bit[stage]);
 }
+static int vk_earlyz_off(void) {
+    static int off = -1;
+    if (off < 0) { const char *e = getenv("WT_VK_EARLYZ"); off = e && !atoi(e); }
+    return off;
+}
 static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
@@ -183,7 +188,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
-    if (o->stage == 1 && getenv("WT_VK_EARLYZ") && !atoi(getenv("WT_VK_EARLYZ"))) h = fnv(h, "ez0", 3);      /* mx_translate: fragment stages without early fragment tests are another translation */
+    if (o->stage == 1 && vk_earlyz_off()) h = fnv(h, "ez0", 3);      /* mx_translate: fragment stages without early fragment tests are another translation */
     if (o->nograin) h = fnv(h, "ng1", 3);      /* issue 86: another translation; with the grain on the hash is the one it always was */
     if (vk_lone_lane(o->stage)) h = fnv(h, "ll1", 3);      /* [witchtime] MxIn.lone_lane is another translation; where the GPU has subgroups in the stage the hash is the one it always was */
     if (o->rs) h = fnv(h, "rs3", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
