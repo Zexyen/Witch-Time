@@ -442,6 +442,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
 }
 
 int display_window_apply(void) { return 0; }      /* [witchtime] Windows: the PC menu's window changes apply at the next start (pcmenu.c says so) */
+void display_quit(void) { if (g_hwnd) PostMessageA(g_hwnd, WM_CLOSE, 0, 0); }      /* [witchtime] issues 212, 277, the PC menu's Quit row: the window's own close, on its thread */
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
  * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
@@ -596,6 +597,7 @@ int display_window_apply(void) {
     memset(&e, 0, sizeof e); e.type = g_apply_ev;
     return SDL_PushEvent(&e);
 }
+void display_quit(void) { SDL_Event e; memset(&e, 0, sizeof e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }      /* [witchtime] issues 212, 277, the PC menu's Quit row: as the window's close, on its thread */
 /* the PC menu: the pointer in the window's pixels, as the window's motion events left it (synthetic ones too, as the key
  * state above); 0 = not known or not over the window */
 static volatile LONG g_ptr_x = -1, g_ptr_y = -1;
