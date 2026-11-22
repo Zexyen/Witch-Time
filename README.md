@@ -32,9 +32,11 @@ Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_
 A release needs nothing installed but a Vulkan driver and OpenGL (`libGL.so.1`), which every desktop distribution
 has: it brings its own compiler (clang + lld in `deps/llvm`), the runtime already built
 (`prebuilt/`, with the FFmpeg it uses) and the build tool. Your PC only translates and compiles the game's code, and
-that needs no system headers. The `deps` step checks all of it and names what is missing. Your dump: one folder with
-`exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files) and `romfs/` (the `.pkz` archives and
-`movie/`), extracted with your own tools from your own console and game; this project decrypts nothing.
+that needs no system headers. The `deps` step checks all of it and names what is missing.
+
+Your dump can be either:
+- **NSP / XCI files** dumped from your own console (your base game `.nsp`/`.xci` + Update 1.2.0 `.nsp`, or a merged `.xci`/`.nsp`, or a folder holding both) together with your own `prod.keys` (auto-detected beside the packages or in `~/.switch/prod.keys`, or passed with `--keys`). Witch Time extracts everything locally—including **Program 1 (The Old Picture Book prologue demo)**—and ships no keys or game data.
+- **An extracted dump folder** holding `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files), `romfs/` (the `.pkz` archives and `movie/`), and optionally `program1/`.
 
 A checkout has no `prebuilt/`, so the link step builds the runtime too: that needs clang 19 or newer + lld and the
 development files of SDL3, Vulkan, glslang, FFmpeg and OpenGL. The same happens in a release whose `runtime/`
@@ -45,15 +47,18 @@ build it once with cargo:
 
 ```
 cargo build --release --manifest-path tools/wtbuild/Cargo.toml
+# Directly from your NSP/XCI files (also extracts The Old Picture Book prologue):
+tools/wtbuild/target/release/wtbuild setup --dump <base.nsp|.xci> --update <update-1.2.0.nsp> [--keys <prod.keys>]
+# Or from an already-extracted dump folder:
 tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
 ```
 
-Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which does the same with progress on screen
-and then plays in its own window.
+Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which lets you pick your NSP/XCI files (or an
+extracted folder) with progress on screen and then plays in its own window.
 
 Setup puts the game data (the dump's `romfs`) in `targets/romfs`, so the Witch Time folder holds the whole game and can be
-moved anywhere: copied by default (hard links on the same drive, so no extra space, and your dump stays whole), or moved
-with `--move-dump` (the launcher's "Move the game data here" switch).
+moved anywhere: extracted directly from NSP/XCI, or for an extracted folder copied by default (hard links on the same
+drive, so no extra space, and your dump stays whole) or moved with `--move-dump` (the launcher's "Move the game data here" switch).
 
 The steps (`deps verify convert mods tables lift compile link book text check`, resumable; `--only`, `--from`, `--status`)
 are described in `tools/wtbuild/README.md`, "Steps". The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
@@ -62,9 +67,10 @@ are described in `tools/wtbuild/README.md`, "Steps". The `verify` step accepts o
 
 Windows 10 or 11, 64-bit. A release (`WitchTime-<version>-windows-x86_64.zip`) needs nothing installed but a Vulkan driver: it
 brings LLVM's own clang + lld (`deps\llvm`), the runtime already built (`prebuilt\`: `witch-time-game.exe`,
-`SDL3.dll`, `wt_glslang.dll`, FFmpeg's DLLs) and `build\wtbuild.exe`. Unzip it, run `witch-time.exe` and pick your dump folder, or:
+`SDL3.dll`, `wt_glslang.dll`, FFmpeg's DLLs) and `build\wtbuild.exe`. Unzip it, run `witch-time.exe` and pick your NSP/XCI files (with your `prod.keys`) or your extracted dump folder, or:
 
 ```
+build\wtbuild.exe setup --dump <base.nsp|.xci> --update <update-1.2.0.nsp> [--keys <prod.keys>]
 build\wtbuild.exe setup --dump <your dump folder>
 ```
 
@@ -114,12 +120,14 @@ mode, add it to Steam with "Add a Non-Steam Game"). If you move the game folder,
 ## The picture book
 
 The Old Picture Book (Rodin's Treasures, then the shelf of the chapter-select room) opens a second program of the game:
-program 1 of its update (title ID 01004A4010FEA001, update 1.2.0), the Bayonetta Origins prologue. Your dump needs it as
-a `program1/` folder beside `exefs/` and `romfs/`: `program1/exefs/` (`main`, `sdk`, `main.npdm`) and
-`program1/romfs/` (36 files, 361 MB), extracted with your own tools from that program of your own update, as you did
-for the game. The `book` step checks and builds it into `build/program1` (about 3 minutes); without the folder it is
-skipped and opening the book says so. A folder added after a build is built at the next REBUILD. In the game, yes on "Open the book?" ends Bayonetta 3 and starts the prologue;
-its end starts Bayonetta 3 again, back in the chapter-select room. Both use the same save folder and settings.
+program 1 of its update (title ID 01004A4010FEA001, update 1.2.0), the Bayonetta Origins prologue. When you build
+directly from your **NSP / XCI** files, Witch Time automatically verifies and extracts Program 1 alongside the main game
+so the prologue is always included. If you use an extracted dump folder instead, include it as a `program1/` folder
+beside `exefs/` and `romfs/`: `program1/exefs/` (`main`, `sdk`, `main.npdm`) and `program1/romfs/` (36 files, 361 MB).
+The `book` step checks and builds it into `build/program1` (about 3 minutes); without it the step is skipped and opening
+the book says so. A folder added after a build is built at the next REBUILD. In the game, yes on "Open the book?" ends
+Bayonetta 3 and starts the prologue; its end starts Bayonetta 3 again, back in the chapter-select room. Both use the
+same save folder and settings.
 
 ## Credits
 

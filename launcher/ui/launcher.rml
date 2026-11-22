@@ -59,16 +59,44 @@
 	<div class="lead-block">
 		<h2>Point the launcher at your dump</h2>
 		<div class="flourish"></div>
-		<p>A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
+		<p data-if="dump_mode == 1">Select your own <em>NSP</em> or <em>XCI</em> files and <em>prod.keys</em> from your console. Everything is extracted locally, including <em>The Old Picture Book</em> prologue demo.</p>
+		<p data-if="dump_mode == 0">A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
 		<p>The launcher turns your copy's code into a native program on this PC. You do this once; updates rebuild only what changed.</p>
 	</div>
 	<div class="col">
-		<div class="label">DUMP FOLDER</div>
-		<div class="field-row">
-			<input type="text" class="text autofocus" data-value="dump"/>
-			<div class="btn" data-event-click="browse()"><div class="fill"></div><span>Browse</span></div>
+		<div class="mode-tabs">
+			<div class="tab" data-class-on="dump_mode == 1" data-event-click="dump_mode(1)"><div>NSP / XCI</div></div>
+			<div class="tab" data-class-on="dump_mode == 0" data-event-click="dump_mode(0)"><div>EXTRACTED FOLDER</div></div>
 		</div>
-		<div class="row">
+		<div class="field-group g1" data-if="dump_mode == 1">
+			<div class="label">BASE GAME (NSP / XCI, OR MERGED)</div>
+			<div class="field-row">
+				<input type="text" class="text autofocus" data-value="dump"/>
+				<div class="btn" data-event-click="browse(0)"><div class="fill"></div><span>Browse</span></div>
+			</div>
+		</div>
+		<div class="field-group g2" data-if="dump_mode == 1">
+			<div class="label">UPDATE 1.2.0 (NSP, OPTIONAL IF MERGED)</div>
+			<div class="field-row">
+				<input type="text" class="text" data-value="update_pkg"/>
+				<div class="btn" data-event-click="browse(1)"><div class="fill"></div><span>Browse</span></div>
+			</div>
+		</div>
+		<div class="field-group g3" data-if="dump_mode == 1">
+			<div class="label">CONSOLE KEYS (PROD.KEYS)</div>
+			<div class="field-row">
+				<input type="text" class="text" data-value="prod_keys"/>
+				<div class="btn" data-event-click="browse(2)"><div class="fill"></div><span>Browse</span></div>
+			</div>
+		</div>
+		<div class="field-group g1" data-if="dump_mode == 0">
+			<div class="label">DUMP FOLDER</div>
+			<div class="field-row">
+				<input type="text" class="text autofocus" data-value="dump"/>
+				<div class="btn" data-event-click="browse(0)"><div class="fill"></div><span>Browse</span></div>
+			</div>
+		</div>
+		<div class="row" data-if="dump_mode == 0">
 			<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
 			<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
 		</div>
@@ -88,9 +116,9 @@
 			<div class="btn primary" data-if="verified" data-event-click="start_build()"><div class="fill"></div><span>Begin build</span></div>
 		</div>
 	</div>
-	<div class="band">{{ verified ? 'Your dump checks out. Begin the build.' : 'Choose the folder, then check the dump.' }}</div>
+	<div class="band">{{ verified ? 'Your dump checks out. Begin the build.' : (dump_mode == 1 ? 'Choose your NSP/XCI files and prod.keys, then check.' : 'Choose the folder, then check the dump.') }}</div>
 	<div class="foot">
-		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
+		<div class="fl">About 15 minutes on 16 threads  ·  About 24 GB of free space for NSP/XCI  ·  Close the window any time; it resumes</div>
 		<div class="grow"></div>
 		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>

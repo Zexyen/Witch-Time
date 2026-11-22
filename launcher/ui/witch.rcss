@@ -180,15 +180,19 @@ body {
 .lead-block p.small { font-size: 15dp; line-height: 21dp; }   /* a long note, clear of the wheel below */
 .lead-block .facts { display: flex; flex-direction: column; gap: 6dp; font-size: 15dp; letter-spacing: 0.5dp; color: #d7ccf7b3; }
 .lead-block .actions { position: relative; left: 0; top: 0; margin-top: 8dp; }
-.col { left: 640dp; top: 110dp; width: 600dp; height: 540dp; display: flex; flex-direction: column; gap: 14dp; }
+.col { left: 640dp; top: 104dp; width: 600dp; height: 552dp; display: flex; flex-direction: column; gap: 12dp; }
 /* the column's lower parts step right, clear of the diagonal, as the staircases do */
-.col .row { margin-left: 30dp; }
+.col .mode-tabs { display: flex; flex-direction: row; align-items: center; gap: 28dp; margin-bottom: 2dp; }
+.col .field-group { display: flex; flex-direction: column; gap: 5dp; }
+.col .field-group.g2 { margin-left: 30dp; }
+.col .field-group.g3 { margin-left: 60dp; }
+.col .row { margin-left: 60dp; }
 .col .rows { margin-left: 120dp; }
 .col .actions { margin-left: 160dp; }
 .col .empty, .col .error { margin-left: 80dp; }
 .label { font-size: 13dp; letter-spacing: 3dp; font-weight: 600; color: #6a49d0; }
 .field-row { display: flex; flex-direction: row; gap: 12dp; align-items: center; }
-input.text { flex: 1; height: 46dp; padding: 0 16dp; line-height: 44dp; background-color: #ffffffb3; border: 1dp #24202e4d; color: #24202e; font-size: 18dp; tab-index: auto; nav: auto; }
+input.text { flex: 1; height: 42dp; padding: 0 14dp; line-height: 40dp; background-color: #ffffffb3; border: 1dp #24202e4d; color: #24202e; font-size: 17dp; tab-index: auto; nav: auto; }
 input.text:focus { border-color: #6a49d0; }
 
 .rows { display: flex; flex-direction: column; min-height: 0; flex-shrink: 1; overflow-y: auto; }
