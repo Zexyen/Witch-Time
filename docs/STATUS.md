@@ -1746,7 +1746,10 @@ gathers, in loops (4 jumps back), 75 dispatcher cases and 122 jumps, 156 KB of t
   `WT_MX_LOOPS=0` (with a `WT_VK_CACHE` of its own): the dispatcher, as before.
 - **Left alone**: fragment stages with a shuffle and a jump back, the larger family (about 1,300 of the variations a
   first run prepares): their quad snapshots are taken at the dispatcher's header with every lane of the wave in the
-  loop, and a lane that left a `for` is gone; they need a wave-uniform `for`. Vertex and compute stages: 12 vertex and
+  loop, and a lane that left a `for` is gone. Tried with a `for` that the wave leaves together
+  (`if (!subgroupAny(pc in the stretch)) break;`, 1,267 stages, all compile, the still scenes' picture right): the ride
+  fell from 119.7 to 62.9 fps, so they keep the dispatcher (`~/.cache/wt-257/shader-shuffle-loops-slower.diff`).
+  Vertex and compute stages: 12 vertex and
   1 compute stage with a jump back, and 45 compute stages with only forward jumps, were tried in order and changed no
   pass's time in the ride, so they keep the dispatcher.
 - **Measured** (Linux, RX 9070 XT, RADV; the ride, `phase p100_GomoraSlider1`, about 2,350 draws at 1600x900, old and

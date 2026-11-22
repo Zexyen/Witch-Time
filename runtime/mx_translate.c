@@ -1906,7 +1906,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
      * step-back limit (loop_guard) counts as before.
      * Not for a stage with a shuffle: its quad snapshots are taken at the dispatcher's header, with every lane of the wave in
      * the loop (issue 66), and a lane that left a for is gone; that is the larger family (about 1,300 of the variations a first
-     * run prepares), left for a wave-uniform for. Vertex and compute stages with a jump back keep the dispatcher too: 12 and 1
+     * run prepares). In a for that the wave leaves together (subgroupAny) the ride ran at 63 fps for 120, so they keep the
+     * dispatcher. Vertex and compute stages with a jump back keep it too: 12 and 1
      * of them in the same run, and in order they changed no pass's time in the ride (nor did the 45 compute stages with only
      * forward jumps). WT_MX_LOOPS=0: the dispatcher, as before (with a cache of its own, WT_VK_CACHE: the stage hash does not
      * know the switch). */
