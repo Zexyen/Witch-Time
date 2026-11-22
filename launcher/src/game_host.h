@@ -1,7 +1,7 @@
 // Starting the game. With build/libwitchtime.so the game runs in this process and takes over the launcher's window
 // (runtime/display.c); when it ends, the launcher starts again in a new window. Without it, build/witch-time-game runs as a
 // child while the launcher's window is hidden. On Windows it always runs as a child (witch-time-game.exe makes its own
-// window). Either way its output goes to build/run/witch-time-game.log.
+// window). Either way its output goes to build/run/witch-time-game.log (the picture book's: witch-time-book.log).
 #pragma once
 #include "config.h"
 #include <SDL3/SDL.h>
