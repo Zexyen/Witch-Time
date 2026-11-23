@@ -2638,6 +2638,37 @@ static uint64_t g_live_end[CB_N];                     /* #257: where each entry 
 static uint64_t g_live_key[CB_N], g_live_max;         /* #156: the list is sorted by the address each entry was added with; the largest size added since it was empty */
 static int g_kept_indexed;                            /* 1 while g_kept_idx holds every state==3 buffer (cb_kept_index) */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
+/* [witchtime] issue 286: 1 when the buffer's memory is not host-cached (write-combined device memory, WT_VK_CBMEM=1)
+ * and the device has host-cached memory to copy into: CPU reads of the buffer go through a GPU staging copy. */
+static int cb_slow_cpu_read(const CB *c) {
+    return g_cb_cached > 0 && c->mem.block >= 0 && !(D.mp.memoryTypes[g_blk[c->mem.block]->type].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+}
+static void cb_stg_ensure(CB *c) {
+    if (c->stg_cap >= c->size) return;
+    if (c->stg) { vkDestroyBuffer(V.device, c->stg, NULL); vmem_free(c->stg_mem); c->stg = NULL; }      /* only ever named by a landing that has finished */
+    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    VkMemoryRequirements rq;
+    c->stg_cap = (c->size + 4095) & ~(uint64_t)4095;
+    bi.size = c->stg_cap; bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VKC(vkCreateBuffer(V.device, &bi, NULL, &c->stg));
+    vkGetBufferMemoryRequirements(V.device, c->stg, &rq);
+    VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    int found = 0;
+    for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) found = 1;
+    if (!found) want &= ~(VkFlags)VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    c->stg_mem = vmem_alloc(rq, want, 2);
+    VKC(vkBindBufferMemory(V.device, c->stg, c->stg_mem.mem, c->stg_mem.off));
+}
+static void cb_copy_barrier_pre(void) {            /* [witchtime] issue 286: GPU writes to a compute buffer finish before the staging copy reads it */
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
+static void cb_copy_barrier_post(void) {           /* [witchtime] issue 286: staging copy writes are visible to the host after the fence */
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
 /* WT_VK_CBKEEP: the buffer's bytes go to guest memory. With the snapshot of the fill (WT_VK_CBMERGE, the default) only
  * the words compute changed since the fill are written, and a word the game changed since then stays the game's. */
 static void cb_keep_back(CB *c, const uint8_t *src) {      /* src: the bytes in ordinary memory already (the copy of an asynchronous landing), or NULL = the buffer itself */
@@ -2687,6 +2718,25 @@ static uint32_t g_cb_epoch;
 static void cb_land(int midbatch) {                /* the GPU has finished everything that wrote a CB */
     LONG64 t0 = tk();
     cb_masks();
+    int ncopy = 0;
+    for (int i = 0; i < CB_N; i++) {               /* [witchtime] issue 286: non-host-cached buffers come back in one GPU copy into host-cached staging */
+        CB *c = &g_cb[i];
+        if (!c->state || c->state >= 3) continue;
+        if (g_cb_keep > 0 && c->state == 2) continue;
+        int need = g_cb_keep > 0 ? (c->dirty || c->stale) : c->dirty;
+        if (!need || !cb_slow_cpu_read(c)) continue;
+        cb_stg_ensure(c);
+        if (!ncopy) { pass_end(); cmd_begin(); cb_copy_barrier_pre(); }
+        VkBufferCopy r = {0, 0, c->size};
+        vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+        ncopy++;
+    }
+    if (ncopy) {
+        cb_copy_barrier_post();
+        uint64_t sr = cmd_submit(NULL, NULL);
+        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
+        if (R.done < sr) R.done = sr;
+    }
     for (int i = 0; i < CB_N; i++) {
         CB *c = &g_cb[i];
         if (!c->state || c->state >= 3) continue;
@@ -2697,15 +2747,17 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
             if (g_cb_keep == 2) cg_guard(i, c->addr, c->size);
             continue;
         }
-        if (g_cb_keep > 0) { cg_unguard(i); cb_keep_back(c, NULL); c->stale = 0; }
-        else if (c->dirty && !c->snap) { memcpy(P(c->addr), c->mem.map, (size_t)c->size); R.cb_bytes += (LONG64)c->size; }
+        int staged = cb_slow_cpu_read(c);
+        const uint8_t *src = staged ? (const uint8_t *)c->stg_mem.map : (const uint8_t *)c->mem.map;
+        if (g_cb_keep > 0) { cg_unguard(i); cb_keep_back(c, staged ? (const uint8_t *)c->stg_mem.map : NULL); c->stale = 0; }
+        else if (c->dirty && !c->snap) { memcpy(P(c->addr), src, (size_t)c->size); R.cb_bytes += (LONG64)c->size; }
         else if (c->dirty) {
             /* Session 5: the copy-back is DEFERRED (up to the next batch), so the guest may have written into the range since
              * the CB was filled. Only what compute changed goes back: a word the guest changed meanwhile (guest != snapshot)
              * is kept and counted; when compute changed that word too it is a real conflict (counted apart; the guest's later
              * write stays, as on the OpenGL path where the copy-back comes before it). */
             uint64_t *g = P(c->addr);
-            const uint64_t *s = (const uint64_t *)c->snap, *m = (const uint64_t *)c->mem.map;
+            const uint64_t *s = (const uint64_t *)c->snap, *m = (const uint64_t *)src;
             size_t nw = (size_t)(c->size / 8), tail = (size_t)(c->size & 7);
             LONG64 gw = 0, cf = 0;
             for (size_t k = 0; k < nw; k++) {
@@ -2811,8 +2863,9 @@ static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach gue
             if (R.done < need) R.done = need;      /* submitted (its batch has ended) and every slot up to it has finished */
             g_gcp_waits++;
         }
-        uint8_t *g = P(o->dst);
+        uint8_t *g = P(o->dst), tmp[GCP_SIDE];
         const uint8_t *m = sided ? (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE : (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+        if (sided || cb_slow_cpu_read(&g_cb[o->src])) { memcpy(tmp, m, (size_t)o->size); m = tmp; }      /* [witchtime] issue 286: one block read instead of byte by byte from uncached memory */
         for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
         ring_inval_range(o->dst, o->size);         /* guest memory changed: overlapping ranges are streamed again */
         gcp_remove(0);
@@ -2906,10 +2959,62 @@ static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring
         g_gcp_patches++;
     }
 }
+/* Round 16, WT_VK_CBASYNC (default 1; 0 = every landing reads the buffer itself): a kept buffer that was not dispatched
+ * into for two batches lands WITHOUT the CPU reading device memory (write-combined: 19-20 ms for the largest buffer,
+ * runs p16t_bf_d / ica_d): the GPU copies it into a buffer in ordinary host memory (state 4, "landing"), and when that
+ * submission has finished the bytes are merged into guest memory from there. Until then the entry counts as kept: a
+ * read of an overlapping range, a new compute buffer over it or a guest-memory command first makes the copy finish
+ * (submit if it is still being recorded, wait) and lands it: what guest memory holds when anything looks is the same. */
+static int g_cb_async = -1;
+static LONG64 g_ck_async, g_ck_async_forced, g_ck_dropped, g_ck_drawn;
+static uint32_t g_cb_batch = 1;                    /* counts batches (vk_submit) */
+static void cb_land_start(CB *c) {
+    cb_stg_ensure(c);
+    pass_end(); cmd_begin();
+    cb_copy_barrier_pre();
+    VkBufferCopy r = {0, 0, c->size};
+    vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+    cb_copy_barrier_post();
+    c->state = 4; c->lserial = R.serial + 1;       /* the number the command buffer being recorded gets at its submission */
+    g_ck_async++;
+}
+static void cb_land_wait(CB *c) {
+    if (R.recording && c->lserial > R.serial) cmd_submit(NULL, NULL);
+    if (R.done < c->lserial) {
+        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->lserial) slot_wait(&R.slot[i]);
+        if (R.done < c->lserial) R.done = c->lserial;
+    }
+}
+static void cb_land_finish(CB *c) {                /* state 4 and its copy has finished */
+    if (g_ngcp) gcp_src_changes(c);
+    LONG64 t0 = tk();
+    cg_unguard((int)(c - g_cb));
+    cb_keep_back(c, (const uint8_t *)c->stg_mem.map);
+    uint64_t busy = c->touch ? R.serial + 2 : c->kserial;      /* touch: a draw of this batch names the buffer (buf_ref): it may be in the command buffer after the one being recorded */
+    if (c->lserial > busy) busy = c->lserial;
+    c->state = 0; c->stale = c->dirty = 0; c->busy = busy; c->touch = 0;
+    if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
+    ring_inval_range(c->addr, c->size);
+    { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
+}
+static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in guest memory now */
+    if (drawlog_on()) printf("DLG f%lld land_force cause %d CB %llx+%llx%s\n", nvn_front_frame_next(), cause, (unsigned long long)c->addr, (unsigned long long)c->size, R.done < c->lserial ? " WAIT" : "");
+    cb_land_wait(c);
+    g_ck_async_forced++; g_ck_land[cause]++;
+    cb_land_finish(c);
+}
 /* WT_VK_CBKEEP: a kept buffer's bytes go to guest memory and the entry is free (see the comment at g_cb_keep). The batch
  * that used it last has finished (it became "kept" only then, or cb_kept_ready waits for it); its Vulkan buffer is not
  * given out again before the submission that ended that batch has finished (busy). */
 static void cb_kept_land(CB *c, int cause) {
+    if ((c->dirty || c->stale) && cb_slow_cpu_read(c)) {      /* [witchtime] issue 286: GPU copies into host-cached staging instead of a CPU read of device memory */
+        if (drawlog_on()) printf("DLG f%lld kept_land (gpu copy) cause %d CB %llx+%llx stale %d\n", nvn_front_frame_next(), cause, (unsigned long long)c->addr, (unsigned long long)c->size, c->stale);
+        cb_land_start(c);
+        cb_land_wait(c);
+        g_ck_land[cause]++;
+        cb_land_finish(c);
+        return;
+    }
     LONG64 t0 = tk();
     if (g_ngcp) gcp_src_changes(c);
     cb_kept_ready(c);
@@ -2921,57 +3026,6 @@ static void cb_kept_land(CB *c, int cause) {
     if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
     ring_inval_range(c->addr, c->size);            /* guest memory changed */
     { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
-}
-/* Round 16, WT_VK_CBASYNC (default 1; 0 = every landing reads the buffer itself): a kept buffer that was not dispatched
- * into for two batches lands WITHOUT the CPU reading device memory (write-combined: 19-20 ms for the largest buffer,
- * runs p16t_bf_d / ica_d): the GPU copies it into a buffer in ordinary host memory (state 4, "landing"), and when that
- * submission has finished the bytes are merged into guest memory from there. Until then the entry counts as kept: a
- * read of an overlapping range, a new compute buffer over it or a guest-memory command first makes the copy finish
- * (submit if it is still being recorded, wait) and lands it: what guest memory holds when anything looks is the same. */
-static int g_cb_async = -1;
-static LONG64 g_ck_async, g_ck_async_forced, g_ck_dropped, g_ck_drawn;
-static uint32_t g_cb_batch = 1;                    /* counts batches (vk_submit) */
-static void cb_land_start(CB *c) {
-    if (c->stg_cap < c->size) {
-        if (c->stg) { vkDestroyBuffer(V.device, c->stg, NULL); vmem_free(c->stg_mem); c->stg = NULL; }      /* only ever named by a landing that has finished */
-        VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        VkMemoryRequirements rq;
-        c->stg_cap = (c->size + 4095) & ~(uint64_t)4095;
-        bi.size = c->stg_cap; bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        VKC(vkCreateBuffer(V.device, &bi, NULL, &c->stg));
-        vkGetBufferMemoryRequirements(V.device, c->stg, &rq);
-        VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        int found = 0;
-        for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) found = 1;
-        if (!found) want &= ~(VkFlags)VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        c->stg_mem = vmem_alloc(rq, want, 2);
-        VKC(vkBindBufferMemory(V.device, c->stg, c->stg_mem.mem, c->stg_mem.off));
-    }
-    pass_end(); cmd_begin();
-    VkBufferCopy r = {0, 0, c->size};
-    vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
-    c->state = 4; c->lserial = R.serial + 1;       /* the number the command buffer being recorded gets at its submission */
-    g_ck_async++;
-}
-static void cb_land_finish(CB *c) {                /* state 4 and its copy has finished */
-    if (g_ngcp) gcp_src_changes(c);
-    LONG64 t0 = tk();
-    cg_unguard((int)(c - g_cb));
-    cb_keep_back(c, (const uint8_t *)c->stg_mem.map);
-    c->state = 0; c->stale = c->dirty = 0; c->busy = c->lserial > c->kserial ? c->lserial : c->kserial;
-    if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
-    ring_inval_range(c->addr, c->size);
-    { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
-}
-static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in guest memory now */
-    if (drawlog_on()) printf("DLG f%lld land_force cause %d CB %llx+%llx%s\n", nvn_front_frame_next(), cause, (unsigned long long)c->addr, (unsigned long long)c->size, R.done < c->lserial ? " WAIT" : "");
-    if (R.recording && c->lserial > R.serial) cmd_submit(NULL, NULL);
-    if (R.done < c->lserial) {
-        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->lserial) slot_wait(&R.slot[i]);
-        if (R.done < c->lserial) R.done = c->lserial;
-    }
-    g_ck_async_forced++; g_ck_land[cause]++;
-    cb_land_finish(c);
 }
 static void cb_landing_poll(void) {                /* at the start of a batch: landings whose copy has finished; never waits */
     int open = 0;
@@ -3082,11 +3136,29 @@ static void cb_kept_discard(uint64_t addr, uint64_t size) {
     }
 }
 static void cb_kept_range_nopf(uint64_t addr, uint64_t size, int cause) {
-    for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {
-        int i = g_kept_idx[n];
-        if (g_cb[i].state < 3 || !(addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size)) continue;
+    int ncopy = 0, need4 = 0, from = cb_kept_from(addr, size);
+    for (int n = from; n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {
+        CB *c = &g_cb[g_kept_idx[n]];
+        if (c->state < 3 || !(addr < c->addr + c->size && c->addr < addr + size)) continue;
         cb_pf_hit(addr, size, "cb_kept_range");
-        if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else cb_land_force(&g_cb[i], cause);
+        if (c->state == 4) { need4 = 1; continue; }
+        if ((c->dirty || c->stale) && cb_slow_cpu_read(c)) {
+            cb_stg_ensure(c);
+            if (!ncopy) { pass_end(); cmd_begin(); cb_copy_barrier_pre(); }
+            VkBufferCopy r = {0, 0, c->size};
+            vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+            c->state = 4; c->lserial = R.serial + 1;
+            g_ck_async++; ncopy++;
+        } else cb_kept_land(c, cause);
+    }
+    if (!ncopy && !need4) return;
+    uint64_t qser = 0;
+    if (ncopy) { cb_copy_barrier_post(); qser = R.serial + 1; }
+    for (int n = from; n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {
+        CB *c = &g_cb[g_kept_idx[n]];
+        if (c->state != 4 || !(addr < c->addr + c->size && c->addr < addr + size)) continue;
+        if (c->lserial != qser) cb_land_force(c, cause);
+        else { cb_land_wait(c); g_ck_land[cause]++; cb_land_finish(c); }
     }
 }
 static void cb_kept_range(uint64_t addr, uint64_t size, int cause) {
@@ -3117,14 +3189,39 @@ static int cb_kept_wrote(CB *k) {                  /* [witchtime] asked once per
     if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
     return k->wrote;
 }
-static void cb_kept_all(int cause) { for (int i = 0; i < CB_N && g_cb_nkept; i++) { if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else if (g_cb[i].state == 4) cb_land_force(&g_cb[i], cause); } }
+static void cb_kept_all(int cause) {
+    int ncopy = 0, need4 = 0;
+    for (int i = 0; i < g_cb_hi && g_cb_nkept; i++) {
+        CB *c = &g_cb[i];
+        if (c->state < 3) continue;
+        if (c->state == 4) { need4 = 1; continue; }
+        if ((c->dirty || c->stale) && cb_slow_cpu_read(c)) {
+            cb_stg_ensure(c);
+            if (!ncopy) { pass_end(); cmd_begin(); cb_copy_barrier_pre(); }
+            VkBufferCopy r = {0, 0, c->size};
+            vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+            c->state = 4; c->lserial = R.serial + 1;
+            g_ck_async++; ncopy++;
+        } else cb_kept_land(c, cause);
+    }
+    if (!ncopy && !need4) return;
+    uint64_t qser = 0;
+    if (ncopy) { cb_copy_barrier_post(); qser = R.serial + 1; }
+    for (int i = 0; i < g_cb_hi && g_cb_nkept; i++) {
+        CB *c = &g_cb[i];
+        if (c->state != 4) continue;
+        if (c->lserial != qser) cb_land_force(c, cause);
+        else { cb_land_wait(c); g_ck_land[cause]++; cb_land_finish(c); }
+    }
+}
 static void cb_kept_age(void) {                    /* at the start of a batch */
     static int lim = -1;
     if (lim < 0) lim = getenv("WT_VK_CBAGE") && atoi(getenv("WT_VK_CBAGE")) > 0 ? atoi(getenv("WT_VK_CBAGE")) : 2;      /* batches a kept buffer may stay without a dispatch into it */
     if (g_cb_async < 0) g_cb_async = !(getenv("WT_VK_CBASYNC") && !atoi(getenv("WT_VK_CBASYNC")));
     cb_landing_poll();
     oq_poll();                                     /* [Recomps#1] */
-    for (int i = 0; i < CB_N && g_cb_nkept; i++) {
+    int ncopy = 0;
+    for (int i = 0; i < g_cb_hi && g_cb_nkept; i++) {
         CB *c = &g_cb[i];
         if (c->state == 3 && c->touch) { c->touch = 0; c->age = 0; c->kserial = R.serial + 1; continue; }      /* drawn from in the last batch: every command of that batch is in a submission up to this number */
         if (c->state != 3 || ++c->age <= lim) continue;
@@ -3132,9 +3229,17 @@ static void cb_kept_age(void) {                    /* at the start of a batch */
             cg_unguard(i);
             c->state = 0; c->dirty = 0; c->busy = c->kserial; g_ck_dropped++;
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
-        } else if (g_cb_async) { g_ck_land[0]++; cb_land_start(c); }
-        else cb_kept_land(c, 0);
+        } else if (g_cb_async) {
+            g_ck_land[0]++;
+            cb_stg_ensure(c);
+            if (!ncopy) { pass_end(); cmd_begin(); cb_copy_barrier_pre(); }
+            VkBufferCopy r = {0, 0, c->size};
+            vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+            c->state = 4; c->lserial = R.serial + 1;
+            g_ck_async++; ncopy++;
+        } else cb_kept_land(c, 0);
     }
+    if (ncopy) cb_copy_barrier_post();
 }
 /* [Recomps#1] counter reports of finished command buffers land now (the GPU has written them); never waits */
 static void oq_poll(void) {
@@ -3303,9 +3408,18 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
  * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
  * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
 static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [witchtime] dispatches / storing draws recorded; the count at the last wait of indirect_src */
+static const uint8_t *cb_read_block(const CB *c, uint64_t off, uint64_t size) {      /* [witchtime] issue 286: one block read from uncached device memory instead of per-field reads across draw loops */
+    const uint8_t *p = (const uint8_t *)c->mem.map + off;
+    if (!cb_slow_cpu_read(c)) return p;
+    static uint8_t *buf[2]; static uint64_t cap[2]; static int turn;
+    int s = turn ^= 1;                             /* two slots: OP_DRAW_INDIRECT can hold `rec` across a second call for `cnt` */
+    if (cap[s] < size) { free(buf[s]); cap[s] = (size + 4095) & ~(uint64_t)4095; buf[s] = malloc((size_t)cap[s]); }
+    memcpy(buf[s], p, (size_t)size);
+    return buf[s];
+}
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
-    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) { if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, no wait\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); return (const uint8_t *)c->mem.map + (addr - c->addr); }      /* nothing written since the last wait */
+    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) { if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, no wait\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); return cb_read_block(c, addr - c->addr, size); }      /* nothing written since the last wait */
     if (c && c->mem.map) {
         if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, WAIT (serial %llu, done %llu)\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size, (unsigned long long)R.serial, (unsigned long long)R.done);
         if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
@@ -3318,7 +3432,7 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
         for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
         if (R.done < sr) R.done = sr;
         R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
-        return (const uint8_t *)c->mem.map + (addr - c->addr);
+        return cb_read_block(c, addr - c->addr, size);
     }
     if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo && !cb_pf_skip(addr, size))
         for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
@@ -3328,7 +3442,7 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
             if (k->wrote) break;
             if (drawlog_on()) printf("DLI f%lld src %llx+%llx kept CB %llx+%llx\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)k->addr, (unsigned long long)k->size);
             cb_kept_ready(k);
-            return (const uint8_t *)k->mem.map + (addr - k->addr);
+            return cb_read_block(k, addr - k->addr, size);
         }
     if (drawlog_on()) printf("DLI f%lld src %llx+%llx guest memory%s\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, g_cb_live && cb_overlap(addr, size) ? " (overlaps a live CB: cb_sync)" : "");
     cpu_read_sync(addr, size);
@@ -3472,10 +3586,32 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         int found = 0;
         for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) found = 1;
         if (!found) want &= ~(VkFlags)VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        /* [witchtime] default 0: B3 reads compute output back on the CPU every frame (about 16 MB), and CPU reads of device-local
-         * host-visible memory (BAR) took 300 ms a frame (3 fps in chapter 1); host-cached memory: 4 ms. WT_VK_CBMEM=1: BAR. */
-        if (g_cb_dl < 0) g_cb_dl = getenv("WT_VK_CBMEM") ? atoi(getenv("WT_VK_CBMEM")) : 0;
-        if (g_cb_dl == 1) {                        /* round 16: where the GPU writes and reads them without the bus (the CPU reads them only at a landing) */
+        /* [witchtime] issue 286: default 1 on a discrete NVIDIA GPU with resizable BAR (>= 2 GB device-local host-visible
+         * heap): shader stores into host-cached memory cross PCIe and stall NVIDIA's driver interrupt handler (~15 ms GPU/frame,
+         * system-wide audio crackles). Landings of non-host-cached buffers copy through host-cached staging on the GPU instead
+         * of CPU reads of device memory (which cost 300 ms/frame in chapter 1). Other GPUs keep host memory by default;
+         * WT_VK_CBMEM=1 tries device memory anywhere, =0 keeps host memory everywhere. */
+        if (g_cb_dl < 0) {
+            const char *e = getenv("WT_VK_CBMEM");
+            int want_dl = e ? atoi(e) : (V.props.vendorID == 0x10de && V.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+            g_cb_dl = 0;
+            if (want_dl == 1) {
+                VkFlags dl = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
+                    if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & dl) == dl && D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].size >= (2ull << 30)) {
+                        g_cb_dl = 1;
+                        printf("nvn_vk: compute buffers in device-local host-visible memory (type %u, heap %llu MB; %s)\n", i,
+                               (unsigned long long)(D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].size >> 20),
+                               e ? "WT_VK_CBMEM=1" : "default on discrete NVIDIA; WT_VK_CBMEM=0: host memory");
+                        break;
+                    }
+                if (!g_cb_dl) printf("nvn_vk: compute buffers stay in host memory (no device-local host-visible heap of 2 GB; %s)\n",
+                                     e ? "WT_VK_CBMEM=1" : "discrete NVIDIA default");
+            } else if (e) {
+                printf("nvn_vk: compute buffers in host memory (WT_VK_CBMEM=%d)\n", want_dl);
+            }
+        }
+        if (g_cb_dl == 1) {                        /* round 16: where the GPU writes and reads them without the bus (the CPU reads them only through staging) */
             VkFlags dl = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
             for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
                 if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & dl) == dl && D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].size >= (2ull << 30)) { want = dl; break; }
