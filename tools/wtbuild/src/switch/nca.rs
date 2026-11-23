@@ -5,7 +5,7 @@ use super::crypto::{aes128_ctr_apply, aes128_ecb_decrypt, aes128_xts_decrypt, ma
 use super::keys::KeySet;
 use super::storage::{
     parse_compression_bktr, parse_indirect_bktr, parse_subsection_bktr, read_vec, AesCtrExStorage, AesCtrStorage,
-    AesXtsStorage, CompressedStorage, IndirectStorage, SliceStorage, SparseStorage, Storage, SubStorage,
+    AesXtsStorage, CompressedStorage, IndirectStorage, NoBaseStorage, SliceStorage, SparseStorage, Storage, SubStorage,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -403,13 +403,16 @@ impl Nca {
             ));
         }
         let base_sec_storage = if sec.is_bktr_patch() {
-            let base = base_nca.ok_or_else(|| {
-                format!("{}: update RomFS requires base game NCA", self.name)
-            })?;
-            let bsec = base
-                .romfs_section()
-                .ok_or_else(|| format!("{}: base NCA has no RomFS section", base.name))?;
-            Some(base.open_section_storage(bsec, None)?)
+            // No base: a program only the update holds (The Old Picture Book; the base game has no Program 1).
+            Some(match base_nca {
+                Some(base) => {
+                    let bsec = base
+                        .romfs_section()
+                        .ok_or_else(|| format!("{}: base NCA has no RomFS section", base.name))?;
+                    base.open_section_storage(bsec, None)?
+                }
+                None => Arc::new(NoBaseStorage),
+            })
         } else {
             None
         };
