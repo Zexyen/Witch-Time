@@ -4059,7 +4059,7 @@ typedef struct { void *pipe; uint32_t prev, n14, n3; uint64_t p14, p3; } MvPrep;
 static int fsr_mv_prepare(VStage *vs, int tess, MvPrep *o);
 static void fsr_mv_record(const MvPrep *q, VStage *vs, const BufRef *bufs, uint32_t vnb, const VkVertexInputBindingDescription2EXT *vbd, uint32_t vna, const VkVertexInputAttributeDescription2EXT *vad,
                           const VkBuffer *vb, const VkDeviceSize *vo, VRes **vkept, int from_cb);
-static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst);
+static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst, VRes *ikept);
 /* [witchtime] The compute buffers a storing draw writes. Their wserial was the batch's last submission (cb_batch_end), so the
  * landing of such a buffer in the next frame (the game wrote into its range: B3's light lists, two of 130 KB a frame in
  * Shibuya) waited for the whole previous frame on the GPU. The draw is in the command buffer being recorded once its
@@ -5081,7 +5081,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
-        fsr_mv_commit(0, NULL, 0, VK_INDEX_TYPE_UINT16, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, (uint32_t)a[3]);
+        fsr_mv_commit(0, NULL, 0, VK_INDEX_TYPE_UINT16, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, (uint32_t)a[3], NULL);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
@@ -5108,7 +5108,7 @@ static void exec(const Cmd *m, int depth) {
             g_dsh_ib = ib.buf; g_dsh_iboff = ib.off; g_dsh_it = it; g_dsh_ib_ok = 1; g_dsh_sent++;
         } else g_dsh_kept++;
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
-        fsr_mv_commit(1, ib.buf, ib.off, it, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        fsr_mv_commit(1, ib.buf, ib.off, it, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5], ikept);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
