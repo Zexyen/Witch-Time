@@ -497,6 +497,19 @@ impl Storage for IndirectStorage {
     }
 }
 
+/// Base of a patch for a program that only the update holds (The Old Picture Book): nothing may read it.
+pub struct NoBaseStorage;
+
+impl Storage for NoBaseStorage {
+    fn size(&self) -> u64 {
+        0
+    }
+
+    fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> Result<(), String> {
+        Err("this update patch reads from the base game NCA, which is missing".into())
+    }
+}
+
 // ---------------------------------------------------------------------------------------------- CompressedStorage
 
 /// LZ4 CompressedStorage (Switch 12.0.0+ `CompressionInfo` BKTR).
@@ -628,6 +641,16 @@ mod tests {
             buf.copy_from_slice(&self.0[o..o + buf.len()]);
             Ok(())
         }
+    }
+
+    #[test]
+    fn patch_without_base_reads_patch_only() {
+        let e = |virt_offset, storage_index| IndirectEntry { virt_offset, phys_offset: 0, storage_index };
+        let patch = || Arc::new(VecStorage(vec![7u8; 16])) as Arc<dyn Storage>;
+        let own = IndirectStorage::new(Arc::new(NoBaseStorage), patch(), 16, vec![e(0, 1)]);
+        assert_eq!(read_vec(&own, 0, 16).unwrap(), vec![7u8; 16]);
+        let needs_base = IndirectStorage::new(Arc::new(NoBaseStorage), patch(), 16, vec![e(0, 1), e(8, 0)]);
+        assert!(read_vec(&needs_base, 0, 16).is_err());
     }
 
     #[test]
