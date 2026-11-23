@@ -990,10 +990,11 @@ static void fsr_mv_record(const MvPrep *q, VStage *vs, const BufRef *bufs, uint3
     g_mvd.open = 1;
 }
 /* the replay, after the game's own draw call: the draw's numbers */
-static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst) {
+static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst, VRes *ikept) {
     if (!g_mvd.open) return;
     g_mvd.open = 0;
-    if (indexed && ib != R.ring) return;
+    if (indexed && ib != R.ring && !ikept) return;
+    if (ikept && ikept->busy < R.serial + 256) ikept->busy = R.serial + 256;      /* issue 283: indices in a kept buffer (PR 276) stay until the pass has run, as the kept vertex streams do */
     MvDraw *e = &g_mvd.d[g_mvd.n++];
     e->indexed = indexed; e->ib = ib; e->iboff = iboff; e->it = it; e->count = count; e->inst = inst; e->first = first; e->base = base; e->first_inst = first_inst;
 }
