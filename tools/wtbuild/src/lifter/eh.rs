@@ -113,10 +113,13 @@ const UI_MARK_SITES: &[(i64, u32, u32, &str)] = &[(0x71009a83e8, 1, 0, "&c->v[1]
 /// the camera manager's easing to its goal (0x7100626308: eye, target, up, roll at the mode's rate, +0x328 / +0x338, read
 /// just before; the map camera's is 0.15). That update serves every camera of the game, whose modes are not read yet:
 /// eased only while the chapter select's update (0x710091dba8, register -1) runs.
+/// The table also serves issue 223: 0x710082064c stores an object's default draw cutoff (0.05 of the screen) from w11,
+/// which model_lod = highest shrinks for the puff under the flower groups (game_shim_eh.c lod_cut).
 const FPS_EASE_SITES: &[(i64, &str, i32, &str)] = &[
     (0x710091f1c8, "fps_ease", 1, "&c->v[1], 0, F_MLA"),
     (0x710091dba8, "fps_ease_map", -1, "c->x[31] +="),
     (0x7100626404, "fps_ease_map", 0, "c->x[8] = (uint64_t)(c->x[19] + 496ULL);"),
+    (0x710082064c, "lod_cut", 11, "wr32(a, (uint32_t)c->x[11]);"),
 ];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image

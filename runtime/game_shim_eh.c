@@ -610,13 +610,23 @@ static void keep_movie_flag(Ctx *c) {
  * distance cut, as with the Switch "Increased LOD" mod (mov w8, #0 at 7100bd5b2c), which runs after that cut. */
 __declspec(dllexport) volatile int game_model_lod;         /* 0 = not read yet, 1 the game's, 2 highest; the PC menu (pcmenu.c) changes it */
 B3_FN void f_7100bd563c(Ctx *c);
+static int model_lod_highest(void) {
+    if (!game_model_lod) { const char *e = getenv("WT_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
+    return game_model_lod == 2;
+}
 void h_model_lod(Ctx *c) {
     int32_t last, *out = (int32_t *)(uintptr_t)c->x[1];
     memcpy(&last, (void *)(uintptr_t)(c->x[0] + 0x14), 4);
     int levels = (int32_t)c->x[2] < last ? (int32_t)c->x[2] : last;      /* the last level this call may pick */
     f_7100bd563c(c);
-    if (!game_model_lod) { const char *e = getenv("WT_MODEL_LOD"); game_model_lod = e && !strcmp(e, "highest") ? 2 : 1; }
-    if (game_model_lod == 2 && (*out > 0 || (*out == -1 && levels > 0))) *out = 0;
+    if (model_lod_highest() && (*out > 0 || (*out == -1 && levels > 0))) *out = 0;
+}
+/* [witchtime] issue 223: the white puff under the flower groups is its own model (It0003_ground, object 0xeef00 at x19 + 0x12d0),
+ * hidden below 0.05 of the screen, the default 710082064c stores from w[r] when the object is set up. With model_lod =
+ * highest it gets a cutoff next to none (not 0: the function reads a level's 0 as not set). Found by ekius42. */
+void lod_cut(Ctx *c, int r) {
+    uint32_t id; memcpy(&id, (void *)(uintptr_t)(c->x[19] + 0x12d0), 4);
+    if (id == 0xeef00 && (uint32_t)c->x[r] == 0x3d4ccccd && model_lod_highest()) c->x[r] = 0x358637bd;      /* 1e-6f */
 }
 /* [witchtime] issue 245: DLAA takes no scene smaller than its output, so the game's resolution levels are held at the top,
  * for every player. 71006d3bb4, once a frame, picks the scene's target set (8 sets, 1600x896 .. 640x360; 0 and 1 are both 1600x896).

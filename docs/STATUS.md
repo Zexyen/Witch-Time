@@ -880,6 +880,10 @@ in the game's pixels while the rest of the picture is finer:
   19.8, GPU 3.57 -> 3.77 ms a frame; scale 1.0: 16.97 -> 16.91 ms, GPU 1.37 -> 1.50. Some runs of either setting have slow
   stretches (a first run read 25.7 ms, a repeat did not): compare per-frame data over repeats, never one run. One or two
   levels finer than the game gave 1.55 / 1.90 million indices and no frame time worth trading for; no weak GPU was tried.
+  Highest also keeps the white puff under the flower groups drawn (issue 223, found by ekius42): it is its own model,
+  `It0003_ground` (object `0xeef00`), hidden below a screen size of 0.05, the default `710082064c` stores when the object
+  is set up; `lod_cut` (game_shim_eh.c) stores 1e-6 for that object instead. Objects already set up keep their cutoff
+  when the setting changes mid-game. Not seen in the game yet.
 - **`film_grain`** (graphics.ini, PC settings and the Options screen; on | off; issue 86). The grain is `m_GrainIntensity`,
   struct offset 0x1fc, `c4[13]` in the four `filtershadertonemap*` stages (the "No Film Grain" mod clears that field's
   registration, in the two tables of `0x7102632810` and `0x71026329d0`); stages are told by a hash of their code because
