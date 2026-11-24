@@ -3,13 +3,14 @@
 //! registers, X0..X30, SP and a 256-byte buffer must come out the same. Replaces lifter/test_ext.py and
 //! lifter/test_b3.py, which checked the Python lifter. Never part of a release: Unicorn is GPL-2.0.
 //!
-//!   lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--wtbuild <path>]
+//!   lifter-check [--main <main.elf> | --synthetic N] [--all-simd] [--trials N] [--seed N] [--keep] [--wtbuild <path>]
 //!
 //! --main (default targets/exefs/main.elf): every word of the player's .text in one of test_ext's FORMS, and every
 //! AdvSIMD word whose statement uses a [witchtime] form of test_b3 (b3_form) or that is a one-lane / replicate
 //! ld2-4 / st2-4. --synthetic N: N random words of FORMS that Unicorn's A57 accepts (no dump needed). A selected word
 //! that lifts to UNIMPL or to the wrong helper fails. A stlxp runs twice: with no exclusive monitor (it fails) and after
-//! an LDXP from its base (it stores). --keep keeps the C, its program and the trials (`./check < trials`).
+//! an LDXP from its base (it stores). --all-simd (with --main): every FP / SIMD word that translates, not only those forms
+//! (issue 294 found XTN2 this way); FP words then also fail where only a NaN's sign or payload differs. --keep keeps the C, its program and the trials (`./check < trials`).
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufWriter, Write};
@@ -31,7 +32,7 @@ const CLREX: u32 = 0xd503305f;
 const NOP: u32 = 0xd503201f;
 
 /// (mask, value, name, what its statement must contain): test_ext.py's forms
-const FORMS: [(u32, u32, &str, &str); 16] = [
+const FORMS: [(u32, u32, &str, &str); 17] = [
     (0xBF20FC00, 0x0E20C000, "smull", "v_long3("),        // SMULL{2} <Vd>.<Ta>, <Vn>.<Tb>, <Vm>.<Tb> (U=0, opcode 1100)
     (0xBF20FC00, 0x0E20A000, "smlsl", "v_long3("),        // SMLSL{2} (opcode 1010)
     (0xBF3FFC00, 0x0E214800, "sqxtn", "v_qxtn("),         // SQXTN{2} (U=0)
@@ -49,6 +50,8 @@ const FORMS: [(u32, u32, &str, &str); 16] = [
     (0xBF20FC00, 0x0E20B400, "sqdmulh", "v_i3x("),        // SQDMULH (vector)
     (0xBF80F400, 0x2F008400, "sqshrun", "v_sqshrn("),     // SQSHRUN / SQRSHRUN{2}, immh != 0
     (0x9F80FC00, 0x0F003400, "rsra", "v_rsra("),          // SRSRA / URSRA (vector), immh != 0
+    // issue 294: XTN2 was lifted as XTN
+    (0xBF3FFC00, 0x0E212800, "xtn", "v_xtn("),            // XTN{2}
 ];
 
 /// test_b3.py's [witchtime] AdvSIMD helpers
@@ -176,7 +179,7 @@ struct State {
 
 /// random registers and buffer for w; a load / store's base register points into the buffer
 fn inputs(rng: &mut Rng, w: u32, stmt: &str) -> State {
-    let float = ["v_frint", "v_fcvta", "v_fcvtz_fix"].iter().any(|h| stmt.contains(h));
+    let float = ["v_frint", "v_fcvta", "v_fcvtz_fix", "v_f", ".f[", "fnan", "float", "double", "(F_"].iter().any(|h| stmt.contains(h));
     let mut s = State {
         v: [0; 32],
         x: [0; 32],
@@ -426,8 +429,8 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--main" | "--synthetic" | "--trials" | "--seed" | "--wtbuild" if i + 1 < args.len() => i += 2,
-            "--keep" => i += 1,
-            _ => die("usage: lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--wtbuild <path>]"),
+            "--keep" | "--all-simd" => i += 1,
+            _ => die("usage: lifter-check [--main <main.elf> | --synthetic N] [--all-simd] [--trials N] [--seed N] [--keep] [--wtbuild <path>]"),
         }
     }
     let opt = |k: &str| args.iter().position(|a| a == k).map(|i| args[i + 1].as_str());
@@ -440,6 +443,7 @@ fn main() {
     let trials = num("--trials", 300);
     let mut rng = Rng(num("--seed", 1));
     let keep = args.iter().any(|a| a == "--keep");
+    let all_simd = args.iter().any(|a| a == "--all-simd");
     if opt("--main").is_some() && opt("--synthetic").is_some() {
         die("--main or --synthetic, not both");
     }
@@ -484,6 +488,7 @@ fn main() {
                     continue;
                 }
                 None if !s.starts_with("UNIMPL") && (b3_form(&s) || lane_ldst(w)) => "[witchtime] AdvSIMD",
+                None if all_simd && !s.starts_with("UNIMPL") => "other FP / SIMD",
                 None => continue,
             };
             names.push(name);

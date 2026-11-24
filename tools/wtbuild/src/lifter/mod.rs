@@ -1470,7 +1470,7 @@ impl Fn {
                     return Ok(format!("v_f1v({}, {}, {}, {}, {});", v(rd), v(rn), op, szb, fcount()));
                 }
                 if (u, opc) == (0, 0x12) && !scalar && size < 3 {
-                    return Ok(format!("v_xtn({}, {}, {});", v(rd), v(rn), size));
+                    return Ok(format!("v_xtn({}, {}, {}, {});", v(rd), v(rn), size, q));
                 }
                 if opc == 0x14 && !scalar && size < 3 {
                     return Ok(format!("v_qxtn({}, {}, {}, {}, {});", v(rd), v(rn), size, q, u));
