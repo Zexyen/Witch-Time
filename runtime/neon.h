@@ -205,10 +205,11 @@ static inline void v_i1v(V128 *d, const V128 *pn, int op, int sz, int n) {
 }
 
 /* Narrow each element of vn to half size (XTN), low half of the destination. */
-static inline void v_xtn(V128 *d, const V128 *pn, int sz) {
-    V128 a = *pn, r;
-    r.d[0] = 0; r.d[1] = 0;
-    for (int i = 0; i < (8 >> sz); i++) vset(&r, sz, i, vget(&a, sz + 1, i));
+static inline void v_xtn(V128 *d, const V128 *pn, int sz, int q) {
+    V128 a = *pn, r = *d;
+    int cnt = 8 >> sz;
+    if (!q) r.d[1] = 0;   /* XTN2 (q) fills the upper half and keeps the lower (issue 294) */
+    for (int i = 0; i < cnt; i++) vset(&r, sz, i + q * cnt, vget(&a, sz + 1, i));
     *d = r;
 }
 
