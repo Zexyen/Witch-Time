@@ -111,10 +111,13 @@ impl Target {
     }
 
     /// flags of the processor the build is for: the 16-byte compare-and-swap on x86-64 (clang refuses the flag for
-    /// Apple silicon, which has the instruction pair anyway)
+    /// AArch64, which has the instruction pair anyway). Linux on AArch64 (#291; always this PC's own processor): atomics
+    /// inline, as game.so links no C library for clang's out-of-line helpers to ask which instructions the processor has
     pub fn cpu(self) -> Vec<String> {
         match self {
-            Target::Linux | Target::Windows => vec!["-mcx16".into()],
+            Target::Windows => vec!["-mcx16".into()],
+            Target::Linux if cfg!(target_arch = "aarch64") => vec!["-mno-outline-atomics".into()],
+            Target::Linux => vec!["-mcx16".into()],
             Target::MacOS | Target::Android => vec![],
         }
     }

@@ -29,6 +29,9 @@ Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_
 
 ## Build (Linux)
 
+x86-64, or AArch64 (`WitchTime-<version>-linux-aarch64.tar.gz`: experimental, built and link-tested in CI, never run
+on a device).
+
 A release needs nothing installed but a Vulkan driver and OpenGL (`libGL.so.1`), which every desktop distribution
 has: it brings its own compiler (clang + lld in `deps/llvm`), the runtime already built
 (`prebuilt/`, with the FFmpeg it uses) and the build tool. Your PC only translates and compiles the game's code, and
@@ -93,7 +96,7 @@ builds from your dump (`android/README.md`).
 
 ## Build (macOS)
 
-Experimental, from a checkout only (no release has macOS files yet): a Mac with Apple silicon. The game's AArch64 code
+Experimental, from a release (`WitchTime-<version>-macos-arm64.tar.gz`) or a checkout: a Mac with Apple silicon. The game's AArch64 code
 is translated to C and compiled for the Mac's own AArch64 processor; the picture goes through Vulkan on MoltenVK
 (Metal). `docs/STATUS.md`, "macOS", says how far it runs.
 

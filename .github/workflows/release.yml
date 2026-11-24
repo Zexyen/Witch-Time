@@ -1,6 +1,7 @@
-# Builds the Witch Time launcher for Linux and Windows and publishes them as a release (macOS: job macos, an artifact only).
+# Builds the Witch Time launcher for Linux (x86-64 and AArch64), Windows and macOS (Apple silicon) and publishes them as a
+# release.
 #
-#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
+#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with every archive attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
 # The archive is the part of this repository a player's PC reads (runtime, lifter tables, launcher screens; env TRIM) with:
@@ -61,8 +62,15 @@ env:
 
 jobs:
   linux:
-    # the oldest supported runner, so the binaries run on older glibc too
-    runs-on: ubuntu-22.04
+    # one archive per processor (#291: AArch64, never run on a device), each built on its own kind of runner: the oldest
+    # supported one, so the binaries run on older glibc too
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04, llvm: X64 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm, llvm: ARM64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +79,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=WitchTime-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-linux-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -89,16 +97,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps/llvm
-          key: llvm-${{ env.LLVM_VERSION }}-trim1
+          key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-trim1
       - name: LLVM
         if: steps.llvm.outputs.cache-hit != 'true'
         run: |
-          v="$LLVM_VERSION"; major="${v%%.*}"
+          v="$LLVM_VERSION"; major="${v%%.*}"; top="LLVM-$v-Linux-${{ matrix.llvm }}"
           mkdir -p deps/llvm
-          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/LLVM-$v-Linux-X64.tar.xz" |
-            tar -xJ --strip-components=1 -C deps/llvm --wildcards "LLVM-$v-Linux-X64/bin/clang-$major" \
-              "LLVM-$v-Linux-X64/bin/lld" "LLVM-$v-Linux-X64/lib/clang/$major/include/*" \
-              "LLVM-$v-Linux-X64/lib/clang/$major/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a"
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/$top.tar.xz" |
+            tar -xJ --strip-components=1 -C deps/llvm --wildcards "$top/bin/clang-$major" \
+              "$top/bin/lld" "$top/lib/clang/$major/include/*" \
+              "$top/lib/clang/$major/lib/${{ matrix.arch }}-unknown-linux-gnu/libclang_rt.builtins.a"
           strip deps/llvm/bin/clang-$major deps/llvm/bin/lld
           ln -s clang-$major deps/llvm/bin/clang
           ln -s clang-$major deps/llvm/bin/clang++
@@ -124,7 +132,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ffmpeg
-          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu-22.04-1
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-${{ matrix.runner }}-1
       - name: FFmpeg
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: |
@@ -145,7 +153,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/glslang
-          key: glslang-${{ env.GLSLANG_TAG }}-ubuntu-22.04-1
+          key: glslang-${{ env.GLSLANG_TAG }}-${{ matrix.runner }}-1
       - name: glslang
         if: steps.glslang.outputs.cache-hit != 'true'
         run: |
@@ -613,9 +621,8 @@ jobs:
             dist/*.zip
             dist/*.sha256
 
-  # macOS (experimental, Apple silicon): the launcher, its bundle and the build tool, as a workflow artifact only; no
-  # release gets it yet (the launcher on a Mac looks for WitchTime-<tag>-macos-arm64.tar.gz: add softprops/action-gh-release
-  # here as in the Linux job when it is to be published). No prebuilt/ and no deps/llvm: the player's Mac builds the runtime
+  # macOS (experimental, Apple silicon): the launcher, its bundle and the build tool, attached to the release as
+  # WitchTime-<tag>-macos-arm64.tar.gz (the name the launcher on a Mac looks for). No prebuilt/ and no deps/llvm: the player's Mac builds the runtime
   # too, with Apple's Command Line Tools against its own Homebrew libraries (README, "Build (macOS)"; Homebrew's FFmpeg is a
   # GPL build with versioned names, so it is neither shipped nor linked against here for the player).
   macos:
@@ -674,3 +681,11 @@ jobs:
         with:
           name: ${{ steps.version.outputs.name }}
           path: dist/*.tar.gz
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Witch Time ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: dist/*.tar.gz

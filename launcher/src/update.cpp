@@ -20,7 +20,9 @@ const char* const LATEST = "https://api.github.com/repos/Zexyen/Witch-Time/relea
 #ifdef _WIN32
 const char* const ASSET = "-windows-x86_64.zip";
 #elif defined(__APPLE__)
-const char* const ASSET = "-macos-arm64.tar.gz";     // no release has one yet: the check then finds no update
+const char* const ASSET = "-macos-arm64.tar.gz";
+#elif defined(__aarch64__)
+const char* const ASSET = "-linux-aarch64.tar.gz";
 #else
 const char* const ASSET = "-linux-x86_64.tar.gz";
 #endif
