@@ -122,6 +122,33 @@ const FPS_EASE_SITES: &[(i64, &str, i32, &str)] = &[
     (0x710082064c, "lod_cut", 11, "wr32(a, (uint32_t)c->x[11]);"),
 ];
 
+/// [witchtime] B3's two attachment-effect updates blend neighbouring transforms.
+/// After a model change (e.g being turned into Cereza), the owner can still be live but a lookup can return null anyway.
+/// Reuse the update's lost-owner path if either matrix is missing.
+/// This makes a timing issue less likely, especially when playing at higher frame-rates.
+fn guard_attachment_blend(im: &Image, entry: i64, lines: &mut [(i64, String)]) {
+    const UPDATES: &[i64] = &[0x7100c8b6c8, 0x7100c8bb44];
+    // Guest byte offsets from either update's entry.
+    const OWNER_CHECK: i64 = 0x28;
+    const LOST_OWNER: i64 = 0x8c;
+    const FIRST_MATRIX_LOAD: i64 = 0x1bc;
+    const LDR_Q0_FROM_X23: u32 = 0x3dc002e0;
+
+    if !im.b3 || !UPDATES.contains(&entry) {
+        return;
+    }
+    let cleanup = format!("goto L_{};", hx(entry + LOST_OWNER));
+    let owner_check = format!("if ((uint32_t)c->x[0] == 0) {}", cleanup);
+    if !lines.iter().any(|(pc, stmt)| *pc == entry + OWNER_CHECK && stmt == &owner_check) {
+        return;
+    }
+    if let Some((pc, stmt)) = lines.iter_mut().find(|(pc, _)| *pc == entry + FIRST_MATRIX_LOAD) {
+        if im.word(*pc) == LDR_Q0_FROM_X23 {
+            *stmt = format!("if (!c->x[23] || !c->x[0]) {} {}", cleanup, stmt);
+        }
+    }
+}
+
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
 
@@ -522,6 +549,7 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
     let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
     let mut lines = lines;
+    guard_attachment_blend(im, entry, &mut lines);
     for (pc, stmt) in lines.iter_mut().filter(|_| im.b3) {
         if let Some(&(_, r)) = UI_SIZE_SITES.iter().find(|s| s.0 == *pc) {
             for (bits, f) in [("0x44a00000", "wt_ui_w_bits"), ("0x44340000", "wt_ui_h_bits")] {
