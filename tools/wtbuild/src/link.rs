@@ -975,7 +975,8 @@ mod tests {
     fn table_flags_unchanged() {
         let win = ["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"];
         assert_eq!(table_flags(Target::Windows), win);
-        assert_eq!(table_flags(Target::Linux), [&win[..], &["-fPIC", "-D__declspec(x)="]].concat());
+        let cpu = if cfg!(target_arch = "aarch64") { "-mno-outline-atomics" } else { "-mcx16" }; // Linux: this PC's own processor
+        assert_eq!(table_flags(Target::Linux), [&win[..4], &[cpu, "-fPIC", "-D__declspec(x)="]].concat());
         assert_eq!(table_flags(Target::MacOS), [&win[..4], &["-fPIC", "-D__declspec(x)="]].concat());
     }
 
