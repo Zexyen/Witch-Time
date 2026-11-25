@@ -85,6 +85,7 @@ body {
  * The gears are small squares placed at their centres (fractions of the 800 px drawing) so they turn about themselves. */
 .wheel { width: 660dp; height: 660dp; }
 .wheel img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.wheel .hand { left: 40%; width: 20%; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes spin-back { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
 .wheel .ring1 { animation: 120s linear infinite spin; }

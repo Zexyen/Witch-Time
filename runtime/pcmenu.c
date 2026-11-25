@@ -37,6 +37,7 @@
 #include <time.h>
 #include "gfx_options.h"
 #include "rebind.h"
+#include "svg_rast.h"
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "third_party/stb_truetype.h"
@@ -336,9 +337,9 @@ static void soft_disc(float cx, float cy, float r, Rgb c, float a) {     /* a gl
     }
 }
 
-/* ---- the art (runtime/art, made by the design's scripts): 8-bit BMPs whose palette carries alpha in its fourth byte,
- * colours premultiplied. The wheel in the pearl side's grey and in the indigo side's lilac, the two hands, the stripe. ---- */
-typedef struct { int w, h, stride; const uint8_t *pal, *px; int bx0, by0, bx1, by1; } Art;      /* px: the bottom row first, as a BMP is; b: the box with alpha */
+/* ---- the art (runtime/art): 8-bit BMPs whose palette carries alpha in its fourth byte (colours premultiplied), and
+ * SVGs rasterized into premultiplied BGRA (the two hands). The wheel in pearl-side grey and indigo-side lilac, the hands, the stripe. ---- */
+typedef struct { int w, h, stride; const uint8_t *pal, *px; const uint8_t *bgra; int bx0, by0, bx1, by1; } Art;      /* px: bottom row first (BMP); bgra: top row first (SVG); b: alpha box */
 static Art art_load(const unsigned char *b, size_t n) {
     Art a = {0};
     if (n < 54 + 1024 || b[0] != 'B' || b[1] != 'M') return a;
@@ -352,14 +353,21 @@ static Art art_load(const unsigned char *b, size_t n) {
     if (a.bx1 <= a.bx0) a.w = 0;
     return a;
 }
-static void art_texel(const Art *a, int x, int y, float out[4]) {       /* B G R A premultiplied, 0..255; outside: nothing */
-    if (x < 0 || y < 0 || x >= a->w || y >= a->h) { out[0] = out[1] = out[2] = out[3] = 0; return; }
-    const uint8_t *e = a->pal + (size_t)a->px[(size_t)(a->h - 1 - y) * a->stride + x] * 4;
-    out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
+static Art art_load_svg(const unsigned char *b, size_t n, int target_h) {
+    Art a = {0};
+    uint8_t *px = svg_rasterize(b, n, target_h, 1.0f, 1, &a.w, &a.h);
+    if (!px) return a;
+    a.bgra = px;
+    a.bx0 = a.w; a.by0 = a.h; a.bx1 = a.by1 = 0;
+    for (int y = 0; y < a.h; y++) for (int x = 0; x < a.w; x++)
+        if (px[((size_t)y * a.w + x) * 4 + 3]) { if (x < a.bx0) a.bx0 = x; if (y < a.by0) a.by0 = y; if (x + 1 > a.bx1) a.bx1 = x + 1; if (y + 1 > a.by1) a.by1 = y + 1; }
+    if (a.bx1 <= a.bx0) { free(px); a.bgra = NULL; a.w = a.h = 0; }
+    return a;
 }
 static const uint8_t k_clear[4];
-static inline const uint8_t *art_entry(const Art *a, int x, int y) {    /* the palette entry of a texel; clear outside */
+static inline const uint8_t *art_entry(const Art *a, int x, int y) {    /* premultiplied BGRA of a texel; clear outside */
     if (x < 0 || y < 0 || x >= a->w || y >= a->h) return k_clear;
+    if (a->bgra) return a->bgra + ((size_t)y * a->w + x) * 4;
     return a->pal + (size_t)a->px[(size_t)(a->h - 1 - y) * a->stride + x] * 4;
 }
 static inline void art_sample(const Art *a, float u, float v, float out[4]) {  /* bilinear at source coordinates (u, v) */
@@ -482,10 +490,10 @@ static const unsigned char k_wd_top[] = {
 #embed "art/wheel-dark-top.bmp"
 };
 static const unsigned char k_art_hand_minute[] = {
-#embed "art/hand-minute.bmp"
+#embed "art/hand-minute.svg"
 };
 static const unsigned char k_art_hand_hour[] = {
-#embed "art/hand-hour.bmp"
+#embed "art/hand-hour.svg"
 };
 static const unsigned char k_art_stripe[] = {
 #embed "art/stripe.bmp"
@@ -501,7 +509,8 @@ static void art_init(void) {
     LOAD(g_wheel_dark.ring1, k_wd_ring1); LOAD(g_wheel_dark.ring2, k_wd_ring2); LOAD(g_wheel_dark.base, k_wd_base); LOAD(g_wheel_dark.top, k_wd_top);
     LOAD(g_wheel_dark.gear1, k_wd_gear1); LOAD(g_wheel_dark.gear2, k_wd_gear2); LOAD(g_wheel_dark.gear3, k_wd_gear3);
 #undef LOAD
-    g_hand_minute = art_load(k_art_hand_minute, sizeof k_art_hand_minute); g_hand_hour = art_load(k_art_hand_hour, sizeof k_art_hand_hour);
+    g_hand_minute = art_load_svg(k_art_hand_minute, sizeof k_art_hand_minute, 1920);
+    g_hand_hour = art_load_svg(k_art_hand_hour, sizeof k_art_hand_hour, 1920);
     g_stripe = art_load(k_art_stripe, sizeof k_art_stripe);
 }
 static int art_id(const Art *a) {                           /* the art's number for the GPU path: the light wheel's 7 layers, the dark wheel's, the two hands */
@@ -530,7 +539,7 @@ void *pcmenu_art_pixels(int id, int *w, int *h) {
  * composed over the moving parts). The gears' centres and size are fractions of the 800 px drawing. */
 static void wheel_still(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top) { art_blit(&w->base, cx - R, cy - R, 2 * R, 2 * R, alpha, 0, clip_top); }
 static void wheel_hub(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top) { art_blit(&w->top, cx - R, cy - R, 2 * R, 2 * R, alpha, 0, clip_top); }
-static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha, int hands, float clip_top, double t) {
+static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top, double t) {
     float deg = (float)fmod(t * 3, 360), deg2 = (float)fmod(t * 360 / 160, 360), dg1 = (float)fmod(t * 36, 360), dg2 = (float)fmod(t * 360 / 14, 360);
     g_ann0 = 0.78f; g_ann1 = 0.985f; art_blit(&w->ring1, cx - R, cy - R, 2 * R, 2 * R, alpha, deg, clip_top);
     g_ann0 = 0.61f; g_ann1 = 0.73f; art_blit(&w->ring2, cx - R, cy - R, 2 * R, 2 * R, alpha, -deg2, clip_top);
@@ -539,12 +548,13 @@ static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha,
     const Art *g[3] = {&w->gear1, &w->gear2, &w->gear3};
     float gs = 0.2f * 2 * R;
     for (int k = 0; k < 3; k++) art_blit(g[k], cx - R + gc[k][0] * 2 * R - gs / 2, cy - R + gc[k][1] * 2 * R - gs / 2, gs, gs, alpha, k == 0 ? -dg1 : dg2, clip_top);
-    if (!hands) return;
+}
+static void wheel_hands(float cx, float cy, float R, float alpha, float clip_top) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
-    float m = tm ? tm->tm_min + tm->tm_sec / 60.0f : 0, h = tm ? (tm->tm_hour % 12) + m / 60 : 0, hb = 2 * R;      /* the hand pictures are drawn in the wheel's box */
-    art_blit(&g_hand_hour, cx - hb / 2, cy - hb / 2, hb, hb, alpha, h * 30, clip_top);
-    art_blit(&g_hand_minute, cx - hb / 2, cy - hb / 2, hb, hb, alpha, m * 6, clip_top);
+    float m = tm ? tm->tm_min + tm->tm_sec / 60.0f : 0, h = tm ? (tm->tm_hour % 12) + m / 60 : 0, hb = 2 * R;
+    if (g_hand_hour.h) { float hw = hb * g_hand_hour.w / g_hand_hour.h; art_blit(&g_hand_hour, cx - hw / 2, cy - hb / 2, hw, hb, alpha, h * 30, clip_top); }
+    if (g_hand_minute.h) { float mw = hb * g_hand_minute.w / g_hand_minute.h; art_blit(&g_hand_minute, cx - mw / 2, cy - hb / 2, mw, hb, alpha, m * 6, clip_top); }
 }
 static double anim_t(void) { return (double)(GetTickCount64() % 3600000ull) / 1000.0; }     /* seconds, wrapping each hour (the turns divide an hour) */
 
@@ -732,7 +742,7 @@ static void draw_panel(int W, int H) {
     }
     if (g_gpu) return;                             /* the renderer draws the moving parts and the layers over this ground */
     double t = anim_t();
-    g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, 0, edge, t); g_clip_right = 0;
+    g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, edge, t); g_clip_right = 0;
     layer_over(&g_hubs);
     layer_over(&g_words);
 }
@@ -851,7 +861,8 @@ static void draw_prep(int W, int H) {
             float dx = (x + 0.5f - 0.62f * W) / (0.55f * W), dy = (y + 0.5f - 0.48f * H) / (0.7f * H), d = sqrtf(dx * dx + dy * dy);
             put(x, y, d < 0.55f ? mix(c_in, c_mid, d / 0.55f) : mix(c_mid, c_out, d > 1 ? 1 : (d - 0.55f) / 0.45f), 1);
         }
-        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP);
+        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.65f, NOCLIP);
+        soft_disc(760 * s, 330 * s, 125 * s, c_mid, 0.58f);      /* tame the bright white centre bloom behind the hub */
         float x_top = W - 200 * s;                             /* the pearl panel at the right, its stripe and rules */
         for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; int i0 = (int)e; for (int i = i0; i < W; i++) put(i, j, mix(C_PEARL, C_PEARL_LO, (float)(i - i0) / (W - x_top)), i == i0 ? 1 - (e - i0) : 1); }
         for (int j = 0; j < H; j++) { float e = x_top - 40 * s + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
@@ -872,9 +883,9 @@ static void draw_prep(int W, int H) {
         text(&g_f_ui, 60 * s, (int)(H - 30 * s), g_prep.info, 15 * s, C_LILAC, 1 * s);
         g_bg = malloc((size_t)W * H * 4); g_bg_w = W; g_bg_h = H;
         if (g_bg) memcpy(g_bg, g_px, (size_t)W * H * 4);
-        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP); g_to = NULL;
+        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.28f, NOCLIP); g_to = NULL;
     } else memcpy(g_px, g_bg, (size_t)W * H * 4);
-    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, anim_t()); layer_over(&g_hubs); }      /* else the renderer draws them over the numbers */
+    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP, anim_t()); layer_over(&g_hubs); wheel_hands(760 * s, 330 * s, 300 * s, 0.65f, NOCLIP); }      /* else the renderer draws them over the numbers */
     /* the numbers */
     char t[64];
     float big = 84 * s, x = 72 * s;
@@ -994,13 +1005,14 @@ int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
     PcmSprite hubs = {-1, 0, 0, (float)W, (float)H, 0, 1, 0, 0, NOCLIP, 0, NOCLIP, 0, 0, 0}, words = hubs;
     words.art = -2;
     if (kind == 3) {
-        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, t);
+        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP, t);
         if (g_emit_n < max) out[g_emit_n++] = hubs;
+        wheel_hands(760 * s, 330 * s, 300 * s, 0.65f, NOCLIP);
     } else {
         float wl[3], edge;
         panel_wheel(W, s, wl, &edge);
         if (!can) {
-            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, edge, t); g_clip_right = 0;
             if (g_emit_n < max) out[g_emit_n++] = hubs;
             if (g_emit_n < max) out[g_emit_n++] = words;
         } else {
@@ -1008,7 +1020,7 @@ int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
             float open = g_close_at ? 1 - ease_out((float)(now - g_close_at) / PCM_CLOSE_MS) : ease_out((float)(now - g_open_at) / PCM_OPEN_MS);      /* 0 away .. 1 in place */
             float dx = (1 - open) * (W - edge), ex = edge + dx, fw = (float)W, fh = (float)H;
             emit(-3, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
-            g_clip_right = 1; wheel_turn(&g_wheel, wl[0] + dx, wl[1], wl[2], 0.34f, 0, ex, t); g_clip_right = 0;
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0] + dx, wl[1], wl[2], 0.34f, ex, t); g_clip_right = 0;
             emit(-1, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
             if (open >= 1 && !g_close_at) emit(-2, 0, 0, fw, fh, 1, edge, 1, NOCLIP, 0, 0, 0);
             else {                                 /* the rows one after another from the right, within the segment; the rest with it */

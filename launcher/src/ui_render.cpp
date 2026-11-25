@@ -2,11 +2,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <vector>
 #include <SDL3/SDL.h>
 #include <RmlUi/Core/Log.h>
 #include "../../runtime/prompt_art.h"
+#include "../../runtime/svg_rast.h"
 
 // Pictures by name, with parameters after '?' (colors as rrggbb, alpha 0-255):
 //   gen:glow?x=&y=&rx=&ry=&c1=&c0=&stop=   soft elliptic glow c1 at (x, y) fading to c0 at stop (the screen backgrounds)
@@ -20,8 +22,8 @@
 //   gen:grad?d=&c0=&a0=&c1=&a1=&c2=&a2=&c3=&a3=&p1=&p2=
 //                                          a gradient with up to four stops (c0 at 0, c3 at 1, c1 and c2 at p1 and p2),
 //                                          left to right (d=h, the default) or top to bottom (d=v): the panel, the bars
-// A file source ending in .bmp (ui/img, made by the design's scripts) is an 8-bit BMP whose palette carries alpha in its
-// fourth byte, colours premultiplied: the wheel, the hands, the runic stripe and the logo. ?a= scales its alpha.
+// A file source ending in .bmp (ui/img) is an 8-bit BMP whose palette carries alpha in its fourth byte, colours
+// premultiplied (the wheel, the runic stripe, the logo); .svg (the clock hands) is rasterized by svg_rast.h. ?a= scales alpha.
 namespace {
 
 struct Params {
@@ -310,6 +312,30 @@ Image bmp(const Rml::String& path, const Params& p)
 	return im;
 }
 
+Image svg(const Rml::String& path, const Params& p)
+{
+	size_t size = 0;
+	void* bytes = SDL_LoadFile(path.c_str(), &size);
+	Image im(1, 1);
+	if (!bytes)
+	{
+		Rml::Log::Message(Rml::Log::LT_ERROR, "witch-time: cannot read %s", path.c_str());
+		return im;
+	}
+	int w = 0, h = 0;
+	const int target_h = std::max(64, int(p.num("h", 1320)));
+	const float scale = p.num("a", 255) / 255.f;
+	uint8_t* px = svg_rasterize(bytes, size, target_h, scale, 0, &w, &h);
+	SDL_free(bytes);
+	if (px && w > 0 && h > 0)
+	{
+		im = Image(w, h);
+		std::memcpy(im.px.data(), px, size_t(w) * h * 4);
+	}
+	free(px);
+	return im;
+}
+
 } // namespace
 
 Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source)
@@ -319,9 +345,16 @@ Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, cons
 	{
 		const size_t q = source.find('?');
 		const Rml::String path = source.substr(0, q);
+		const Params p = parse(q == Rml::String::npos ? Rml::String() : source.substr(q + 1));
+		if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".svg") == 0)
+		{
+			Image im = svg(path, p);
+			texture_dimensions = {im.w, im.h};
+			return GenerateTexture({im.px.data(), im.px.size()}, texture_dimensions);
+		}
 		if (path.size() < 4 || path.compare(path.size() - 4, 4, ".bmp") != 0)
 			return RenderInterface_SDL_GPU::LoadTexture(texture_dimensions, source);
-		Image im = bmp(path, parse(q == Rml::String::npos ? Rml::String() : source.substr(q + 1)));
+		Image im = bmp(path, p);
 		texture_dimensions = {im.w, im.h};
 		return GenerateTexture({im.px.data(), im.px.size()}, texture_dimensions);
 	}

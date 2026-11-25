@@ -17,8 +17,8 @@
 		<img class="gear2" src="img/wheel-gear2.bmp?a=170"/>
 		<img class="gear3" src="img/wheel-gear3.bmp?a=170"/>
 		<img class="top" src="img/wheel-top.bmp?a=170"/>
-		<img src="img/hand-hour.bmp" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
-		<img src="img/hand-minute.bmp" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-hour.svg" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-minute.svg" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
 	<div class="wedge"></div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
@@ -50,8 +50,8 @@
 		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
 		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
 		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
-		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
-		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-hour.svg?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-minute.svg?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
@@ -184,8 +184,8 @@
 		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
 		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
 		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
-		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
-		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-hour.svg?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-minute.svg?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
@@ -232,8 +232,8 @@
 		<img class="gear2" src="img/wheel-dark-gear2.bmp?a=85"/>
 		<img class="gear3" src="img/wheel-dark-gear3.bmp?a=85"/>
 		<img class="top" src="img/wheel-dark-top.bmp?a=85"/>
-		<img src="img/hand-hour.bmp?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
-		<img src="img/hand-minute.bmp?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-hour.svg?a=85" data-style-transform="'rotate(' + hour_deg + 'deg)'"/>
+		<img class="hand" src="img/hand-minute.svg?a=85" data-style-transform="'rotate(' + minute_deg + 'deg)'"/>
 	</div>
 	<div class="stripe"><img src="img/stripe.bmp"/></div>
 	<div class="rule r1"></div><div class="rule r2"></div>
