@@ -20,7 +20,7 @@ use crate::util::{fmt_secs, py_repr, sha256_file};
 use crate::{lifter, link, nso, pchtxt, tables, text};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -685,6 +685,25 @@ fn step_verify_packages(cx: &mut Ctx, dump: &str, pkg_files: &[PathBuf]) -> Resu
         if p1_romfs.find("root_000.pkz").is_none() {
             warnings.push("program1/romfs/root_000.pkz is missing".into());
             p1_bad = true;
+        } else {
+            let ((p1_count, p1_total, p1_digest), _) = p1_romfs.manifest();
+            if p1_digest != PROGRAM1_ROMFS_MANIFEST.2 {
+                warnings.push(format!(
+                    "program1/romfs: {} files / {} bytes, expected {} / {}",
+                    p1_count, p1_total, PROGRAM1_ROMFS_MANIFEST.0, PROGRAM1_ROMFS_MANIFEST.1
+                ));
+                p1_bad = true;
+            }
+            for (rel, size, want) in PROGRAM1_ROMFS_FILES {
+                let ok = match p1_romfs.find(rel) {
+                    Some(f) if f.size == size => p1_romfs.sha256_file(f).map_err(Fail)? == want,
+                    _ => false,
+                };
+                if !ok {
+                    warnings.push(format!("program1/romfs/{} differs from the expected version", rel));
+                    p1_bad = true;
+                }
+            }
         }
         if !p1_bad {
             has_prog1_ok = true;
@@ -866,6 +885,8 @@ fn exefs_source(dump: &Path, targets: &Path) -> PathBuf {
 /// dst = a real folder with the files of src, so the build folder holds the game on its own (portable): moved when
 /// `mv`, else hard-linked (same drive: no extra space, the dump stays whole) or copied. A file already in dst with
 /// the same size is kept, so an interrupted run resumes; a symbolic link or junction at dst (older setups) is replaced.
+/// When `!mv`, stale files left in `dst` that are no longer in `src` are removed so a corrected dump does not keep
+/// leftover archives from an earlier attempt (issue 261).
 fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
     let f = |e: std::io::Error| Fail(e.to_string());
     if fs::symlink_metadata(dst).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -876,7 +897,7 @@ fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
     }
     let mut files = Vec::new();
     walk_files(src, "", &mut files);
-    let (mut placed, mut linked) = (0, 0);
+    let (mut placed, mut linked, mut removed) = (0, 0, 0);
     for (rel, from) in &files {
         let to = dst.join(rel);
         let size = fs::metadata(from).map_err(f)?.len();
@@ -895,14 +916,42 @@ fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
     }
     if mv {
         remove_empty_dirs(src);
+    } else if dst.is_dir() {
+        let norm = |r: &str| {
+            #[cfg(windows)]
+            {
+                r.to_ascii_lowercase()
+            }
+            #[cfg(not(windows))]
+            {
+                r.to_string()
+            }
+        };
+        let keep: HashSet<String> = files.iter().map(|(r, _)| norm(r)).collect();
+        let mut existing = Vec::new();
+        walk_files(dst, "", &mut existing);
+        for (rel, path) in existing {
+            if !keep.contains(&norm(&rel)) {
+                fs::remove_file(&path).map_err(|e| Fail(format!("{}: {}", path.display(), e)))?;
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            if let Ok(rd) = fs::read_dir(dst) {
+                for e in rd.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)) {
+                    remove_empty_dirs(&e.path());
+                }
+            }
+        }
     }
     Ok(format!(
-        "{} files, {} {} from {}{}",
+        "{} files, {} {} from {}{}{}",
         files.len(),
         placed,
         if mv { "moved" } else { "copied" },
         src.display(),
-        if linked > 0 { format!(" ({} as hard links: no extra space)", linked) } else { String::new() }
+        if linked > 0 { format!(" ({} as hard links: no extra space)", linked) } else { String::new() },
+        if removed > 0 { format!(", {} stale removed", removed) } else { String::new() }
     ))
 }
 
@@ -1230,6 +1279,137 @@ const PROGRAM1_EXEFS: [(&str, u64, &str); 3] = [
     ("sdk", 5989236, "2a89fa1c0e677710e89ed29b578162affef530a0c9b8c93cda15d50a57a20d28"),
     ("main.npdm", 1604, "060e9cc8c9541b245240ce76c44401a6984cc6f070e96d1d9ed428d553f05153"),
 ];
+const PROGRAM1_ROMFS_FILES: [(&str, u64, &str); 3] = [
+    ("root_000.pkz", 1204608, "95de97468b0bd72174231595498a355f474f2eb51e3639a5dd934d2566d9f133"),
+    ("Text_000.pkz", 23424, "0396c38c19d3a63f7855c623db90f9e0f5ea184f9a06f40adc3a436f361b8668"),
+    ("shader_000.pkz", 6442176, "d3c116655e1471cf3f43abaca8267839cee930574a49b18d661ebb869f173abb"),
+];
+const PROGRAM1_ROMFS_MANIFEST: (usize, u64, &str) = (
+    36,
+    378295576,
+    "f01944f856c742d0a88403f12bdd3fb1874a2a10046d99ed8e929627c5ba4716",
+);
+const PROGRAM1_ROMFS_NAMES: [&str; 36] = [
+    "Text_000.pkz",
+    "ba_000.pkz",
+    "bg_000.pkz",
+    "bh_000.pkz",
+    "core_000.pkz",
+    "effect_000.pkz",
+    "em_000.pkz",
+    "es_000.pkz",
+    "et_000.pkz",
+    "event_000.pkz",
+    "filter_000.pkz",
+    "font_000.pkz",
+    "it_000.pkz",
+    "miscTex_000.pkz",
+    "movie/event/ev9000.bk2",
+    "ph1_000.pkz",
+    "ph2_000.pkz",
+    "ph3_000.pkz",
+    "ph4_000.pkz",
+    "ph6_000.pkz",
+    "ph9_000.pkz",
+    "pha_000.pkz",
+    "phf_000.pkz",
+    "pl_000.pkz",
+    "root_000.pkz",
+    "shader_000.pkz",
+    "sound_000.pkz",
+    "st1_000.pkz",
+    "st2_000.pkz",
+    "st3_000.pkz",
+    "st4_000.pkz",
+    "st5_000.pkz",
+    "st9_000.pkz",
+    "sta_000.pkz",
+    "ui_000.pkz",
+    "wp_000.pkz",
+];
+
+/// Validate a Program 1 (The Old Picture Book) RomFS directory: catches mixed Bayonetta 3 archives (issue 261:
+/// extra `.pkz` files such as `ba_002.pkz` shadow Program 1's own entries and break the prologue with a lilac screen),
+/// wrong-program RomFS folders, and missing archives.
+fn verify_program1_romfs(romfs: &Path, accept_modified: bool) -> Result<(), Fail> {
+    let root_pkz = romfs.join("root_000.pkz");
+    if !root_pkz.is_file() {
+        return Err(Fail(format!(
+            "{}: root_000.pkz is missing: the picture book's program needs its own RomFS",
+            romfs.display()
+        )));
+    }
+    if sha256_file(&root_pkz).ok().as_deref() == Some(ROMFS_FILES[0].2) {
+        return Err(Fail(format!(
+            "{}/root_000.pkz is Bayonetta 3's archive, not Program 1's (The Old Picture Book): extract Program 1's own RomFS into an empty folder",
+            romfs.display()
+        )));
+    }
+    let ((count, total, digest), sizes) = romfs_manifest(romfs);
+    let known: HashSet<String> = PROGRAM1_ROMFS_NAMES.iter().map(|n| n.to_ascii_lowercase()).collect();
+    let have: HashSet<String> = sizes.keys().map(|n| n.to_ascii_lowercase()).collect();
+    let mut missing: Vec<&str> = PROGRAM1_ROMFS_NAMES
+        .iter()
+        .copied()
+        .filter(|n| !have.contains(&n.to_ascii_lowercase()))
+        .collect();
+    missing.sort();
+    if !missing.is_empty() {
+        let sample = missing.iter().take(5).copied().collect::<Vec<_>>().join(", ");
+        let more = if missing.len() > 5 { format!(" (+{} more)", missing.len() - 5) } else { String::new() };
+        return Err(Fail(format!(
+            "{}: missing {} Program 1 RomFS file(s): {}{} (incomplete extraction, or wrong RomFS)",
+            romfs.display(),
+            missing.len(),
+            sample,
+            more
+        )));
+    }
+    let mut extra_pkz: Vec<String> = sizes
+        .keys()
+        .filter(|n| n.to_ascii_lowercase().ends_with(".pkz") && !known.contains(&n.to_ascii_lowercase()))
+        .cloned()
+        .collect();
+    extra_pkz.sort();
+    let mut warnings = Vec::new();
+    if !extra_pkz.is_empty() {
+        let sample = extra_pkz.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+        let more = if extra_pkz.len() > 5 { format!(" (+{} more)", extra_pkz.len() - 5) } else { String::new() };
+        warnings.push(format!(
+            "{}: {} extra .pkz archive(s) that do not belong to Program 1: {}{} (Bayonetta 3 archives mixed into Program 1's RomFS override its assets and break The Old Picture Book — delete the extra archives or delete {} and rebuild from a clean program1 dump)",
+            romfs.display(),
+            extra_pkz.len(),
+            sample,
+            more,
+            romfs.display()
+        ));
+    }
+    for (rel, size, want) in PROGRAM1_ROMFS_FILES {
+        let p = romfs.join(rel);
+        if fs::metadata(&p).map(|m| m.len()).ok() != Some(size) || sha256_file(&p).ok().as_deref() != Some(want) {
+            warnings.push(format!("{}/{} differs from Program 1's expected archive (corrupt, wrong program, or modded)", romfs.display(), rel));
+        }
+    }
+    if warnings.is_empty() && digest != PROGRAM1_ROMFS_MANIFEST.2 {
+        warnings.push(format!(
+            "{}: {} files / {} bytes, expected {} / {} (file list or sizes differ from Program 1)",
+            romfs.display(),
+            count,
+            total,
+            PROGRAM1_ROMFS_MANIFEST.0,
+            PROGRAM1_ROMFS_MANIFEST.1
+        ));
+    }
+    for w in &warnings {
+        say(format!("  warning: {}", w));
+    }
+    if !warnings.is_empty() && !accept_modified {
+        return Err(Fail(format!(
+            "program1/romfs differs from the expected Program 1 RomFS (above). Fix it, or run again with --accept-modified to continue at your own risk."
+        )));
+    }
+    Ok(())
+}
 
 fn step_book(cx: &mut Ctx) -> Result<(), Fail> {
     let repo = cx.root().to_path_buf();
@@ -1305,6 +1485,10 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
     let exefs = targets.join("exefs");
     fs::create_dir_all(&exefs).map_err(|e| Fail(e.to_string()))?;
     if src != targets {
+        // validate the source RomFS before copying so a wrong or mixed dump fails fast without copying 15 GB
+        if src.join("romfs").is_dir() {
+            verify_program1_romfs(&src.join("romfs"), cx.a.accept_modified)?;
+        }
         // never with src == targets: place_folder's move would delete the files it keeps
         for (name, _, _) in PROGRAM1_EXEFS {
             copy2(&src.join("exefs").join(name), &exefs.join(name)).map_err(|e| Fail(format!("program1/exefs/{}: {}", name, e)))?;
@@ -1315,6 +1499,7 @@ fn build_program(cx: &mut Ctx, repo: &Path, src: &Path) -> Result<(), Fail> {
     } else {
         say("  targets/program1: from the last build (the dump folder is gone)");
     }
+    verify_program1_romfs(&targets.join("romfs"), cx.a.accept_modified)?;
     for name in ["main", "sdk"] {
         convert_nso(&exefs.join(name), &exefs.join(format!("{}.elf", name))).map_err(|e| Fail(format!("program1 {}: {}", name, e)))?;
     }
@@ -1691,5 +1876,58 @@ mod tests {
         assert_eq!(a.update.as_deref(), Some("upd.nsp"));
         assert_eq!(a.keys.as_deref(), Some("prod.keys"));
         assert_eq!(a.only.as_deref(), Some("verify"));
+    }
+
+    #[test]
+    fn place_folder_removes_stale_files_when_copying_but_keeps_on_move() {
+        let t = std::env::temp_dir().join(format!("wtbuild_place_stale_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&t);
+        let (src, dst) = (t.join("src"), t.join("dst"));
+        fs::create_dir_all(src.join("movie")).unwrap();
+        fs::write(src.join("ba_000.pkz"), b"p1").unwrap();
+        fs::write(src.join("movie").join("ev9000.bk2"), b"v").unwrap();
+        // Pre-populate dst with leftover Bayonetta 3 archives (issue 261) and an obsolete subdirectory
+        fs::create_dir_all(dst.join("old")).unwrap();
+        fs::write(dst.join("ba_000.pkz"), b"b3_bigger").unwrap();
+        fs::write(dst.join("ba_002.pkz"), b"b3_extra").unwrap();
+        fs::write(dst.join("old").join("stale.dat"), b"x").unwrap();
+
+        let msg = place_folder(&dst, &src, false).ok().unwrap();
+        assert!(msg.contains("2 stale removed"), "unexpected message: {}", msg);
+        assert_eq!(fs::read(dst.join("ba_000.pkz")).unwrap(), b"p1");
+        assert!(!dst.join("ba_002.pkz").exists());
+        assert!(!dst.join("old").exists());
+
+        // When moving (--move-dump), an already-moved file in dst is NOT deleted on resume
+        fs::write(dst.join("already_moved.pkz"), b"kept").unwrap();
+        assert!(place_folder(&dst, &src, true).is_ok());
+        assert!(dst.join("already_moved.pkz").exists());
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn verify_program1_romfs_catches_missing_and_extra_pkz() {
+        let t = std::env::temp_dir().join(format!("wtbuild_p1_romfs_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&t);
+        fs::create_dir_all(t.join("movie").join("event")).unwrap();
+        // Missing root_000.pkz
+        assert!(verify_program1_romfs(&t, false).is_err());
+
+        // Populate all 36 expected Program 1 names (dummy bytes -> fails hash check unless accept_modified,
+        // and adding ba_002.pkz triggers the extra-.pkz check)
+        for name in PROGRAM1_ROMFS_NAMES {
+            let p = t.join(name);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"dummy").unwrap();
+        }
+        // Extra Bayonetta 3 archive ba_002.pkz is caught (unless --accept-modified)
+        fs::write(t.join("ba_002.pkz"), b"b3").unwrap();
+        assert!(verify_program1_romfs(&t, false).is_err());
+        assert!(verify_program1_romfs(&t, true).is_ok());
+
+        // Removing a required file still fails even with --accept-modified
+        fs::remove_file(t.join("ba_000.pkz")).unwrap();
+        assert!(verify_program1_romfs(&t, true).is_err());
+        fs::remove_dir_all(&t).unwrap();
     }
 }
