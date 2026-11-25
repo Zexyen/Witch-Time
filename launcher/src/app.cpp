@@ -5,6 +5,7 @@
 #include "update.h"
 #include <algorithm>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sys/stat.h>
 
 namespace {
@@ -1705,4 +1707,99 @@ void App::play()
 	if (play_only)
 		running = false;
 	refresh_title();
+}
+
+// ---------------------------------------------------------------------------------------------------- --prepare
+namespace {
+volatile std::sig_atomic_t g_prepare_stop = 0;   // RecompLauncher's Cancel: the build stops, and resumes at the next run
+}
+
+// RecompLauncher's setup step (recomplauncher.json, prepare): the Build screen's build with no window. The arguments after
+// --prepare go to wtbuild setup as they are; its steps come out as "progress <0..1> <what>" lines, by the screen's weights.
+// A finished build is marked as this release's and its textures converted, as start_build() and tick() do
+int prepare_main(int argc, char** argv)
+{
+	const Paths paths = Paths::find(argv[0]);
+#ifndef _WIN32
+	std::signal(SIGTERM, [](int) { g_prepare_stop = 1; });
+	std::signal(SIGINT, [](int) { g_prepare_stop = 1; });
+#endif
+	BuildRunner runner;
+	std::string said;
+	double said_at = -1e9;
+	// at most a line a second, and one a minute at least: a step silent for an hour counts as stuck
+	auto say = [&](float f, std::string what, bool now = false) {
+		char l[512];
+		std::snprintf(l, sizeof l, "progress %.3f %s", std::clamp(f, 0.f, 1.f), what.c_str());
+		const double t = now_seconds();
+		if (now || (l != said && t - said_at >= 1) || t - said_at >= 60)
+		{
+			std::printf("%s\n", l);
+			std::fflush(stdout);
+			said = l, said_at = t;
+		}
+	};
+	auto follow = [&](const std::function<void()>& show) {
+		while (runner.running())
+		{
+			if (g_prepare_stop)
+				runner.stop();
+			if (!runner.poll())
+				SDL_Delay(200);
+			show();
+		}
+	};
+	auto output = [&] {
+		for (const std::string& l : runner.lines)
+			std::printf("%s\n", l.c_str());
+		std::fflush(stdout);
+	};
+	if (!runner.start(paths.repo, std::vector<std::string>(argv + 2, argv + argc)))
+	{
+		std::printf("%s\n", start_error(paths.repo));
+		return 1;
+	}
+	say(0, "Starting the build", true);
+	follow([&] {
+		const int cur = step_index(runner.current);
+		if (cur < 0)
+			return;
+		float f = 0;
+		for (const std::string& s : BuildRunner::steps())
+			if (step_index(s) < cur)
+				f += weight(s);
+		std::string what = phase_of(runner.current);
+		what[0] = char(std::toupper(static_cast<unsigned char>(what[0])));
+		if ((runner.current == "compile" || runner.current == "convert") && runner.to_compile > 0)
+		{
+			f += weight(runner.current) * float(runner.compiled) / float(runner.to_compile);
+			what += " " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " files";
+		}
+		say(f * .85f, what);
+	});
+	if (runner.exit_code || g_prepare_stop)
+	{
+		output();                                // wtbuild's reason, after its FAILED line
+		return runner.exit_code ? runner.exit_code : 1;
+	}
+	std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
+#ifndef __APPLE__                                // Apple's GPUs read the game's ASTC textures as they are
+	std::error_code ec;
+	if (ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete") &&
+		double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED &&
+		runner.start(paths.repo, {}, "textures"))
+	{
+		say(.85f, "Converting textures", true);
+		follow([&] {
+			const float f = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
+			say(.85f + .15f * f, "Converting textures, archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile));
+		});
+		if (g_prepare_stop)
+			return 1;
+		if (runner.exit_code)                    // optional: the game decodes the rest as it plays, and Settings goes on with them
+			output();
+	}
+#endif
+	say(1, "Ready to play", true);
+	return 0;
 }
