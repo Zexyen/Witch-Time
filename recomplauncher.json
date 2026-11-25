@@ -23,7 +23,7 @@
     { "id": "dlss", "label": "NVIDIA DLSS", "role": "runtime", "shared": "nvidia.dlss", "optional": true, "destination": "nvngx_dlss.dll" }
   ],
   "prepare": {
-    "program": ["build/witch-time.exe", "build/witch-time"],
+    "program": ["build/witch-time.exe", "WitchTime-x86_64.AppImage", "build/witch-time"],
     "args": ["--prepare", "--dump={input:game}", "--update={input:update}", "--keys={input:keys}"],
     "label": "Translating and compiling the game from your dump",
     "done": ["{install}/targets/exefs/main.elf", "{install}/build/built_version"],
@@ -37,19 +37,19 @@
       }
     ]
   },
-  "start": { "program": ["witch-time.exe", "build/witch-time"], "args": ["--play"] },
+  "start": { "program": ["witch-time.exe", "WitchTime-x86_64.AppImage", "build/witch-time"], "args": ["--play"] },
   "system": {
     "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
     "linux": { "glibc": "2.35", "graphics": { "vulkan": "1.3" } }
   },
-  "saves": ["{install}/build/userdata/save"],
+  "saves": ["{data}/userdata/save"],
   "folders": {
-    "saves": [{ "path": "{install}/build/userdata/save" }],
-    "logs": [{ "path": "{install}/build/run" }]
+    "saves": [{ "path": "{data}/userdata/save" }],
+    "logs": [{ "path": "{data}/logs" }]
   },
   "config": [
-    { "id": "main", "format": "ini", "file": [{ "path": "{install}/config/graphics.ini" }] },
-    { "id": "controllers", "format": "ini", "file": [{ "path": "{install}/config/controllers.ini" }] }
+    { "id": "main", "format": "ini", "file": [{ "path": "{data}/config/graphics.ini" }] },
+    { "id": "controllers", "format": "ini", "file": [{ "path": "{data}/config/controllers.ini" }] }
   ],
   "settings": [
     {
@@ -172,7 +172,7 @@
     }
   ],
   "actions": [
-    { "id": "saves", "label": "Saves", "help": "Your save slots, kept in the game's folder.", "open": "saves" },
-    { "id": "logs", "label": "Logs", "help": "The game's log from its last run, for a bug report.", "open": "logs" }
+    { "id": "saves", "label": "Saves", "help": "Your save slots.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "The game's logs from its last five runs, for a bug report.", "open": "logs" }
   ]
 }

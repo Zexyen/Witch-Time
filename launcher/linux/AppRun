@@ -1,0 +1,14 @@
+#!/bin/sh
+# AppRun of the Witch Time AppImage (.github/workflows/release.yml): starts this folder's launcher. Witch Time builds the
+# game from the player's dump into its own folder, which an AppImage run as one file (mounted read-only) cannot write to,
+# so the AppImage plays unpacked: RecompLauncher unpacks it when it installs it (APPIMAGE is not set there), and
+# --appimage-extract does the same by hand.
+here="$(dirname "$(readlink -f "$0")")"
+if [ -n "$APPIMAGE" ]; then
+	msg="Witch Time builds the game from your dump into its own folder, and an AppImage run as one file cannot be written to. Unpack it first: run it with --appimage-extract, then start squashfs-root/AppRun. Or use this release's .tar.gz, or install Witch Time with RecompLauncher."
+	echo "witch-time: $msg" >&2
+	zenity --error --title="Witch Time" --text="$msg" 2>/dev/null || kdialog --title "Witch Time" --error "$msg" 2>/dev/null ||
+		notify-send "Witch Time" "$msg" 2>/dev/null
+	exit 1
+fi
+exec "$here/build/witch-time" "$@"

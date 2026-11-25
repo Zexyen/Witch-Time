@@ -13,6 +13,7 @@
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
 #   recomplauncher.json              how RecompLauncher sets the game up and starts it (from the repository's top)
+#   AppRun, witch-time.desktop/.png  the folder as an AppDir: the same folder is also the release's AppImage (Linux)
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
@@ -45,7 +46,7 @@ env:
   # Removed here and not by export-ignore, which would take them out of GitHub's source archives too.
   TRIM: >-
     .github .claude .mcp.json .gitattributes .gitignore docs scripts tests tools
-    launcher/src launcher/CMakeLists.txt launcher/macos launcher/win32 launcher/README.md lifter/README.md
+    launcher/src launcher/CMakeLists.txt launcher/macos launcher/win32 launcher/linux launcher/README.md lifter/README.md
   SDL_TAG: release-3.4.18
   FFMPEG_TAG: n7.1.5
   GLSLANG_TAG: 16.6.0
@@ -53,6 +54,8 @@ env:
   LLVM_MINGW_TAG: '20260922'
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
   FREETYPE_TAG: VER-2-13-3
+  APPIMAGETOOL_TAG: '1.9.1'
+  APPIMAGE_RUNTIME_TAG: '20251108'
 
 jobs:
   linux:
@@ -208,9 +211,33 @@ jobs:
           cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
           cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
           ln -s build/witch-time "dist/$name/witch-time"
+          # what makes the folder an AppDir too (the AppImage step), in the tarball as well, so both are the same folder
+          cp launcher/linux/AppRun launcher/linux/witch-time.desktop "dist/$name/"
+          cp launcher/ui/img/icon.png "dist/$name/witch-time.png"
           LD_LIBRARY_PATH= ldd "dist/$name/build/witch-time" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
+
+      # the same folder as one file, for RecompLauncher (which unpacks it at install and plays it from that folder,
+      # recomplauncher.json at its top) and players who keep one file: run as one file it says how to unpack it, as Witch
+      # Time builds the game into its own folder (launcher/linux/AppRun)
+      - name: AppImage
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-x86_64.AppImage"
+          curl -sSfL -o "$RUNNER_TEMP/runtime-x86_64" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_TAG/runtime-x86_64"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream --comp zstd \
+            --runtime-file "$RUNNER_TEMP/runtime-x86_64" "dist/$name" "dist/$name.AppImage"
+          # unpacked as RecompLauncher does, elsewhere: the files, their modes and the links inside it are all there
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$name.AppImage" --appimage-extract >/dev/null)
+          x="$RUNNER_TEMP/squashfs-root"
+          diff <(cd "dist/$name" && find . ! -name .DirIcon | sort) <(cd "$x" && find . ! -name .DirIcon | sort)
+          test -f "$x/recomplauncher.json" && test -x "$x/AppRun" && test -x "$x/build/witch-time" && test -x "$x/build/wtbuild"
+          test -x "$x/deps/llvm/bin/clang" && "$x/deps/llvm/bin/clang" --version
+          LD_LIBRARY_PATH= ldd "$x/build/witch-time" | grep -q "$x/build/libSDL3.so.0"
+          (cd dist && sha256sum "$name.AppImage" > "$name.AppImage.sha256")
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -218,6 +245,7 @@ jobs:
           name: ${{ steps.version.outputs.name }}
           path: |
             dist/*.tar.gz
+            dist/*.AppImage
             dist/*.sha256
 
       - name: Release
@@ -228,6 +256,7 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/*.AppImage
             dist/*.sha256
 
   windows:
