@@ -76,21 +76,15 @@
       "defaults": { "vsync": "auto" }
     },
     {
-      "id": "cutscene_fps", "label": "Cutscene frame rate", "group": "Display",
-      "help": "Title, menus and cutscenes. 30 is the console's; movies keep theirs either way.",
-      "choices": [
-        { "label": "30 fps", "set": { "cutscene_fps": "30" } },
-        { "label": "60 fps", "set": { "cutscene_fps": "60" } }
-      ],
-      "defaults": { "cutscene_fps": "30" }
-    },
-    {
       "id": "frame_rate", "label": "Frame rate", "group": "Display",
-      "help": "60 is the console's. 90 and 120 are experimental: some effects may run fast.",
+      "help": "60 is the default (including menus and cutscenes). Above 60 is experimental: some effects may run fast.",
       "choices": [
         { "label": "60 fps", "set": { "frame_rate": "60" } },
         { "label": "90 fps", "set": { "frame_rate": "90" } },
-        { "label": "120 fps", "set": { "frame_rate": "120" } }
+        { "label": "120 fps", "set": { "frame_rate": "120" } },
+        { "label": "144 fps", "set": { "frame_rate": "144" } },
+        { "label": "165 fps", "set": { "frame_rate": "165" } },
+        { "label": "240 fps", "set": { "frame_rate": "240" } }
       ],
       "defaults": { "frame_rate": "60" }
     },

@@ -7,7 +7,7 @@
 //! Scenes (a copy of the save is played, audio muted, graphics.ini the committed defaults, written to the run folder):
 //! - shibuya: Continue -> Tokyo: Shibuya street fight; the fight pattern from 40 s; 330 s; frames 1500 .. end
 //! - tokyo: the earlier Tokyo save (--save, required); the fight pattern from 560 s; 700 s; frames 19800 .. end
-//! - cutscene: Shibuya, no input: the cutscene that starts after about 75 s on the street, at cutscene_fps = 60; 300 s;
+//! - cutscene: Shibuya, no input: the cutscene that starts after about 75 s on the street (60 fps by default); 300 s;
 //!   the frames between the game's two "fps mode" changes around it
 //!
 //! Scales: 1.0 (1600x900), 1.6 (2560x1440), 2.4 (3840x2160); the window is the output size over --desktop-scale, the
@@ -81,7 +81,7 @@ static SCENES: [Scene; 3] = [
         secs: 300,
         fight_from: None,
         first: None,
-        env: &[("WT_CUTSCENE_FPS", "60")],
+        env: &[],
     },
 ];
 
@@ -806,7 +806,7 @@ mod tests {
                 "cutscene 2.4 --desktop-scale 1.0 --repo /r",
                 "cutscene_2.4",
                 "3840x2160",
-                &[("WT_CUTSCENE_FPS", "60")]
+                &[]
             ),
             300
         );

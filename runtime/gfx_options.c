@@ -151,18 +151,13 @@ static const char *const k_default_ini =
 ";   first pause after each start. always: at every pause. off: never.\r\n"
 "pause_hint = first\r\n"
 "\r\n"
-"; frame_rate = 60      (60 .. 120; EXPERIMENTAL above 60)\r\n"
-";   60: the game as made. 61 .. 120: the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
-";   runtime/game_shim_eh.c h_frame_clock) and the runtime paces the game at this value; the title, menus and cutscenes\r\n"
-";   run at it too (as cutscene_fps = 60). The game's timers that count frames are converted one by one\r\n"
-";   (tools/wtbuild/fps_counters.txt; docs/STATUS.md, \"Frame rates above 60\"): some effects, input windows and countdowns\r\n"
-";   may still run faster than at 60.\r\n"
+"; frame_rate = 60      (60 .. 960; EXPERIMENTAL above 60)\r\n"
+";   60: gameplay, title, menus and cutscenes at 60 fps (pre-rendered movies keep their own rate). Above 60 (e.g. 90,\r\n"
+";   120, 144, 165, 240, or any value up to 960): the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
+";   runtime/game_shim_eh.c h_frame_clock) and the runtime paces gameplay, title, menus and cutscenes at this value.\r\n"
+";   The game's timers that count frames are converted one by one (tools/wtbuild/fps_counters.txt; docs/STATUS.md,\r\n"
+";   \"Frame rates above 60\"): some effects, input windows and countdowns may still run faster than at 60.\r\n"
 "frame_rate = 60\r\n"
-"\r\n"
-"; cutscene_fps = 30 | 60\r\n"
-";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
-";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
-"cutscene_fps = 30\r\n"
 "\r\n"
 "; model_lod = game | highest\r\n"
 ";   game: models lose detail with distance and far ones disappear, as on the console. highest: every model with detail\r\n"
@@ -344,7 +339,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "gpu")) { if (_stricmp(val, "auto")) snprintf(o->gpu, sizeof o->gpu, "%s", val); }
         else if (!_stricmp(key, "console_mode")) o->handheld = !_stricmp(val, "handheld");
         else if (!_stricmp(key, "resolution_scale")) { float v = (float)atof(val); if (v > 0) o->scale = v; }
-        else if (!_stricmp(key, "anisotropic_filtering") || !_stricmp(key, "texture_lod_bias")) { }      /* [witchtime] keys of older files: not used any more */
+        else if (!_stricmp(key, "anisotropic_filtering") || !_stricmp(key, "texture_lod_bias") || !_stricmp(key, "cutscene_fps")) { }      /* [witchtime] keys of older files: not used any more */
         else if (!_stricmp(key, "frame_time_overlay")) o->overlay = !_stricmp(val, "on") || !strcmp(val, "1");
         else if (!_stricmp(key, "profile")) o->profile = !_stricmp(val, "low");
         else if (!_stricmp(key, "shader_wait")) o->shader_skip = !_stricmp(val, "skip");
@@ -358,13 +353,12 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "frame_generator")) { int k = framegen_of(val); if (k == 1 || k == 2) o->frame_gen_kind = k; }
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
-        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
+        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 960 ? 960 : v; }      /* [Recomps#1] */
         else if (!_stricmp(key, "hdr")) o->hdr = !_stricmp(val, "off") ? 1 : !_stricmp(val, "on") ? 2 : 0;      /* [Recomps#1] finding 147 */
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "hdr_peak")) { float v = (float)atof(val); o->hdr_peak = v >= 80.0f && v <= 10000.0f ? v : 0.0f; }      /* [witchtime] auto, or a value out of range */
-        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
         else if (!_stricmp(key, "discord_presence")) {}      /* [witchtime] read by presence.c */
@@ -398,20 +392,14 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (!getenv("WT_MODEL_LOD")) _putenv_s("WT_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
     else o->model_lod_high = !_stricmp(getenv("WT_MODEL_LOD"), "highest");
-    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads WT_CUTSCENE_FPS; a set variable (test runs) wins */
-        const char *e = getenv("WT_CUTSCENE_FPS");
-        if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
-        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("WT_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
-        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "WT_CUTSCENE_FPS" : "graphics.ini",
-               o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
-    }
+    if (!getenv("WT_CUTSCENE_FPS")) _putenv_s("WT_CUTSCENE_FPS", "60");      /* [witchtime] 60 (or frame_rate) by default; keeps an un-rebuilt game.dll at 60 too */
     /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
     if (o->aspect_ratio != -1.0f && (!(o->aspect_ratio >= 0.25f && o->aspect_ratio <= 8.0f) || fabsf(o->aspect_ratio - 16.0f / 9.0f) < 0.001f)) o->aspect_ratio = 0.0f;
     if (o->aspect_ratio > 0.0f && !getenv("RECOMPS_ASPECT")) { char n[32]; snprintf(n, sizeof n, "%.6f", o->aspect_ratio); _putenv_s("RECOMPS_ASPECT", n); }
     if (o->hud_centre && !getenv("RECOMPS_HUD_CENTRE")) _putenv_s("RECOMPS_HUD_CENTRE", "1");
     if (getenv("RECOMPS_ASPECT")) printf("graphics options: aspect_ratio %s (the game's screen width / height; experimental, docs/STATUS.md \"Aspect ratios\")\n", getenv("RECOMPS_ASPECT"));
     /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
-     * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).
+     * RECOMPS_UNCAP and WT_PACE_RATE with getenv the first time the game's clock runs (after this, at the first frame).
      * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */
     if (o->frame_rate > 60 && !getenv("RECOMPS_UNCAP")) {
         char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
@@ -419,6 +407,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         int paced = !(pe && !atoi(pe));
         _putenv_s("RECOMPS_UNCAP", "1");
         if (!getenv("RECOMPS_UNCAP_FPS")) _putenv_s("RECOMPS_UNCAP_FPS", paced ? "0" : n);
+        if (paced && !getenv("WT_PACE_RATE")) _putenv_s("WT_PACE_RATE", n);
         printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
                paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (WT_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
     }
@@ -604,12 +593,11 @@ int gfx_option_set(const char *key, const char *val) {
     free(b);
     if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
     if (!_stricmp(key, "model_lod")) _putenv_s("WT_MODEL_LOD", val);
-    if (!_stricmp(key, "cutscene_fps")) _putenv_s("WT_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
     GfxOptions t;
     opt_load(NULL, &t, NULL);
     /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
-    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
+    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler; g_opt.sharpness = t.sharpness; g_opt.frame_gen = t.frame_gen; g_opt.frame_gen_on = t.frame_gen_on; g_opt.frame_gen_kind = t.frame_gen_kind; g_opt.frame_gen_no_hud = t.frame_gen_no_hud;
     g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */

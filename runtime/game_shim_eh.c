@@ -450,34 +450,35 @@ void h_quad_walk(Ctx *c) {
 
 /* f_7100d02de0(mode w0): the game's main loop (0x7100670b80) asks for its frame-rate mode each frame from its own state
  * flags (1 = 30 fps on the title, in menus and cutscenes; 0 = 60; 2 = 15); the mode is applied at 0x7100cfd9b8 (present
- * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). With
- * cutscene_fps = 60 (graphics.ini, WT_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
- * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
+ * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). By default a 1
+ * is made 0 so the title, menus and cutscenes run at 60 fps (or frame_rate above 60; WT_CUTSCENE_FPS=30 keeps the console's
+ * 30 fps mode for testing). Each change of the mode asked for is logged with the wall-clock time (the start and end of a
+ * cutscene). */
 B3_FN void f_7100d02de0(Ctx *c);
-/* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
+/* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1 and WT_PACE_RATE=<fps>): the clock below measures real time below 1.0 */
 static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
-static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
+static int pace_rate(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_PACE_RATE"); v = e ? atoi(e) : 0; } return v; }
+static int cutscene_30(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_CUTSCENE_FPS"); v = e && atoi(e) == 30; } return v; }
+static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 / frame_rate */
 static int g_one_pass;                             /* h_frame_clock: this fixed-step frame runs one logic step (h_main_pass) */
 static int g_half;                                 /* the last frame ran the first kind of logic step alone, so this one is the second (h_step_kind) */
 static int g_exact;                                /* h_frame_clock: this frame is a fixed-step one of the spider ride's scene, whose steps must be 1.0 (scene_even) */
 static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&f, (void *)(uintptr_t)fp, 4); return f; }
-__declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
     static int last = -1;
-    if (!game_cutscene_fps) { const char *e = getenv("WT_CUTSCENE_FPS"); game_cutscene_fps = e && atoi(e) == 60 ? 60 : 30; }
-    int sixty = game_cutscene_fps == 60;
+    int sixty = !cutscene_30();
     int want = (int)(uint32_t)c->x[0];
+    /* title, menus, cutscenes and rides (flag 16) run at 60 fps or frame_rate (real time). Only the chapter 3 spider ride's
+     * prompt scene (g_exact = eva142) stays at 60 above 60 fps (#45: display.c paces mode 1's interval 2 at 60 Hz for any
+     * frame_rate): its logic steps must be exactly 1.0, 60 a second. */
+    g_fps_forced = want == 1 && (g_exact ? !uncap_on() : uncap_on() || sixty || (state_flags() & 0x10000));
     if (want != last) {
         struct timespec ts; timespec_get(&ts, TIME_UTC);
         printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; WT_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
-               (double)ts.tv_sec + ts.tv_nsec / 1e9, sixty && want == 1 ? ": runs at 60 (cutscene_fps = 60)" : "");
+               (double)ts.tv_sec + ts.tv_nsec / 1e9, g_fps_forced ? (uncap_on() ? ": runs at frame_rate" : ": runs at 60") : (want == 1 && g_exact && uncap_on() ? ": runs at 60 (exact step)" : ""));
         fflush(stdout);
         last = want;
     }
-    /* above 60 fps the 30 fps scenes run at frame_rate too (real time). A ride set piece (flag 16) is gameplay the console runs
-     * at 30: it takes the game's frame rate whatever cutscene_fps says (#156). Only the chapter 3 spider ride's prompt scene stays
-     * at 60 above 60 fps (#45: the game's mode 1 is 2 ticks of frame_rate there): its logic steps must be exactly 1.0, 60 a second */
-    g_fps_forced = want == 1 && (g_exact ? !uncap_on() : uncap_on() || sixty || (state_flags() & 0x10000));
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }
@@ -789,7 +790,7 @@ void h_frame_clock(Ctx *c) {
     int fixed = (uint32_t)c->x[1] == 0, ride = state_flags() & 0x10000;
     g_exact = fixed && ride && scene_playing(0xa142);
     /* s0 is 4.0 in the game's mode 2 */
-    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on() || ride);
+    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (!cutscene_30() || uncap_on() || ride);
     f_7100c1f600(c);
     {
         static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
@@ -797,10 +798,12 @@ void h_frame_clock(Ctx *c) {
         if (fixed) {
             float v, ms;
             uint32_t flags = state_flags();
+            int rate = pace_rate();
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
             float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; above 60 fps a frame is shorter */
+            if (g_one_pass && !g_exact && rate > 60) even = 30.0f / (float)rate;
             float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
-            if (uncap_on() && due < even && !g_exact) even = due;
+            if (uncap_on() && !rate && due < even && !g_exact) even = due;
             /* the load before a scene is not the scene's time, nor is its pause menu (flags 14 and 0: its clock stands) */
             if (!was_fixed || flags & 0x4001) { owed = 0.0f; due = even; }
             float k = g_exact ? scene_even(&owed, due, even, &g_one_pass, g_half) : scene_step(&owed, due, even);
