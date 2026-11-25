@@ -2725,9 +2725,11 @@ static uint64_t g_live_end[CB_N];                     /* #257: where each entry 
 static uint64_t g_live_key[CB_N], g_live_max;         /* #156: the list is sorted by the address each entry was added with; the largest size added since it was empty */
 static int g_kept_indexed;                            /* 1 while g_kept_idx holds every state==3 buffer (cb_kept_index) */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
-/* [witchtime] issue 286: 1 when the buffer's memory is not host-cached (write-combined device memory, WT_VK_CBMEM=1)
- * and the device has host-cached memory to copy into: CPU reads of the buffer go through a GPU staging copy. */
+/* [witchtime] issue 286 / issue 257: 1 when the buffer's memory is not host-cached (write-combined device memory,
+ * WT_VK_CBMEM=1, or pure DEVICE_LOCAL memory without a host mapping, WT_VK_CBMEM=2 / non-ReBAR discrete NVIDIA):
+ * CPU reads of the buffer go through a GPU staging copy. */
 static int cb_slow_cpu_read(const CB *c) {
+    if (!c->mem.map) return 1;
     return g_cb_cached > 0 && c->mem.block >= 0 && !(D.mp.memoryTypes[g_blk[c->mem.block]->type].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
 }
 static void cb_stg_ensure(CB *c) {
@@ -2736,7 +2738,7 @@ static void cb_stg_ensure(CB *c) {
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     VkMemoryRequirements rq;
     c->stg_cap = (c->size + 4095) & ~(uint64_t)4095;
-    bi.size = c->stg_cap; bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bi.size = c->stg_cap; bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VKC(vkCreateBuffer(V.device, &bi, NULL, &c->stg));
     vkGetBufferMemoryRequirements(V.device, c->stg, &rq);
     VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
@@ -2943,6 +2945,11 @@ static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach gue
     for (; g_ngcp && last >= 0; last--) {
         GCopy *o = &g_gcp[0];
         int sided = gcp_sided(o);                  /* else the source buffer still holds the bytes (a side copy not submitted yet has not run) */
+        if (!sided && !g_cb[o->src].mem.map) {     /* [witchtime] issue 257: pure DEVICE_LOCAL source: wait for its side copy in `up` */
+            if (!wait) break;
+            if (o->side >= 0 && R.recording && R.serial < o->sserial) cmd_submit(NULL, NULL);
+            sided = gcp_sided(o);
+        }
         uint64_t need = sided ? o->sserial : o->wserial;
         if (R.done < need) {
             if (!wait) break;
@@ -2951,8 +2958,26 @@ static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach gue
             g_gcp_waits++;
         }
         uint8_t *g = P(o->dst), tmp[GCP_SIDE];
-        const uint8_t *m = sided ? (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE : (const uint8_t *)g_cb[o->src].mem.map + o->soff;
-        if (sided || cb_slow_cpu_read(&g_cb[o->src])) { memcpy(tmp, m, (size_t)o->size); m = tmp; }      /* [witchtime] issue 286: one block read instead of byte by byte from uncached memory */
+        const uint8_t *m = NULL;
+        if (sided) {
+            memcpy(tmp, (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE, (size_t)o->size);
+            m = tmp;
+        } else if (g_cb[o->src].mem.map) {
+            m = (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+            if (cb_slow_cpu_read(&g_cb[o->src])) { memcpy(tmp, m, (size_t)o->size); m = tmp; }      /* [witchtime] issue 286: one block read instead of byte by byte from uncached memory */
+        } else {                                   /* defensive fallback if an unmapped source was ever not sided */
+            CB *sc = &g_cb[o->src];
+            cb_stg_ensure(sc);
+            pass_end(); cmd_begin(); cb_copy_barrier_pre();
+            VkBufferCopy cr = {o->soff, 0, o->size};
+            vkCmdCopyBuffer(R.cmd, sc->buf, sc->stg, 1, &cr);
+            cb_copy_barrier_post();
+            uint64_t sr = cmd_submit(NULL, NULL);
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
+            if (R.done < sr) R.done = sr;
+            memcpy(tmp, sc->stg_mem.map, (size_t)o->size);
+            m = tmp;
+        }
         for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
         ring_inval_range(o->dst, o->size);         /* guest memory changed: overlapping ranges are streamed again */
         gcp_remove(0);
@@ -3003,9 +3028,9 @@ static void gcp_src_rewritten(const CB *c) {
         vkCmdCopyBuffer(up, c->buf, g_gcp_sbuf, 1, &r);
         g_gcp_sides++;
     }
-    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* gcp_patch reads the slots later in this `up` */
-    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* gcp_patch reads the slots later in this `up`; host reads them at gcp_settle_upto */
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the copy is an overlay (and nothing else is to be done) */
     if (g_gpucopy < 0) g_gpucopy = !(getenv("WT_VK_GPUCOPY") && !atoi(getenv("WT_VK_GPUCOPY")));
@@ -3018,9 +3043,27 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     if (g_cb_live && cb_overlap(dst, size)) return 0;      /* the destination is a compute buffer's of this batch */
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, src, size)) return 0;      /* the source is another copy's destination */
+    if (!s->mem.map) {                             /* [witchtime] issue 257: pure DEVICE_LOCAL source: copy into a host-visible side slot now so settling never stalls on a second read-back */
+        if (g_gcp_sideon < 0) g_gcp_sideon = !(getenv("WT_VK_GPUCOPY_SIDE") && !atoi(getenv("WT_VK_GPUCOPY_SIDE")));
+        if (!g_gcp_sideon || s->wserial > R.serial || __builtin_popcount(g_gcp_sused) >= GCP_N) return 0;
+    }
     GCopy *o = &g_gcp[g_ngcp++];
     o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial; o->side = -1; o->sserial = 0;
     o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
+    if (!s->mem.map) {
+        if (!g_gcp_sbuf) g_gcp_sbuf = vbuf_new((uint64_t)GCP_N * GCP_SIDE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_gcp_smem);
+        VkCommandBuffer up = up_cmd();
+        gcp_up_barrier(&R.slot[R.cur], up);
+        o->side = __builtin_ctz(~g_gcp_sused); g_gcp_sused |= 1u << o->side;
+        o->sserial = R.serial + 1;
+        VkBufferCopy r = {o->soff, (uint64_t)o->side * GCP_SIDE, o->size};
+        vkCmdCopyBuffer(up, s->buf, g_gcp_sbuf, 1, &r);
+        s->touch = 1;                              /* named by `up` of this batch */
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        g_gcp_sides++;
+    }
     gcp_min();
     g_gcp_made++;
     ring_inval_range(dst, size);                   /* the range is streamed again, now with the patch */
@@ -3495,17 +3538,33 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
  * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
  * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
 static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [witchtime] dispatches / storing draws recorded; the count at the last wait of indirect_src */
-static const uint8_t *cb_read_block(const CB *c, uint64_t off, uint64_t size) {      /* [witchtime] issue 286: one block read from uncached device memory instead of per-field reads across draw loops */
-    const uint8_t *p = (const uint8_t *)c->mem.map + off;
-    if (!cb_slow_cpu_read(c)) return p;
+static const uint8_t *cb_read_block(CB *c, uint64_t off, uint64_t size) {      /* [witchtime] issue 286 / issue 257: one block read from uncached device memory (or a GPU copy into staging for pure DEVICE_LOCAL) */
+    if (c->mem.map && !cb_slow_cpu_read(c)) return (const uint8_t *)c->mem.map + off;
     static uint8_t *buf[2]; static uint64_t cap[2]; static int turn;
     int s = turn ^= 1;                             /* two slots: OP_DRAW_INDIRECT can hold `rec` across a second call for `cnt` */
     if (cap[s] < size) { free(buf[s]); cap[s] = (size + 4095) & ~(uint64_t)4095; buf[s] = malloc((size_t)cap[s]); }
-    memcpy(buf[s], p, (size_t)size);
+    if (c->mem.map) {
+        memcpy(buf[s], (const uint8_t *)c->mem.map + off, (size_t)size);
+        return buf[s];
+    }
+    cb_stg_ensure(c);
+    pass_end(); cmd_begin(); cb_copy_barrier_pre();
+    VkBufferCopy r = {off, 0, size};
+    vkCmdCopyBuffer(R.cmd, c->buf, c->stg, 1, &r);
+    cb_copy_barrier_post();
+    uint64_t sr = cmd_submit(NULL, NULL);
+    for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
+    if (R.done < sr) R.done = sr;
+    R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
+    memcpy(buf[s], c->stg_mem.map, (size_t)size);
     return buf[s];
 }
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
+    if (c && !c->mem.map) {
+        if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, STAGE WAIT (serial %llu, done %llu)\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size, (unsigned long long)R.serial, (unsigned long long)R.done);
+        return cb_read_block(c, addr - c->addr, size);
+    }
     if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) { if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, no wait\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); return cb_read_block(c, addr - c->addr, size); }      /* nothing written since the last wait */
     if (c && c->mem.map) {
         if (drawlog_on()) printf("DLI f%lld src %llx+%llx live CB %llx+%llx, WAIT (serial %llu, done %llu)\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size, (unsigned long long)R.serial, (unsigned long long)R.done);
@@ -3524,11 +3583,11 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo && !cb_pf_skip(addr, size))
         for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
-            if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || !k->mem.map) continue;
+            if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
             if (k->wrote) break;
             if (drawlog_on()) printf("DLI f%lld src %llx+%llx kept CB %llx+%llx\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, (unsigned long long)k->addr, (unsigned long long)k->size);
-            cb_kept_ready(k);
+            if (k->mem.map) cb_kept_ready(k);
             return cb_read_block(k, addr - k->addr, size);
         }
     if (drawlog_on()) printf("DLI f%lld src %llx+%llx guest memory%s\n", nvn_front_frame_next(), (unsigned long long)addr, (unsigned long long)size, g_cb_live && cb_overlap(addr, size) ? " (overlaps a live CB: cb_sync)" : "");
@@ -3666,18 +3725,18 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         VkMemoryRequirements rq;
         c->cap = (size + 4095) & ~(uint64_t)4095;
-        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bi.size = c->cap; bi.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VKC(vkCreateBuffer(V.device, &bi, NULL, &c->buf));
         vkGetBufferMemoryRequirements(V.device, c->buf, &rq);
         VkFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | (g_cb_cached ? VK_MEMORY_PROPERTY_HOST_CACHED_BIT : 0);
         int found = 0;
         for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) found = 1;
         if (!found) want &= ~(VkFlags)VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        /* [witchtime] issue 286: default 1 on a discrete NVIDIA GPU with resizable BAR (>= 2 GB device-local host-visible
-         * heap): shader stores into host-cached memory cross PCIe and stall NVIDIA's driver interrupt handler (~15 ms GPU/frame,
-         * system-wide audio crackles). Landings of non-host-cached buffers copy through host-cached staging on the GPU instead
-         * of CPU reads of device memory (which cost 300 ms/frame in chapter 1). Other GPUs keep host memory by default;
-         * WT_VK_CBMEM=1 tries device memory anywhere, =0 keeps host memory everywhere. */
+        /* [witchtime] issue 286 / issue 257: default 1 on a discrete NVIDIA GPU: shader stores into host-cached memory cross
+         * PCIe and stall NVIDIA's GPU and interrupt handler (~15 ms GPU/frame). With resizable BAR (>= 2 GB device-local
+         * host-visible heap), buffers use that memory (g_cb_dl = 1); without resizable BAR (e.g. a 256 MB BAR), buffers use
+         * pure DEVICE_LOCAL VRAM (g_cb_dl = 2) with GPU staging copies for fills and landings. Other GPUs keep host memory by
+         * default; WT_VK_CBMEM=0 keeps host memory, =1 tries ReBAR then pure DEVICE_LOCAL, =2 forces pure DEVICE_LOCAL. */
         if (g_cb_dl < 0) {
             const char *e = getenv("WT_VK_CBMEM");
             int want_dl = e ? atoi(e) : (V.props.vendorID == 0x10de && V.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
@@ -3692,9 +3751,20 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
                                e ? "WT_VK_CBMEM=1" : "default on discrete NVIDIA; WT_VK_CBMEM=0: host memory");
                         break;
                     }
-                if (!g_cb_dl) printf("nvn_vk: compute buffers stay in host memory (no device-local host-visible heap of 2 GB; %s)\n",
-                                     e ? "WT_VK_CBMEM=1" : "discrete NVIDIA default");
-            } else if (e) {
+            }
+            if (!g_cb_dl && (want_dl == 1 || want_dl == 2)) {
+                for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
+                    if ((rq.memoryTypeBits >> i & 1) &&
+                        (D.mp.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+                        g_cb_dl = 2;
+                        printf("nvn_vk: compute buffers in device-local memory via staging copies (type %u, heap %llu MB; %s)\n", i,
+                               (unsigned long long)(D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].size >> 20),
+                               e ? (want_dl == 2 ? "WT_VK_CBMEM=2" : "WT_VK_CBMEM=1, no >= 2 GB BAR") : "default on discrete NVIDIA without resizable BAR; WT_VK_CBMEM=0: host memory");
+                        break;
+                    }
+                if (!g_cb_dl) printf("nvn_vk: compute buffers stay in host memory (no suitable device-local memory type; %s)\n",
+                                     e ? "WT_VK_CBMEM" : "discrete NVIDIA default");
+            } else if (e && !g_cb_dl) {
                 printf("nvn_vk: compute buffers in host memory (WT_VK_CBMEM=%d)\n", want_dl);
             }
         }
@@ -3702,6 +3772,17 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
             VkFlags dl = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
             for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
                 if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & dl) == dl && D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].size >= (2ull << 30)) { want = dl; break; }
+        } else if (g_cb_dl == 2) {                 /* [witchtime] issue 257: pure DEVICE_LOCAL (keep non-device-local bits so vmem_alloc's VRAM-full fallback still works) */
+            for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
+                if ((rq.memoryTypeBits >> i & 1) &&
+                    (D.mp.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+                    uint32_t keep = 0;
+                    for (uint32_t j = 0; j < D.mp.memoryTypeCount; j++)
+                        if ((rq.memoryTypeBits >> j & 1) && !(D.mp.memoryTypes[j].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) keep |= 1u << j;
+                    rq.memoryTypeBits = (1u << i) | keep;
+                    want = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                    break;
+                }
         }
         c->mem = vmem_alloc(rq, want, want & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? 3 : 2);
         VKC(vkBindBufferMemory(V.device, c->buf, c->mem.mem, c->mem.off));
@@ -3718,9 +3799,20 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
     if (g_cb_merge) {                              /* the snapshot the copy-back is compared with (cb_land) */
         if (c->snap_cap < size) { free(c->snap); c->snap_cap = (size + 4095) & ~(uint64_t)4095; c->snap = malloc((size_t)c->snap_cap); }
         memcpy(c->snap, P(addr), (size_t)size);
-        memcpy(c->mem.map, c->snap, (size_t)size);
-    } else
-    memcpy(c->mem.map, P(addr), (size_t)size);
+        if (c->mem.map) memcpy(c->mem.map, c->snap, (size_t)size);
+    } else if (c->mem.map) {
+        memcpy(c->mem.map, P(addr), (size_t)size);
+    }
+    if (!c->mem.map) {                             /* [witchtime] issue 257: pure DEVICE_LOCAL fill through the buffer's host-cached staging buffer */
+        cb_stg_ensure(c);
+        memcpy(c->stg_mem.map, g_cb_merge ? c->snap : (const uint8_t *)P(addr), (size_t)size);
+        pass_end(); cmd_begin();
+        VkBufferCopy r = {0, 0, size};
+        vkCmdCopyBuffer(R.cmd, c->stg, c->buf, 1, &r);
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
     c->stale = 0; g_ck_fills++; g_ck_fill_bytes += (LONG64)size;
     g_cb_live++;
     return c;
@@ -5597,7 +5689,7 @@ static void vk_sync_wait(void *arg) {
         if (!s->pending || s->serial != want) continue;
         LONG64 tw0 = tk();
         VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, j->timeout);
-        if (g_tl_t0 && j->timeout) { LONG64 now = tk(); g_tl_sum[3]++; g_tl_sum[4] += now - tw0; g_tl_sum[5] += now - g_tl_t0; }
+        if (g_tl_t0 && j->timeout && !j->flags) { LONG64 now = tk(); g_tl_sum[3]++; g_tl_sum[4] += now - tw0; g_tl_sum[5] += now - g_tl_t0; }
         if (r == VK_SUCCESS) { slot_wait(s); j->result = 1; cb_poll(); }      /* [Recomps#1] slot_wait: older slots and counter reports land first */ else j->result = r == VK_TIMEOUT ? 2 : 3;
         return;
     }
