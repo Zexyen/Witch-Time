@@ -5257,10 +5257,13 @@ static int sync_wait_here(SyncObj *o, uint64_t timeout_ns) {
  * the caller waits here for R.done to move (the render thread keeps it current during a replay and wakes the waiters,
  * nvn_front_done_moved), 1 ms at most, and gets 0, signalled, or 2, timeout expired. Only while the render thread is busy:
  * idle, nobody moves R.done, and the job asks the driver at once. -1: the job. WT_SYNC_POLL=0: always the job, as before. */
-static int sync_poll_here(const SyncObj *o) {
+static int sync_poll_on(void) {
     static int on = -1;
     if (on < 0) on = !(getenv("WT_SYNC_POLL") && !atoi(getenv("WT_SYNC_POLL")));
-    if (!on || o->dead || o->unsafe || !o->posted || o->posted != o->ran) return -1;
+    return on;
+}
+static int sync_poll_here(const SyncObj *o) {
+    if (!sync_poll_on() || o->dead || o->unsafe || !o->posted || o->posted != o->ran) return -1;
     if (!*(Job *volatile *)&g_job_head && !g_rt_cur) return -1;
     InterlockedIncrement(&g_dw_waiters);
     AcquireSRWLockExclusive(&g_dw_lock);
@@ -5282,14 +5285,35 @@ static void sync_wait(Ctx *c) {                         /* (sync, timeoutNs) -> 
     SyncJob j = {o, 0, A1, 3};
     LONG64 sw0 = 0;
     int poll;
+    static _Thread_local const SyncObj *t_poll_o;       /* [witchtime] issue 257: back-to-back timeout-0 spin on the same unsignalled fence while the render thread is idle */
+    static _Thread_local void *t_poll_s;
+    static _Thread_local LONG64 t_poll_t;
+    static LONG64 g_poll_lim;
     if (o && fastsync_on() && o == g_window_sync && !o->posted) { j.result = 3; InterlockedIncrement64(&g_fs[0]); }      /* finding 138: see fastsync_on */
-    else if (o && fastsync_on() && o != g_window_sync && sync_fast_done(o)) { j.result = 0; InterlockedIncrement64(&g_fs[1]); }
-    else if (o && fastsync_on() && o != g_window_sync && !A1 && (poll = sync_poll_here(o)) >= 0) { j.result = poll; InterlockedIncrement64(&g_fs[11]); }
-    else if (o && fastsync_on() && o != g_window_sync && (sw0 = pf_now(), sync_wait_here(o, A1))) { j.result = 1; InterlockedIncrement64(&g_fs[8]); InterlockedExchangeAdd64(&g_fs[9], pf_now() - sw0); }
+    else if (o && fastsync_on() && o != g_window_sync && sync_fast_done(o)) { j.result = 0; InterlockedIncrement64(&g_fs[1]); if (t_poll_o == o) t_poll_o = NULL; }
+    else if (o && fastsync_on() && o != g_window_sync && !A1 && (poll = sync_poll_here(o)) >= 0) { j.result = poll; InterlockedIncrement64(&g_fs[11]); if (poll != 2 && t_poll_o == o) t_poll_o = NULL; }
+    else if (o && fastsync_on() && o != g_window_sync && (sw0 = pf_now(), sync_wait_here(o, A1))) { j.result = 1; InterlockedIncrement64(&g_fs[8]); InterlockedExchangeAdd64(&g_fs[9], pf_now() - sw0); if (t_poll_o == o) t_poll_o = NULL; }
     else if (o) {
         if (fastsync_on() && o != g_window_sync) InterlockedIncrement64(&g_fs[o->dead || o->unsafe || !o->posted ? 6 : o->posted != o->ran ? 4 : A1 < 1000000000ull ? 10 : 5]);
+        int spin = 0;
+        if (fastsync_on() && sync_poll_on() && o != g_window_sync && !A1 && !o->dead && !o->unsafe && o->posted && o->posted == o->ran) {
+            if (!g_poll_lim) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_poll_lim = f.QuadPart / 2000; if (!g_poll_lim) g_poll_lim = 1; }      /* 0.5 ms */
+            void *sv = *(void *volatile *)&o->s;
+            if (sv && t_poll_o == o && t_poll_s == sv && pf_now() - t_poll_t <= g_poll_lim) {
+                j.timeout = 1000000ull;                 /* sleep up to 1 ms in vkWaitForFences instead of 30k+ jobs/s when the GPU is behind and the render thread is idle */
+                j.flags = 1;
+                spin = 1;
+            }
+        }
         gl_run(g_rb->sync_wait, &j);
         if (GetCurrentThreadId() != g_render_tid) jw_add(o == g_window_sync ? 0 : 1 + (j.result & 3), t_jw);      /* finding 138 */
+        if (!A1 && o != g_window_sync) {
+            if (j.result == 2 && !o->dead && !o->unsafe && o->posted && o->posted == o->ran) {
+                t_poll_o = o; t_poll_s = *(void *volatile *)&o->s; t_poll_t = pf_now();
+            } else if (spin || t_poll_o == o) {
+                t_poll_o = NULL;
+            }
+        }
     }
     if (o && o == g_window_sync && A1 && j.result == 3) {      /* P3 round 3: the window texture's sync (never fenced by us): it is free at the refresh that shows the queued frame (display.c) */
         if (l1_pipe_wait()) j.result = 1; else {      /* L1 round 2: pipe mode does not hold here */
