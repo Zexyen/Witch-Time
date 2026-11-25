@@ -78,8 +78,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
 		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
 		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
-		{"frame_rate", "Frame rate (experimental)", "Above 60 some effects may run fast; next start",
-			{{"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}, {"240", "240 fps"}}, 0},
+		{"frame_rate", "Frame rate (experimental)", "Below 60 caps cleanly; above 60 some effects may run fast; next start",
+			{{"30", "30 fps"}, {"40", "40 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}, {"240", "240 fps"}}, 0, "60"},
 		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
 			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
 			1, "1.0"},

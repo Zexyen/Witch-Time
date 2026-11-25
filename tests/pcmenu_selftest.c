@@ -87,6 +87,8 @@ int main(int argc, char **argv) {
     assert(!strcmp(k_rows[ws].val[nearest(ws, -1, 0)], "1280x720") && !strcmp(k_rows[ws].val[nearest(ws, 1, 0)], "1600x900"));
     snprintf(g_raw[fr], sizeof g_raw[fr], "100");
     assert(!strcmp(k_rows[fr].val[nearest(fr, -1, 0)], "90") && !strcmp(k_rows[fr].val[nearest(fr, 1, 0)], "120"));
+    snprintf(g_raw[fr], sizeof g_raw[fr], "35");
+    assert(!strcmp(k_rows[fr].val[nearest(fr, -1, 0)], "30") && !strcmp(k_rows[fr].val[nearest(fr, 1, 0)], "40"));
     int vs = row_of("vsync");                              /* a number in a row of words: the ends, as before */
     snprintf(g_raw[vs], sizeof g_raw[vs], "1");
     assert(nearest(vs, 1, 0) == 0 && nearest(vs, -1, 0) == row_count(vs) - 1);
@@ -149,6 +151,12 @@ int main(int argc, char **argv) {
     change(9, 1, 0); assert(gfx_options()->frame_gen == 2);
     change(9, -1, 0); change(10, -1, 0); assert(!gfx_options()->frame_gen);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
+    assert(!strcmp(val_name(3), "60 fps") && !row_restart(3));
+    change(3, -1, 0); assert(!strcmp(val_name(3), "40 fps") && row_restart(3));
+    assert(gfx_ini_get("frame_rate", buf, sizeof buf) && !strcmp(buf, "40"));
+    change(3, -1, 0); assert(!strcmp(val_name(3), "30 fps") && row_restart(3));
+    assert(gfx_ini_get("frame_rate", buf, sizeof buf) && !strcmp(buf, "30"));
+    change(3, 1, 0); change(3, 1, 0); assert(!strcmp(val_name(3), "60 fps") && !row_restart(3));
     change(3, 1, 0); change(3, 1, 0); change(3, 1, 0); assert(!strcmp(val_name(3), "144 fps") && row_restart(3));
     assert(gfx_ini_get("frame_rate", buf, sizeof buf) && !strcmp(buf, "144"));
     change(3, 1, 0); assert(!strcmp(val_name(3), "165 fps"));

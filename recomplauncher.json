@@ -77,8 +77,10 @@
     },
     {
       "id": "frame_rate", "label": "Frame rate", "group": "Display",
-      "help": "60 is the default (including menus and cutscenes). Above 60 is experimental: some effects may run fast.",
+      "help": "60 is the default (including menus and cutscenes). Below 60 caps cleanly for weaker hardware; above 60 is experimental.",
       "choices": [
+        { "label": "30 fps", "set": { "frame_rate": "30" } },
+        { "label": "40 fps", "set": { "frame_rate": "40" } },
         { "label": "60 fps", "set": { "frame_rate": "60" } },
         { "label": "90 fps", "set": { "frame_rate": "90" } },
         { "label": "120 fps", "set": { "frame_rate": "120" } },

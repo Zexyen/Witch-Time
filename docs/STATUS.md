@@ -1310,6 +1310,18 @@ not changed; it is to be retired).
   `710091dba8` runs): its modes set the rate in about 40 places, none read, some may take the step themselves. Not done:
   the aim's snap to a chapter when the stick is let go (`71009202bc`, 6 frames of t += 0.2: 0.1 s at 60, 0.05 s at 120;
   the ring's own easing hides it).
+- **Below 60 fps real time and `frame_rate = 30 .. 59` (issue 210, 2026-11-25)**: `7100c1f600` clamped gameplay steps
+  to `[1.0, 2.0]` (dropping time whenever a frame exceeded 33.3 ms, so anything below 30 fps ran in slow motion), and
+  the converted frame-counter / smoothing sites (`fps_ci`, `fps_cf`, `fps_fs`, `fps_ease`) were gated on `frame_rate > 60`
+  (so hit-stops, Witch Time slow-downs, input windows, rumble and smoothings ran at half speed at 30 fps). `h_frame_clock`
+  now raises the gameplay step ceiling to `4.0` (15 fps, matching `scene_step.h` and the game's mode 2) and enables the
+  converted sites at every rate (no-op at steady 60; `fps_cf` and `fps_ci` clear carry on reaching 0). `frame_rate`
+  accepts `30 .. 960` (`30` and `40` added to PC settings, Options, launcher and `recomplauncher.json`): at `30`,
+  30 fps-mode scenes keep the console's native 2-pass mode; at `31 .. 59`, they run at `frame_rate` (`eva142` stays at
+  30 Hz). Measured in `p100_GomoraSlider1` (10 s ride displacement, Linux, RADV, vsync = clock): 1014 units at 60 fps
+  (`step = 1.00`), 986 at 30 cap (`step = 2.02`), 983 at 40 cap (`step = 1.50`), 994 at simulated ~19.5 fps
+  (`step = 2.94`, previously clamped to 2.0), and 883 at simulated 15.0 fps (`step = 3.93`, frames over 66.7 ms hit the
+  4.0 ceiling); zero errors.
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
   the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
   smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other

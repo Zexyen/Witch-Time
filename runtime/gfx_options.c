@@ -151,12 +151,14 @@ static const char *const k_default_ini =
 ";   first pause after each start. always: at every pause. off: never.\r\n"
 "pause_hint = first\r\n"
 "\r\n"
-"; frame_rate = 60      (60 .. 960; EXPERIMENTAL above 60)\r\n"
-";   60: gameplay, title, menus and cutscenes at 60 fps (pre-rendered movies keep their own rate). Above 60 (e.g. 90,\r\n"
-";   120, 144, 165, 240, or any value up to 960): the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
-";   runtime/game_shim_eh.c h_frame_clock) and the runtime paces gameplay, title, menus and cutscenes at this value.\r\n"
-";   The game's timers that count frames are converted one by one (tools/wtbuild/fps_counters.txt; docs/STATUS.md,\r\n"
-";   \"Frame rates above 60\"): some effects, input windows and countdowns may still run faster than at 60.\r\n"
+"; frame_rate = 60      (30 .. 960; EXPERIMENTAL outside 60)\r\n"
+";   60: gameplay, title, menus and cutscenes at 60 fps (pre-rendered movies keep their own rate). Below 60 (e.g. 30,\r\n"
+";   40, or any value down to 30): paced at that rate while keeping real time (at 30, title, menus and cutscenes use the\r\n"
+";   console's 30 fps mode). Gameplay also keeps real time down to 15 fps when the PC cannot hold the target rate.\r\n"
+";   Above 60 (e.g. 90, 120, 144, 165, 240, or any value up to 960): the game's frame clock measures real time (its 1.0\r\n"
+";   floor lowered, runtime/game_shim_eh.c h_frame_clock) and the runtime paces gameplay, title, menus and cutscenes at\r\n"
+";   this value. The game's timers that count frames are converted one by one (tools/wtbuild/fps_counters.txt;\r\n"
+";   docs/STATUS.md, \"Frame rates above 60\"): some effects, input windows and countdowns may still differ from 60.\r\n"
 "frame_rate = 60\r\n"
 "\r\n"
 "; model_lod = game | highest\r\n"
@@ -353,7 +355,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "frame_generator")) { int k = framegen_of(val); if (k == 1 || k == 2) o->frame_gen_kind = k; }
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
-        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 960 ? 960 : v; }      /* [Recomps#1] */
+        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 30 ? 30 : v > 960 ? 960 : v; }      /* [Recomps#1] */
         else if (!_stricmp(key, "hdr")) o->hdr = !_stricmp(val, "off") ? 1 : !_stricmp(val, "on") ? 2 : 0;      /* [Recomps#1] finding 147 */
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
@@ -410,6 +412,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         if (paced && !getenv("WT_PACE_RATE")) _putenv_s("WT_PACE_RATE", n);
         printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
                paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (WT_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
+    } else if (o->frame_rate > 0 && o->frame_rate < 60) {
+        char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
+        if (!getenv("WT_PACE_RATE")) _putenv_s("WT_PACE_RATE", n);
+        printf("graphics options: frame_rate=%d: paced at %d fps, keeping real time (issue 210)\n", o->frame_rate, o->frame_rate);
     }
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
         o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
@@ -454,7 +460,9 @@ int gfx_pace_rate(void) {
     if (r < 0) {
         const GfxOptions *o = gfx_options();
         const char *e = getenv("WT_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
-        r = o->frame_rate > 60 && !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
+        if (o->frame_rate > 60) r = !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
+        else if (o->frame_rate > 0 && o->frame_rate < 60) r = o->frame_rate;
+        else r = 60;
     }
     return r;
 }

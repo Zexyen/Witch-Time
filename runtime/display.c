@@ -80,7 +80,7 @@ static volatile LONG g_vb_state;                       /* 0 not started, 1 measu
 static int g_pace_want = -1;                           /* 0 clock, 1 display lock when the refresh rate allows */
 static int g_hold_on = -1;                             /* present at the tick */
 static volatile LONG g_lock_k;                         /* display lock: refreshes per game frame, 0 = our own clock */
-static int g_pace_hz = 60;                             /* [Recomps#1] the ticks per second: 60, or frame_rate above 60 (gfx_options.c gfx_pace_rate); the guest's vsync event stays at 60 */
+static int g_pace_hz = 60;                             /* [Recomps#1] the ticks per second: 60, or frame_rate (30 .. 960; gfx_options.c gfx_pace_rate); the guest's vsync event stays at 60 */
 static volatile LONG64 g_lock_drops, g_lock_relocks;   /* [Recomps#1] finding 122: lock lost after a vblank gap / taken again */
 static volatile LONG64 g_drift_drops, g_drift_relocks; /* [Recomps#1] finding 125 (vsync = auto): lock dropped because the game's speed under it left 60 +-1.1 % / taken again */
 static int g_pace_auto;                                /* vsync = auto: the drift check may drop the lock (display: it only says so) */
@@ -230,7 +230,8 @@ static void pace_options(void) {
     g_pace_hz = gfx_pace_rate();
     printf("display: pacing: %s %d Hz%s; a finished frame is presented %s%s%c", g_pace_want ? "locked to the display when its refresh rate is k x" : "our own clock at",
            g_pace_hz, g_pace_want ? " within 1.1 % (vsync = display / auto), else our own clock" : " (vsync = clock)", g_hold_on ? "at the next tick (steady cadence)" : "as soon as it is ready",
-           g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz" : "", 10);
+           g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz"
+                          : g_pace_hz < 60 ? "; frame_rate below 60: the game is paced on these ticks, keeping real time" : "", 10);
 }
 /* [witchtime] vsync changed in the PC menu (pcmenu.c): the pacing is chosen again (nvn_vk makes the swapchain again for the present
  * mode). A display lock is let go when it is no longer wanted; one is taken while the game runs only if none was tried yet. */
@@ -940,13 +941,14 @@ int display_interval(void) { return (int)g_interval; }
  * present; when display.c paces at frame_rate (g_pace_hz > 60) that is one of its ticks */
 static LONG64 eff_interval(void) { LONG iv = g_interval; return iv ? iv : g_pace_hz > 60 ? 1 : 0; }
 /* The next tick due after `prev` for present interval `iv`. At g_pace_hz == 60, `iv` is in 60 Hz ticks (1 = 60, 2 = 30,
- * 4 = 15 fps). Above 60 fps: iv == 1 is one tick of g_pace_hz (frame_rate); iv == 2 is the spider ride's exact-step scene
- * (eva142: 60 steps/s at any frame_rate, game_shim_eh.c h_fps_mode_set), so it advances by one 60 Hz tick; iv >= 3 keeps
- * the console's 60 / iv Hz cadence (e.g. mode 2 = 15 fps). */
+ * 4 = 15 fps). At other rates: iv == 1 is one tick of g_pace_hz (frame_rate); iv == 2 is 60 Hz above 60 (the spider
+ * ride's exact-step scene eva142: 60 single steps/s at any frame_rate, game_shim_eh.c h_fps_mode_set) or 30 Hz below 60
+ * (the console's 30 fps 2-pass mode); iv >= 3 keeps the console's 60 / iv Hz cadence (e.g. mode 2 = 15 fps). */
 static LONG64 next_due_tick(LONG64 prev, LONG64 iv) {
-    if (g_pace_hz <= 60 || iv <= 1) return prev + iv;
-    LONG64 hz = iv == 2 ? 60 : 60 / iv;
+    if (g_pace_hz == 60 || iv <= 1) return prev + iv;
+    LONG64 hz = iv == 2 ? (g_pace_hz > 60 ? 60 : 30) : 60 / iv;
     if (hz < 1) hz = 1;
+    if (hz >= g_pace_hz) return prev + 1;
     LONG64 c = prev * hz / g_pace_hz + 1;
     return (c * g_pace_hz + hz - 1) / hz;
 }
