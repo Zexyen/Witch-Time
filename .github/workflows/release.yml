@@ -379,7 +379,7 @@ jobs:
             dist/*.sha256
 
       - name: Release
-        if: github.ref_type == 'tag'
+        if: false   # Android isn't announced yet: the APK stays a run artifact; back to github.ref_type == 'tag' when it is
         uses: softprops/action-gh-release@v2
         with:
           name: Witch Time ${{ steps.version.outputs.version }}
