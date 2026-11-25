@@ -1130,6 +1130,36 @@ void h_ui_element(Ctx *c) {
             float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
             v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
         }
+    } else if (kind == 1 && ty == 2001 && sz[0] == 600.0f && sz[1] == 720.0f && !strncmp(ui_name(lay), "hud0200", 7)) {
+        /* Verse Results' white painted backdrop (el 26, 27; 27, 28 in en-GB): right-anchored at x = 640 with a diagonal left
+         * edge ~350 left of that anchor at y = 0. With hud_area = screen on ultrawide, el 0 moves the whole layout to the
+         * right edge below. Centered on ultrawide or on a taller screen, scale uniformly around that diagonal point so the
+         * slope stays and the right / top / bottom edges reach the screen's. */
+        float ex_w = game_hud_centre && a > 16.0f / 9.0f ? (720.0f * a - 1280.0f) * 0.5f : 0.0f;
+        float ex_h = a < 16.0f / 9.0f ? (1280.0f / a - 720.0f) * 0.5f : 0.0f;
+        float k = (350.0f + ex_w) / 350.0f, ky = (360.0f + ex_h) / 360.0f;
+        if (ky > k) k = ky;
+        if (k > 1.0f) {
+            float x;
+            v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+            memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x += 350.0f * (k - 1.0f); memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+        }
+    } else if ((el == 3 || el == 4 || el == 5 || el == 37) && (ex[0] == 640.0f || ex[0] == -640.0f) && !strncmp(ui_name(lay), "huda07a", 7)) {
+        /* Jeanne side-mission Verse Results: el 2 is a 1280x720 dim (widened above); el 3, 4 are its right-anchored 500x720
+         * backdrop at x = 640; el 5 (id 97) holds the rows at x = 640; el 37 (child of el 5, x = -640) sits centred at x = 0. */
+        float x; memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
+        if (a > 16.0f / 9.0f) {
+            float extra = (720.0f * a - 1280.0f) * 0.5f;
+            if (!game_hud_centre) {
+                x += el == 37 ? -extra : extra;
+                memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+            } else if (el == 3 || el == 4) {
+                x += extra; v[0] *= (500.0f + extra) / 500.0f;
+                memcpy((void *)(uintptr_t)(out + 0x10), &x, 4); memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+            }
+        } else if (a < 16.0f / 9.0f && (el == 3 || el == 4)) {
+            v[1] *= 16.0f / (a * 9.0f); memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+        }
     }
     if (!(a > 16.0f / 9.0f)) return;
     float rule = kind == 2 ? ui_rule(lay, el) : kind == 6 ? ui_rule(lay, el + 1) : 0.0f;
@@ -1141,10 +1171,13 @@ void h_ui_element(Ctx *c) {
     }
     if (el != 0 || game_hud_centre) return;
     float x0 = ex[0], x;
-    if (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(ui_name(lay), "hud", 3)) return;
+    if (!(x0 >= 200.0f || x0 <= -200.0f) && x0 != 0.0f) return;
+    const char *nm = ui_name(lay);
+    int vr = x0 == 0.0f && !strncmp(nm, "hud0200", 7);      /* Verse Results: el 0 is at (0, 0), all children sit on the right edge (640) */
+    if (!vr && (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(nm, "hud", 3))) return;
     memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
     float extra = (720.0f * a - 1280.0f) * 0.5f;
-    x += x0 > 0.0f ? extra : -extra;
+    x += (vr || x0 > 0.0f) ? extra : -extra;
     memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
 }
 
