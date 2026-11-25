@@ -480,7 +480,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         let os = match t {
             Target::Windows => "Windows",
             Target::MacOS => "macOS",
-            Target::Linux => "Linux",
+            Target::Linux | Target::Android => "Linux",
         };
         build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a {} program\n{}", os, e)))?;
         let linker = t.linker();
@@ -496,7 +496,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
             let wanted = match t {
                 Target::Windows => &WINDOWS_LIBS[..],
                 Target::MacOS => &MACOS_LIBS[..],
-                Target::Linux => &SYSTEM_LIBS[..],
+                Target::Linux | Target::Android => &SYSTEM_LIBS[..],
             };
             for (what, header, libs) in wanted {
                 let c = probe.join("lib.c");
@@ -1191,7 +1191,7 @@ fn link_outputs(t: Target) -> &'static [&'static str] {
     match t {
         Target::Windows => &["game.dll", "witch-time-game.exe"],
         Target::MacOS => &["game.dylib", "libwitchtime.dylib", "witch-time-game"],
-        Target::Linux => &["game.so", "libwitchtime.so", "witch-time-game"],
+        Target::Linux | Target::Android => &["game.so", "libwitchtime.so", "witch-time-game"],
     }
 }
 

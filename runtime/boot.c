@@ -346,6 +346,7 @@ static int b3_main(int argc, char **argv) {
 #endif
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    if (!t) { printf("cannot start the game's main thread (1 GB stack): %s\n", strerror(errno)); fflush(stdout); exit(1); }
     if (getenv("WT_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
     { void prof15_start(void); prof15_start(); }
 #ifdef __linux__

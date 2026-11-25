@@ -185,6 +185,25 @@ Tools' SDK. The lifted code is compiled with `runtime/freestanding` as elsewhere
 `wtbuild smoke` runs as on Windows, with stand-ins for the game functions the runtime replaces (dyld looks up every
 symbol when it loads the library).
 
+### Android
+
+The same split again, for AArch64 Android 10 and later (`--target=aarch64-linux-android29`), in progress: the runtime
+is `libwitchtime.so` with `SDL_main` inside (`runtime/wt_main.c`: the app's SDLActivity loads it, and the player's
+files are in the app's external storage folder), built with the NDK's clang (`LLVM_ROOT=<ndk>/toolchains/llvm/prebuilt/
+linux-x86_64 wtbuild runtime --target android --out prebuilt-android`, after copying the Android builds of SDL3 and
+FFmpeg into that folder: the link looks for them there, the NDK's clang ignores `LIBRARY_PATH`). The player's PC
+compiles the lifted code with its bundled clang and no NDK (`wtbuild compile --target android`, objects in
+`build/obj_android`; `runtime/freestanding/setjmp.h` has bionic's `jmp_buf`) and links `game.so`
+(`wtbuild link --target android`, into `build/android/`) from `prebuilt-android/`, with the compiler-rt builtins and the NDK's stand-ins for
+bionic (`libc.so`, `libm.so`, `libdl.so`, symbol tables only) the runtime build copied there: the bundled clang has
+neither for that target, and `game.so` must name bionic as its need, since Android's linker resolves every symbol of
+`game.so` when the app loads it (before `libwitchtime.so`, which needs `game.so` and finds it loaded; the three SDK
+calls of the lifted sdk go through `game_bind`'s pointers there, as on Windows). The app is `android/` (README there);
+CI's job `android` builds SDL3, FFmpeg and glslang for Android (`android/build_deps.sh`), the runtime and the app. Not yet
+run on a device. The runtime's Android fixes are `#ifdef __ANDROID__`: fibers switched by a few lines of
+assembly (bionic has no `makecontext`), no `backtrace()` or sampling profiler, a GL 1.1 header and empty functions of
+its own (`runtime/posix/GL/gl_android.h`, `gl_android.c`: the NDK has no desktop OpenGL; the renderer there is Vulkan).
+
 ## Regression tests
 
 `cargo test --release --manifest-path tools/wtbuild/Cargo.toml` needs no dump; CI runs it on Linux

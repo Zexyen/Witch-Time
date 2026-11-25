@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SDL's template manifest (android-project in SDL3's sources), cut to what the game uses: Vulkan, controllers.
+     hasFragileUserData: uninstalling asks whether to keep the files folder, which holds the player's converted dump -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" android:installLocation="auto">
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application android:label="@string/app_name"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:allowBackup="false"
+        android:hasFragileUserData="true"
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+        android:enableOnBackInvokedCallback="false"
+        android:hardwareAccelerated="true"
+        android:isGame="true"
+        android:appCategory="game">
+        <!-- touches are the touch controls' (TouchControls.java), never mouse clicks: the mouse is bound to punch and the camera -->
+        <meta-data android:name="SDL_ENV.SDL_TOUCH_MOUSE_EVENTS" android:value="0" />
+        <activity android:name=".WitchTimeActivity"
+            android:label="@string/app_name"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

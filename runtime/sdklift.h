@@ -7,7 +7,11 @@
 #include "runtime.h"
 #include "hostrt.h"
 
+#ifdef __ANDROID__
+#define SDK_BASE 0x1500000000ULL          /* Android's allocator (scudo) has regions at 0x75..: below them, as hostrt.h */
+#else
 #define SDK_BASE 0x7500000000ULL          /* where the SDK image is mapped (text, rodata, data, bss) */
+#endif
 #include "image_layout.h"
 #define SDK_IMAGE_SIZE SDK_IMAGE_SPAN     /* [Recomps#1] our sdk.elf, from image_layout.h */
 

@@ -721,6 +721,12 @@ void h_frame_clock(Ctx *c) {
         g += (uint64_t)t;
         fc_gtab[(g_upd + 1) & 255] = g;
         fc_stab[(g_upd + 1) & 255] = st > 0.0f && st == st ? st : 1.0f;
+        static int log = -1;                       /* [witchtime] TEST ONLY: WT_STEPLOG=1: the game's step every 300 updates */
+        if (log < 0) log = getenv("WT_STEPLOG") != NULL;
+        if (log && g_upd % 300 == 0) {
+            float ms, per; memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4); memcpy(&per, (void *)(uintptr_t)(obj + 0xec), 4);
+            printf("steplog: update %llu fixed %d step %g ms %g per %g frames due %llu\n", (unsigned long long)g_upd, fixed, st, ms, per, (unsigned long long)g);
+        }
     }
     if (fc_on > 0) { while (__atomic_exchange_n(&fc_lock, 1, __ATOMIC_ACQUIRE)) {} g_upd++; if (g_upd % 1200 == 0) fc_dump(); __atomic_store_n(&fc_lock, 0, __ATOMIC_RELEASE); }
     else __atomic_store_n(&g_upd, g_upd + 1, __ATOMIC_RELEASE);

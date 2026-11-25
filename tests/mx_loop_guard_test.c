@@ -13,10 +13,11 @@
 #include <string.h>
 #include "mx_translate.h"
 
+static int g_no_switch, g_seq_all;
 static char *translate(int stage, const uint8_t *code, int len, unsigned loopdebug) {
     MxIn in; MxOut out;
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
-    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug;
+    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug; in.no_switch = g_no_switch; in.seq_all = g_seq_all;
     mx_translate(&in, &out);
     if (!out.glsl) printf("stage %d not translated: %s %s\n", stage, out.op, out.why);
     return out.glsl;
@@ -165,6 +166,30 @@ int main(int argc, char **argv) {
         if (!aok) { if (aout.glsl) puts(aout.glsl); if (aout_ne.glsl) puts(aout_ne.glsl); }
         ok = ok && aok;
     }
+    g_no_switch = 1;                               /* [witchtime] Qualcomm's if-chain leaves the same way (a fragment stage with a step back has it only with WT_MX_LOOPS=0) */
+    memcpy(code + 0x50, old ? f : w, sizeof f);
+    char *nn = translate(old ? 1 : 0, code, sizeof code, 0), *chain_end = nn ? strstr(nn, " pc = 0u;\n }\n") : NULL;
+    int nsw = chain_end && !strstr(nn, "switch (pc)") && strstr(nn, "while (pc != 0u) {\n") && strstr(nn, "if (pc == 1u) {") && (!old || strstr(chain_end, "if (mx_kill) discard;"));
+    for (const char *t = nn; nsw && (t = strstr(t, "discard")) && t < chain_end; t++) nsw = 0;
+    for (const char *t = nn; nsw && (t = strstr(t, "return;")) && t < chain_end; t++) nsw = 0;
+    uint64_t sg[4] = {0,
+        0xeed8000000000000ull | 4ull << 48 | 1ull << 8,                 /* STG r0, [r1]: no switch in mx_ldg / mx_stg either */
+        0x50b0000000000f00ull | 7ull << 16,                            /* NOP */
+        0xe30000000000000full | 7ull << 16};                           /* EXIT */
+    char *q = translate(5, (const uint8_t *)sg, sizeof sg, 0);
+    nsw = nsw && q && strstr(q, "void mx_stg(uint ad, uint v)") && !strstr(q, "switch");
+    g_no_switch = 0;
+    char *qs = translate(5, (const uint8_t *)sg, sizeof sg, 0);
+    nsw = nsw && qs && strstr(qs, "void mx_stg(uint ad, uint v)") && strstr(qs, "switch (ad >> 27)");
+    if (!nsw && nn) puts(nn);
+    ok = ok && nsw;
+    g_seq_all = 1;                                 /* [witchtime] MxIn.seq_all: a short fragment stage with only forward jumps runs in order too */
+    memcpy(code + 0x50, j, sizeof j);
+    char *sa = translate(1, code, sizeof code, 0);
+    g_seq_all = 0;
+    int saok = sa && strstr(sa, "do { if (pc != 3u) continue;") && !strstr(sa, "switch (pc)");
+    if (!saok && sa) puts(sa);
+    ok = ok && saok;
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }

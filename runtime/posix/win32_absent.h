@@ -150,7 +150,12 @@ SHORT GetAsyncKeyState(int vk);
 #define LoadImageA(...) ((HANDLE)NULL)
 #define GetSystemMetrics(i) 0
 /* the critical-section fields the lock diagnostics print, on glibc's mutex */
-#ifdef __APPLE__
+#ifdef __ANDROID__
+/* bionic's pthread_mutex_internal_t (64-bit): state (type, counter, locked bits) then owner_tid. Diagnostics only. */
+#define OwningThread __private[1]
+#define RecursionCount __private[0]
+#define LockCount __private[0]
+#elif defined(__APPLE__)
 #define OwningThread __sig & 0                /* macOS's mutex does not show its owner: nobody (diagnostics only) */
 #define RecursionCount __sig & 0
 #define LockCount __sig & 0
