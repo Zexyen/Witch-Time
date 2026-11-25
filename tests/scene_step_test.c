@@ -80,6 +80,47 @@ int main(void) {
     check("no movie: nothing to do", !movie_flag_lost(0x40000000u, 0, 60, 30));
     check("a scene the game runs without the flag", !movie_flag_lost(0x40000000u, 1, 60, 60));
     check("an empty header", !movie_flag_lost(0x40000000u, 1, 60, 0));
+
+    /* Arbitrary frame rates (90, 120, 144, 165, 240, 360): even step is 30 / rate, jitter stays even, slower or faster
+     * real rates keep real time and never go non-positive. */
+    static const int rates[] = {75, 90, 100, 120, 144, 165, 180, 240, 360};
+    for (size_t ri = 0; ri < sizeof rates / sizeof rates[0]; ri++) {
+        int hz = rates[ri];
+        float even = 30.0f / (float)hz;
+        owed = 0.0f;
+        for (int i = 0; i < 1000; i++) {
+            float jitter = (i & 1 ? 0.25f : -0.25f) * even;
+            check("arbitrary fps: jitter within a frame keeps the even step", scene_step(&owed, even + jitter, even) == even);
+        }
+        /* GPU slower than target (e.g. 85 fps at target hz): keeps real time */
+        owed = 0.0f;
+        double sum = 0.0;
+        float slow_due = 30.0f / 85.0f;
+        for (int i = 0; i < 2000; i++) { k = scene_step(&owed, slow_due, even); check("arbitrary fps: positive step", k >= 0.03125f); sum += k; }
+        check("arbitrary fps: slower GPU keeps real time", fabs(sum - 2000.0 * slow_due) < 6.0);
+        /* Faster than target (e.g. sudden jump to 500 fps): stays positive and keeps real time */
+        owed = 0.0f;
+        sum = 0.0;
+        float fast_due = 30.0f / 500.0f;
+        for (int i = 0; i < 2000; i++) { k = scene_step(&owed, fast_due, even); check("arbitrary fps: fast step positive", k >= 0.03125f); sum += k; }
+        check("arbitrary fps: faster rate keeps real time", fabs(sum - 2000.0 * fast_due) < 6.0);
+
+        /* eva142 (scene_even) under display.c's 60 Hz next_due_tick cadence at this pace rate: exact 60 steps/s, 0 pairs */
+        owed = 0.0f;
+        half = 0; kind = 2;
+        long long prev = 0, total_steps = 0, pairs = 0;
+        for (int i = 0; i < 6000; i++) {
+            long long c = prev * 60 / hz + 1;
+            long long next = (c * hz + 59) / 60;
+            float dt_due = (float)((double)(next - prev) * 30.0 / (double)hz);
+            prev = next;
+            int s = ride_frame(&owed, &half, &kind, dt_due);
+            if (s == 2) pairs++;
+            total_steps += s;
+        }
+        double secs = (double)prev / (double)hz;
+        check("ride at arbitrary frame_rate: exact 60 steps/s, no pair frames", pairs == 0 && fabs((double)total_steps / secs - 60.0) < 0.01);
+    }
     if (!bad) printf("scene_step: ok\n");
     return bad;
 }

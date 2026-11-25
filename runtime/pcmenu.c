@@ -10,7 +10,7 @@
  *     presents the game's last picture again with the panel over it (nvn_vk_pcmenu.c).
  * Controls: up / down choose a row, left / right (or A / Enter, B / Escape closes) change it; the mouse: point at a row,
  * click on the value (on '‹' for the one before). A change is written to graphics.ini at once (gfx_option_set: comments and
- * other keys kept) and applied while the game runs where the runtime can: cutscene_fps (the game library's switch), vsync
+ * other keys kept) and applied while the game runs where the runtime can: vsync
  * (present mode and pacing), the window (Linux), model detail, film grain, aspect,
  * resolution_scale (when the panel closes, so that going past 3.0 does not make its images; from the game's Options rows at
  * once: nvn_vk_draw.c rs_apply). The rest (frame_rate) is marked "applies at the next start". A key set by an environment
@@ -54,7 +54,7 @@ static const unsigned char k_font_uib[] = {
 
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
 extern volatile LONG g_display_close;                      /* display.c: the window is being closed (the game must run to exit) */
-__declspec(dllimport) extern volatile int game_cutscene_fps, game_model_lod;      /* game_shim_eh.c (the game library) */
+__declspec(dllimport) extern volatile int game_model_lod;      /* game_shim_eh.c (the game library) */
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab);       /* nnhid.c */
 __declspec(dllimport) extern volatile int game_hud_centre;        /* [witchtime] game_shim_eh.c h_ui_element */
 int nnhid_menu_key(int vk);
@@ -80,7 +80,7 @@ int nnpad_bind_set(int ch, const unsigned char *b);
 int options_control_type(int ch);                          /* options_row.c */
 
 /* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; A_QUIT: ends the game; from A_CHAR on the Controls page's rows */
-enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_CHAR, A_PRESET, A_BIND };
+enum { A_LIVE, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_CHAR, A_PRESET, A_BIND };
 #define ROW_VALUES 16
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -96,10 +96,8 @@ static const Row k_rows[] = {
      {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"1280 \xC3\x97 720", "1600 \xC3\x97 900", "1920 \xC3\x97 1080", "2560 \xC3\x97 1440", "3840 \xC3\x97 2160"}},
     {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "WT_VK_PRESENT", "auto", A_VSYNC, 0,
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
-    {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "WT_CUTSCENE_FPS", "30", A_CUT, 0,
-     {"30", "60"}, {"30 fps", "60 fps"}},
-    {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
-     {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
+    {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: gameplay, menus and cutscenes run at this rate (or any value up to 960 in graphics.ini), keeping real time; some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
+     {"60", "90", "120", "144", "165", "240"}, {"60 fps", "90 fps", "120 fps", "144 fps", "165 fps", "240 fps"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"360p", "450p", "540p", "675p", "720p", "900p", "1080p", "1440p", "1800p", "2160p", "2700p"}},
@@ -162,14 +160,14 @@ static volatile LONG g_release;                            /* a bit per npad id:
 static int g_sel, g_cur[NROW], g_start[NROW], g_shown[NROW], g_lock_why[NROW], g_inited, g_said_restart[NROW], g_nowin;
 static char g_raw[NROW][32];                               /* a value of the file that is none of the row's: shown as it is */
 static unsigned g_ver;
-static int g_env_cut, g_env_set[NROW];
+static int g_env_set[NROW];
 static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
 static int g_quit_ask;                                    /* the Quit row was pressed once: the next press on it ends the game */
 static int g_page, g_direct;                               /* 1 = Controls, the rows from A_CHAR on; g_direct: opened there, so back closes */
 static int g_ch, g_cap = -1, g_fam, g_letter;              /* the character shown; the row that waits for a button; the button names */
 static uint8_t g_b[2][16];                                 /* the layouts shown: as saved, else the game's type */
 static int g_b_on[2];                                      /* saved */
-/* the environment as the program started (gfx_options sets WT_CUTSCENE_FPS itself, later) */
+/* the environment as the program started (gfx_options sets WT_MODEL_LOD / RECOMPS_ASPECT itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
@@ -1080,7 +1078,6 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (!ok) return;
     g_cur[i] = k;
     switch (r->apply) {
-    case A_CUT: game_cutscene_fps = atoi(r->val[k]) == 60 ? 60 : 30; break;
     case A_MODEL: game_model_lod = k + 1; break;
     case A_HUD: game_hud_centre = !strcmp(r->val[k], "16:9"); break;
     case A_VSYNC: display_vsync_apply(); add_work(2); break;

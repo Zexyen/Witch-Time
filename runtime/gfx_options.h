@@ -19,14 +19,12 @@ typedef struct {
     int shader_prepare;     /* track V session 14 (appended: older objects keep their offsets): 0 first_run (the game is held at its first frame until every shader of the game's data is prepared, once per GPU + driver), 1 background (as before), 2 off;  env WT_VK_PREPARE wins */
     int aspect_stretch;     /* [Recomps#1] aspect = keep (0, default: the picture keeps its shape, black bars on a wider or taller
                                window, e.g. an ultrawide monitor) | stretch (1: it fills the window); nvn_vk_draw.c present (Vulkan) */
-    int frame_rate;         /* [Recomps#1] frame_rate = 60 (the game as made) .. 120: above 60 the lifted frame-rate patch is on, capped there */
+    int frame_rate;         /* [Recomps#1] frame_rate = 60 (the game as made) .. 960: above 60 the lifted frame-rate patch is on, paced there */
     int hdr;                /* [Recomps#1] hdr = auto (0: HDR output while Windows HDR is on for the window's monitor) | off (1) | on (2: always);
                                nvn_vk_draw.c hdr_* (Vulkan on Windows; finding 147) */
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */
     float hdr_paper_white;  /* [Recomps#1] hdr_paper_white: the game's white in nits (80 .. 1000); 0 = auto: Windows' SDR content brightness */
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
-    int cutscene_fps;       /* [witchtime] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
-                             * env WT_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
     float texture_lod_bias; /* [witchtime] the mip bias, -1 (0 = the game's own; no key since 2026-11-10); added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env WT_TEXTURE_LOD_BIAS wins */
     int model_lod_high;     /* [witchtime] model_lod = game (0) | highest (1); game_shim_eh.c h_model_lod through WT_MODEL_LOD */

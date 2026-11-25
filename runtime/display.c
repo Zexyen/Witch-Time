@@ -939,6 +939,17 @@ int display_interval(void) { return (int)g_interval; }
 /* [Recomps#1] the interval the pacing uses: above 60 fps the lifted frame-rate patch asks for 0 (do not wait) at every
  * present; when display.c paces at frame_rate (g_pace_hz > 60) that is one of its ticks */
 static LONG64 eff_interval(void) { LONG iv = g_interval; return iv ? iv : g_pace_hz > 60 ? 1 : 0; }
+/* The next tick due after `prev` for present interval `iv`. At g_pace_hz == 60, `iv` is in 60 Hz ticks (1 = 60, 2 = 30,
+ * 4 = 15 fps). Above 60 fps: iv == 1 is one tick of g_pace_hz (frame_rate); iv == 2 is the spider ride's exact-step scene
+ * (eva142: 60 steps/s at any frame_rate, game_shim_eh.c h_fps_mode_set), so it advances by one 60 Hz tick; iv >= 3 keeps
+ * the console's 60 / iv Hz cadence (e.g. mode 2 = 15 fps). */
+static LONG64 next_due_tick(LONG64 prev, LONG64 iv) {
+    if (g_pace_hz <= 60 || iv <= 1) return prev + iv;
+    LONG64 hz = iv == 2 ? 60 : 60 / iv;
+    if (hz < 1) hz = 1;
+    LONG64 c = prev * hz / g_pace_hz + 1;
+    return (c * g_pace_hz + hz - 1) / hz;
+}
 void nvn_pf_pace(LONG64 ticks);            /* nvn_gl.c: timing scopes */
 /* WT_CLOCKSTAT=1: per 600 presented frames, the real time, the vsync signals sent, the refreshes the game counted
  * (600 = one step per presented frame) and the refreshes this thread slept through. */
@@ -981,9 +992,9 @@ static void frame_queued(void) {
         LONG64 held = InterlockedExchange64(&g_hold_ticks, 0);
         if (held) nvn_pf_pace(held);                               /* the hold of the finished frame is pacing time (it replaces the wait after the present) */
     } else {
-    LONG64 at = g_vsync_n + 1, iv = eff_interval();
+    LONG64 at = g_vsync_n + 1, iv = eff_interval(), due = iv ? next_due_tick(g_latch, iv) : g_vsync_n;
     if (!iv) at = g_vsync_n;                                       /* interval 0: shown at once, nobody waits */
-    else if (at < g_latch + iv) at = g_latch + iv;
+    else if (at < due) at = due;
     g_latch = at;
     InterlockedExchange(&g_latch_pending, iv != 0);
     }
@@ -1208,17 +1219,18 @@ static void l1_report(FILE *out) {
 void display_present_plan(int vulkan) {
     if (!vulkan || old_pacing()) return;
     pace_options();
-    LONG64 now_n = g_vsync_n, iv = eff_interval(), prev = g_latch, at = now_n + 1;
-    int on_time = iv && now_n < prev + iv && prev + iv - now_n <= 6;
+    LONG64 now_n = g_vsync_n, iv = eff_interval(), prev = g_latch, due = iv ? next_due_tick(prev, iv) : now_n, at = now_n + 1;
+    LONG64 span = due - prev;
+    int on_time = iv && now_n < due && due - now_n <= (span > 6 ? span + 2 : 6);
     static int late_go = -1;
     if (late_go < 0) late_go = !(getenv("WT_PACE_LATE") && !atoi(getenv("WT_PACE_LATE")));
     if (!iv) at = now_n;
-    else if (at < prev + iv) at = prev + iv;
-    else if (late_go && now_n >= prev + iv) at = now_n;      /* issue 257: a late frame does not wait for one more tick (see the comment above) */
+    else if (at < due) at = due;
+    else if (late_go && now_n >= due) at = now_n;      /* issue 257: a late frame does not wait for one more tick (see the comment above) */
     g_latch = at;
     InterlockedExchange(&g_latch_pending, iv != 0);
     if (iv && !on_time) g_hold_late++;
-    l1_plan(iv && !on_time && now_n > prev + iv);      /* L1 (a frame queued after the tick it was due at = late) */
+    l1_plan(iv && !on_time && now_n > due);      /* L1 (a frame queued after the tick it was due at = late) */
     InterlockedExchange64(&g_hold_target, on_time && g_hold_on && !g_lockstep ? at : 0);
     InterlockedExchange(&g_planned, 1);
 }

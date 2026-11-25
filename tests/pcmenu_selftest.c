@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 
 volatile LONG g_guest_frozen, g_display_close;
-volatile int game_cutscene_fps, game_model_lod;
+volatile int game_model_lod;
 volatile int game_hud_centre;
 static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int swap_ab) { (void)swap_ab; *b = 0; *lx = *ly = 0; }
@@ -74,8 +74,9 @@ int main(int argc, char **argv) {
     /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
     spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
     setenv("WT_GRAPHICS_CONFIG", ini, 1);
-    /* a value not in a row's list (v0.5.2's 1.4, a hand-edited 16:10): the nearest one that way; none: left / right stay */
-    int rs = row_of("resolution_scale"), ar = row_of("aspect_ratio"), ws = row_of("size");
+    /* a value not in a row's list (v0.5.2's 1.4, a hand-edited 16:10, custom frame_rate 100): the nearest one that way; none: left / right stay */
+    int rs = row_of("resolution_scale"), ar = row_of("aspect_ratio"), ws = row_of("size"), fr = row_of("frame_rate");
+    assert(row_of("cutscene_fps") < 0 && fr == 3);
     snprintf(g_raw[rs], sizeof g_raw[rs], "1.4");
     assert(!strcmp(k_rows[rs].val[nearest(rs, 1, 0)], "1.6") && !strcmp(k_rows[rs].val[nearest(rs, -1, 0)], "1.2"));
     snprintf(g_raw[rs], sizeof g_raw[rs], "9");
@@ -84,10 +85,12 @@ int main(int argc, char **argv) {
     assert(!strcmp(k_rows[ar].val[nearest(ar, -1, 0)], "16:9") && nearest(ar, 1, 0) == -1);
     snprintf(g_raw[ws], sizeof g_raw[ws], "1280x800");
     assert(!strcmp(k_rows[ws].val[nearest(ws, -1, 0)], "1280x720") && !strcmp(k_rows[ws].val[nearest(ws, 1, 0)], "1600x900"));
+    snprintf(g_raw[fr], sizeof g_raw[fr], "100");
+    assert(!strcmp(k_rows[fr].val[nearest(fr, -1, 0)], "90") && !strcmp(k_rows[fr].val[nearest(fr, 1, 0)], "120"));
     int vs = row_of("vsync");                              /* a number in a row of words: the ends, as before */
     snprintf(g_raw[vs], sizeof g_raw[vs], "1");
     assert(nearest(vs, 1, 0) == 0 && nearest(vs, -1, 0) == row_count(vs) - 1);
-    g_raw[rs][0] = g_raw[ar][0] = g_raw[ws][0] = g_raw[vs][0] = 0;
+    g_raw[rs][0] = g_raw[ar][0] = g_raw[ws][0] = g_raw[fr][0] = g_raw[vs][0] = 0;
     assert(gfx_options()->present == 0);                   /* the last vsync line wins: clock */
     assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
     assert(fabsf(gfx_options()->aspect_ratio - 21.0f / 9.0f) < 1e-5f && fabs(atof(getenv("RECOMPS_ASPECT")) - 21.0 / 9.0) < 1e-5);      /* <w>:<h>, handed on */
@@ -102,10 +105,10 @@ int main(int argc, char **argv) {
     assert(strstr(s, "resolution_scale = 1.0\r\naspect = stretch\r\n") && strstr(s, "mystery = 7\r\n"));
     free(s);
     assert(gfx_option_set("resolution_scale", "2.4") && gfx_options()->scale == 2.4f);
-    spit(ini, "window = windowed\nwidth = 1280\nheight = 720\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n");      /* LF file */
+    spit(ini, "window = windowed\nwidth = 1280\nheight = 720\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\ncutscene_fps = 30\n");      /* LF file */
     assert(gfx_option_set("width", "1920") && gfx_option_set("height", "1080") && gfx_options()->width == 1920 && gfx_options()->height == 1080);
     s = slurp(ini);
-    assert(!strcmp(s, "window = windowed\nwidth = 1920\nheight = 1080\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n"));
+    assert(!strcmp(s, "window = windowed\nwidth = 1920\nheight = 1080\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\ncutscene_fps = 30\n"));
     free(s);
     /* opening from the pad: Start + Select together, not one of them and not the sticks */
     assert(pcmenu_gate(0, 0x30) == 0 && pcmenu_gate(0, 0) == 0 && pcmenu_gate(0, 1u << 10) == 0 && pcmenu_gate(0, 1u << 11) == 0 && !g_open);
@@ -114,43 +117,48 @@ int main(int argc, char **argv) {
     /* the menu's rows from that file; changes through the menu */
     g_type[1] = 2;                                         /* Viola on the game's Type C */
     menu_open("test", 0, 0);                              /* (its thread runs on with the stubs' idle input) */
-    assert(g_cur[5] == 7 && !strcmp(val_name(5), "1440p"));
+    assert(g_cur[4] == 7 && !strcmp(val_name(4), "1440p"));
     assert(gfx_options()->aniso == 16 && gfx_options()->texture_lod_bias == -1.0f);      /* fixed: the file's anisotropic_filtering = 8 is not used */
-    assert(!gfx_options()->model_lod_high && g_cur[6] == 0);
-    change(6, 1, 0); assert(gfx_options()->model_lod_high && game_model_lod == 2 && !row_restart(6));
+    assert(!gfx_options()->model_lod_high && g_cur[5] == 0);
+    change(5, 1, 0); assert(gfx_options()->model_lod_high && game_model_lod == 2 && !row_restart(5));
     assert(gfx_ini_get("model_lod", buf, sizeof buf) && !strcmp(buf, "highest"));
-    change(6, -1, 0); assert(!gfx_options()->model_lod_high && game_model_lod == 1);
-    assert(!gfx_options()->no_film_grain && g_cur[7] == 0);      /* not in the file: the game's own */
-    change(7, 1, 0); assert(gfx_options()->no_film_grain && !row_restart(7));
+    change(5, -1, 0); assert(!gfx_options()->model_lod_high && game_model_lod == 1);
+    assert(!gfx_options()->no_film_grain && g_cur[6] == 0);      /* not in the file: the game's own */
+    change(6, 1, 0); assert(gfx_options()->no_film_grain && !row_restart(6));
     assert(gfx_ini_get("film_grain", buf, sizeof buf) && !strcmp(buf, "off"));
-    change(7, -1, 0); assert(!gfx_options()->no_film_grain);
-    assert(!gfx_options()->upscaler && g_cur[8] == 0);      /* issue 118: not in the file: off */
-    pcmenu_take_work(); change(8, 1, 0); assert(gfx_options()->upscaler == 1 && row_restart(8) && !(g_work & 4));      /* applies when the panel closes */
+    change(6, -1, 0); assert(!gfx_options()->no_film_grain);
+    assert(!gfx_options()->upscaler && g_cur[7] == 0);      /* issue 118: not in the file: off */
+    pcmenu_take_work(); change(7, 1, 0); assert(gfx_options()->upscaler == 1 && row_restart(7) && !(g_work & 4));      /* applies when the panel closes */
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3"));
-    change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); change(8, 1, 0); assert(gfx_options()->upscaler == 5 && !strcmp(val_name(8), "FSR 3 Ultra Performance"));
+    change(7, 1, 0); change(7, 1, 0); change(7, 1, 0); change(7, 1, 0); assert(gfx_options()->upscaler == 5 && !strcmp(val_name(7), "FSR 3 Ultra Performance"));
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr3_ultra_performance"));
-    for (int i = 0; i < 10; i++) change(8, 1, 0);      /* DLSS (6 .. 10), then FSR 4 (11 .. 15): the last of the 16 values */
-    assert(gfx_options()->upscaler == 15 && !strcmp(val_name(8), "FSR 4 Ultra Performance"));
+    for (int i = 0; i < 10; i++) change(7, 1, 0);      /* DLSS (6 .. 10), then FSR 4 (11 .. 15): the last of the 16 values */
+    assert(gfx_options()->upscaler == 15 && !strcmp(val_name(7), "FSR 4 Ultra Performance"));
     assert(gfx_ini_get("upscaler", buf, sizeof buf) && !strcmp(buf, "fsr4_ultra_performance"));
-    for (int k = 0; k < 15; k++) change(8, -1, 0);
+    for (int k = 0; k < 15; k++) change(7, -1, 0);
     assert(!gfx_options()->upscaler);
-    assert(gfx_options()->sharpness == 0.0f && g_cur[9] == 0);      /* issue 119: not in the file: off */
-    change(9, 1, 0); change(9, 1, 0); assert(fabsf(gfx_options()->sharpness - 0.4f) < 1e-6f && !row_restart(9) && !strcmp(val_name(9), "40 %"));      /* applies while the game runs */
+    assert(gfx_options()->sharpness == 0.0f && g_cur[8] == 0);      /* issue 119: not in the file: off */
+    change(8, 1, 0); change(8, 1, 0); assert(fabsf(gfx_options()->sharpness - 0.4f) < 1e-6f && !row_restart(8) && !strcmp(val_name(8), "40 %"));      /* applies while the game runs */
     assert(gfx_ini_get("sharpness", buf, sizeof buf) && !strcmp(buf, "40"));
-    change(9, -1, 0); change(9, -1, 0); assert(gfx_options()->sharpness == 0.0f);
-    assert(!gfx_options()->frame_gen && g_cur[10] == 0);      /* issue 119: not in the file: off */
-    change(10, 1, 0); assert(gfx_options()->frame_gen == 1 && !row_restart(10) && !strcmp(val_name(10), "On"));      /* on: the generator's row decides which (fsr when not in the file); applies while the game runs */
+    change(8, -1, 0); change(8, -1, 0); assert(gfx_options()->sharpness == 0.0f);
+    assert(!gfx_options()->frame_gen && g_cur[9] == 0);      /* issue 119: not in the file: off */
+    change(9, 1, 0); assert(gfx_options()->frame_gen == 1 && !row_restart(9) && !strcmp(val_name(9), "On"));      /* on: the generator's row decides which (fsr when not in the file); applies while the game runs */
     assert(gfx_ini_get("frame_generation", buf, sizeof buf) && !strcmp(buf, "on"));
-    change(11, 1, 0); assert(gfx_options()->frame_gen == 2 && !strcmp(val_name(11), "DLSS"));
-    change(10, -1, 0); assert(!gfx_options()->frame_gen && gfx_options()->frame_gen_kind == 2);      /* off keeps the choice */
-    change(10, 1, 0); assert(gfx_options()->frame_gen == 2);
-    change(10, -1, 0); change(11, -1, 0); assert(!gfx_options()->frame_gen);
+    change(10, 1, 0); assert(gfx_options()->frame_gen == 2 && !strcmp(val_name(10), "DLSS"));
+    change(9, -1, 0); assert(!gfx_options()->frame_gen && gfx_options()->frame_gen_kind == 2);      /* off keeps the choice */
+    change(9, 1, 0); assert(gfx_options()->frame_gen == 2);
+    change(9, -1, 0); change(10, -1, 0); assert(!gfx_options()->frame_gen);
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
-    change(3, 1, 0); assert(game_cutscene_fps == 60);
-    pcmenu_take_work(); change(5, 1, 0); assert(row_restart(5) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */
-    change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); assert(g_cur[5] == 10);      /* 3.0, the last: right stops there */
-    change(5, 1, 1); assert(g_cur[5] == 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0); change(5, 1, 0);      /* A goes round */
-    g_sel = 5; g_ver++;
+    change(3, 1, 0); change(3, 1, 0); change(3, 1, 0); assert(!strcmp(val_name(3), "144 fps") && row_restart(3));
+    assert(gfx_ini_get("frame_rate", buf, sizeof buf) && !strcmp(buf, "144"));
+    change(3, 1, 0); assert(!strcmp(val_name(3), "165 fps"));
+    change(3, 1, 0); assert(!strcmp(val_name(3), "240 fps"));
+    for (int k = 0; k < 5; k++) change(3, -1, 0);
+    assert(!strcmp(val_name(3), "60 fps") && !row_restart(3));
+    pcmenu_take_work(); change(4, 1, 0); assert(row_restart(4) && !(g_work & 4));      /* 1.6 -> 2.0: applies when the panel closes */
+    change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); assert(g_cur[4] == 10);      /* 3.0, the last: right stops there */
+    change(4, 1, 1); assert(g_cur[4] == 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0);      /* A goes round */
+    g_sel = 4; g_ver++;
     panel(dir, "pcmenu_1280x720", 1280, 720);
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
     g_sel = 2; g_ver++;
@@ -193,7 +201,7 @@ int main(int argc, char **argv) {
     AcquireSRWLockExclusive(&g_lock); page_go(0); g_ver++; ReleaseSRWLockExclusive(&g_lock);
     /* closing: every player reads an idle pad until that player has let go (player 2 = a keyboard holding Esc = Plus) */
     InterlockedExchange(&g_open, 0); Sleep(200);           /* the menu's thread ends: what it does at a close */
-    assert(g_release == 0xff && !g_guest_frozen && (g_work & 4) && !row_restart(5));
+    assert(g_release == 0xff && !g_guest_frozen && (g_work & 4) && !row_restart(4));
     pcmenu_take_work();
     assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 2 still holds Plus: not given */
     assert(pcmenu_gate(0, 0) == 0);                        /* player 1 let go: its input is back at once */
