@@ -467,15 +467,19 @@ static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *
 void h_fps_mode_set(Ctx *c) {
     static int last = -1;
     int sixty = !cutscene_30();
+    int rate = pace_rate(), below = rate > 0 && rate < 60;
     int want = (int)(uint32_t)c->x[0];
-    /* title, menus, cutscenes and rides (flag 16) run at 60 fps or frame_rate (real time). Only the chapter 3 spider ride's
-     * prompt scene (g_exact = eva142) stays at 60 above 60 fps (#45: display.c paces mode 1's interval 2 at 60 Hz for any
-     * frame_rate): its logic steps must be exactly 1.0, 60 a second. */
-    g_fps_forced = want == 1 && (g_exact ? !uncap_on() : uncap_on() || sixty || (state_flags() & 0x10000));
+    /* title, menus, cutscenes and rides (flag 16) run at 60 fps or frame_rate (real time). At frame_rate <= 30 they keep
+     * the console's native 30 fps 2-pass mode. The chapter 3 spider ride's prompt scene (g_exact = eva142) keeps exact 1.0
+     * steps: 60 single steps/s at >= 60 (display.c paces interval 2 at 60 Hz above 60), or 30 two-step frames/s below 60. */
+    g_fps_forced = want == 1 && (rate > 0 && rate <= 30 ? 0 : g_exact ? (!uncap_on() && !below) : (uncap_on() || below || sixty || (state_flags() & 0x10000)));
     if (want != last) {
         struct timespec ts; timespec_get(&ts, TIME_UTC);
         printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; WT_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
-               (double)ts.tv_sec + ts.tv_nsec / 1e9, g_fps_forced ? (uncap_on() ? ": runs at frame_rate" : ": runs at 60") : (want == 1 && g_exact && uncap_on() ? ": runs at 60 (exact step)" : ""));
+               (double)ts.tv_sec + ts.tv_nsec / 1e9,
+               g_fps_forced ? (uncap_on() || below ? ": runs at frame_rate" : ": runs at 60")
+                            : (want == 1 && g_exact && uncap_on() ? ": runs at 60 (exact step)"
+                             : want == 1 && g_exact && below ? ": runs at 30 (exact step)" : ""));
         fflush(stdout);
         last = want;
     }
@@ -600,14 +604,14 @@ void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
  * fps_ci / fps_cf). The game's counters move 1 a frame, made for 60 Hz frames (30 Hz in the 30 fps scenes). Each clock
  * update adds its step (frames of the game's own cadence) to an accumulator; G = the whole frames due so far (at most 4
  * an update). A counter visit moves by the frames due since that field's last visit when it also ran in the previous
- * update, so it keeps the game's time at 90, 120, 144 fps or a rate that changes from frame to frame; a second visit in
- * the same update moves as the first did (a counter the game steps twice a frame); any other visit (the first, a one-off
- * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 (a test of the result
- * for 0 fires as made; at 0 nothing is owed); an up-counter moves at most 1 a visit (a test for an exact value is not
- * passed over); what a limit holds back is owed to the next visits (at most 8). Off (the stock 1) unless frame_rate is
- * above 60; WT_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
- * fps_patch.py (finding 134), written again for B3. */
-static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_FPS_COUNTERS"); v = uncap_on() && !(e && !atoi(e)); } return v; }
+ * update, so it keeps the game's time at 30, 60, 90, 120, 144 fps or a rate that changes from frame to frame (at a steady
+ * 60 fps, step == 1.0 gives the stock 1); a second visit in the same update moves as the first did (a counter the game
+ * steps twice a frame); any other visit (the first, a one-off event) moves 1 as made. A countdown never passes 0 in one
+ * visit and takes the stock step at 0 (a test of the result for 0 fires as made; hitting 0 owes nothing); an up-counter
+ * moves at most 1 a visit (a test for an exact value is not passed over); what a limit holds back is owed to the next
+ * visits (at most 8). WT_FPS_COUNTERS=0 keeps the stock 1 at any rate (tests: is a fault the sites'). The rules of
+ * B2recomp's fps_patch.py (finding 134), written again for B3. */
+static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_FPS_COUNTERS"); v = !(e && !atoi(e)); } return v; }
 static float fc_stab[256];                  /* the step of update n at [n & 255] (fps_fs) */
 static uint64_t fc_gtab[256];               /* G of update n at [n & 255], stored before n is published: other threads read n, then its G */
 typedef struct { uint64_t key, field, S, U; int64_t now, carry; float f; } FcCnt;
@@ -655,11 +659,13 @@ uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int si
     if (!fc_sites_on() || !g_upd) return (uint32_t)k;
     FcCnt *r;
     int64_t de = fc_visit(key, field, &r), w = (int32_t)wb;
-    /* at 0 a countdown takes the stock step and owes nothing: frames of 2 below 60 fps would pile up there and cut the next
-     * window short (issue 134) */
+    /* at 0 a countdown takes the stock step and owes nothing: frames of 2+ below 60 fps would pile up there and cut the next
+     * window short (issue 134); hitting 0 on this visit clears carry for the same reason */
     if (sign < 0 && w == 0) { r->carry = 0; return (uint32_t)k; }
-    if (sign < 0) fc_limit(r, &de, w > k ? 1 + (w - k) / k : 1);
-    else fc_limit(r, &de, 1);
+    if (sign < 0) {
+        int64_t keep = w > k ? 1 + (w - k) / k : 1;
+        if (de >= keep) { de = keep; r->carry = 0; }
+    } else fc_limit(r, &de, 1);
     return (uint32_t)(k * de);
 }
 /* a float counter's add of +/-1.0 (w: its value before): the frames that multiply the 1.0 */
@@ -668,6 +674,7 @@ int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign) {
     if (!fc_sites_on() || !g_upd) return 1;
     FcCnt *r;
     int64_t de = fc_visit(key, field, &r);
+    if (sign < 0 && w <= 0.0f) { r->carry = 0; return 1; }
     fc_limit(r, &de, sign < 0 ? (w >= 2.0f ? 1 + (int64_t)(w - 1.0f) : 1) : 1);
     return (int)de;
 }
@@ -788,9 +795,12 @@ void h_frame_clock(Ctx *c) {
     keep_movie_flag(c);
     test_witch_time(c);
     int fixed = (uint32_t)c->x[1] == 0, ride = state_flags() & 0x10000;
+    int rate = pace_rate(), below = rate > 0 && rate < 60;
     g_exact = fixed && ride && scene_playing(0xa142);
-    /* s0 is 4.0 in the game's mode 2 */
-    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (!cutscene_30() || uncap_on() || ride);
+    /* s0 is 4.0 in the game's mode 2; at frame_rate <= 30 (or eva142 below 60) keep the console's 2-pass 30 Hz mode */
+    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (rate > 0 && rate <= 30 ? 0 : g_exact ? !below : (!cutscene_30() || uncap_on() || below || ride));
+    float old_carry = 0.0f;
+    if (!fixed) memcpy(&old_carry, (void *)(uintptr_t)(obj + 0xe4), 4);
     f_7100c1f600(c);
     {
         static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
@@ -798,10 +808,9 @@ void h_frame_clock(Ctx *c) {
         if (fixed) {
             float v, ms;
             uint32_t flags = state_flags();
-            int rate = pace_rate();
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
-            float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; above 60 fps a frame is shorter */
-            if (g_one_pass && !g_exact && rate > 60) even = 30.0f / (float)rate;
+            float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; at frame_rate != 60 a frame is shorter or longer */
+            if (g_one_pass && !g_exact && rate > 0 && rate != 60) even = 30.0f / (float)rate;
             float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
             if (uncap_on() && !rate && due < even && !g_exact) even = due;
             /* the load before a scene is not the scene's time, nor is its pause menu (flags 14 and 0: its clock stands) */
@@ -812,17 +821,26 @@ void h_frame_clock(Ctx *c) {
         }
         was_fixed = fixed;
     }
-    /* frame_rate above 60: a measured step (w1 = 1) is this frame's ms / the ms of a 60 Hz frame (+0xec) with the floor 1.0
-     * lowered to 1/16 (960 fps) and no carry; the 2.0 ceiling (slow below 30 fps) and the global override (7100ba3300's float,
-     * when above 0) stay the game's. The game's frame counters of tools/wtbuild/fps_counters.txt follow (fps_ci below). */
-    if (!fixed && uncap_on()) {
+    /* Gameplay (w1 = 1): keep real time down to 15 fps (4.0 ceiling, matching the game's 15 fps mode and scene_step.h;
+     * stock f_7100c1f600 clamps at 2.0, slowing down below 30 fps — issue 210). Above 60 fps (uncap_on), also lower the
+     * 1.0 floor to 1/16 (960 fps) with no carry. The global override (7100ba3300's float, when above 0) always wins. */
+    if (!fixed) {
         uint64_t p; float ov, ms, per;
         memcpy(&p, (void *)(uintptr_t)0x71024aaea0ull, 8); memcpy(&ov, (void *)(uintptr_t)p, 4);
         memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4); memcpy(&per, (void *)(uintptr_t)(obj + 0xec), 4);
         if (!(ov > 0.0f) && per > 0.0f && ms == ms) {
-            float s = ms / per, z = 0.0f;
-            s = s < 0.0625f ? 0.0625f : s > 2.0f ? 2.0f : s;
-            memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+            if (uncap_on()) {
+                float s = ms / per, z = 0.0f;
+                s = s < 0.0625f ? 0.0625f : s > 4.0f ? 4.0f : s;
+                memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+            } else {
+                float s = ms / per - (old_carry == old_carry ? old_carry : 0.0f);
+                if (s > 2.0f) {
+                    float z = 0.0f;
+                    if (s > 4.0f) s = 4.0f;
+                    memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+                }
+            }
         }
     }
     {   /* this update's step into the frames due (fps_ci), then the update is published */

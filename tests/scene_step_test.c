@@ -121,6 +121,45 @@ int main(void) {
         double secs = (double)prev / (double)hz;
         check("ride at arbitrary frame_rate: exact 60 steps/s, no pair frames", pairs == 0 && fabs((double)total_steps / secs - 60.0) < 0.01);
     }
+
+    /* Frame rates below 60 (30, 40, 45, 50): 30 uses native 2-pass (even = 1.0); 31..59 uses 1-pass with even = 30 / rate.
+     * Both keep real time on time and when dropping down to 15 fps. */
+    static const int low_rates[] = {30, 40, 45, 50};
+    for (size_t ri = 0; ri < sizeof low_rates / sizeof low_rates[0]; ri++) {
+        int hz = low_rates[ri];
+        int one_pass = hz > 30;
+        float even = one_pass ? 30.0f / (float)hz : 1.0f;
+        owed = 0.0f;
+        for (int i = 0; i < 1000; i++) {
+            float jitter = (i & 1 ? 0.25f : -0.25f) * even;
+            check("low fps: jitter within a frame keeps the even step", scene_step(&owed, even + jitter, even) == even);
+        }
+        /* Dropping to 20 fps keeps real time (30/20 = 1.5 30-Hz frames per frame; steady debt is 8*due - 7*even) */
+        owed = 0.0f;
+        double sum = 0.0;
+        float slow_due = 30.0f / 20.0f;
+        for (int i = 0; i < 2000; i++) { k = scene_step(&owed, slow_due, even); sum += k; }
+        check("low fps: dropping to 20 fps keeps real time", fabsf(k - slow_due) < 0.001f && fabs(sum + owed - 2000.0 * slow_due) < 0.1 && owed < 8.5f);
+        /* Dropping to 15 fps keeps real time (30/15 = 2.0 30-Hz frames per frame, ceiling) */
+        owed = 0.0f;
+        sum = 0.0;
+        float slow15 = 30.0f / 15.0f;
+        for (int i = 0; i < 2000; i++) { k = scene_step(&owed, slow15, even); sum += k; }
+        check("low fps: dropping to 15 fps keeps real time", fabsf(k - slow15) < 0.001f && fabs(sum + owed - 2000.0 * slow15) < 0.1 && owed < 13.0f);
+        /* display.c next_due_tick at low rate: iv == 2 -> 30 Hz, iv == 4 -> 15 Hz */
+        long long prev = 0, ticks30 = 0, ticks15 = 0;
+        for (int i = 0; i < 300; i++) {
+            long long next = (30 >= hz) ? prev + 1 : (((prev * 30 / hz + 1) * hz + 29) / 30);
+            prev = next; ticks30++;
+        }
+        check("low fps: interval 2 paces at 30 Hz", fabs((double)ticks30 / ((double)prev / (double)hz) - 30.0) < 0.1);
+        prev = 0;
+        for (int i = 0; i < 150; i++) {
+            long long next = (15 >= hz) ? prev + 1 : (((prev * 15 / hz + 1) * hz + 14) / 15);
+            prev = next; ticks15++;
+        }
+        check("low fps: interval 4 paces at 15 Hz", fabs((double)ticks15 / ((double)prev / (double)hz) - 15.0) < 0.1);
+    }
     if (!bad) printf("scene_step: ok\n");
     return bad;
 }
