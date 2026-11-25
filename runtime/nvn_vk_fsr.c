@@ -920,7 +920,7 @@ static MvPipe *fsr_mv_pipe(VStage *vs, VkFormat dfmt) {
     if (vs->nsmp || vs->ssbos || vs->images || !ssrc_of(&src, R.prog[0], 0)) return NULL;
     if (!g_mv_pl) {                                /* one layout: the vertex stage's constant buffers 1 .. 17, last frame's c3 and c14 */
         VkDescriptorSetLayoutBinding lb[19];
-        for (uint32_t n = 0; n < 19; n++) { VkDescriptorSetLayoutBinding b = {n < 17 ? n + 1 : n == 17 ? 43u : 54u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL}; lb[n] = b; }
+        for (uint32_t n = 0; n < 19; n++) { VkDescriptorSetLayoutBinding b = {n < 17 ? n + 1 : n == 17 ? 43u : 54u, n < 17 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL}; lb[n] = b; }
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; li.bindingCount = 19; li.pBindings = lb;
         VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &g_mv_dl));
@@ -1027,7 +1027,7 @@ static int fsr_mv_pass(Tex *depth, VTex *vd, int w, int h) {
         VkWriteDescriptorSet wr[20]; VkDescriptorBufferInfo bi[20];
         for (int k = 0; k < e->nb; k++) {
             bi[k].buffer = e->b[k].buf; bi[k].offset = e->b[k].off; bi[k].range = e->b[k].range;
-            wr[k] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, NULL, e->b[k].binding, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[k], NULL};
+            wr[k] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, NULL, e->b[k].binding, 0, 1, e->b[k].binding < 18 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[k], NULL};
         }
         if (e->p != bound) { vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, e->p); bound = e->p; }
         vkCmdSetViewport(R.cmd, 0, 1, &e->vp); vkCmdSetScissor(R.cmd, 0, 1, &e->sc);

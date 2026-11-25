@@ -710,7 +710,7 @@ static void window_event(SDL_Window *w, const SDL_Event *ev) {
         }
         if (g_apply_ev && e.type == g_apply_ev) { window_apply(w); return; }
         if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {   /* as WM_CLOSE: nn::oe decides */
-            printf("\nwindow closed by the user after %lld frames\n", (long long)g_frames);
+            printf("\nwindow closed by the user after %lld frames (SDL event 0x%x)\n", (long long)g_frames, (unsigned)e.type);
             { extern volatile LONG g_display_close; InterlockedExchange(&g_display_close, 1); }
             if (!oe_exit_request()) report_and_exit(0);
         }

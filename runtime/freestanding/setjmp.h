@@ -17,6 +17,11 @@ __declspec(dllimport) int __attribute__ ((__nothrow__,__returns_twice__)) _setjm
 #else
 #define setjmp(BUF) _setjmp((BUF), __builtin_frame_address(0))
 #endif
+#elif defined(__ANDROID__)
+/* Android: bionic's AArch64 jmp_buf (32 longs, 256 bytes) and its setjmp, a function of its own that keeps the signal mask */
+typedef long jmp_buf[32];
+int setjmp(jmp_buf __env) __attribute__((__returns_twice__));
+#define setjmp(__env) setjmp(__env)
 #elif defined(__APPLE__)
 /* macOS on Apple silicon: the system's jmp_buf (48 ints, 192 bytes) and setjmp, as the runtime's sdklift_rt.c sees them
  * through the SDK's own header */

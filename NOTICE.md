@@ -33,6 +33,9 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 | `runtime/third_party/ffx_api/` | [AMD FSR SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) tag v2.4.0 (commit `7539ae8`, 2026-10-28): the FSR API's C headers `ffx_api.h`, `ffx_api_types.h`, `vk/ffx_api_vk.h`, `ffx_upscale.h`, `ffx_framegeneration.h` and `ffx_framegeneration_api_types.h`, 6 files, copied; `runtime/nvn_vk_fsr4.c` and `runtime/nvn_vk_fg.c` call the player's own copy of AMD's DLLs through them (no DLL of AMD's is here or in a release) | MIT (`runtime/third_party/ffx_api/LICENSE.txt`) | None |
 | `runtime/nvn_vk_fg.c`, the DLSS part | The names of NVIDIA's frame generation parameters as [dlssg-to-fsr3](https://github.com/Nukem9/dlssg-to-fsr3) (Nukem9) reads them in `source/maindll/FFFrameInterpolator.cpp`; no code copied | GPL-3.0 | — |
 
+The Android app also carries, unmodified, a [Mesa](https://mesa3d.org) Turnip Vulkan driver built by K11MCH1 (MIT, `android/Mesa-LICENSE.txt`) and
+[libadrenotools](https://github.com/bylaws/libadrenotools) (BSD-2-Clause). `android/build_deps.sh` fetches both.
+
 Our own files (everything else: `scripts/`, `launcher/`, `tests/`, `tools/` apart from the ports above, among them
 `tools/wtbuild/src/sdklift.rs` and `tools/wtbuild/src/tables.rs`, new runtime files) are under the same licence.
 `tools/wtbuild/src/setup.rs` follows the structure of ssbu-recomp's `scripts/setup.py` (resumable steps, state file,

@@ -1,0 +1,56 @@
+// The Witch Time app: SDL's Java side and the prebuilt runtime, nothing from the game (the player's game.so is copied
+// onto the phone, WitchTimeActivity.java). Built with
+//     gradle -p android assembleRelease -Pwitchtime.deps=<build_deps.sh's out> -Pwitchtime.prebuilt=<prebuilt-android>
+plugins {
+    id 'com.android.application'
+}
+
+def need = { String k ->
+    def v = project.findProperty(k)
+    if (!v) throw new GradleException("-P${k}=<folder> is needed (android/app/build.gradle)")
+    file(v)
+}
+def deps = need('witchtime.deps')
+def prebuilt = need('witchtime.prebuilt')
+
+// only the runtime and the libraries it loads: prebuilt-android also holds the link inputs of the player's game.so,
+// among them the NDK's stand-ins for libc, libm and libdl, which must never reach the phone
+def jni = layout.buildDirectory.dir('witchtime-jni')
+def copyJni = tasks.register('copyWitchTimeLibs', Sync) {
+    from(prebuilt) {
+        include 'libwitchtime.so', 'libwt_glslang.so', 'libSDL3.so', 'libav*.so', 'libsw*.so', 'libopus.so', 'libVkLayer_*.so'
+    }
+    from(new File(deps, 'turnip')) { include '*.so' }    // the Vulkan driver for Adreno and what loads it (build_deps.sh, nvn_vk.c)
+    into jni.map { it.dir('arm64-v8a') }
+}
+
+android {
+    namespace 'com.zexyen.witchtime'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.zexyen.witchtime'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName project.findProperty('witchtime.version') ?: 'dev'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    sourceSets {
+        main {
+            java.srcDirs += new File(deps, 'sdl-java')
+            jniLibs.srcDirs = [jni]
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug   // shortcut: debug key, so anyone can sideload it; a release key when it is published
+        }
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }     // on disk: the driver's linker namespace cannot open libraries inside the APK
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+tasks.named('preBuild') { dependsOn copyJni }

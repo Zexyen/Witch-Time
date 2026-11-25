@@ -4153,6 +4153,7 @@ void nvn_gl_start(void *hwnd) {
     g_job_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     g_ready_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     { const char *e = getenv("WT_STACKS_AT"); void nvn_vk_stacks_at(int seconds); if (e && atoi(e) > 0) nvn_vk_stacks_at(atoi(e)); }      /* session 13, TEST: every thread's call stack once, that many seconds from here, with either renderer (nvn_vk_wd.c) */
+    { const char *e = getenv("WT_EXIT_AT"); void nvn_vk_exit_at(int seconds); if (e && atoi(e) > 0) nvn_vk_exit_at(atoi(e)); }      /* [witchtime] TEST (nvn_vk_wd.c) */
     CreateThread(NULL, 16 << 20, render_thread, NULL, 0, NULL);
 #ifdef __APPLE__
     /* [witchtime] macOS: the render thread has the window's surface made on this thread, the program's first (nvn_vk.c) */
