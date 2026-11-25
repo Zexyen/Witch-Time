@@ -7,7 +7,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/plat_posix.c', 'tests/plat_ww_test.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/language_test.c', 'tests/rebind_test.c', 'tests/debug_cmd_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/mx_prev_test.c', 'tests/mv_match_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/plat_posix.c', 'tests/plat_ww_test.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/language_test.c', 'tests/rebind_test.c', 'tests/debug_cmd_test.c', 'tests/presence_test.c', 'runtime/presence.c', 'tests/achievements_test.c', 'runtime/achievements.c', 'runtime/third_party/rl_achievements/**', 'tests/rs_pyramid_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/mx_prev_test.c', 'tests/mv_match_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -96,6 +96,21 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime -I runtime/posix '-D__declspec(x)=' tests/presence_test.c -lpthread -o "$RUNNER_TEMP/presence_test"
           "$RUNNER_TEMP/presence_test"
+
+      - name: Recomp Achievements (runtime/achievements.c)
+        run: |
+          clang -O2 -Wall -I runtime -I runtime/third_party/rl_achievements/include \
+            -I runtime/third_party/rl_achievements/third_party/cjson \
+            -I runtime/third_party/rl_achievements/third_party/rcheevos/include \
+            -I runtime/third_party/rl_achievements/third_party/rcheevos/src \
+            -DRC_DISABLE_LUA '-D__declspec(x)=' -DWT_VERSION='"v0.15.0"' \
+            tests/achievements_test.c \
+            runtime/third_party/rl_achievements/src/rl_achievements.c \
+            runtime/third_party/rl_achievements/third_party/cjson/cJSON.c \
+            runtime/third_party/rl_achievements/third_party/rcheevos/src/runtime/*.c \
+            runtime/third_party/rl_achievements/third_party/rcheevos/src/util/*.c \
+            -lm -o "$RUNNER_TEMP/achievements_test"
+          "$RUNNER_TEMP/achievements_test"
 
   lifter-check:
     # the shipped lifter against Unicorn: random words of the forms added to the lifter, run in Unicorn and as their lifted C

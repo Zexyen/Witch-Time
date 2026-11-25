@@ -264,6 +264,7 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     trace_printf("=== phase 3: nnMain\n");
     call_guest(&c, NN_MAIN);
     { void clib_run_atexit(Ctx *c); clib_run_atexit(&c); }   /* clib.c: functions registered with atexit, as a normal exit does */
+    { void achievements_shutdown(void); achievements_shutdown(); }   /* [witchtime] Recomp Achievements */
 
     printf("\nnnMain returned.\n");
     print_import_summary(stdout);
@@ -337,6 +338,7 @@ static int b3_main(int argc, char **argv) {
     if (argc > 3 && !strcmp(argv[2], "--pkz-dump")) { int pkz_dump(const char *, char **, int); return pkz_dump(argv[3], argv + 4, argc - 4); }
     display_init();
     { void presence_start(void); presence_start(); }      /* [witchtime] Discord Rich Presence */
+    { void achievements_start(void); achievements_start(); } /* [witchtime] Recomp Achievements */
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
 #ifdef __APPLE__
     /* [witchtime] macOS: this thread, the program's first, is the only one the window's events can be read on: it reads

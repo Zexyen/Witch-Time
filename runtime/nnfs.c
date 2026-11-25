@@ -1237,6 +1237,7 @@ static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const
         if (on) printf("fslog: open \"%s\" mode %d -> %s\n", STR(1), (int)A2, r ? "NOT FOUND" : "ok"); }
     if (r) { wr64(A0, 0); RET(r); return; }
     open_remember(h, (int)(A2 & 7), m);
+    if (m->kind == MK_SAVE && !write && !_strnicmp(rel, "SlotData_", 9)) { void achievements_save_loaded(void); achievements_save_loaded(); }   /* [witchtime] Recomp Achievements */
     ui_pkz_open(h, STR(1), view ? pkz_open_of(h) : NULL);
     if (modded) prompt_swap_open(h, path);              /* [Recomps#1] finding 148 */
     wr64(A0, (uint64_t)h);

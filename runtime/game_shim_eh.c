@@ -55,6 +55,112 @@ static void presence_tick(Ctx *c) {
     game_presence[2] = verse >= 0 && (uint64_t)verse < count && *(const int *)(record + 2248) != 15 ? *(const int *)(record + 68) + 1 : 0;      /* 15: over */
     game_presence[3] = *(int *)(uintptr_t)0x7104dbb128ull;
 }
+/* [witchtime] Recomp Achievements (docs/RE_NOTES.md section 12, docs/ACHIEVEMENTS.md): story chapter clears,
+ * difficulty completion, Platinum & Infinite Climax Pure Platinum mastery, secret bosses (Golem, Rodin),
+ * Witch Trials 1-3, and weapon/demon unlocks (ids 1..50). Chapter-record commits (f_7100b2a6c0, f_7100b2c740)
+ * and weapon/demon unlocks (f_7100b2cf90, f_7100b2d050) evaluate milestones live; achieve_tick also polls save
+ * state so loaded saves report earlier unlocks and un-relifted builds still report unlocks. */
+#include "achievements.h"
+B3_FN void f_7100b29be0(Ctx *c);                             /* (w0 diff, w1 chapter, x2 out[10], x3 out_ok) -> w0 1 if cleared */
+B3_FN void f_7100b2a6c0(Ctx *c);                             /* commits a normal chapter's clear record & medal to save_obj */
+B3_FN void f_7100b2c740(Ctx *c);                             /* commits a side chapter's clear record & medal to save_obj */
+B3_FN void f_7100b2cf90(Ctx *c);                             /* (w0 id, w1 on): set/clear owned weapon bit in save_obj + 6492 */
+B3_FN void f_7100b2d050(Ctx *c);                             /* (w0 id, w1 on): set/clear owned Infernal Demon bit in save_obj + 6496 */
+static uint64_t g_ach_ms_seen, g_ach_ms_sent;
+static int g_ach_defined, g_ach_casual_debug, g_ach_env = -1;
+static int ach_active(void) {
+    if (!host.ach_event) return 0;
+    if (g_ach_env < 0) { const char *e = getenv("RL_SESSION"); g_ach_env = e && e[0]; }
+    return g_ach_env;
+}
+static void achieve_casual_debug(void) {
+    if (g_ach_casual_debug || !ach_active()) return;
+    g_ach_casual_debug = 1;
+    host.ach_event(ACH_EV_CASUAL, 0, "debug", NULL, 0);
+}
+static void achieve_define_all(void) {
+    for (uint32_t i = 0; i < WT_ACH_COUNT; i++) {
+        const WtAchDef *m = &wt_ach_defs[i];
+        host.ach_event(ACH_EV_DEFINE, m->id, m->title, m->desc, m->score);
+    }
+    host.ach_event(ACH_EV_READY, 0, NULL, NULL, 0);
+    g_ach_defined = 1;
+}
+static int8_t achieve_query_medal(Ctx *c, uint32_t diff, uint32_t ch) {
+    uint32_t rec[10] = {0xffffffffu, 0xffffffffu, 0, 0, 0, 0, 0xffffffffu, 0x7fffffffu, 0, 0};
+    uint32_t ok = 1;
+    Ctx t = *c;
+    t.x[0] = diff;
+    t.x[1] = ch;
+    t.x[2] = (uint64_t)(uintptr_t)rec;
+    t.x[3] = (uint64_t)(uintptr_t)&ok;
+    f_7100b29be0(&t);
+    return ((uint32_t)t.x[0] && ok && rec[3] <= 6u) ? (int8_t)rec[3] : (int8_t)-1;
+}
+static void achieve_eval_milestones(Ctx *c, int live) {
+    if (!ach_active() || !g_ach_defined || !f_7100b29be0) return;
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    if (!save_obj || !*(const uint64_t *)(uintptr_t)0x710249c728ull) return;
+    WtAchSnapshot snap;
+    memset(&snap, 0, sizeof snap);
+    for (uint32_t i = 0; i < WT_ACH_STORY_CHAPTERS; i++)
+        for (uint32_t d = 0; d < 4; d++)
+            snap.story[i][d] = achieve_query_medal(c, d, wt_ach_story_chapters[i]);
+    for (uint32_t d = 0; d < 4; d++)
+        if (achieve_query_medal(c, d, WT_ACH_CH_GOLEM) >= 0) { snap.golem_cleared = 1; break; }
+    snap.rodin_cleared = achieve_query_medal(c, 3u, WT_ACH_CH_RODIN) >= 0;
+    snap.witch_trial_cleared[0] = achieve_query_medal(c, 1u, WT_ACH_CH_WITCH_TRIAL_1) >= 0;
+    snap.witch_trial_cleared[1] = achieve_query_medal(c, 2u, WT_ACH_CH_WITCH_TRIAL_2) >= 0;
+    snap.witch_trial_cleared[2] = achieve_query_medal(c, 3u, WT_ACH_CH_WITCH_TRIAL_3) >= 0;
+    snap.weapons_mask = *(const uint32_t *)(uintptr_t)(save_obj + 6492ull);
+    snap.demons_mask = *(const uint32_t *)(uintptr_t)(save_obj + 6496ull);
+    uint64_t mask = wt_ach_eval(&snap);
+    uint64_t added = mask & ~g_ach_ms_seen;
+    if (added) {
+        uint32_t n_new = (uint32_t)__builtin_popcountll(added);
+        for (uint32_t i = 0; i < WT_ACH_COUNT; i++) {
+            uint64_t bit = 1ull << i;
+            if ((added & bit) && !(g_ach_ms_sent & bit)) {
+                g_ach_ms_sent |= bit;
+                if (live) host.ach_event(ACH_EV_UNLOCK, WT_ACH_BASE + i, NULL, NULL, 0);
+                else host.ach_event(ACH_EV_BITFIELD, WT_ACH_BASE + i, NULL, NULL, n_new);
+            }
+        }
+    }
+    g_ach_ms_seen = mask;
+}
+void h_chapter_record_save(Ctx *c) {
+    f_7100b2a6c0(c);
+    achieve_eval_milestones(c, 1);
+}
+void h_side_chapter_record_save(Ctx *c) {
+    f_7100b2c740(c);
+    achieve_eval_milestones(c, 1);
+}
+void h_weapon_unlock(Ctx *c) {
+    uint32_t on = (uint32_t)c->x[1];
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    uint32_t before = save_obj ? *(const uint32_t *)(uintptr_t)(save_obj + 6492ull) : 0u;
+    f_7100b2cf90(c);
+    if (on && save_obj && *(const uint32_t *)(uintptr_t)(save_obj + 6492ull) != before)
+        achieve_eval_milestones(c, 1);
+}
+void h_demon_unlock(Ctx *c) {
+    uint32_t on = (uint32_t)c->x[1];
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    uint32_t before = save_obj ? *(const uint32_t *)(uintptr_t)(save_obj + 6496ull) : 0u;
+    f_7100b2d050(c);
+    if (on && save_obj && *(const uint32_t *)(uintptr_t)(save_obj + 6496ull) != before)
+        achieve_eval_milestones(c, 1);
+}
+static void achieve_tick(Ctx *c) {
+    static unsigned tick_frame;
+    if (!ach_active()) return;
+    unsigned f = tick_frame++;
+    if (!g_ach_defined) achieve_define_all();
+    if ((f & 63) == 0) achieve_eval_milestones(c, 0);
+    host.ach_event(ACH_EV_FRAME, 0, NULL, NULL, 0);
+}
 /* [witchtime] Debug commands, TEST ONLY (docs/RE_NOTES.md section 11; the game ships no debug menu). WT_DEBUG=<file>: the file is
  * read and deleted whenever it appears, one command a line, each answered on stdout with "debug:":
  *   phase <sub-phase>            go to a phase by its sub-phase's name (p9a0_training, pc20_ChapterSelect; "phases" lists them)
@@ -120,6 +226,7 @@ static void debug_command(Ctx *c, char *line) {
         const char *name = words == 2 ? b : a;
         int phase = words == 2 ? (int)strtol(a, NULL, 16) : dbg_phase_of(a);
         if (phase < 0) { printf("debug: phase: %s does not start with a phase number\n", a); return; }
+        achieve_casual_debug();
         c->x[0] = 0x71024c2220ull; c->x[1] = (uint32_t)phase; c->x[2] = (uint64_t)(uintptr_t)name; c->x[3] = c->x[4] = 0; c->x[5] = 0xffffffffull;
         f_710066f464(c);
         printf("debug: phase %x %s asked for\n", phase, name);
@@ -129,6 +236,7 @@ static void debug_command(Ctx *c, char *line) {
         sscanf(line, "%*s %*s %d %f %f %f", &n, &v[0], &v[1], &v[2]);
         while (slot < 16 && g_debug_spawn[slot].id) slot++;
         if (!id || slot == 16 || n < 1 || n > 32) { printf("debug: spawn: %s\n", !id ? "not an object (em0010 or 20010)" : slot == 16 ? "16 are waiting already" : "1 to 32 at a time"); return; }
+        achieve_casual_debug();
         c->x[0] = 0x7104d728f0ull; c->x[1] = id; c->x[2] = c->x[3] = c->x[5] = 0; c->x[4] = 0xffffffffull; f_710081bca8(c);
         g_debug_spawn[slot].id = id; g_debug_spawn[slot].n = n; g_debug_spawn[slot].age = 0; memcpy(g_debug_spawn[slot].at, v, sizeof v);
         snprintf(g_debug_spawn[slot].name, sizeof g_debug_spawn[slot].name, "%.7s", a);
@@ -137,6 +245,7 @@ static void debug_command(Ctx *c, char *line) {
         c->x[0] = c->x[1] = 0; f_710074d490(c);
         uint64_t pl = c->x[0], entity = pl ? *(uint64_t *)(uintptr_t)(pl + 0x12e0) : 0;
         if (!entity) { printf("debug: effect: no player here\n"); return; }
+        achieve_casual_debug();
         static _Alignas(16) uint8_t par[0x400];                /* the game's own are 0x130 on its stack */
         _Alignas(16) float scale[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, at[4] = {0, 0, 0, 1};
         uint32_t key[2] = {dbg_obj_id(b) ? 2 : 1, dbg_obj_id(b)};       /* {1, 0}: the file every scene has */
@@ -148,11 +257,12 @@ static void debug_command(Ctx *c, char *line) {
         f_7100b8f970(c);
         printf("debug: effect %ld of %s: %s\n", strtol(a, NULL, 0), key[1] ? b : "the common file", (uint32_t)c->x[0] ? "played" : "not played (no such effect, or its file is not loaded)");
     } else if (!strncmp(line, "pad", 3) && words >= 1) {
+        achieve_casual_debug();
         g_debug_pad_edge[0] = g_debug_pad_edge[1] = g_debug_pad = (uint32_t)strtoul(a, NULL, 16); g_debug_pad_frames = words == 2 && atoi(b) > 0 ? atoi(b) : 8;
         printf("debug: pad %x for %d frames\n", g_debug_pad, g_debug_pad_frames);
     } else if (!strncmp(line, "pos", 3) || !strncmp(line, "warp", 4)) {
         float *p = debug_player_pos(c);
-        if (p && line[0] == 'w' && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) memcpy(p, v, sizeof v);
+        if (p && line[0] == 'w' && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) { achieve_casual_debug(); memcpy(p, v, sizeof v); }
         if (p) printf("debug: player at %.2f %.2f %.2f\n", p[0], p[1], p[2]); else printf("debug: no player here\n");
     } else if (!strncmp(line, "objects", 7)) {               /* the game's class table: 1694 x {u32 object, fn, kind, name} */
         for (int i = 0; i < 1694; i++) {
@@ -192,6 +302,7 @@ void h_rebind_pads(Ctx *c) {
     static const struct { uint64_t at; int n; } copies[] = {{0x7104d8f338ull, 4}, {0x7104d8f418ull, 4}, {0x7104d8f5d8ull, 1}};
     presence_tick(c);
     debug_tick(c);
+    achieve_tick(c);
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     const uint8_t *r = rebind_cur(c);
     if (!r) return;

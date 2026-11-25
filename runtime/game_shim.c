@@ -16,6 +16,7 @@ typedef struct {
     void (*sdk_dispatch)(Ctx *, uint64_t);           /* [witchtime] for gen/sdklift_gen.c, which is in the game library now */
     void (*sdk_host_call)(Ctx *, int);
     void (*sdk_trap_call)(Ctx *, const char *);
+    void (*ach_event)(int, uint32_t, const char *, const char *, uint32_t);  /* [witchtime] Recomp Achievements (achievements.c) */
 } GameHost;
 
 typedef struct {
