@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 1000" width="200" height="1000">
+  <!-- Counterweight tapered tail, crescent cradle, and diamond finial -->
+  <path d="M 95 516 L 97.8 612 L 100 622 L 102.2 612 L 105 516 Z" fill="#7358cf"/>
+  <path d="M 79 608 C 82 628 118 628 121 608 C 115 620 85 620 79 608 Z" fill="#7358cf"/>
+  <path d="M 100 620 L 106.5 636 L 100 654 L 93.5 636 Z" fill="#7358cf"/>
+
+  <!-- Lower tapered gothic shaft with pierced lancet window -->
+  <path d="M 91.5 484 L 94.2 326 L 100 318 L 105.8 326 L 108.5 484 Z M 100 462 L 96.5 404 L 100 344 L 103.5 404 Z" fill="#7358cf" fill-rule="evenodd"/>
+
+  <!-- Sweeping gothic filigree crescent ribs framing the cathedral lantern -->
+  <path d="M 96 324 C 82 323 70 315 66 302 C 74 309 85 313 96 314 Z" fill="#7358cf"/>
+  <path d="M 104 324 C 118 323 130 315 134 302 C 126 309 115 313 104 314 Z" fill="#7358cf"/>
+  <path d="M 73 305 C 65 280 73 252 96 232 C 81 254 76 278 81 301 Z" fill="#7358cf"/>
+  <path d="M 127 305 C 135 280 127 252 104 232 C 119 254 124 278 119 301 Z" fill="#7358cf"/>
+
+  <!-- Pierced cathedral ogee lantern -->
+  <path d="M 100 322 C 79 305 76 270 100 226 C 124 270 121 305 100 322 Z M 100 307 C 89 294 88 272 100 245 C 112 272 111 294 100 307 Z" fill="#7358cf" fill-rule="evenodd"/>
+
+  <!-- Suspended four-point celestial star inside the lantern -->
+  <path d="M 100 258 L 104.5 274 L 114.5 278 L 104.5 282 L 100 298 L 95.5 282 L 85.5 278 L 95.5 274 Z" fill="#9a84e6"/>
+
+  <!-- Gothic spire tip -->
+  <path d="M 100 150 L 92 232 L 100 242 L 108 232 Z" fill="#7358cf"/>
+
+  <!-- Center pivot collar -->
+  <circle cx="100" cy="500" r="18" fill="#7358cf"/>
+  <circle cx="100" cy="500" r="9.5" fill="#9a84e6"/>
+</svg>
