@@ -280,6 +280,10 @@ bool App::create_window()
 		std::fprintf(stderr, "witch-time: no Vulkan device for the launcher's screens: %s\n", SDL_GetError());
 		return false;
 	}
+	// mailbox when there is one, as the game does (runtime/nvn_vk.c): KWin 6.8 gave a FIFO window 20 frames a second
+	// (vkcube too). Mailbox does not wait for the display, so run() keeps the frames to its refresh
+	if (SDL_WindowSupportsGPUPresentMode(gpu, window, SDL_GPU_PRESENTMODE_MAILBOX))
+		SDL_SetGPUSwapchainParameters(gpu, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_MAILBOX);
 	return true;
 }
 
@@ -506,13 +510,19 @@ void App::bind_model()
 
 int App::run()
 {
+	double drawn_at = 0;
+	bool input = false;                          // since the last frame: drawn at the next refresh, not after the idle wait
 	while (running)
 	{
 		SDL_Event ev;
-		// while an animation plays RmlUi asks for the next frame at once; the swapchain's vsync paces it
-		const int wait = ctx->GetNextUpdateDelay() <= 0 ? 1 : runner.running() ? 30 : 50;
+		// one frame per display refresh: an animation asks RmlUi for the next frame at once, and mailbox does not wait
+		const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+		const double frame = 1 / double(mode && mode->refresh_rate > 0 ? mode->refresh_rate : 60);
+		const int due = std::max(0, int(std::ceil((drawn_at + frame - now_seconds()) * 1000)));
+		const int wait = input || ctx->GetNextUpdateDelay() <= 0 ? due : runner.running() ? 30 : 50;
 		if (SDL_WaitEventTimeout(&ev, wait))
 		{
+			input = true;
 			handle(ev);
 			while (running && SDL_PollEvent(&ev))
 				handle(ev);
@@ -524,6 +534,10 @@ int App::run()
 			want_play = false;
 			play();
 		}
+		if (now_seconds() < drawn_at + frame)
+			continue;
+		drawn_at = now_seconds();
+		input = false;
 		draw();
 	}
 	if (runner.running())
