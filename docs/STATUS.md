@@ -1961,7 +1961,11 @@ RecompLauncher (`RL_SESSION` unset), every call is a no-op.
 - **Live unlocks & existing saves**: `f_7100b2a6c0` (`h_chapter_record_save`), `f_7100b2c740` (`h_side_chapter_record_save`),
   `f_7100b2cf90` (`h_weapon_unlock`), and `f_7100b2d050` (`h_demon_unlock`) evaluate achievements live; `achieve_tick` also polls
   `f_7100b29be0` and the save bitmasks (`save_obj + 6492` / `+ 6496`) so saves loaded through `nn::fs` (`SlotData_*.dat`) report
-  already-earned achievements with `earlier: true` and un-relifted builds still report unlocks.
+  already-earned achievements right after `save_loaded` (Casual) and un-relifted builds still report unlocks.
+- **Events list (after v0.16.0)**: unlocks are named events (`rl_ach_event`), the list is hosted by RecompLauncher from
+  [docs/achievements.json](achievements.json) (written from `wt_ach_defs`, checked by `tests/achievements_test.c`); points follow the
+  list format (5, 10, 25 or 50; 1,240 in all). v0.16.0 sent native ids and its own list.
+- **Not tested**: no run against RecompLauncher itself, only the fake socket of the test; the list has not been uploaded.
 - **Rich presence & Casual mode**: forwards chapter/verse/difficulty/area via `rl_ach_presence`, and marks the session Casual (`debug`)
   if a mutating `WT_DEBUG` command is executed.
 - **Area** is blank after Continue until the next banner: a phase does not always raise one.

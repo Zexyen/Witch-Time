@@ -511,7 +511,8 @@ to [Recomp Achievements](https://github.com/elripalda/RecompAchievements) over `
   - `*(uint32_t *)(save_obj + 6496)` (`f_7100b2d030` / `f_7100b2d050`, `HOST_OVERRIDES` -> `h_demon_unlock`) holds owned Infernal Demons MSB-first
     (`0x80000000u >> id`): IDs `0..11` (`0xfff00000u`, all 12 Infernal Demons).
 - **Save loads**: `SAVE:/SlotData_%d.dat` reads in `runtime/nnfs.c` trigger `achievements_save_loaded()`, starting a 180-frame grace
-  window so pre-existing chapter progress loaded from disk is reported with `earlier: true` rather than as live unlocks.
+  window. The list is an `events` list (docs/achievements.json), and an event has no `earlier` flag: progress read from a save is
+  fired right after `save_loaded` (sent once more when it is found outside the window), which the launcher keeps as Casual.
 - **Game-internal Bewitchments (RE reference; not currently exposed as Recomp Achievements)**:
   - Bayonetta 3 ships 137 internal Bewitchments (game ids `0 .. 136`, sentinel `137` / `0x89`).
   - Save bitfield: global save object at GOT `0x710249c4f0` (`0x7104e544f0`), 5-entry offset table at GOT `0x71024aa970`

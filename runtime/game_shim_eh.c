@@ -79,10 +79,6 @@ static void achieve_casual_debug(void) {
     host.ach_event(ACH_EV_CASUAL, 0, "debug", NULL, 0);
 }
 static void achieve_define_all(void) {
-    for (uint32_t i = 0; i < WT_ACH_COUNT; i++) {
-        const WtAchDef *m = &wt_ach_defs[i];
-        host.ach_event(ACH_EV_DEFINE, m->id, m->title, m->desc, m->score);
-    }
     host.ach_event(ACH_EV_READY, 0, NULL, NULL, 0);
     g_ach_defined = 1;
 }
