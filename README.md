@@ -88,7 +88,7 @@ Releases are provided as both a `.tar.gz` archive and an `.AppImage` containing 
      ```
 
 **Notes:**
-- **Windows Defender:** Release binaries are not code-signed, so Defender may flag new releases. Download only from this repository's Releases page and verify the archive against its `.sha256` file:
+- **Windows Defender:** Release binaries are not code-signed, so Defender may flag new releases. Download only from this repository's Releases page and verify the archive against the SHA-256 digest listed on the Releases page:
   ```bat
   certutil -hashfile WitchTime-<version>-windows-x86_64.zip SHA256
   ```
