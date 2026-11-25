@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -96,8 +98,46 @@ std::vector<std::string> build_command(const std::string& repo, const std::strin
 	return {};
 }
 
-Paths Paths::find(const char* argv0)
+namespace {
+// What the player had before the data folder is copied in once (an older launcher, or one started without the folder,
+// still reads the old copy): the settings files, and the saves through a folder renamed when whole, so a copy cut short
+// is never taken for theirs. The shader caches (gigabytes, made again where missing) are moved. False: the saves stay
+// where they were for this run
+bool adopt_data(const Paths& p)
 {
+	namespace fs = std::filesystem;
+	std::error_code ec;
+	for (const std::string& d : {p.config, p.logs, p.cache})
+		fs::create_directories(d, ec);
+	for (const char* f : {"graphics.ini", "controllers.ini", "launcher.ini", "mods.ini"})
+		if (!file_exists(p.config + "/" + f) && file_exists(p.repo + "/config/" + f))
+			fs::copy_file(p.repo + "/config/" + f, p.config + "/" + f, ec);
+	std::vector<std::string> caches;
+	for (const auto& e : fs::directory_iterator(p.build + "/cache", ec))
+		if (const std::string n = e.path().filename().string(); n.rfind("vk", 0) == 0 || n == "shaders")
+			caches.push_back(n);
+	for (const std::string& n : caches)
+		if (!file_exists(p.cache + "/" + n))
+			fs::rename(p.build + "/cache/" + n, p.cache + "/" + n, ec);
+	const std::string old = p.build + "/userdata", part = p.userdata + ".part";
+	if (file_exists(p.userdata) || !file_exists(old))
+		return true;
+	fs::remove_all(part, ec);
+	ec.clear();
+	fs::copy(old, part, fs::copy_options::recursive, ec);
+	if (!ec)
+		fs::rename(part, p.userdata, ec);
+	if (!ec)
+		return true;
+	std::fprintf(stderr, "witch-time: the saves in %s could not be copied to %s (%s); they are used where they are\n", old.c_str(), p.userdata.c_str(), ec.message().c_str());
+	fs::remove_all(part, ec);
+	return false;
+}
+} // namespace
+
+Paths Paths::find(int argc, char** argv)
+{
+	const char* argv0 = argv[0];
 	Paths p;
 #ifdef _WIN32
 	std::wstring buf(32768, L'\0');
@@ -126,6 +166,29 @@ Paths Paths::find(const char* argv0)
 	p.config = p.repo + "/config";
 	p.mods = p.repo + "/mods";
 	p.run = p.build + "/run";
+	for (int i = 1; i < argc; i++)
+		if (!std::strcmp(argv[i], "--data") && i + 1 < argc)
+			p.data = argv[++i];
+		else if (!std::strncmp(argv[i], "--data=", 7))
+			p.data = argv[i] + 7;
+	for (const char* v : {"WT_DATA", "RECOMPLAUNCHER_DATA"})    // WT_DATA: the launcher started again after the game keeps it
+		if (const char* e = std::getenv(v); p.data.empty() && e && e[0])
+			p.data = e;
+	p.userdata = p.build + "/userdata";
+	p.logs = p.run;
+	p.cache = p.build + "/cache";
+	if (p.data.empty())
+		return p;
+	std::error_code ec;
+	p.data = std::filesystem::absolute(p.data, ec).string();    // the game runs in build/run
+	std::replace(p.data.begin(), p.data.end(), '\\', '/');
+	p.config = p.data + "/config";
+	p.logs = p.data + "/logs";
+	p.cache = p.data + "/cache";
+	p.userdata = p.data + "/userdata";
+	if (!adopt_data(p))
+		p.userdata = p.build + "/userdata";
+	set_env("WT_DATA", p.data, true);           // the game's settings files (runtime) and the mods step's mods.ini (wtbuild)
 	return p;
 }
 

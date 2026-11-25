@@ -4,6 +4,8 @@
 
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zexyen/witch-time/total)
 
+<a href="https://recomplauncher.com/game/witch-time"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
 [B2recomp](../B2recomp): the game's AArch64 code is translated to C **on your PC from your own dump**, and runs on a
@@ -52,6 +54,9 @@ tools/wtbuild/target/release/wtbuild setup --dump <base.nsp|.xci> --update <upda
 # Or from an already-extracted dump folder:
 tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
 ```
+
+A release comes as a `.tar.gz` and as an AppImage of the same folder. Witch Time builds the game into its own folder, so the
+AppImage plays unpacked: RecompLauncher unpacks it, or run it with `--appimage-extract` and start `squashfs-root/AppRun`.
 
 Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which lets you pick your NSP/XCI files (or an
 extracted folder) with progress on screen and then plays in its own window.
@@ -121,6 +126,17 @@ the check; Play there still closes with the game), a game that is not built yet,
 The launcher makes such a shortcut itself: Settings, Display, **Desktop shortcut**. On Windows that is `Witch Time.lnk`
 on the desktop; on Linux and the Steam Deck an entry in the application menu and on the desktop (for the Deck's game
 mode, add it to Steam with "Add a Non-Steam Game"). If you move the game folder, create it again from there.
+
+## RecompLauncher
+
+Witch Time can be installed, set up and started from [RecompLauncher](https://recomplauncher.com/game/witch-time) too
+(`recomplauncher.json`, in every release): pick your NSP/XCI files (or your extracted dump folder) there and it runs the
+build with no window (`witch-time --prepare`, with `wtbuild setup`'s arguments), then Play starts `witch-time --play`.
+Started by RecompLauncher (`RECOMPLAUNCHER=1`), the launcher does not look for updates: RecompLauncher installs them.
+Your settings, saves, logs and shader caches are then in the game folder's `recompdata/` (RecompLauncher's data folder;
+`witch-time --data <folder>` does the same anywhere, and copies in the settings and saves you had the first time), while
+the built game stays in `build/` and `targets/`. Big Picture mode starts the game borderless when `graphics.ini` says
+windowed, and with Button prompts on Auto the prompts follow the controller RecompLauncher names until the game sees one.
 
 ## The picture book
 

@@ -1076,7 +1076,7 @@ fn step_mods(cx: &mut Ctx) -> Result<(), Fail> {
     if !nso_p.is_file() || !elf.is_file() {
         return Err(Fail("targets/exefs/main / main.elf are missing: run convert first".into()));
     }
-    let settings = pchtxt::read_settings(&cx.root().join("config").join("mods.ini")); // the launcher's Mods window switches
+    let settings = pchtxt::read_settings(&crate::util::mods_ini(&cx.root())); // the launcher's Mods window switches
     let rel = |f: &PathBuf| f.strip_prefix(&folder_p).unwrap_or(f).to_string_lossy().into_owned();
     let mut off: Vec<String> = files
         .iter()

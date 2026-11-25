@@ -217,7 +217,8 @@ static void menu_init(void) {                              /* the first opening:
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
         int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply >= A_LAYOUT || gfx_ini_get(r->key, v, sizeof v);
-        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
+        if (r->apply == A_WINDOW) { static const char *const w[3] = {"windowed", "borderless", "fullscreen"}; snprintf(v, sizeof v, "%s", w[o->window_mode]); have = 1; }      /* [witchtime] what runs: Big Picture's borderless included (gfx_options.c) */
+        else if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());

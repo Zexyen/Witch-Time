@@ -8,7 +8,11 @@ struct Paths {
 	std::string repo;          // the checkout: the launcher lives in <repo>/build
 	std::string build, ui, config, mods, run;
 	std::string self;          // this program
-	static Paths find(const char* argv0);
+	// --data <folder>, else WT_DATA, else RecompLauncher's RECOMPLAUNCHER_DATA: the player's settings (config), saves
+	// (userdata), logs and shader caches go there, and the built game stays in build/ and targets/. Without one, as ever:
+	// config/, build/userdata, build/run, build/cache
+	std::string data, userdata, logs, cache;
+	static Paths find(int argc, char** argv);
 };
 
 // One key of an ini file; set() keeps every other line, comments included, as the runtime's own writer does.

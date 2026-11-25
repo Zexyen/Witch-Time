@@ -170,6 +170,8 @@ static void mods_ini_path(char *out) {                   /* beside controllers.i
         if (s) { *s = 0; snprintf(out, MAX_PATH, "%s\\mods.ini", tmp); } else snprintf(out, MAX_PATH, "mods.ini");
         return;
     }
+    const char *d = getenv("WT_DATA");                   /* [witchtime] the launcher's data folder, as graphics.ini */
+    if (d && d[0]) { snprintf(out, MAX_PATH, "%s\\config\\mods.ini", d); return; }
     GetModuleFileNameA(NULL, tmp, MAX_PATH);
     char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');      /* [witchtime] '/' on Linux, as graphics.ini (gfx_options.c) */
     if (s2 > s) s = s2;

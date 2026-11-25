@@ -135,7 +135,7 @@ fn main() {
             let ini = args
                 .iter()
                 .find_map(|a| a.strip_prefix("--ini=").map(PathBuf::from))
-                .unwrap_or_else(|| repo_root(&args).join("config").join("mods.ini"));
+                .unwrap_or_else(|| util::mods_ini(&repo_root(&args)));
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .enumerate()

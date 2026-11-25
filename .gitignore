@@ -3,6 +3,7 @@
 /dump
 /targets
 /build/
+/recompdata/
 /cache/
 /deps/
 /prebuilt/
