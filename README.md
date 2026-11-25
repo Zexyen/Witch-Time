@@ -65,7 +65,7 @@ Witch Time can be installed, built, configured, and launched directly through [R
 Releases are provided as both a `.tar.gz` archive and an `.AppImage` containing the same directory layout:
 
 - **`.tar.gz`:** Extract the archive and run `./witch-time` to pick your dump and build with on-screen progress.
-- **`.AppImage`:** Because Witch Time builds into its own directory, the AppImage runs unpacked (RecompLauncher unpacks it automatically, or run `--appimage-extract` and launch `squashfs-root/AppRun`).
+- **`.AppImage`:** Because Witch Time builds into its own directory, the AppImage runs unpacked: the first start copies it into a `WitchTime` folder beside the AppImage (`~/.local/share/WitchTime` when that folder is read-only) and later starts play from there. RecompLauncher unpacks it on install.
 - **CLI alternative:**
   ```sh
   # From NSP/XCI files (also extracts The Old Picture Book):
