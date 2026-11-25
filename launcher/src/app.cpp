@@ -208,7 +208,7 @@ bool is_pkg_path(const std::string& p)
 // ---------------------------------------------------------------------------------------------------- start and loop
 bool App::init(int argc, char** argv)
 {
-	paths = Paths::find(argv[0]);
+	paths = Paths::find(argc, argv);
 	for (int i = 1; i < argc; i++)
 		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
 			returned_code = std::atoi(argv[i + 1]);
@@ -1719,7 +1719,7 @@ volatile std::sig_atomic_t g_prepare_stop = 0;   // RecompLauncher's Cancel: the
 // A finished build is marked as this release's and its textures converted, as start_build() and tick() do
 int prepare_main(int argc, char** argv)
 {
-	const Paths paths = Paths::find(argv[0]);
+	const Paths paths = Paths::find(argc, argv);
 #ifndef _WIN32
 	std::signal(SIGTERM, [](int) { g_prepare_stop = 1; });
 	std::signal(SIGINT, [](int) { g_prepare_stop = 1; });
@@ -1754,7 +1754,13 @@ int prepare_main(int argc, char** argv)
 			std::printf("%s\n", l.c_str());
 		std::fflush(stdout);
 	};
-	if (!runner.start(paths.repo, std::vector<std::string>(argv + 2, argv + argc)))
+	std::vector<std::string> setup_args;           // all but --data (Paths::find's), which wtbuild does not take
+	for (int i = 2; i < argc; i++)
+		if (!std::strcmp(argv[i], "--data"))
+			i++;
+		else if (std::strncmp(argv[i], "--data=", 7))
+			setup_args.push_back(argv[i]);
+	if (!runner.start(paths.repo, setup_args))
 	{
 		std::printf("%s\n", start_error(paths.repo));
 		return 1;

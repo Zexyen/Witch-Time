@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -21,7 +22,19 @@ std::string main_elf(const Paths& paths, int program = 0) { return paths.repo + 
 std::string program_build(const Paths& paths, int program) { return paths.build + program_dir(program); }
 // The picture book's program has a log of its own: Bayonetta 3 starts again when the book closes, and its log would
 // replace the one that says what went wrong in the book (#261)
-std::string game_log(const Paths& paths, int program) { return paths.run + (program ? "/witch-time-book.log" : "/witch-time-game.log"); }
+std::string game_log(const Paths& paths, int program) { return paths.logs + (program ? "/witch-time-book.log" : "/witch-time-game.log"); }
+
+// the last runs' logs stay beside the new one: witch-time-game.1.log is the run before, up to .4
+void keep_old_logs(const std::string& log)
+{
+	namespace fs = std::filesystem;
+	const std::string stem = log.substr(0, log.size() - 4);
+	std::error_code ec;
+	fs::remove(stem + ".4.log", ec);
+	for (int i = 3; i >= 1; i--)
+		fs::rename(stem + "." + std::to_string(i) + ".log", stem + "." + std::to_string(i + 1) + ".log", ec);
+	fs::rename(log, stem + ".1.log", ec);
+}
 
 // the save folder, where the runtime leaves the switch file (runtime/b3_imports.c switch_path; ..\userdata from build/run)
 std::string switch_file(const Paths& paths)
@@ -30,7 +43,7 @@ std::string switch_file(const Paths& paths)
 	if (e && e[0])
 		return e;
 	const char* u = std::getenv("WT_USERDATA");
-	return (u && u[0] ? std::string(u) : paths.build + "/userdata") + "/program_switch.bin";
+	return (u && u[0] ? std::string(u) : paths.userdata) + "/program_switch.bin";
 }
 
 #ifndef _WIN32
@@ -44,6 +57,7 @@ int g_out = -1, g_err = -1;                   // the launcher's own stdout / std
 void log_to_file(const Paths& paths, int program)
 {
 	std::string log = game_log(paths, program);
+	keep_old_logs(log);
 	std::fprintf(stderr, "witch-time: the game's output goes to %s\n", log.c_str());
 	std::fflush(nullptr);
 	int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
@@ -110,11 +124,16 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	const bool other = after_switch || (last && std::strcmp(last, std::to_string(program).c_str()) != 0);
 	set_env("WT_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", other);
 	set_env("WT_PROGRAM", std::to_string(program), true);
-	if (program || other)
+	if (program || other || !paths.data.empty())
 	{                                            // each program its own shaders: the container store is tied to its root_000.pkz
 		const std::string own = program ? "-program" + std::to_string(program) : "";
-		set_env("WT_VK_CACHE", paths.build + "/cache/vk" + own, true);
-		set_env("WT_VK_CONTAINERS", paths.build + "/cache/vk_containers2" + own, true);
+		set_env("WT_VK_CACHE", paths.cache + "/vk" + own, true);
+		set_env("WT_VK_CONTAINERS", paths.cache + "/vk_containers2" + own, true);
+	}
+	if (!paths.data.empty())
+	{                                            // the data folder (Paths::find): the saves and the OpenGL renderer's shaders there too
+		set_env("WT_USERDATA", paths.userdata, false);
+		set_env("WT_SHADER_CACHE", paths.cache + "/shaders", false);
 	}
 	// program N's exe is in build/programN, where the runtime's <exe>/../config would be build/config
 	const std::string config = paths.config + "/controllers.ini";
@@ -158,6 +177,7 @@ int run_child(const Paths& paths, SDL_Window* window, int program)
 	// its output goes to build/run/witch-time-game.log: this program has no console to show it in
 	ChildProcess game;
 	int code = -1;
+	keep_old_logs(game_log(paths, program));
 	if (game.start({program_build(paths, program) + "/" + GAME_EXE, main_elf(paths, program)}, paths.run, game_log(paths, program)))
 		while (!game.wait(&code, 50))
 			SDL_PumpEvents();

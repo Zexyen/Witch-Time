@@ -261,6 +261,8 @@ static void opt_path(char *out) {
         if (s) { *s = 0; snprintf(out, MAX_PATH, "%s\\graphics.ini", tmp); } else snprintf(out, MAX_PATH, "graphics.ini");
         return;
     }
+    const char *d = getenv("WT_DATA");      /* [witchtime] the launcher's data folder (--data, RECOMPLAUNCHER_DATA): its config\ */
+    if (d && d[0]) { snprintf(out, MAX_PATH, "%s\\config\\graphics.ini", d); return; }
     GetModuleFileNameA(NULL, exe, MAX_PATH);
     char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/witch-time-game/../config was not a folder, the file was never read */
     if (s2 > s) s = s2;
@@ -276,6 +278,8 @@ static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOption
     return 0;
 }
 static int framegen_of(const char *v) { return !_stricmp(v, "fsr") ? 1 : !_stricmp(v, "dlss") ? 2 : !_stricmp(v, "test") ? 3 : 0; }      /* (on: by frame_generator, below) */      /* [witchtime] GfxOptions.frame_gen (test: WT_FRAMEGEN only, the real frame twice) */
+/* [witchtime] -1 not asked yet; 1: started in RecompLauncher's Big Picture mode, until a Display mode is picked in the panel */
+static int g_bigpicture = -1;
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     (void)once; (void)ctx;
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
@@ -355,6 +359,11 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     {   /* [witchtime] WT_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
         const char *e = getenv("WT_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
+    }
+    if (g_bigpicture < 0) { const char *m = getenv("RECOMPLAUNCHER_MODE"); g_bigpicture = m && !_stricmp(m, "bigpicture"); }
+    if (g_bigpicture && o->window_mode == 0) {      /* [witchtime] RecompLauncher's Big Picture mode: a windowed start fills the monitor */
+        o->window_mode = 1;
+        if (!arg) printf("graphics options: window=borderless (RecompLauncher's Big Picture mode; graphics.ini says windowed, and is kept)\n");
     }
     if (!getenv("WT_MODEL_LOD")) _putenv_s("WT_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
     else o->model_lod_high = !_stricmp(getenv("WT_MODEL_LOD"), "highest");
@@ -545,6 +554,7 @@ int gfx_ini_refresh(const char *path) {
 }
 int gfx_option_set(const char *key, const char *val) {
     const char *path = gfx_options()->path;
+    if (!_stricmp(key, "window")) g_bigpicture = 0;      /* the player's pick counts from now on, Windowed too */
     size_t len, vs, ve, vl = strlen(val), done = 0;
     char *b = ini_read_all(path, &len), tmp[MAX_PATH + 8];
     int crlf = !b || strstr(b, "\r\n") != NULL;
