@@ -56,6 +56,7 @@ const HOST_SOURCES: &[&str] = &[
     "nnmovie.c",
     "nnmisc.c",
     "nnaudio.c",
+    "plat_audio_sdl.c", // Linux/macOS/Android: the only sound path; Windows: fallback when waveOutOpen fails (issue 182)
     "nnmovie_mf.c",
     "nniostream.c",
     "nncxxrt.c",
@@ -106,7 +107,7 @@ const RL_ACH_SOURCES: &[&str] = &[
     "third_party/rl_achievements/third_party/rcheevos/src/util/rc_util.c",
     "third_party/rl_achievements/third_party/rcheevos/src/util/rc_version.c",
 ];
-const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
+const POSIX_SOURCES: &[&str] = &["plat_posix.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
 /// the runtime reads (runtime/split)
 pub const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];

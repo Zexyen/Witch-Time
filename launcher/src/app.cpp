@@ -894,7 +894,8 @@ void App::refresh_title()
 	std::string built_version;
 	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
 	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
-	stale = built && WT_VERSION[0] == 'v' && built_version != WT_VERSION;
+	// CI test builds ("dev-<sha>") are packaged like releases too; only a local source build ("dev build") skips the check [issue 182]
+	stale = built && std::strcmp(WT_VERSION, "dev build") != 0 && built_version != WT_VERSION;
 	status_bad = false;
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
