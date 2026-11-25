@@ -1,0 +1,56 @@
+Recomp Achievements License, version 1.0
+
+Copyright (c) 2026 Ripalda (github.com/elripalda). All rights not granted below are reserved.
+
+1. What's covered
+
+"The Software" is everything in this repository: the rl-achievements library, its bridges, tests
+and build files, the documentation, and the list format and channel described in it.
+
+A "Game" is a recompilation, decompilation, source port or other build of a particular game, or an
+original game.
+
+A "Launcher" is software, or a service behind it, whose job is to find, install, start, manage or
+show games made by other people: launchers, front-ends, stores, library managers, emulator
+front-ends, overlays and the like. RecompLauncher is the Launcher the Software was made for.
+
+2. Free for every game
+
+You may use, copy, modify and distribute the Software in or with a Game, in source or compiled form,
+for free or as part of a paid product, without asking us, as long as:
+  a. this license and the copyright notice stay with any copy of the Software's source, and
+  b. the notices of the third-party parts (section 5) stay with them.
+A Game doesn't need to say it uses the Software, though "Supports Recomp Achievements" is welcome.
+
+3. Launchers need our written permission
+
+The permission in section 2 doesn't cover Launchers. Using the Software, or anything made from it,
+in or for a Launcher (for example to receive the channel's messages from a Game, to read or show
+Recomp Achievements lists, unlocks, profiles or leaderboards, or to offer the same achievements under
+another name) requires our written permission first.
+
+If you'd like Recomp Achievements in your launcher, open an issue on this repository or write to
+info@recompstore.com. We're glad to talk about it.
+
+4. Names and logos
+
+This license gives no rights to the names "Recomp Achievements", "RecompLauncher" or "RecompStore",
+or to their logos, beyond saying truthfully that a Game supports Recomp Achievements.
+
+5. Third-party parts
+
+sdk/third_party/rcheevos (rcheevos, MIT License) and sdk/third_party/cjson (cJSON, MIT License) are
+included under their own licenses, which are in their folders. This license doesn't change them.
+
+6. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+7. Ending
+
+If you break these terms, your permission under this license ends. It comes back if you fix it
+within 30 days of hearing from us, the first time.

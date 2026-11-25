@@ -1937,6 +1937,21 @@ Discord without an error.
   story scene in the fight, the results and the next phase; Expert and Standard from two saves; "Tokyo: Shinjuku" against the banner on screen; the
   area held across phases. On the real client: the card shown, one connection held for a 130 s run, and every activity accepted.
 - **Time** is wall clock from entering the chapter, not the game's Play Time: it runs on through a pause.
+
+## Recomp Achievements (initial support)
+
+`runtime/achievements.c` vendors the [Recomp Achievements](https://github.com/elripalda/RecompAchievements) C SDK
+(`runtime/third_party/rl_achievements/`) and exposes Witch Time's 50-achievement set (story chapter clears, difficulty
+completion, Platinum & ∞ Climax Pure Platinum mastery, Golem & Rodin bosses, Witch Trials 1–3, and all weapons/Infernal
+Demons; docs/RE_NOTES.md section 12; full list in [docs/ACHIEVEMENTS.md](ACHIEVEMENTS.md)) over `RL_SESSION`. Outside
+RecompLauncher (`RL_SESSION` unset), every call is a no-op.
+
+- **Live unlocks & existing saves**: `f_7100b2a6c0` (`h_chapter_record_save`), `f_7100b2c740` (`h_side_chapter_record_save`),
+  `f_7100b2cf90` (`h_weapon_unlock`), and `f_7100b2d050` (`h_demon_unlock`) evaluate achievements live; `achieve_tick` also polls
+  `f_7100b29be0` and the save bitmasks (`save_obj + 6492` / `+ 6496`) so saves loaded through `nn::fs` (`SlotData_*.dat`) report
+  already-earned achievements with `earlier: true` and un-relifted builds still report unlocks.
+- **Rich presence & Casual mode**: forwards chapter/verse/difficulty/area via `rl_ach_presence`, and marks the session Casual (`debug`)
+  if a mutating `WT_DEBUG` command is executed.
 - **Area** is blank after Continue until the next banner: a phase does not always raise one.
 - **Not tested**: Windows was compiled, not run. Chapters other than those two come from the game's tables.
 
