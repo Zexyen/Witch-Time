@@ -4,6 +4,8 @@
 
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zexyen/witch-time/total)
 
+<a href="https://recomplauncher.com/game/witch-time"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
 [B2recomp](../B2recomp): the game's AArch64 code is translated to C **on your PC from your own dump**, and runs on a
@@ -116,6 +118,13 @@ the check; Play there still closes with the game), a game that is not built yet,
 The launcher makes such a shortcut itself: Settings, Display, **Desktop shortcut**. On Windows that is `Witch Time.lnk`
 on the desktop; on Linux and the Steam Deck an entry in the application menu and on the desktop (for the Deck's game
 mode, add it to Steam with "Add a Non-Steam Game"). If you move the game folder, create it again from there.
+
+## RecompLauncher
+
+Witch Time can be installed, set up and started from [RecompLauncher](https://recomplauncher.com/game/witch-time) too
+(`recomplauncher.json`, in every release): pick your NSP/XCI files (or your extracted dump folder) there and it runs the
+build with no window (`witch-time --prepare`, with `wtbuild setup`'s arguments), then Play starts `witch-time --play`.
+Started by RecompLauncher (`RECOMPLAUNCHER=1`), the launcher does not look for updates: RecompLauncher installs them.
 
 ## The picture book
 

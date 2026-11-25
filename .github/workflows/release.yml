@@ -12,6 +12,7 @@
 #   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which wtbuild uses:
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
+#   recomplauncher.json              how RecompLauncher sets the game up and starts it (from the repository's top)
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
@@ -195,6 +196,7 @@ jobs:
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           (cd "dist/$name" && rm -rf $TRIM)
+          test -f "dist/$name/recomplauncher.json"    # RecompLauncher reads it at the archive's top, beside witch-time
           cp build/witch-time "dist/$name/build/"
           cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -417,6 +419,7 @@ jobs:
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
           (cd "$p" && rm -rf $TRIM)
+          test -f "$p/recomplauncher.json"            # RecompLauncher reads it at the archive's top, beside witch-time.exe
           cp witch-time.exe "$p/"
           cp build/witch-time.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"

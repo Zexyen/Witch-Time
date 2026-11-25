@@ -1,0 +1,178 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Witch Time",
+  "repo": "Zexyen/Witch-Time",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your Bayonetta 3 dump: the base game's .nsp or .xci (Update 1.2.0 merged in, or picked below), or an extracted folder with exefs and romfs from Update 1.2.0.",
+      "formats": [
+        { "type": "file", "extensions": ["nsp", "xci"], "requires": ["keys"] },
+        { "type": "folder" }
+      ]
+    },
+    {
+      "id": "update",
+      "label": "Update 1.2.0 (.nsp), unless your base game file already has it.",
+      "role": "update",
+      "optional": true,
+      "formats": [{ "type": "file", "extensions": ["nsp", "xci"], "requires": ["keys"] }]
+    },
+    { "id": "keys", "label": "Your Nintendo Switch prod.keys", "role": "key", "shared": "switch.prod-keys" },
+    { "id": "dlss", "label": "NVIDIA DLSS", "role": "runtime", "shared": "nvidia.dlss", "optional": true, "destination": "nvngx_dlss.dll" }
+  ],
+  "prepare": {
+    "program": ["build/witch-time.exe", "build/witch-time"],
+    "args": ["--prepare", "--dump={input:game}", "--update={input:update}", "--keys={input:keys}"],
+    "label": "Translating and compiling the game from your dump",
+    "done": ["{install}/targets/exefs/main.elf", "{install}/build/built_version"],
+    "options": [
+      {
+        "id": "accept_modified",
+        "label": "Accept a modified dump",
+        "note": "Only if the check says your dump's files were changed, by a mod or a translation.",
+        "default": false,
+        "args": ["--accept-modified"]
+      }
+    ]
+  },
+  "start": { "program": ["witch-time.exe", "build/witch-time"], "args": ["--play"] },
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
+    "linux": { "glibc": "2.35", "graphics": { "vulkan": "1.3" } }
+  },
+  "saves": ["{install}/build/userdata/save"],
+  "folders": {
+    "saves": [{ "path": "{install}/build/userdata/save" }],
+    "logs": [{ "path": "{install}/build/run" }]
+  },
+  "config": [
+    { "id": "main", "format": "ini", "file": [{ "path": "{install}/config/graphics.ini" }] },
+    { "id": "controllers", "format": "ini", "file": [{ "path": "{install}/config/controllers.ini" }] }
+  ],
+  "settings": [
+    {
+      "id": "window", "label": "Display mode", "group": "Display",
+      "help": "Windowed, or the whole monitor the window is on.",
+      "choices": [
+        { "label": "Windowed", "set": { "window": "windowed" } },
+        { "label": "Borderless", "set": { "window": "borderless" } },
+        { "label": "Fullscreen", "set": { "window": "fullscreen" } }
+      ],
+      "defaults": { "window": "windowed" }
+    },
+    {
+      "id": "vsync", "label": "Vertical sync", "group": "Display",
+      "help": "Auto locks to a 60, 120 or 240 Hz display.",
+      "choices": [
+        { "label": "Auto", "set": { "vsync": "auto" } },
+        { "label": "Display", "set": { "vsync": "display" } },
+        { "label": "Clock", "set": { "vsync": "clock" } },
+        { "label": "Off", "set": { "vsync": "off" } },
+        { "label": "On", "set": { "vsync": "on" } },
+        { "label": "Mailbox", "set": { "vsync": "mailbox" } }
+      ],
+      "defaults": { "vsync": "auto" }
+    },
+    {
+      "id": "cutscene_fps", "label": "Cutscene frame rate", "group": "Display",
+      "help": "Title, menus and cutscenes. 30 is the console's; movies keep theirs either way.",
+      "choices": [
+        { "label": "30 fps", "set": { "cutscene_fps": "30" } },
+        { "label": "60 fps", "set": { "cutscene_fps": "60" } }
+      ],
+      "defaults": { "cutscene_fps": "30" }
+    },
+    {
+      "id": "frame_rate", "label": "Frame rate", "group": "Display",
+      "help": "60 is the console's. 90 and 120 are experimental: some effects may run fast.",
+      "choices": [
+        { "label": "60 fps", "set": { "frame_rate": "60" } },
+        { "label": "90 fps", "set": { "frame_rate": "90" } },
+        { "label": "120 fps", "set": { "frame_rate": "120" } }
+      ],
+      "defaults": { "frame_rate": "60" }
+    },
+    {
+      "id": "resolution_scale", "label": "Internal resolution", "group": "Graphics",
+      "help": "What the game renders at. 900p is the console's own; the first start at another size stops a while for its shaders.",
+      "choices": [
+        { "label": "720p", "set": { "resolution_scale": "0.8" } },
+        { "label": "900p", "set": { "resolution_scale": "1.0" } },
+        { "label": "1080p", "set": { "resolution_scale": "1.2" } },
+        { "label": "1440p", "set": { "resolution_scale": "1.6" } },
+        { "label": "1800p", "set": { "resolution_scale": "2.0" } },
+        { "label": "2160p", "set": { "resolution_scale": "2.4" } }
+      ],
+      "defaults": { "resolution_scale": "1.0" }
+    },
+    {
+      "id": "model_lod", "label": "Model detail", "group": "Graphics",
+      "help": "Highest keeps the finest detail at any distance.",
+      "choices": [
+        { "label": "Game", "set": { "model_lod": "game" } },
+        { "label": "Highest", "set": { "model_lod": "highest" } }
+      ],
+      "defaults": { "model_lod": "game" }
+    },
+    {
+      "id": "hdr", "label": "HDR", "group": "Graphics",
+      "help": "Auto follows the desktop's HDR, and the scene's lights go above white.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr": "auto" } },
+        { "label": "Off", "set": { "hdr": "off" } },
+        { "label": "On", "set": { "hdr": "on" } }
+      ],
+      "defaults": { "hdr": "auto" }
+    },
+    {
+      "id": "aspect_ratio", "label": "Aspect ratio", "group": "Graphics",
+      "help": "Fixed is the game's 16:9. Unlocked takes the window's shape, for ultrawide screens.",
+      "choices": [
+        { "label": "Fixed", "set": { "aspect_ratio": "16:9" } },
+        { "label": "Unlocked", "set": { "aspect_ratio": "auto" } }
+      ],
+      "defaults": { "aspect_ratio": "16:9" }
+    },
+    {
+      "id": "upscaler", "label": "Upscaling", "group": "Upscaling",
+      "help": "FSR 3 works on any card. DLSS needs an NVIDIA RTX card, FSR 4 your own AMD DLLs.",
+      "choices": [
+        { "label": "Off", "set": { "upscaler": "off" } },
+        { "label": "FSR 3 Native AA", "set": { "upscaler": "fsr3" } },
+        { "label": "FSR 3 Quality", "set": { "upscaler": "fsr3_quality" } },
+        { "label": "FSR 3 Balanced", "set": { "upscaler": "fsr3_balanced" } },
+        { "label": "FSR 3 Performance", "set": { "upscaler": "fsr3_performance" } },
+        { "label": "FSR 3 Ultra Performance", "set": { "upscaler": "fsr3_ultra_performance" } },
+        { "label": "DLAA", "set": { "upscaler": "dlaa" } },
+        { "label": "DLSS Quality", "set": { "upscaler": "dlss_quality" } },
+        { "label": "DLSS Balanced", "set": { "upscaler": "dlss_balanced" } },
+        { "label": "DLSS Performance", "set": { "upscaler": "dlss_performance" } },
+        { "label": "DLSS Ultra Performance", "set": { "upscaler": "dlss_ultra_performance" } },
+        { "label": "FSR 4 Native AA", "set": { "upscaler": "fsr4" } },
+        { "label": "FSR 4 Quality", "set": { "upscaler": "fsr4_quality" } },
+        { "label": "FSR 4 Balanced", "set": { "upscaler": "fsr4_balanced" } },
+        { "label": "FSR 4 Performance", "set": { "upscaler": "fsr4_performance" } },
+        { "label": "FSR 4 Ultra Performance", "set": { "upscaler": "fsr4_ultra_performance" } }
+      ],
+      "defaults": { "upscaler": "off" }
+    },
+    {
+      "id": "button_prompts", "label": "Button prompts", "group": "Controls", "in": "controllers",
+      "help": "Auto follows the controller or keyboard you use.",
+      "choices": [
+        { "label": "Auto", "set": { "general/button_prompts": "auto" } },
+        { "label": "PlayStation", "set": { "general/button_prompts": "playstation" } },
+        { "label": "Xbox", "set": { "general/button_prompts": "xbox" } },
+        { "label": "Switch", "set": { "general/button_prompts": "switch" } },
+        { "label": "Keyboard", "set": { "general/button_prompts": "keyboard" } }
+      ],
+      "defaults": { "general/button_prompts": "auto" }
+    }
+  ],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your save slots, kept in the game's folder.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "The game's log from its last run, for a bug report.", "open": "logs" }
+  ]
+}
