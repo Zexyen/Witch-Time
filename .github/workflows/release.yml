@@ -226,24 +226,25 @@ jobs:
           ls -la dist
 
       # the same folder as one file, for RecompLauncher (which unpacks it at install and plays it from that folder,
-      # recomplauncher.json at its top) and players who keep one file: run as one file it says how to unpack it, as Witch
-      # Time builds the game into its own folder (launcher/linux/AppRun)
+      # recomplauncher.json at its top) and players who keep one file: run as one file it copies itself into a WitchTime
+      # folder beside it and starts from there, as Witch Time builds the game into its own folder (launcher/linux/AppRun)
       - name: AppImage
         run: |
           name="${{ steps.version.outputs.name }}"
+          app="WitchTime-${{ steps.version.outputs.version }}-x86_64.AppImage"   # no "linux" in it: every AppImage is (the AppImage catalog's rule)
           curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-x86_64.AppImage"
           curl -sSfL -o "$RUNNER_TEMP/runtime-x86_64" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_TAG/runtime-x86_64"
           chmod +x "$RUNNER_TEMP/appimagetool"
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream --comp zstd \
-            --runtime-file "$RUNNER_TEMP/runtime-x86_64" "dist/$name" "dist/$name.AppImage"
+            --runtime-file "$RUNNER_TEMP/runtime-x86_64" "dist/$name" "dist/$app"
           # unpacked as RecompLauncher does, elsewhere: the files, their modes and the links inside it are all there
-          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$name.AppImage" --appimage-extract >/dev/null)
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$app" --appimage-extract >/dev/null)
           x="$RUNNER_TEMP/squashfs-root"
           diff <(cd "dist/$name" && find . ! -name .DirIcon | sort) <(cd "$x" && find . ! -name .DirIcon | sort)
           test -f "$x/recomplauncher.json" && test -x "$x/AppRun" && test -x "$x/build/witch-time" && test -x "$x/build/wtbuild"
           test -x "$x/deps/llvm/bin/clang" && "$x/deps/llvm/bin/clang" --version
           LD_LIBRARY_PATH= ldd "$x/build/witch-time" | grep -q "$x/build/libSDL3.so.0"
-          (cd dist && sha256sum "$name.AppImage" > "$name.AppImage.sha256")
+          (cd dist && sha256sum "$app" > "$app.sha256")
           ls -la dist
 
       - uses: actions/upload-artifact@v4
