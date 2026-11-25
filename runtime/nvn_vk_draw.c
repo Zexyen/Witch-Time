@@ -1323,7 +1323,11 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->fmt = tex_vkfmt(b->format, &vt->expand, &vt->decode);
         if (!vt->fmt || !nvn_front_fmt(b->format, &f)) { static char msg[80]; snprintf(msg, sizeof msg, "texture format 0x%x", b->format); nvn_vk_missing(msg); vt->fmt = VK_FORMAT_R8G8B8A8_UNORM; nvn_front_fmt(0x25, &f); }
         int bc3 = vt->decode && (vt->fmt == VK_FORMAT_BC3_UNORM_BLOCK || vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK);
-        if (bc3 && fmt_supported(VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) && nvn_front_tex_bc7(t)) { vt->bc7 = 1; vt->fmt = vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK; }      /* #54: blocks of the same size */
+        if (bc3) {
+            int m = nvn_front_tex_bc7(t);
+            if (m == 3 && fmt_supported(VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) { vt->bc7 = 1; vt->fmt = vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK; }      /* #54: blocks of the same size */
+            else if (m == 1) { bc3 = 0; vt->fmt = vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM; }      /* #215: pack-miss (mod) ASTC textures stay lossless RGBA8 */
+        }
         vt->bpb = bc3 ? 16 : vt->decode ? 4 : vt->expand ? f.bpb / 3 * 4 : f.bpb; vt->bw = bc3 ? 4 : vt->decode ? 1 : f.bw; vt->bh = bc3 ? 4 : vt->decode ? 1 : f.bh;
         vt->aspect = fmt_aspect(vt->fmt);
         vt->w = b->width > 0 ? b->width : 1; vt->h = b->height > 0 ? b->height : 1; vt->d = b->depth > 0 ? b->depth : 1;

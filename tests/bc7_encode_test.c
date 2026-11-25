@@ -18,6 +18,22 @@ int main(void) {
         tex_layout(&L, 1, 0x1, 1024, 1024, 1, 1, 0, 0, 5, 2);
         if (L.lvl_bh_log2[0] != 5 || L.data_size != 1024 * 1024) { printf("layout: block height 32 not taken (%d, %zu bytes)\n", L.lvl_bh_log2[0], (size_t)L.data_size); bad++; }
     }
+    {   /* issue 215: ASTC block decoding sanity (valid void-extent, invalid reserved bits, all-zero invalid block, HDR void-extent) */
+        uint8_t out[16 * 4];
+        static const uint8_t ve_ok[16] = {0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x80, 0x00, 0x40, 0x00, 0x20, 0xff, 0xff};
+        static const uint8_t ve_bad_rsv[16] = {0xfc, 0xf1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x80, 0x00, 0x40, 0x00, 0x20, 0xff, 0xff};
+        static const uint8_t ve_hdr[16] = {0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x3c, 0x00, 0x38, 0x00, 0x00, 0x00, 0x3c};
+        static const uint8_t zero[16] = {0};
+        unsigned b0 = tex_astc_bad_blocks, h0 = tex_astc_hdr_blocks;
+        tex_decode_block_rgba8(TEX_FMT_ASTC_4x4, ve_ok, out, 16);
+        if (tex_astc_bad_blocks != b0 || out[0] != 0x80 || out[1] != 0x40 || out[2] != 0x20 || out[3] != 0xff) { printf("astc valid void-extent FAIL\n"); bad++; }
+        tex_decode_block_rgba8(TEX_FMT_ASTC_4x4, ve_bad_rsv, out, 16);
+        if (tex_astc_bad_blocks != b0 + 1 || out[0] || out[1] || out[2] || out[3]) { printf("astc bad void-extent reserved bits FAIL\n"); bad++; }
+        tex_decode_block_rgba8(TEX_FMT_ASTC_4x4, zero, out, 16);
+        if (tex_astc_bad_blocks != b0 + 2 || out[0] || out[1] || out[2] || out[3]) { printf("astc all-zero invalid block FAIL\n"); bad++; }
+        tex_decode_block_rgba8(TEX_FMT_ASTC_4x4, ve_hdr, out, 16);
+        if (tex_astc_hdr_blocks != h0 + 1 || tex_astc_bad_blocks != b0 + 2 || out[0] != 255 || out[1] != 128 || out[2] != 0 || out[3] != 255) { printf("astc HDR void-extent FAIL\n"); bad++; }
+    }
     srand(1);
     for (int s = 0; s < 4; s++)
         for (int kind = 0; kind < 4; kind++) {
