@@ -2400,8 +2400,14 @@ the scissors per draw (16:9: `107 43 200 10`; 21:9: `0 43 268 10`), then gdb up 
 `target_w` (that width times 1280 / (720 * ratio), only for its two calls there) and `clip_cmd` (`0x7100d04414`, only for
 its call at `0x7100c1e388`: the rectangle on the stack moved right by half the extra width before it is copied). Checked
 at 21:9 in a Verse 3 fight: the scissors equal 16:9's, the three bars full, with the HUD at the edges and centred.
-Wider than 16:9 only. **Verse results screen**: reported not reaching the right edge; not reproduced yet (a scripted
-run does not finish a verse).
+Wider than 16:9 only. **Verse results screen**: `hud0200` (main) and `huda07a` (Jeanne side missions) both place their root
+(el 0) at (0, 0) while anchoring their backdrop and score rows at x = 640 (the 16:9 right edge), so `h_ui_element`'s
+`>= 200` corner shift left them in 16:9 while the "VERSE #" badge (`hud0210`, el 0 at 560) moved out to the right edge.
+`h_ui_element` now shifts `hud0200`'s root (and `huda07a` el 3, 4, 5, keeping el 37 centred at 0) right by half the extra
+width when `hud_area = screen`; with `hud_area = 16:9` (or narrower than 16:9), `hud0200`'s 600 x 720 right-anchored
+painted backdrop (el 26, 27; el 27, 28 in `en-GB`, matched by kind / type / size) scales uniformly around its diagonal edge
+and `huda07a`'s 500 x 720 backdrop (el 3, 4) widens / tallens to reach the screen's edges. Verified against the real
+`ui_hud*.dat` layouts across all 13 languages at 16:9, 21:9, 32:9 and 9:10; not yet checked by an in-game screenshot.
 
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
 - **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);
