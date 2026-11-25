@@ -16,6 +16,7 @@ uint32_t nnhid_menu_pad(void) { return 0; }
 int nvn_front_post_pcmenu(void) { return 0; }
 int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) {}
+void display_quit(void) {}
 int display_window_apply(void) { return 1; }
 void display_mouse_want(int on) { (void)on; }
 int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }

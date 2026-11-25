@@ -884,7 +884,9 @@ static void fsr_mv_build(MvJob *j) {
     VkPipelineRenderingCreateInfo ren = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ren.colorAttachmentCount = 1; ren.pColorAttachmentFormats = &cf; ren.depthAttachmentFormat = mp->dfmt;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ren; gi.stageCount = 2; gi.pStages = st; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
+    if (D.use_rp) { RpKey rk; memset(&rk, 0, sizeof rk); rk.ncolor = 1; rk.cfmt[0] = (int32_t)cf; rk.dfmt = (int32_t)mp->dfmt; rk.clayout[0] = 1; rk.samples = 1; gi.renderPass = rp_get(&rk); }
+    else gi.pNext = &ren;
+    gi.stageCount = 2; gi.pStages = st; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
     gi.pRasterizationState = &rs; gi.pMultisampleState = &ms; gi.pDepthStencilState = &dss; gi.pColorBlendState = &cb; gi.pDynamicState = &ds; gi.layout = g_mv_pl;
     VkResult r = vkCreateGraphicsPipelines(V.device, g_pcache, 1, &gi, NULL, &mp->p);
     vkDestroyShaderModule(V.device, vm, NULL);
@@ -1019,7 +1021,16 @@ static int fsr_mv_pass(Tex *depth, VTex *vd, int w, int h) {
     da.imageView = g_mvd.dview; da.imageLayout = vd->layout; da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea.extent.width = (uint32_t)w; ri.renderArea.extent.height = (uint32_t)h; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca; ri.pDepthAttachment = &da;
-    vkCmdBeginRendering(R.cmd, &ri);
+    if (D.use_rp) {
+        RpKey rk; memset(&rk, 0, sizeof rk);
+        rk.ncolor = 1; rk.cfmt[0] = VK_FORMAT_R16G16_SFLOAT; rk.dfmt = (int32_t)vd->fmt; rk.clayout[0] = 1; rk.dlayout = vd->layout == VK_IMAGE_LAYOUT_GENERAL ? 1 : 0; rk.samples = 1;
+        VkRenderPass rp = rp_get(&rk);
+        VkImageView views[2] = {F.img[FI_MV].lvl[0], g_mvd.dview};
+        VkFramebuffer fb = fb_get(rp, views, 2, (uint32_t)w, (uint32_t)h);
+        VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rbi.renderPass = rp; rbi.framebuffer = fb; rbi.renderArea.extent.width = (uint32_t)w; rbi.renderArea.extent.height = (uint32_t)h;
+        vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    } else vkCmdBeginRendering(R.cmd, &ri);
     VkPipeline bound = NULL;
     for (int i = 0; i < n; i++) {
         const MvDraw *e = &g_mvd.d[i];
@@ -1043,7 +1054,7 @@ static int fsr_mv_pass(Tex *depth, VTex *vd, int w, int h) {
         else vkCmdDraw(R.cmd, e->count, e->inst, e->first, e->first_inst);
         drawn++;
     }
-    vkCmdEndRendering(R.cmd);
+    if (D.use_rp) vkCmdEndRenderPass(R.cmd); else vkCmdEndRendering(R.cmd);
     fsr_barrier(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
     vt_layout(vd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     F.depth_layout = vd->layout;
