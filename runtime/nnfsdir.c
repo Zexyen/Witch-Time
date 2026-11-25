@@ -56,7 +56,8 @@ static int dir_host_path(const char *guest, char *out) {  /* superseded by fs_di
     return 1;
 }
 
-static void fs_OpenDirectory(Ctx *c) {                    /* (DirectoryHandle *out, const char *path, int mode) -> Result */
+static int entry_cmp(const void *a, const void *b) { return _stricmp(((const HostEntry *)a)->name, ((const HostEntry *)b)->name); }
+static void fs_OpenDirectory(Ctx *c) {                  /* (DirectoryHandle *out, const char *path, int mode) -> Result */
     uint64_t out = A0;
     int mode = (int)A2;
     char roots[FS_DIR_ROOTS][MAX_PATH], pattern[MAX_PATH + 4];
@@ -108,6 +109,10 @@ static void fs_OpenDirectory(Ctx *c) {                    /* (DirectoryHandle *o
         for (int k = 0; k < d->count; k++) if (d->entries[k].is_file ? (mode & 2) : (mode & 1)) d->entries[n++] = d->entries[k];
         d->count = n;
     }
+    /* #297: by name over all the folders, as one file system lists them. The game enters rom:/'s archives in the order
+     * listed and the one entered last wins a name both hold: mods ship theirs as z_<name>.pkz for that, and listed
+     * first (its mod folder comes first above) such an archive lost every file to the game's own. */
+    if (d->count > 1) qsort(d->entries, (size_t)d->count, sizeof *d->entries, entry_cmp);
 
     trace_printf("     fs OpenDirectory \"%s\" mode %d -> %d entries\n", (const char *)(uintptr_t)A1, mode, d->count);
     wr64(out, P(d));
