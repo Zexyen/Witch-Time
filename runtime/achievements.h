@@ -30,7 +30,7 @@
 #define WT_ACH_ALL_WEAPONS_MASK 0xfff20000u
 #define WT_ACH_ALL_DEMONS_MASK  0xfff00000u
 
-/* Native IDs (1-based; Recomp Achievements reserves 0). */
+/* List ids (1-based; Recomp Achievements reserves 0). */
 #define WT_ACH_ID_CHAPTER_BASE      1u  /*  1..19: Story chapter clears (any difficulty) */
 #define WT_ACH_ID_COMPLETE_GAME     20u /* Complete all 19 story chapters on any difficulty */
 #define WT_ACH_ID_COMPLETE_HARD     21u /* Complete all 19 story chapters on Expert (Hard) or higher */
@@ -50,7 +50,8 @@ typedef struct {
     uint32_t id;
     const char *title;
     const char *desc;
-    uint32_t score;
+    uint32_t score;     /* 5, 10, 25 or 50: the only values a Recomp Achievements list takes */
+    const char *event;  /* fired over the channel, matched by docs/achievements.json; never rename a shipped one */
 } WtAchDef;
 
 /* The 19 story chapters (main.elf 0x7101853904, matching Play History's overall story record 0x15). */
@@ -61,62 +62,62 @@ static const uint32_t wt_ach_story_chapters[WT_ACH_STORY_CHAPTERS] = {
 
 static const WtAchDef wt_ach_defs[WT_ACH_COUNT] = {
     /* 1..19: Story Chapter Clears (any difficulty) */
-    { 1, "Prologue Clear",              "Complete Prologue: A Chaotic Encounter on any difficulty.",                        15},
-    { 2, "Chapter 1 Clear",             "Complete Chapter 1: Scrambling for Answers on any difficulty.",                    15},
-    { 3, "Chapter 2 Clear",             "Complete Chapter 2: City on Fire on any difficulty.",                              15},
-    { 4, "Chapter 3 Clear",             "Complete Chapter 3: A Sinking Feeling on any difficulty.",                         15},
-    { 5, "Side Chapter 1 Clear",        "Complete Side Chapter 1: The Crimson Shadow on any difficulty.",                   15},
-    { 6, "Chapter 4 Clear",             "Complete Chapter 4: Worlds Apart on any difficulty.",                              15},
-    { 7, "Chapter 5 Clear",             "Complete Chapter 5: Hot Pursuit on any difficulty.",                               15},
-    { 8, "Chapter 6 Clear",             "Complete Chapter 6: Off the Rails on any difficulty.",                             15},
-    { 9, "Side Chapter 2 Clear",        "Complete Side Chapter 2: The Lynx Strikes on any difficulty.",                     15},
-    {10, "Chapter 7 Clear",             "Complete Chapter 7: Burning Sands on any difficulty.",                             15},
-    {11, "Chapter 8 Clear",             "Complete Chapter 8: A Croaking Chorus on any difficulty.",                         15},
-    {12, "Chapter 9 Clear",             "Complete Chapter 9: Learning to Fly on any difficulty.",                           15},
-    {13, "Side Chapter 3 Clear",        "Complete Side Chapter 3: High Stakes on any difficulty.",                          15},
-    {14, "Chapter 10 Clear",            "Complete Chapter 10: Cover of Night on any difficulty.",                           15},
-    {15, "Chapter 11 Clear",            "Complete Chapter 11: A Familiar Dance on any difficulty.",                         15},
-    {16, "Chapter 12 Clear",            "Complete Chapter 12: The Edge of Madness on any difficulty.",                      15},
-    {17, "Side Chapter 4 Clear",        "Complete Side Chapter 4: The Doctor is Out on any difficulty.",                    15},
-    {18, "Chapter 13 Clear",            "Complete Chapter 13: Kingdom of One on any difficulty.",                           15},
-    {19, "Chapter 14 Clear",            "Complete Chapter 14: The Single Truth on any difficulty.",                         15},
+    { 1, "Prologue Clear",              "Complete Prologue: A Chaotic Encounter on any difficulty.",                        10, "prologue_clear"},
+    { 2, "Chapter 1 Clear",             "Complete Chapter 1: Scrambling for Answers on any difficulty.",                    10, "chapter_1_clear"},
+    { 3, "Chapter 2 Clear",             "Complete Chapter 2: City on Fire on any difficulty.",                              10, "chapter_2_clear"},
+    { 4, "Chapter 3 Clear",             "Complete Chapter 3: A Sinking Feeling on any difficulty.",                         10, "chapter_3_clear"},
+    { 5, "Side Chapter 1 Clear",        "Complete Side Chapter 1: The Crimson Shadow on any difficulty.",                   10, "side_chapter_1_clear"},
+    { 6, "Chapter 4 Clear",             "Complete Chapter 4: Worlds Apart on any difficulty.",                              10, "chapter_4_clear"},
+    { 7, "Chapter 5 Clear",             "Complete Chapter 5: Hot Pursuit on any difficulty.",                               10, "chapter_5_clear"},
+    { 8, "Chapter 6 Clear",             "Complete Chapter 6: Off the Rails on any difficulty.",                             10, "chapter_6_clear"},
+    { 9, "Side Chapter 2 Clear",        "Complete Side Chapter 2: The Lynx Strikes on any difficulty.",                     10, "side_chapter_2_clear"},
+    {10, "Chapter 7 Clear",             "Complete Chapter 7: Burning Sands on any difficulty.",                             10, "chapter_7_clear"},
+    {11, "Chapter 8 Clear",             "Complete Chapter 8: A Croaking Chorus on any difficulty.",                         10, "chapter_8_clear"},
+    {12, "Chapter 9 Clear",             "Complete Chapter 9: Learning to Fly on any difficulty.",                           10, "chapter_9_clear"},
+    {13, "Side Chapter 3 Clear",        "Complete Side Chapter 3: High Stakes on any difficulty.",                          10, "side_chapter_3_clear"},
+    {14, "Chapter 10 Clear",            "Complete Chapter 10: Cover of Night on any difficulty.",                           10, "chapter_10_clear"},
+    {15, "Chapter 11 Clear",            "Complete Chapter 11: A Familiar Dance on any difficulty.",                         10, "chapter_11_clear"},
+    {16, "Chapter 12 Clear",            "Complete Chapter 12: The Edge of Madness on any difficulty.",                      10, "chapter_12_clear"},
+    {17, "Side Chapter 4 Clear",        "Complete Side Chapter 4: The Doctor is Out on any difficulty.",                    10, "side_chapter_4_clear"},
+    {18, "Chapter 13 Clear",            "Complete Chapter 13: Kingdom of One on any difficulty.",                           10, "chapter_13_clear"},
+    {19, "Chapter 14 Clear",            "Complete Chapter 14: The Single Truth on any difficulty.",                         10, "chapter_14_clear"},
     /* 20..23: Game Completion & Platinum Mastery */
-    {20, "The Single Truth",            "Complete all story chapters on any difficulty.",                                   50},
-    {21, "Umbran Expert",               "Complete all story chapters on Expert or higher.",                                 75},
-    {22, "Infinite Climax",             "Complete all story chapters on \xe2\x88\x9e Climax.",                             100},
-    {23, "Platinum Witch",              "Earn a Platinum or Pure Platinum award on all story chapters.",                   100},
+    {20, "The Single Truth",            "Complete all story chapters on any difficulty.",                                   50, "the_single_truth"},
+    {21, "Umbran Expert",               "Complete all story chapters on Expert or higher.",                                 50, "umbran_expert"},
+    {22, "Infinite Climax",             "Complete all story chapters on \xe2\x88\x9e Climax.",                             50, "infinite_climax"},
+    {23, "Platinum Witch",              "Earn a Platinum or Pure Platinum award on all story chapters.",                   50, "platinum_witch"},
     /* 24..42: Pure Platinum on Infinite Climax per Chapter */
-    {24, "Prologue: Pure Climax",       "Earn a Pure Platinum award in Prologue: A Chaotic Encounter on \xe2\x88\x9e Climax.",      25},
-    {25, "Chapter 1: Pure Climax",      "Earn a Pure Platinum award in Chapter 1: Scrambling for Answers on \xe2\x88\x9e Climax.",  25},
-    {26, "Chapter 2: Pure Climax",      "Earn a Pure Platinum award in Chapter 2: City on Fire on \xe2\x88\x9e Climax.",            25},
-    {27, "Chapter 3: Pure Climax",      "Earn a Pure Platinum award in Chapter 3: A Sinking Feeling on \xe2\x88\x9e Climax.",       25},
-    {28, "Side Chapter 1: Pure Climax", "Earn a Pure Platinum award in Side Chapter 1: The Crimson Shadow on \xe2\x88\x9e Climax.", 25},
-    {29, "Chapter 4: Pure Climax",      "Earn a Pure Platinum award in Chapter 4: Worlds Apart on \xe2\x88\x9e Climax.",            25},
-    {30, "Chapter 5: Pure Climax",      "Earn a Pure Platinum award in Chapter 5: Hot Pursuit on \xe2\x88\x9e Climax.",             25},
-    {31, "Chapter 6: Pure Climax",      "Earn a Pure Platinum award in Chapter 6: Off the Rails on \xe2\x88\x9e Climax.",           25},
-    {32, "Side Chapter 2: Pure Climax", "Earn a Pure Platinum award in Side Chapter 2: The Lynx Strikes on \xe2\x88\x9e Climax.",   25},
-    {33, "Chapter 7: Pure Climax",      "Earn a Pure Platinum award in Chapter 7: Burning Sands on \xe2\x88\x9e Climax.",           25},
-    {34, "Chapter 8: Pure Climax",      "Earn a Pure Platinum award in Chapter 8: A Croaking Chorus on \xe2\x88\x9e Climax.",       25},
-    {35, "Chapter 9: Pure Climax",      "Earn a Pure Platinum award in Chapter 9: Learning to Fly on \xe2\x88\x9e Climax.",         25},
-    {36, "Side Chapter 3: Pure Climax", "Earn a Pure Platinum award in Side Chapter 3: High Stakes on \xe2\x88\x9e Climax.",        25},
-    {37, "Chapter 10: Pure Climax",     "Earn a Pure Platinum award in Chapter 10: Cover of Night on \xe2\x88\x9e Climax.",         25},
-    {38, "Chapter 11: Pure Climax",     "Earn a Pure Platinum award in Chapter 11: A Familiar Dance on \xe2\x88\x9e Climax.",       25},
-    {39, "Chapter 12: Pure Climax",     "Earn a Pure Platinum award in Chapter 12: The Edge of Madness on \xe2\x88\x9e Climax.",    25},
-    {40, "Side Chapter 4: Pure Climax", "Earn a Pure Platinum award in Side Chapter 4: The Doctor is Out on \xe2\x88\x9e Climax.",  25},
-    {41, "Chapter 13: Pure Climax",     "Earn a Pure Platinum award in Chapter 13: Kingdom of One on \xe2\x88\x9e Climax.",         25},
-    {42, "Chapter 14: Pure Climax",     "Earn a Pure Platinum award in Chapter 14: The Single Truth on \xe2\x88\x9e Climax.",       25},
+    {24, "Prologue: Pure Climax",       "Earn a Pure Platinum award in Prologue: A Chaotic Encounter on \xe2\x88\x9e Climax.",      25, "prologue_pure_climax"},
+    {25, "Chapter 1: Pure Climax",      "Earn a Pure Platinum award in Chapter 1: Scrambling for Answers on \xe2\x88\x9e Climax.",  25, "chapter_1_pure_climax"},
+    {26, "Chapter 2: Pure Climax",      "Earn a Pure Platinum award in Chapter 2: City on Fire on \xe2\x88\x9e Climax.",            25, "chapter_2_pure_climax"},
+    {27, "Chapter 3: Pure Climax",      "Earn a Pure Platinum award in Chapter 3: A Sinking Feeling on \xe2\x88\x9e Climax.",       25, "chapter_3_pure_climax"},
+    {28, "Side Chapter 1: Pure Climax", "Earn a Pure Platinum award in Side Chapter 1: The Crimson Shadow on \xe2\x88\x9e Climax.", 25, "side_chapter_1_pure_climax"},
+    {29, "Chapter 4: Pure Climax",      "Earn a Pure Platinum award in Chapter 4: Worlds Apart on \xe2\x88\x9e Climax.",            25, "chapter_4_pure_climax"},
+    {30, "Chapter 5: Pure Climax",      "Earn a Pure Platinum award in Chapter 5: Hot Pursuit on \xe2\x88\x9e Climax.",             25, "chapter_5_pure_climax"},
+    {31, "Chapter 6: Pure Climax",      "Earn a Pure Platinum award in Chapter 6: Off the Rails on \xe2\x88\x9e Climax.",           25, "chapter_6_pure_climax"},
+    {32, "Side Chapter 2: Pure Climax", "Earn a Pure Platinum award in Side Chapter 2: The Lynx Strikes on \xe2\x88\x9e Climax.",   25, "side_chapter_2_pure_climax"},
+    {33, "Chapter 7: Pure Climax",      "Earn a Pure Platinum award in Chapter 7: Burning Sands on \xe2\x88\x9e Climax.",           25, "chapter_7_pure_climax"},
+    {34, "Chapter 8: Pure Climax",      "Earn a Pure Platinum award in Chapter 8: A Croaking Chorus on \xe2\x88\x9e Climax.",       25, "chapter_8_pure_climax"},
+    {35, "Chapter 9: Pure Climax",      "Earn a Pure Platinum award in Chapter 9: Learning to Fly on \xe2\x88\x9e Climax.",         25, "chapter_9_pure_climax"},
+    {36, "Side Chapter 3: Pure Climax", "Earn a Pure Platinum award in Side Chapter 3: High Stakes on \xe2\x88\x9e Climax.",        25, "side_chapter_3_pure_climax"},
+    {37, "Chapter 10: Pure Climax",     "Earn a Pure Platinum award in Chapter 10: Cover of Night on \xe2\x88\x9e Climax.",         25, "chapter_10_pure_climax"},
+    {38, "Chapter 11: Pure Climax",     "Earn a Pure Platinum award in Chapter 11: A Familiar Dance on \xe2\x88\x9e Climax.",       25, "chapter_11_pure_climax"},
+    {39, "Chapter 12: Pure Climax",     "Earn a Pure Platinum award in Chapter 12: The Edge of Madness on \xe2\x88\x9e Climax.",    25, "chapter_12_pure_climax"},
+    {40, "Side Chapter 4: Pure Climax", "Earn a Pure Platinum award in Side Chapter 4: The Doctor is Out on \xe2\x88\x9e Climax.",  25, "side_chapter_4_pure_climax"},
+    {41, "Chapter 13: Pure Climax",     "Earn a Pure Platinum award in Chapter 13: Kingdom of One on \xe2\x88\x9e Climax.",         25, "chapter_13_pure_climax"},
+    {42, "Chapter 14: Pure Climax",     "Earn a Pure Platinum award in Chapter 14: The Single Truth on \xe2\x88\x9e Climax.",       25, "chapter_14_pure_climax"},
     /* 43..44: Secret Bosses */
-    {43, "The Artifact Unleashed",      "Defeat Golem in Extra: The Artifact Unleashed.",                                   50},
-    {44, "Devil's Duel",                "Defeat Rodin in Devil's Duel.",                                                   100},
+    {43, "The Artifact Unleashed",      "Defeat Golem in Extra: The Artifact Unleashed.",                                   50, "the_artifact_unleashed"},
+    {44, "Devil's Duel",                "Defeat Rodin in Devil's Duel.",                                                   50, "devils_duel"},
     /* 45..46: Arsenal & Infernal Demons */
-    {45, "Arsenal of Darkness",         "Unlock all 13 Bayonetta 3 weapons.",                                               50},
-    {46, "Infernal Pact",               "Unlock all 12 Infernal Demons.",                                                   50},
+    {45, "Arsenal of Darkness",         "Unlock all 13 Bayonetta 3 weapons.",                                               50, "arsenal_of_darkness"},
+    {46, "Infernal Pact",               "Unlock all 12 Infernal Demons.",                                                   50, "infernal_pact"},
     /* 47..49: Lost Chapters (Witch Trials) */
-    {47, "Witch Trial 1 Clear",         "Complete Lost Chapter: Witch Trial 1.",                                            25},
-    {48, "Witch Trial 2 Clear",         "Complete Lost Chapter: Witch Trial 2.",                                            50},
-    {49, "Witch Trial 3 Clear",         "Complete Lost Chapter: Witch Trial 3.",                                            75},
+    {47, "Witch Trial 1 Clear",         "Complete Lost Chapter: Witch Trial 1.",                                            25, "witch_trial_1_clear"},
+    {48, "Witch Trial 2 Clear",         "Complete Lost Chapter: Witch Trial 2.",                                            50, "witch_trial_2_clear"},
+    {49, "Witch Trial 3 Clear",         "Complete Lost Chapter: Witch Trial 3.",                                            50, "witch_trial_3_clear"},
     /* 50: Ultimate Mastery */
-    {50, "Pure Platinum Witch",         "Earn a Pure Platinum award on all story chapters on \xe2\x88\x9e Climax.",        150},
+    {50, "Pure Platinum Witch",         "Earn a Pure Platinum award on all story chapters on \xe2\x88\x9e Climax.",        50, "pure_platinum_witch"},
 };
 
 typedef struct {
@@ -128,7 +129,7 @@ typedef struct {
     uint32_t demons_mask;                   /* save_obj + 6496 (MSB-first) */
 } WtAchSnapshot;
 
-/* Evaluate all 50 achievement bits (bit i -> native id WT_ACH_BASE + i) from a save snapshot.
+/* Evaluate all 50 achievement bits (bit i -> id WT_ACH_BASE + i) from a save snapshot.
  * Clearing on a higher difficulty retroactively satisfies lower difficulty game-completion achievements.
  * Per-chapter and full Pure Platinum achievements require Pure Platinum (6) strictly on Infinite Climax (diff 3). */
 static inline uint64_t wt_ach_eval(const WtAchSnapshot *s) {
@@ -169,8 +170,8 @@ static inline uint64_t wt_ach_eval(const WtAchSnapshot *s) {
 /* Event kinds passed from game.so/game.dll (game_shim_eh.c) to the host runtime via GameHost.ach_event. */
 enum {
     ACH_EV_FRAME = 0,       /* once per game frame (main thread) */
-    ACH_EV_DEFINE = 1,      /* native_list entry: id, title, desc, score */
-    ACH_EV_READY = 2,       /* all native_list entries defined; connect to RL_SESSION now */
+    ACH_EV_DEFINE = 1,      /* unused: game builds up to v0.16.0 sent the list here, it is hosted now (docs/achievements.json) */
+    ACH_EV_READY = 2,       /* connect to RL_SESSION now */
     ACH_EV_UNLOCK = 3,      /* live unlock: id */
     ACH_EV_EARLIER = 4,     /* already unlocked in loaded save: id */
     ACH_EV_CASUAL = 5,      /* session voided to Casual: title = reason */
