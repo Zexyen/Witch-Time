@@ -35,6 +35,7 @@ typedef struct { VkImage img; VMem mem; VkImageView view; VkDescriptorSet set; i
 static struct {
     int tried, on;                                 /* on: the GPU path; decided at the first upload */
     VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkShaderModule vs, fs; VkPipeline pipe;
+    VkRenderPass rp; VkFramebuffer canvas_fb;      /* [issue 55] when D.use_rp */
     PcmTex tex[PCM_NTEX];                          /* the art (PCM_NART), then the hubs layer, the words layer and the ground, of the canvas's size */
     VkImage canvas; VMem canvas_mem; VkImageView canvas_view; int cw, ch;
     VkBuffer art_buf; VMem art_mem; uint64_t art_off[PCM_NART]; int art_staged, art_uploaded;      /* the art's staging: filled once, copied by a present, then freed */
@@ -176,7 +177,19 @@ static VkPipeline pcm_gpu_pipeline(void) {
     VkPipelineRenderingCreateInfo ren = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ren.colorAttachmentCount = 1; ren.pColorAttachmentFormats = &cf;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ren; gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
+    if (D.use_rp) {
+        if (!g_gpu.rp) {
+            VkAttachmentDescription att = {0, cf, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription sub; memset(&sub, 0, sizeof sub);
+            sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+            VkRenderPassCreateInfo rpi = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            rpi.attachmentCount = 1; rpi.pAttachments = &att; rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+            VKC(vkCreateRenderPass(V.device, &rpi, NULL, &g_gpu.rp));
+        }
+        gi.renderPass = g_gpu.rp;
+    } else gi.pNext = &ren;
+    gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
     gi.pRasterizationState = &rs; gi.pMultisampleState = &ms; gi.pColorBlendState = &cb; gi.pDynamicState = &ds; gi.layout = g_gpu.pl;
     VkResult r = vkCreateGraphicsPipelines(V.device, NULL, 1, &gi, NULL, &g_gpu.pipe);
     if (r != VK_SUCCESS) { printf("pcmenu: THE DRIVER REFUSED the panel's pipeline (%s): the panel is composed on the CPU\n", vk_result_name(r)); fflush(stdout); g_gpu.pipe = NULL; return NULL; }
@@ -206,6 +219,7 @@ static void pcm_gpu_art_stage(void) {
 static void pcm_gpu_canvas(int w, int h) {
     if (g_gpu.canvas && g_gpu.cw == w && g_gpu.ch == h) return;
     cmd_wait_all();                                /* a present may still draw with them */
+    if (g_gpu.canvas_fb) { vkDestroyFramebuffer(V.device, g_gpu.canvas_fb, NULL); g_gpu.canvas_fb = NULL; }
     if (g_gpu.canvas) { vkDestroyImageView(V.device, g_gpu.canvas_view, NULL); vkDestroyImage(V.device, g_gpu.canvas, NULL); vmem_free(g_gpu.canvas_mem); g_gpu.canvas = NULL; g_gpu.canvas_view = NULL; }
     for (int k = 0; k < 3; k++) pcm_tex_free(&g_gpu.tex[PCM_NART + k]);
     g_gpu.cw = w; g_gpu.ch = h; g_gpu.layers_gen = g_gpu.ground_gen = ~0u;
@@ -274,7 +288,17 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     ri.renderArea.extent.width = (uint32_t)r[2]; ri.renderArea.extent.height = (uint32_t)r[3]; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
     VkViewport vp = {0, 0, (float)r[2], (float)r[3], 0, 1};
     VkRect2D sc = {{0, 0}, {(uint32_t)r[2], (uint32_t)r[3]}};
-    vkCmdBeginRendering(R.cmd, &ri);
+    if (D.use_rp) {
+        if (!g_gpu.canvas_fb) {
+            VkFramebufferCreateInfo fbi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            fbi.renderPass = g_gpu.rp; fbi.attachmentCount = 1; fbi.pAttachments = &g_gpu.canvas_view;
+            fbi.width = (uint32_t)g_gpu.cw; fbi.height = (uint32_t)g_gpu.ch; fbi.layers = 1;
+            VKC(vkCreateFramebuffer(V.device, &fbi, NULL, &g_gpu.canvas_fb));
+        }
+        VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rbi.renderPass = g_gpu.rp; rbi.framebuffer = g_gpu.canvas_fb; rbi.renderArea.extent.width = (uint32_t)r[2]; rbi.renderArea.extent.height = (uint32_t)r[3];
+        vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    } else vkCmdBeginRendering(R.cmd, &ri);
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_gpu.pipe);
     vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
     for (int i = 0; i < n; i++) {
@@ -290,7 +314,7 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
         vkCmdPushConstants(R.cmd, g_gpu.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 6, 1, 0, 0);
     }
-    vkCmdEndRendering(R.cmd);
+    if (D.use_rp) vkCmdEndRenderPass(R.cmd); else vkCmdEndRendering(R.cmd);
     R.pipe_bound = NULL; R.dyn_dirty = 1; R.dyn3_dirty = 1;
     dsh_forget();
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -397,11 +421,12 @@ static void pcm_vk_free(void) {                    /* the shutdown, the device i
     for (int i = 0; i < PCM_NTEX; i++) pcm_tex_free(&g_gpu.tex[i]);
     pcm_gpu_canvas(0, 0);
     if (g_gpu.pipe) vkDestroyPipeline(V.device, g_gpu.pipe, NULL);
+    if (g_gpu.rp) vkDestroyRenderPass(V.device, g_gpu.rp, NULL);
     if (g_gpu.pl) vkDestroyPipelineLayout(V.device, g_gpu.pl, NULL);
     if (g_gpu.dp) vkDestroyDescriptorPool(V.device, g_gpu.dp, NULL);
     if (g_gpu.dl) vkDestroyDescriptorSetLayout(V.device, g_gpu.dl, NULL);
     if (g_gpu.smp) vkDestroySampler(V.device, g_gpu.smp, NULL);
     if (g_gpu.vs) vkDestroyShaderModule(V.device, g_gpu.vs, NULL);
     if (g_gpu.fs) vkDestroyShaderModule(V.device, g_gpu.fs, NULL);
-    g_gpu.pipe = NULL; g_gpu.pl = NULL; g_gpu.dp = NULL; g_gpu.dl = NULL; g_gpu.smp = NULL; g_gpu.vs = g_gpu.fs = NULL;
+    g_gpu.pipe = NULL; g_gpu.rp = NULL; g_gpu.pl = NULL; g_gpu.dp = NULL; g_gpu.dl = NULL; g_gpu.smp = NULL; g_gpu.vs = g_gpu.fs = NULL;
 }

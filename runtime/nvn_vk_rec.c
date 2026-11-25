@@ -228,6 +228,7 @@ static void rc_SetScissor(VkCommandBuffer c, uint32_t first, uint32_t n, const V
 #define vkCmdSetStencilReference(c, a, b) rc_g2((RcG2)vkCmdSetStencilReference, c, (uint32_t)(a), (uint32_t)(b))
 /* every other call that records into, begins, ends or resets a command buffer waits for the queue first */
 #define vkCmdBeginQuery(...) (rc_flush(), vkCmdBeginQuery(__VA_ARGS__))
+#define vkCmdBeginRenderPass(...) (rc_flush(), vkCmdBeginRenderPass(__VA_ARGS__))
 #define vkCmdBeginRendering(...) (rc_flush(), vkCmdBeginRendering(__VA_ARGS__))
 #define vkCmdBlitImage(...) (rc_flush(), vkCmdBlitImage(__VA_ARGS__))
 #define vkCmdClearAttachments(...) (rc_flush(), vkCmdClearAttachments(__VA_ARGS__))
@@ -239,6 +240,7 @@ static void rc_SetScissor(VkCommandBuffer c, uint32_t first, uint32_t n, const V
 #define vkCmdCopyImageToBuffer(...) (rc_flush(), vkCmdCopyImageToBuffer(__VA_ARGS__))
 #define vkCmdDispatch(...) (rc_flush(), vkCmdDispatch(__VA_ARGS__))
 #define vkCmdEndQuery(...) (rc_flush(), vkCmdEndQuery(__VA_ARGS__))
+#define vkCmdEndRenderPass(...) (rc_flush(), vkCmdEndRenderPass(__VA_ARGS__))
 #define vkCmdEndRendering(...) (rc_flush(), vkCmdEndRendering(__VA_ARGS__))
 #define vkCmdPipelineBarrier(...) (rc_flush(), vkCmdPipelineBarrier(__VA_ARGS__))
 #define vkCmdResetQueryPool(...) (rc_flush(), vkCmdResetQueryPool(__VA_ARGS__))

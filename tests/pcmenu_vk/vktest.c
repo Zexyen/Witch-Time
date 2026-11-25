@@ -20,6 +20,7 @@
 typedef struct { int block; uint64_t off, size; void *map; VkDeviceMemory mem; } VMem;
 static struct { VkInstance inst; VkPhysicalDevice pd; VkPhysicalDeviceMemoryProperties mp; VkDevice device; VkQueue queue; uint32_t qf; VkExtent2D extent; int hdr, alive; VkSwapchainKHR swapchain; } V;
 static struct { VkCommandPool pool; VkCommandBuffer cmd; void *pipe_bound; int dyn_dirty, dyn3_dirty, in_pass; } R;
+static struct { int use_rp; } D;
 static void vk_fatal(const char *what, VkResult r) { printf("FATAL %s: %d\n", what, (int)r); exit(2); }
 #define VKC(call) do { VkResult r_ = (call); if (r_ != VK_SUCCESS) vk_fatal(#call, r_); } while (0)
 #define DBG_ASSERT(c, m) do { if (!(c)) { printf("assert: %s\n", m); exit(3); } } while (0)
@@ -67,6 +68,7 @@ static VkShaderModule module_from_glsl(int stage, const char *glsl, const char *
 }
 static void dsh_forget(void) {}
 static int g_nsmp_old, g_nsmp; static VkSampler g_smp_old[4]; static struct { VkSampler s; } g_smp[4];
+static void sampler_table_reset(void) {}
 const GfxOptions *gfx_options(void);
 static void present_mode_pick(void) {} static void swapchain_destroy(void) {} static LONG64 g_vk_recreated; static void rs_apply(void) {}
 typedef struct { void *win; } PresentJob; static PresentJob g_pcm_last; static void vk_present2(void *a, int p) { (void)a; (void)p; }
@@ -86,6 +88,7 @@ static void cmd_begin(void) { VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_C
 static void cmd_run(void) { VKC(vkEndCommandBuffer(R.cmd)); VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO}; si.commandBufferCount = 1; si.pCommandBuffers = &R.cmd; VKC(vkQueueSubmit(V.queue, 1, &si, NULL)); VKC(vkQueueWaitIdle(V.queue)); }
 int main(int argc, char **argv) {
     int W = argc > 1 ? atoi(argv[1]) : 1280, H = argc > 2 ? atoi(argv[2]) : 720, which = argc > 3 ? atoi(argv[3]) : 1, anim = argc > 4 ? atoi(argv[4]) : 0;
+    D.use_rp = getenv("WT_VK_RENDERPASS") && atoi(getenv("WT_VK_RENDERPASS"));
     g_sc_src = 1;                                  /* the target can be read: the opening and the closing play over it */
     VkApplicationInfo ap = {VK_STRUCTURE_TYPE_APPLICATION_INFO}; ap.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo ii = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; ii.pApplicationInfo = &ap;

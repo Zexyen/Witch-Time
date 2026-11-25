@@ -19,6 +19,7 @@ static int have_targets_live(void);
     X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements) X(vkBindImageMemory) X(vkCreateImageView) X(vkDestroyImageView) X(vkCreateSampler) X(vkDestroySampler) \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) \
     X(vkCreateGraphicsPipelines) X(vkDestroyPipeline) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) \
+    X(vkCreateRenderPass) X(vkDestroyRenderPass) X(vkCreateFramebuffer) X(vkDestroyFramebuffer) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetDepthBias) \
     X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetLineWidth) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) \
     X(vkCmdSetPrimitiveTopology) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
@@ -52,6 +53,7 @@ static struct {
     const char *exts[24]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
+    int use_rp;                                    /* [issue 55] VkRenderPass / VkFramebuffer instead of dynamic rendering (Intel Windows < 101.5000; WT_VK_RENDERPASS=0/1) */
     int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
@@ -89,6 +91,24 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     vkGetPhysicalDeviceMemoryProperties2 = vk_sym("vkGetPhysicalDeviceMemoryProperties2");
     vkGetDeviceProcAddr = vk_sym("vkGetDeviceProcAddr");
     D.debug = getenv("WT_VK_DEBUG") && atoi(getenv("WT_VK_DEBUG"));
+    {   /* driver identity and subgroup stages, queried first so driver-specific workarounds (issue 55, issue 50) can use them */
+        VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
+        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv; D.drv.pNext = &p11;
+        vkGetPhysicalDeviceProperties2(V.gpu, &p2);
+        D.drv.pNext = NULL;
+        D.sg_stages = p11.subgroupSupportedStages; D.sg_known = 1;
+        if (!(D.sg_stages & VK_SHADER_STAGE_VERTEX_BIT) || !(D.sg_stages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+            printf("nvn_vk: subgroup operations in stages 0x%x only: a vertex or tessellation stage without them is translated as a warp of one lane\n", (unsigned)D.sg_stages);
+    }
+    /* [issue 55] Intel's Windows Vulkan driver (igvk64.dll) below 101.5000 (driverVersion packs major = >> 14, minor = & 0x3fff;
+     * UHD 620 101.2127 and Iris Xe 101.3111) crashes reading +0x68 inside vkCmdBeginRendering on the first pass after a
+     * depth-only pass in the same command buffer. Fall back to VkRenderPass / VkFramebuffer there (WT_VK_RENDERPASS=0/1). */
+    int intel_win = D.drv.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+    uint32_t intel_maj = V.props.driverVersion >> 14, intel_min = V.props.driverVersion & 0x3fffu;
+    int intel_old = intel_win && (intel_maj < 101 || (intel_maj == 101 && intel_min < 5000));
+    const char *rpe = getenv("WT_VK_RENDERPASS");
+    D.use_rp = rpe && rpe[0] ? atoi(rpe) != 0 : intel_old;
     D.f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2; D.f11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     D.f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES; D.f13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     D.f2.pNext = &D.f11; D.f11.pNext = &D.f12; D.f12.pNext = &D.f13; tail = &D.f13.pNext;
@@ -101,8 +121,9 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     }
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
     /* [witchtime] Qualcomm's driver (Adreno 740) feeds some attributes of a dynamic vertex input as (0, 0, 0, 1): the title's
-     * text and the stage meshes vanish. There the vertex layout is part of each pipeline (WT_VK_VIDS=1 uses the extension) */
-    int vids_want = getenv("WT_VK_VIDS") ? atoi(getenv("WT_VK_VIDS")) != 0 : V.props.vendorID != 0x5143;
+     * text and the stage meshes vanish. Intel's old Windows drivers (< 101.5000, Vulkan 1.3.215, issue 55) also miscompile
+     * dynamic vertex input. There the vertex layout is part of each pipeline (WT_VK_VIDS=1 uses the extension) */
+    int vids_want = getenv("WT_VK_VIDS") ? atoi(getenv("WT_VK_VIDS")) != 0 : (V.props.vendorID != 0x5143 && !intel_old);
     if (vids_want) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* WT_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
     EXT(has_pv, "VK_EXT_provoking_vertex", pv, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT)
@@ -113,7 +134,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     /* session 9: graphics pipeline libraries (nvn_vk_m4.c "graphics pipeline libraries"): the stage pair is compiled at loading
      * without the pass formats, a draw only LINKS. WT_VK_GPL=1 turns it on (needs extended dynamic state 3 as well). */
     D.ext_gpl = has_name(dext, ndext, "VK_EXT_graphics_pipeline_library") && has_name(dext, ndext, "VK_KHR_pipeline_library"); D.ext_so = has_name(dext, ndext, "VK_EXT_shader_object");
-    if (D.ext_gpl && vk_gpl_mode()) { D.exts[D.next++] = "VK_KHR_pipeline_library"; EXT(has_gpl, "VK_EXT_graphics_pipeline_library", gpl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT) }
+    if (D.ext_gpl && vk_gpl_mode() && !D.use_rp) { D.exts[D.next++] = "VK_KHR_pipeline_library"; EXT(has_gpl, "VK_EXT_graphics_pipeline_library", gpl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT) }
     EXT(has_fault, "VK_EXT_device_fault", fault, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT)      /* [issue 140] a lost device says what faulted (fault_dump) */
 #undef EXT
     {   /* [issue 26] WT_VK_CHECKPOINTS=1: NVIDIA's diagnostic checkpoints (ckpt) */
@@ -127,6 +148,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     if (has_name(dext, ndext, "VK_EXT_memory_budget")) { D.has_budget = 1; D.exts[D.next++] = "VK_EXT_memory_budget"; }      /* [issue 153] vmem_report */
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("WT_VK_PUSH") && !atoi(getenv("WT_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
+    if (!D.f13.dynamicRendering) D.use_rp = 1;
     D.has_vids = D.has_vids && D.vids.vertexInputDynamicState; D.has_cbc = D.has_cbc && D.cbc.customBorderColors && D.cbc.customBorderColorWithoutFormat;
     D.has_pv = D.has_pv && D.pv.provokingVertexLast; D.has_iu8 = D.has_iu8 && D.iu8.indexTypeUint8; D.has_plr = D.has_plr && D.plr.primitiveTopologyListRestart;
     D.has_fault = D.has_fault && D.fault.deviceFault; D.fault.deviceFaultVendorBinary = VK_FALSE;      /* (the binary dump is not read: not asked for) */
@@ -134,7 +156,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.has_eds3 = D.has_eds3 && D.eds3.extendedDynamicState3ColorBlendEnable && D.eds3.extendedDynamicState3ColorBlendEquation && D.eds3.extendedDynamicState3ColorWriteMask && D.eds3.extendedDynamicState3PolygonMode &&
                  D.eds3.extendedDynamicState3AlphaToCoverageEnable && D.eds3.extendedDynamicState3SampleMask && (D.eds3.extendedDynamicState3DepthClampEnable || !D.f2.features.depthClamp);
     printf("nvn_vk: extended dynamic state 3 (blend enable / equation / write mask, polygon mode, alpha to coverage, sample mask, depth clamp dynamic = not in the pipeline key): %s\n", D.has_eds3 ? "yes" : "no");
-    D.has_gpl = D.has_gpl && D.gpl.graphicsPipelineLibrary && D.has_eds3 && D.has_vids;
+    D.has_gpl = D.has_gpl && D.gpl.graphicsPipelineLibrary && D.has_eds3 && D.has_vids && !D.use_rp;
     printf("nvn_vk: driver support for pipelines without a hold: VK_EXT_graphics_pipeline_library %s, VK_EXT_shader_object %s, extended dynamic state 3 (all seven states) %s, vertex input dynamic state %s | pipeline libraries in use: %s\n",
            D.ext_gpl ? "yes" : "NO", D.ext_so ? "yes" : "NO", D.has_eds3 ? "yes" : "NO", D.has_vids ? "yes" : "NO", D.has_gpl ? "YES" : "no");
     {   /* [issue 50] the driver and its branch. AMD's Windows driver for RDNA 2 and older (driverInfo "(AMD proprietary shader compiler)";
@@ -142,33 +164,27 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
          * washed-out world without Bayonetta's body, and RX 470 / 570 / 580 / 590 did the same in another recomp until it took alpha
          * to coverage out of the dynamic state. Here it goes into the pipeline key on that branch's whole-pipeline path, as on a GPU
          * without extended dynamic state 3. WT_VK_DYN_A2C=0 / 1 forces either way on whole pipelines. */
-        VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-        VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
-        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv; D.drv.pNext = &p11;
-        vkGetPhysicalDeviceProperties2(V.gpu, &p2);
-        D.drv.pNext = NULL;
-        D.sg_stages = p11.subgroupSupportedStages; D.sg_known = 1;
-        if (!(D.sg_stages & VK_SHADER_STAGE_VERTEX_BIT) || !(D.sg_stages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
-            printf("nvn_vk: subgroup operations in stages 0x%x only: a vertex or tessellation stage without them is translated as a warp of one lane\n", (unsigned)D.sg_stages);
         const char *e = getenv("WT_VK_DYN_A2C");
         int amd_sc = D.drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(D.drv.driverInfo, "shader compiler") != NULL;
-        D.dyn_a2c = D.has_eds3 && (D.has_gpl || (e && e[0] ? atoi(e) != 0 : !amd_sc));      /* the libraries hold no alpha to coverage: always dynamic with them */
+        D.dyn_a2c = D.has_eds3 && (D.has_gpl || (e && e[0] ? atoi(e) != 0 : !(amd_sc || intel_old)));      /* the libraries hold no alpha to coverage: always dynamic with them */
         printf("nvn_vk: driver: %s, %s (id %d); alpha to coverage: %s\n", D.drv.driverName, D.drv.driverInfo, (int)D.drv.driverID,
-               !D.has_eds3 ? "in the pipeline key" : D.dyn_a2c ? (e && e[0] && !atoi(e) && D.has_gpl ? "dynamic state (WT_VK_DYN_A2C=0 needs whole pipelines: WT_VK_GPL=0)" : "dynamic state") : e && e[0] ? "in the pipeline key (WT_VK_DYN_A2C=0)" : "in the pipeline key: AMD's driver for RDNA 2 and older applies it while the dynamic state says off (issue 50)");
+               !D.has_eds3 ? "in the pipeline key" : D.dyn_a2c ? (e && e[0] && !atoi(e) && D.has_gpl ? "dynamic state (WT_VK_DYN_A2C=0 needs whole pipelines: WT_VK_GPL=0)" : "dynamic state") : e && e[0] ? "in the pipeline key (WT_VK_DYN_A2C=0)" : amd_sc ? "in the pipeline key: AMD's driver for RDNA 2 and older applies it while the dynamic state says off (issue 50)" : "in the pipeline key: Intel Windows driver below 101.5000 (issue 55)");
     }
+    printf("nvn_vk: render passes: %s%s\n", D.use_rp ? "VkRenderPass / VkFramebuffer" : "dynamic rendering (vkCmdBeginRendering)",
+           rpe && rpe[0] ? (D.use_rp ? " (WT_VK_RENDERPASS=1)" : " (WT_VK_RENDERPASS=0)") : !D.f13.dynamicRendering ? " (device lacks dynamicRendering)" : intel_old ? " (Intel Windows driver below 101.5000: avoids igvk64.dll crash in vkCmdBeginRendering, issue 55; WT_VK_RENDERPASS=0 forces dynamic rendering)" : "");
     /* session 11: ONE line that says which path draws and why */
     {   const char *e = getenv("WT_VK_GPL");
         int m = vk_gpl_mode();
         printf("nvn_vk_path: %s: %s (WT_VK_GPL %s; default %d; WT_VK_GPL=0 is the switch back to whole pipelines)\n",
                D.has_gpl && m >= 2 ? "STAGE LIBRARIES + preparation + loading barrier (a draw links, nothing is compiled in a fight)" : D.has_gpl ? "PAIR LIBRARIES (WT_VK_GPL=1, a measurement mode)" : "WHOLE PIPELINES (made by the workers from the list of earlier runs; a first use can hold a frame)",
-               !m ? (e ? "turned off by WT_VK_GPL=0" : "off by default in this build") : D.has_gpl ? (e ? "asked for by WT_VK_GPL" : "the default: the driver has VK_EXT_graphics_pipeline_library, extended dynamic state 3 and dynamic vertex input") :
+               D.use_rp ? "VkRenderPass fallback uses whole pipelines" : !m ? (e ? "turned off by WT_VK_GPL=0" : "off by default in this build") : D.has_gpl ? (e ? "asked for by WT_VK_GPL" : "the default: the driver has VK_EXT_graphics_pipeline_library, extended dynamic state 3 and dynamic vertex input") :
                !D.ext_gpl ? "the driver has NO VK_EXT_graphics_pipeline_library: fallen back" : "the driver lacks extended dynamic state 3 or dynamic vertex input: fallen back", e ? e : "not set", VK_GPL_DEFAULT);
     }
     if (getenv("WT_VK_NOINT64")) D.f2.features.shaderInt64 = 0;      /* [witchtime] TEST ONLY: the translation for a GPU without it (Adreno), on any GPU */
-    if (!D.f13.dynamicRendering || !D.f13.synchronization2) vkd_fail("the device lacks dynamicRendering / synchronization2");
+    if (!D.f13.synchronization2) vkd_fail("the device lacks synchronization2");
     if (!D.has_vids)                               /* finding 116: AMD Polaris (RX 400/500) on Windows, older drivers */
         printf("nvn_vk: NO VK_EXT_vertex_input_dynamic_state%s: the vertex layout of a draw is part of its pipeline (numbered in ../cache/vk/vlayouts.bin); attribute divisors above 1: %s\n",
-               getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")) ? " (WT_VK_VIDS=0, a test)" : V.props.vendorID == 0x5143 ? " (not used on Qualcomm: its driver drops attributes; WT_VK_VIDS=1 uses it)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
+               getenv("WT_VK_VIDS") && !atoi(getenv("WT_VK_VIDS")) ? " (WT_VK_VIDS=0, a test)" : V.props.vendorID == 0x5143 ? " (not used on Qualcomm: its driver drops attributes; WT_VK_VIDS=1 uses it)" : intel_old ? " (not used on Intel Windows drivers below 101.5000, issue 55; WT_VK_VIDS=1 uses it)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
     D.nan_exact = V.props.vendorID != 0x1002 && V.props.vendorID != 0x10de && V.props.vendorID != 0x8086;
     if (getenv("WT_VK_NANEXACT")) D.nan_exact = atoi(getenv("WT_VK_NANEXACT")) != 0;
     D.no_switch = V.props.vendorID == 0x5143;
@@ -366,7 +382,7 @@ static struct {
     uint16_t acache_used[8192]; int acache_n; uint64_t acache_lo, acache_hi;
     VkBuffer zero; VMem zero_mem;
     /* pass */
-    int in_pass, pass_w, pass_h;
+    int in_pass, pass_w, pass_h, pass_has_depth;
     int pass_rs; float pass_sx, pass_sy;           /* track O: the pass draws into scaled images (pass_w, pass_h are the images'; sx, sy = image / game) */
     /* NVN state as left by the commands executed so far */
     TexPool *tpool; SamplerPool *spool;
@@ -546,7 +562,7 @@ static void passwhy_report(void) {
         printf("nvn_vk_passwhy: TEST: %lld passes ended from +0x%llx\n", (long long)g_pw[best].n, (unsigned long long)off); g_pw[best].n = 0;
     }
 }
-__attribute__((noinline)) static void pass_end(void) { if (R.in_pass) { passwhy_note(__builtin_return_address(0)); oq_end(); vkCmdEndRendering(R.cmd); R.in_pass = 0; if (g_dump_on) dump_pass_end(); if (R.pass_stores) { R.pass_stores = 0; storage_barrier(); } } }
+__attribute__((noinline)) static void pass_end(void) { if (R.in_pass) { passwhy_note(__builtin_return_address(0)); oq_end(); if (D.use_rp) vkCmdEndRenderPass(R.cmd); else vkCmdEndRendering(R.cmd); R.in_pass = 0; R.pass_has_depth = 0; if (g_dump_on) dump_pass_end(); if (R.pass_stores) { R.pass_stores = 0; storage_barrier(); } } }
 static LONG64 g_tm[12];                          /* ticks: 0 wait for a submission, 1 copy-back, 2 dispatch, 3 batch replay, 4 present, 5 pipelines, 6 modules, 7 copy-back wait at batch start, 8 draw preparation */
 static LONG64 tk(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 /* Session 5, WT_VK_GPUTIME=1: two timestamp queries per command buffer (written at its first and after its last command),
@@ -1119,8 +1135,167 @@ static void vt_layout(VTex *vt, VkImageLayout to) {
     vt->layout = to;
     vt->touch_gen++;
 }
+/* [issue 55] VkRenderPass / VkFramebuffer fallback cache (D.use_rp): Intel Windows drivers < 101.5000 crash inside
+ * vkCmdBeginRendering on the first pass after a depth-only pass in the same command buffer.
+ * - rp_get is thread-safe (g_rp_lock): called from the render thread, M4 pipeline workers, and the FSR velocity pipeline thread.
+ * - fb_get / fb_invalidate_vtex are render-thread only: framebuffers referencing a VTex's views are destroyed in vt_destroy
+ *   (after the GPU has finished using that VTex) right before its VkImageViews are destroyed. */
+typedef struct {
+    int32_t cfmt[8], dfmt;                         /* VkFormat; 0 (VK_FORMAT_UNDEFINED) = unused slot / no depth */
+    uint8_t clayout[8], dlayout;                   /* 0 = COLOR/DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1 = GENERAL */
+    uint8_t ncolor, samples, load_dont_care, pad;
+} RpKey;
+typedef struct RpEntry { RpKey k; VkRenderPass rp; struct RpEntry *next; } RpEntry;
+typedef struct { VkRenderPass rp; uint32_t w, h, nviews; VkImageView views[9]; } FbKey;
+typedef struct FbEntry { FbKey k; VkFramebuffer fb; unsigned bucket; struct FbEntry *next, *prev, *all_next, *all_prev; } FbEntry;
+static RpEntry *g_rp[256];
+static CRITICAL_SECTION g_rp_lock;
+static int g_rp_lock_init;
+static LONG64 g_rp_made, g_fb_made, g_fb_live;
+static FbEntry *g_fb[1024], *g_fb_all;
+static uint64_t rp_hash(const void *p, size_t n) {
+    const uint8_t *b = p; uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001B3ULL;
+    return h;
+}
+static VkFormat target_vkfmt(const TargetRef *r, const VTex *vt) {
+    VkFormat f = vt->fmt;
+    if ((r->view.set & 0x84) == 0x84 && r->view.format && r->view.format != r->tex->b.format &&
+        vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT && !vt->decode && !vt->expand) {
+        int ex, dec;
+        VkFormat f2 = tex_vkfmt(r->view.format, &ex, &dec);
+        if (f2 && !ex && !dec && fmt_aspect(f2) == VK_IMAGE_ASPECT_COLOR_BIT) f = f2;
+    }
+    if (vt->fl && f != vt->fmt && f != vt->fl_twin) f = vt->fmt;
+    return f;
+}
+static VkRenderPass rp_get(const RpKey *k0) {
+    RpKey k = *k0;
+    if (k.ncolor > 8) k.ncolor = 8;
+    if (!k.samples) k.samples = 1;
+    k.pad = 0;
+    for (int i = 0; i < 8; i++) if (i >= k.ncolor || !k.cfmt[i]) { k.cfmt[i] = 0; k.clayout[i] = 0; }
+    if (!k.dfmt) k.dlayout = 0;
+    unsigned b = (unsigned)(rp_hash(&k, sizeof k) & 255);
+    EnterCriticalSection(&g_rp_lock);
+    for (RpEntry *e = g_rp[b]; e; e = e->next) if (!memcmp(&e->k, &k, sizeof k)) { VkRenderPass r = e->rp; LeaveCriticalSection(&g_rp_lock); return r; }
+    VkAttachmentDescription atts[9];
+    VkAttachmentReference cref[8], dref;
+    uint32_t natt = 0;
+    int has_color = 0, has_depth = k.dfmt != 0, any_general = 0;
+    for (int i = 0; i < k.ncolor; i++) {
+        if (k.cfmt[i]) {
+            VkImageLayout lay = k.clayout[i] ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            VkAttachmentDescription *a = &atts[natt];
+            memset(a, 0, sizeof *a);
+            a->format = (VkFormat)k.cfmt[i]; a->samples = (VkSampleCountFlagBits)k.samples;
+            a->loadOp = k.load_dont_care ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_LOAD;
+            a->storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            a->stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a->stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            a->initialLayout = lay; a->finalLayout = lay;
+            cref[i].attachment = natt; cref[i].layout = lay;
+            natt++; has_color = 1; if (k.clayout[i]) any_general = 1;
+        } else {
+            cref[i].attachment = VK_ATTACHMENT_UNUSED; cref[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        }
+    }
+    if (has_depth) {
+        VkImageLayout lay = k.dlayout ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkFlags asp = fmt_aspect((VkFormat)k.dfmt);
+        VkAttachmentDescription *a = &atts[natt];
+        memset(a, 0, sizeof *a);
+        a->format = (VkFormat)k.dfmt; a->samples = (VkSampleCountFlagBits)k.samples;
+        a->loadOp = (asp & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a->storeOp = (asp & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a->stencilLoadOp = (asp & VK_IMAGE_ASPECT_STENCIL_BIT) ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a->stencilStoreOp = (asp & VK_IMAGE_ASPECT_STENCIL_BIT) ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a->initialLayout = lay; a->finalLayout = lay;
+        dref.attachment = natt; dref.layout = lay;
+        natt++; if (k.dlayout) any_general = 1;
+    }
+    VkSubpassDescription sub;
+    memset(&sub, 0, sizeof sub);
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = k.ncolor; sub.pColorAttachments = k.ncolor ? cref : NULL;
+    sub.pDepthStencilAttachment = has_depth ? &dref : NULL;
+    VkSubpassDependency dep[2];
+    uint32_t ndep = 0;
+    if (natt) {
+        VkPipelineStageFlags stg = 0; VkAccessFlags acc = 0;
+        if (has_color) { stg |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; acc |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; }
+        if (has_depth) { stg |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT; acc |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT; }
+        if (any_general) { stg |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; acc |= VK_ACCESS_SHADER_READ_BIT; }
+        if (stg) {
+            dep[ndep++] = (VkSubpassDependency){VK_SUBPASS_EXTERNAL, 0, stg, stg, acc, acc, 0};
+            dep[ndep++] = (VkSubpassDependency){0, VK_SUBPASS_EXTERNAL, stg, stg, acc, acc, 0};
+        }
+    }
+    VkRenderPassCreateInfo ci = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    ci.attachmentCount = natt; ci.pAttachments = natt ? atts : NULL;
+    ci.subpassCount = 1; ci.pSubpasses = &sub;
+    ci.dependencyCount = ndep; ci.pDependencies = ndep ? dep : NULL;
+    VkRenderPass rp = VK_NULL_HANDLE;
+    VKC(vkCreateRenderPass(V.device, &ci, NULL, &rp));
+    RpEntry *e = calloc(1, sizeof *e);
+    e->k = k; e->rp = rp; e->next = g_rp[b]; g_rp[b] = e;
+    g_rp_made++;
+    LeaveCriticalSection(&g_rp_lock);
+    return rp;
+}
+static VkFramebuffer fb_get(VkRenderPass rp, const VkImageView *views, uint32_t nviews, uint32_t w, uint32_t h) {
+    FbKey k;
+    memset(&k, 0, sizeof k);
+    k.rp = rp; k.w = w; k.h = h; k.nviews = nviews;
+    for (uint32_t i = 0; i < nviews; i++) k.views[i] = views[i];
+    unsigned b = (unsigned)(rp_hash(&k, sizeof k) & 1023);
+    for (FbEntry *e = g_fb[b]; e; e = e->next) if (!memcmp(&e->k, &k, sizeof k)) return e->fb;
+    VkFramebufferCreateInfo ci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    ci.renderPass = rp; ci.attachmentCount = nviews; ci.pAttachments = nviews ? views : NULL;
+    ci.width = w; ci.height = h; ci.layers = 1;
+    VkFramebuffer fb = VK_NULL_HANDLE;
+    VKC(vkCreateFramebuffer(V.device, &ci, NULL, &fb));
+    FbEntry *e = calloc(1, sizeof *e);
+    e->k = k; e->fb = fb; e->bucket = b;
+    e->next = g_fb[b]; if (g_fb[b]) g_fb[b]->prev = e; g_fb[b] = e;
+    e->all_next = g_fb_all; if (g_fb_all) g_fb_all->all_prev = e; g_fb_all = e;
+    g_fb_made++; g_fb_live++;
+    return fb;
+}
+static void fb_remove(FbEntry *e) {
+    if (e->prev) e->prev->next = e->next; else g_fb[e->bucket] = e->next;
+    if (e->next) e->next->prev = e->prev;
+    if (e->all_prev) e->all_prev->all_next = e->all_next; else g_fb_all = e->all_next;
+    if (e->all_next) e->all_next->all_prev = e->all_prev;
+    vkDestroyFramebuffer(V.device, e->fb, NULL);
+    free(e);
+    g_fb_live--;
+}
+static void fb_invalidate_vtex(VTex *vt) {
+    if (!g_fb_live) return;
+    int has_att = 0;
+    for (VView *v = vt->views; v; v = v->next) if (v->attach == 1 || v->vtype == -2) { has_att = 1; break; }
+    if (!has_att) return;
+    for (FbEntry *e = g_fb_all, *next; e; e = next) {
+        next = e->all_next;
+        int hit = 0;
+        for (uint32_t i = 0; i < e->k.nviews && !hit; i++)
+            for (VView *v = vt->views; v; v = v->next)
+                if (v->view == e->k.views[i]) { hit = 1; break; }
+        if (hit) fb_remove(e);
+    }
+}
+static void rp_shutdown(void) {
+    LONG64 rem = g_fb_live;
+    while (g_fb_all) fb_remove(g_fb_all);
+    for (int i = 0; i < 256; i++) for (RpEntry *e = g_rp[i], *n; e; e = n) { n = e->next; vkDestroyRenderPass(V.device, e->rp, NULL); free(e); g_rp[i] = NULL; }
+    if (D.use_rp || g_rp_made || g_fb_made)
+        printf("nvn_vk: render pass fallback: %lld VkRenderPass, %lld VkFramebuffer created (%lld live at shutdown)\n", (long long)g_rp_made, (long long)g_fb_made, (long long)rem);
+    g_rp_made = g_fb_made = g_fb_live = 0;
+    if (g_rp_lock_init) { DeleteCriticalSection(&g_rp_lock); g_rp_lock_init = 0; }
+}
 static void vt_check(VTex *vt) { if (vt->magic != 0x56544558) vkd_fail("an image is used after it was destroyed (texture record %p)", (void *)vt); }
 static void vt_destroy(VTex *vt) {
+    if (g_fb_live) fb_invalidate_vtex(vt);
     for (VView *v = vt->views, *n; v; v = n) { n = v->next; vkDestroyImageView(V.device, v->view, NULL); free(v); }
     vkDestroyImage(V.device, vt->img, NULL);
     vmem_free(vt->mem);
@@ -2051,7 +2226,9 @@ static uint32_t g_tex_batch_gen = 1, g_attach_gen = 1;
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
-    int w = 0, h = 0;
+    VkFormat cfmt[8] = {0}, dfmt = VK_FORMAT_UNDEFINED;
+    uint8_t clayout[8] = {0}, dlayout = 0;
+    int w = 0, h = 0, samples = 1, has_depth = 0;
     if (R.in_pass) return 1;
     if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; }      /* [witchtime] Turnip (a phone): the GPU is the slow half of a frame and starts while the rest is recorded (16 -> 20 fps on a Shibuya street; needs slot_done) */
     if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
@@ -2067,7 +2244,10 @@ static int pass_begin(void) {
         t->gpu_written = 1; vt->drawn = 1; vt->attach_gen = g_attach_gen;
         vt_layout(vt, vt->feedback ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         ca[i].imageView = target_view(&R.col[i], vt); ca[i].imageLayout = vt->layout;
-        if (!w) { w = lvl_(vt->w, target_level(&R.col[i])); h = lvl_(vt->h, target_level(&R.col[i])); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
+        cfmt[i] = target_vkfmt(&R.col[i], vt); clayout[i] = vt->layout == VK_IMAGE_LAYOUT_GENERAL ? 1 : 0; samples = vt->samples;
+        int lw = lvl_(vt->w, target_level(&R.col[i])), lh = lvl_(vt->h, target_level(&R.col[i]));
+        if (!w) { w = lw; h = lh; if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
+        else if (D.use_rp) { if (lw < w) w = lw; if (lh < h) h = lh; }
     }
     if (R.depth.tex && !R.depth.tex->dead) {
         VTex *vt = vt_get(R.depth.tex);
@@ -2080,7 +2260,10 @@ static int pass_begin(void) {
             da.imageView = target_view(&R.depth, vt); da.imageLayout = vt->layout;
             if (vt->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ri.pDepthAttachment = &da;
             if (vt->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) ri.pStencilAttachment = &da;
-            if (!w) { w = lvl_(vt->w, target_level(&R.depth)); h = lvl_(vt->h, target_level(&R.depth)); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
+            dfmt = vt->fmt; dlayout = vt->layout == VK_IMAGE_LAYOUT_GENERAL ? 1 : 0; samples = vt->samples; has_depth = 1;
+            int lw = lvl_(vt->w, target_level(&R.depth)), lh = lvl_(vt->h, target_level(&R.depth));
+            if (!w) { w = lw; h = lh; if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
+            else if (D.use_rp) { if (lw < w) w = lw; if (lh < h) h = lh; }
         }
     }
     if (w && rs_render_scale() != rs_scale()) {      /* [witchtime] issue 118: attachments of the two scales in one pass (none known): the area all of them hold, counted */
@@ -2147,8 +2330,21 @@ static int pass_begin(void) {
     cmd_begin();                                   /* vt_get may have submitted (ring wrap) */
     ri.renderArea.extent.width = (uint32_t)w; ri.renderArea.extent.height = (uint32_t)h; ri.layerCount = 1; ri.colorAttachmentCount = (uint32_t)R.ncol; ri.pColorAttachments = ca;
     if (g_pt_on > 0) { Tex *c0 = R.ncol ? R.col[0].tex : NULL; pt_mark(w, h, R.ncol, c0 ? (int)c0->b.format : 0, ri.pDepthAttachment != NULL, c0 && wintex_is(c0), 0); }
-    vkCmdBeginRendering(R.cmd, &ri);
-    R.in_pass = 1; R.pass_w = w; R.pass_h = h;
+    if (D.use_rp) {
+        RpKey rk;
+        VkImageView views[9];
+        uint32_t nviews = 0;
+        memset(&rk, 0, sizeof rk);
+        rk.ncolor = (uint8_t)R.ncol; rk.samples = (uint8_t)samples;
+        for (int i = 0; i < R.ncol; i++) if (ca[i].imageView) { rk.cfmt[i] = (int32_t)cfmt[i]; rk.clayout[i] = clayout[i]; views[nviews++] = ca[i].imageView; }
+        if (has_depth) { rk.dfmt = (int32_t)dfmt; rk.dlayout = dlayout; views[nviews++] = da.imageView; }
+        VkRenderPass rp = rp_get(&rk);
+        VkFramebuffer fb = fb_get(rp, views, nviews, (uint32_t)w, (uint32_t)h);
+        VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rbi.renderPass = rp; rbi.framebuffer = fb; rbi.renderArea.extent.width = (uint32_t)w; rbi.renderArea.extent.height = (uint32_t)h;
+        vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    } else vkCmdBeginRendering(R.cmd, &ri);
+    R.in_pass = 1; R.pass_w = w; R.pass_h = h; R.pass_has_depth = has_depth;
     if (g_dump_on) dump_pass_begin(w, h);
     oq_begin();                                           /* [Recomps#1] SAMPLES_PASSED counter running */
     return 1;
@@ -4688,18 +4884,16 @@ static int pkey_targets_of(PKey *k, int ncol, const TargetRef *col, const Target
     int all = 1;
     k->ncolor = (uint8_t)ncol; k->samples = 1;
     for (int i = 0; i < ncol; i++) {
-        if (!col[i].tex) continue;
+        if (!col[i].tex || col[i].tex->dead) continue;
         VTex *vt = col[i].tex->vk;
-        int ex, dec;
         if (!vt) { all = 0; continue; }
-        VkFormat f = vt->fmt;
-        if ((col[i].view.set & 0x84) == 0x84 && col[i].view.format) { VkFormat f2 = tex_vkfmt(col[i].view.format, &ex, &dec); if (f2 && !ex && !dec) f = f2; }
-        k->cfmt[i] = (int32_t)f; k->samples = (uint8_t)vt->samples;
+        if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) continue;
+        k->cfmt[i] = (int32_t)target_vkfmt(&col[i], vt); k->samples = (uint8_t)vt->samples;
     }
-    if (depth->tex) { VTex *vt = depth->tex->vk; if (!vt) all = 0; else { k->dfmt = (int32_t)vt->fmt; k->samples = (uint8_t)vt->samples; } }
+    if (depth->tex && !depth->tex->dead) { VTex *vt = depth->tex->vk; if (!vt) all = 0; else if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { k->dfmt = (int32_t)vt->fmt; k->samples = (uint8_t)vt->samples; } }
     return all;
 }
-static void pkey_targets(PKey *k) { pkey_targets_of(k, R.ncol, R.col, &R.depth); }
+static void pkey_targets(PKey *k) { pkey_targets_of(k, R.ncol, R.col, &R.depth); if (R.in_pass && !R.pass_has_depth) k->dfmt = 0; }
 #if 0   /* session 3's form */
 static void pkey_targets(PKey *k) {
     k->ncolor = (uint8_t)R.ncol; k->samples = 1;
@@ -5884,6 +6078,7 @@ static struct {
     VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkDescriptorSet set[8]; unsigned iset;      /* a set per present, 8 in turn: the frames in flight read theirs */
     LONG64 frame; float rect[4];                   /* [witchtime] the present's frame and where its blit put the game's picture in the window (w 0: nowhere) */
     VkShaderModule vs, fs; VkPipeline pipe; VkFormat pipe_fmt;
+    VkFramebuffer fbs[16];                         /* [issue 55] swapchain framebuffers when D.use_rp */
     int broken, said_none, mode_said; float white_said, peak_said;
 } g_hdr = {.mode_said = -1};
 static volatile LONG g_hdr_on = -1, g_hdr_white_mn = 80000;      /* the window's monitor: Windows HDR on 1 / off 0 / not asked yet -1; its SDR white in thousandths of a nit */
@@ -5999,7 +6194,10 @@ static int hdr_mode_want(void) {
  * nvn_vk_init makes the first swapchain before vkd_init has these functions); swapchain_destroy and the shutdown (0, the
  * device idle): the views and the 8-bit picture go. */
 static void hdr_views(int make) {
-    for (int i = 0; i < 16; i++) if (V.views[i]) { vkDestroyImageView(V.device, V.views[i], NULL); V.views[i] = NULL; }
+    for (int i = 0; i < 16; i++) {
+        if (g_hdr.fbs[i]) { vkDestroyFramebuffer(V.device, g_hdr.fbs[i], NULL); g_hdr.fbs[i] = NULL; }
+        if (V.views[i]) { vkDestroyImageView(V.device, V.views[i], NULL); V.views[i] = NULL; }
+    }
     if (!make) {
         if (g_hdr.img) { vkDestroyImageView(V.device, g_hdr.view, NULL); vkDestroyImage(V.device, g_hdr.img, NULL); vmem_free(g_hdr.mem); g_hdr.img = NULL; g_hdr.view = NULL; }
         return;
@@ -6113,7 +6311,9 @@ static VkPipeline hdr_pipeline(VkFormat cf) {
     VkPipelineRenderingCreateInfo ren = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ren.colorAttachmentCount = 1; ren.pColorAttachmentFormats = &cf;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ren; gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
+    if (D.use_rp) { RpKey rk; memset(&rk, 0, sizeof rk); rk.ncolor = 1; rk.cfmt[0] = (int32_t)cf; rk.samples = 1; rk.load_dont_care = 1; gi.renderPass = rp_get(&rk); }
+    else gi.pNext = &ren;
+    gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
     gi.pRasterizationState = &rs; gi.pMultisampleState = &ms; gi.pColorBlendState = &cb; gi.pDynamicState = &ds; gi.layout = g_hdr.pl;
     VkResult r = vkCreateGraphicsPipelines(V.device, NULL, 1, &gi, NULL, &g_hdr.pipe);
     if (r != VK_SUCCESS) { printf("nvn_vk_hdr: THE DRIVER REFUSED the HDR pass's pipeline (%s): the picture goes out as SDR\n", vk_result_name(r)); fflush(stdout); g_hdr.pipe = NULL; return NULL; }
@@ -6194,13 +6394,25 @@ static void hdr_pass(uint32_t index, VkImage pic) {
         ri.renderArea.extent = V.extent; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
         VkViewport vp = {0, 0, (float)V.extent.width, (float)V.extent.height, 0, 1};
         VkRect2D sc = {{0, 0}, V.extent};
-        vkCmdBeginRendering(R.cmd, &ri);
+        if (D.use_rp) {
+            RpKey rk; memset(&rk, 0, sizeof rk); rk.ncolor = 1; rk.cfmt[0] = (int32_t)sf; rk.samples = 1; rk.load_dont_care = 1;
+            VkRenderPass rp = rp_get(&rk);
+            if (!g_hdr.fbs[index]) {
+                VkFramebufferCreateInfo fbi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+                fbi.renderPass = rp; fbi.attachmentCount = 1; fbi.pAttachments = &V.views[index];
+                fbi.width = V.extent.width; fbi.height = V.extent.height; fbi.layers = 1;
+                VKC(vkCreateFramebuffer(V.device, &fbi, NULL, &g_hdr.fbs[index]));
+            }
+            VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            rbi.renderPass = rp; rbi.framebuffer = g_hdr.fbs[index]; rbi.renderArea.extent = V.extent;
+            vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        } else vkCmdBeginRendering(R.cmd, &ri);
         vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
         vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
         vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_hdr.pl, 0, 1, &set, 0, NULL);
         vkCmdPushConstants(R.cmd, g_hdr.pl, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 3, 1, 0, 0);
-        vkCmdEndRendering(R.cmd);
+        if (D.use_rp) vkCmdEndRenderPass(R.cmd); else vkCmdEndRendering(R.cmd);
         R.pipe_bound = NULL; R.dyn_dirty = 1; R.dyn3_dirty = 1;
         dsh_forget();
         hdr_shot_copy(index);
@@ -6896,6 +7108,7 @@ static void vkd_init(void) {
 #define X(n) n = (PFN_##n)vkGetDeviceProcAddr(V.device, #n); if (!n) vkd_fail("the device has no " #n);
     VKD(X)
 #undef X
+    InitializeCriticalSection(&g_rp_lock); g_rp_lock_init = 1;
     vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(V.device, "vkCmdSetVertexInputEXT");
     if (D.f12.drawIndirectCount) {                 /* [witchtime] issues 132, 133: indirect draws whose count compute writes (g_gpucount) */
         vkCmdDrawIndexedIndirectCount_ = (PFN_vkCmdDrawIndexedIndirectCount)vkGetDeviceProcAddr(V.device, "vkCmdDrawIndexedIndirectCount");
@@ -7062,6 +7275,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < g_nsmp; i++) vkDestroySampler(V.device, g_smp[i].s, NULL);
     for (int i = 0; i < g_nsmp_old; i++) vkDestroySampler(V.device, g_smp_old[i], NULL);
     pcm_vk_free();
+    rp_shutdown();
     vkDestroySampler(V.device, g_smp_default, NULL);
     for (int i = 0; i < UT_N; i++) if (g_ut[i].t) { vkDestroyDescriptorUpdateTemplate(V.device, g_ut[i].t, NULL); g_ut[i].t = VK_NULL_HANDLE; }      /* finding 145 */
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }

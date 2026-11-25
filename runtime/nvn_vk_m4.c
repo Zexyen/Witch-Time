@@ -1234,7 +1234,14 @@ whole:;
     if (fmt_aspect((VkFormat)k->dfmt) & VK_IMAGE_ASPECT_DEPTH_BIT) ri.depthAttachmentFormat = (VkFormat)k->dfmt;
     if (k->dfmt && (fmt_aspect((VkFormat)k->dfmt) & VK_IMAGE_ASPECT_STENCIL_BIT)) ri.stencilAttachmentFormat = (VkFormat)k->dfmt;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ri; gi.stageCount = nst; gi.pStages = st; gi.pTessellationState = p->tcs ? &ts : NULL; gi.pInputAssemblyState = &ia; gi.pViewportState = &vp; gi.pRasterizationState = &rs; gi.pMultisampleState = &ms;
+    if (D.use_rp) {
+        RpKey rk;
+        memset(&rk, 0, sizeof rk);
+        rk.ncolor = k->ncolor; rk.dfmt = k->dfmt; rk.samples = k->samples ? k->samples : 1;
+        for (int i = 0; i < k->ncolor && i < 8; i++) rk.cfmt[i] = k->cfmt[i];
+        gi.renderPass = rp_get(&rk);
+    } else gi.pNext = &ri;
+    gi.stageCount = nst; gi.pStages = st; gi.pTessellationState = p->tcs ? &ts : NULL; gi.pInputAssemblyState = &ia; gi.pViewportState = &vp; gi.pRasterizationState = &rs; gi.pMultisampleState = &ms;
     gi.pDepthStencilState = &ds; gi.pColorBlendState = &cb; gi.pDynamicState = &dy; gi.layout = p->layout;
     if (!D.has_vids) gi.pVertexInputState = &vi;
     static volatile LONG nfail;
