@@ -179,8 +179,9 @@ int tex_rule_mip_block_depth_log2(int depth, int bd0_log2);
  *  - snorm (BC4/BC5 SNORM): float output is -1..1; RGBA8 maps -1..1 to 0..255 (0 -> 128).
  *  - BC6H: float output is the decoded half values; RGBA8 is clamped to 0..1 (for previews only).
  *  - BC4: G = B = 0, A = 255. BC5: B = 0, A = 255. RGB_DXT1: A = 255 (3-colour blocks give black).
- *  - ASTC: LDR only. HDR blocks (HDR endpoint modes, HDR void-extent) decode to magenta (255,0,255,255)
- *    and are counted in tex_astc_hdr_blocks. Invalid blocks give the ASTC error colour magenta too. */
+ *  - ASTC: 2D footprints; HDR endpoint modes and HDR void-extent blocks are decoded (clamped to 0..1)
+ *    and counted in tex_astc_hdr_blocks. Invalid blocks decode to transparent black (0,0,0,0) as on Tegra
+ *    and are counted in tex_astc_bad_blocks. */
 int tex_decode_rgba8(int nvn_format, const void *src, int w, int h, uint8_t *dst);
 int tex_decode_rgba32f(int nvn_format, const void *src, int w, int h, float *dst);
 extern unsigned tex_astc_hdr_blocks, tex_astc_bad_blocks;      /* counters, informational */

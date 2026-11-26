@@ -5891,53 +5891,75 @@ static const TexPackEntry *pack_find(const Tex *t, const uint8_t *src) {
  * job second frees it (owner). With the BC7 pack a job finds the texture there instead (bc7 = 1: out holds BC7 blocks).
  * WT_TEXPREP_THREADS=<n> (default 3, 0 = at the draw, as before); WT_TEXPREP_CHECK=1 (test) decodes again at the draw and
  * compares; WT_TEXPACK_CHECK=1 (test) compares the pack's texels with the decode and prints the worst level. */
-typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok, bc7; } TexPrep;
+typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok, kind; } TexPrep;
 static TexPrep *g_tp_head, *g_tp_tail;
 static CRITICAL_SECTION g_tp_lock;
 static HANDLE g_tp_go;
 static int g_tp_n = -1;
 static volatile LONG64 g_tp_held;                  /* bytes in finished jobs: a texture made at its use later than this is decoded there */
+static volatile LONG64 g_pack_miss_rgba;           /* #215: cumulative RGBA8 bytes kept lossless for pack-miss (mod) ASTC textures */
 static LONG64 g_tp_hit, g_tp_stale, g_tp_late, g_tp_diff;
 #define TP_HELD_MAX (512ll << 20)
+#define PACK_MISS_RGBA_MAX (256ll << 20)
+static size_t tex_rgba_bytes(const Tex *t, const TexLayout *L, int levels) {
+    size_t n = 0;
+    for (int l = 0; l < levels && l < L->levels; l++) n += (size_t)L->layers * (size_t)L->lvl_w[l] * (size_t)L->lvl_h[l] * 4;
+    (void)t;
+    return n;
+}
 static void tp_free(TexPrep *j) { if (j->ok) InterlockedAdd64(&g_tp_held, -(LONG64)(j->bytes + j->size)); free(j->snap); free(j->out); free(j); }
 static void tp_decode(TexPrep *j) {
     Tex *t = j->t;
     TexLayout L;
-    size_t total = 0, tmp_n = 0;
+    size_t total_bc = 0, total_rgba = 0, max_lin = 0, tmp_n = 0;
     tex_lay(&t->b, &L);
     int levels = nvn_front_tex_levels(t);
     for (int l = 0; l < levels && l < L.levels; l++) {
         size_t lin = L.lvl_linear_size[l], rgba = (size_t)L.lvl_w[l] * L.lvl_h[l] * 4;
-        total += (size_t)L.layers * ((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+        total_bc += (size_t)L.layers * ((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+        total_rgba += (size_t)L.layers * rgba;
+        if (lin > max_lin) max_lin = lin;
         if (lin + rgba > tmp_n) tmp_n = lin + rgba;
     }
-    uint8_t *tmp = malloc(tmp_n), *o;
-    j->snap = malloc(j->size); o = j->out = malloc(total);
-    if (!tmp || !j->snap || !o) { free(tmp); return; }
+    j->snap = malloc(j->size);
+    if (!j->snap) return;
     memcpy(j->snap, j->src, j->size);
+    int use_rgba = 0;
     if (pack_on()) {
         const TexPackEntry *e = pack_find(t, j->snap);
-        if (e && e->raw == total && tex_pack_read(e, o)) {
-            free(tmp);
-            InterlockedIncrement64(&g_pack_hit);
-            j->bytes = total; j->bc7 = j->ok = 1;
-            InterlockedAdd64(&g_tp_held, (LONG64)(total + j->size));
-            return;
+        if (e && e->raw == total_bc) {
+            j->out = malloc(total_bc);
+            if (j->out && tex_pack_read(e, j->out)) {
+                InterlockedIncrement64(&g_pack_hit);
+                j->bytes = total_bc; j->kind = 3; j->ok = 1;
+                InterlockedAdd64(&g_tp_held, (LONG64)(total_bc + j->size));
+                return;
+            }
+            free(j->out); j->out = NULL;
         }
         InterlockedIncrement64(&g_pack_miss);
+        use_rgba = g_pack_miss_rgba + (LONG64)total_rgba <= PACK_MISS_RGBA_MAX;
     }
+    size_t out_total = use_rgba ? total_rgba : total_bc;
+    uint8_t *tmp = malloc(use_rgba ? max_lin : tmp_n), *o = j->out = malloc(out_total);
+    if (!tmp || !o) { free(tmp); return; }
     for (int layer = 0; layer < L.layers; layer++)
         for (int l = 0; l < levels && l < L.levels; l++) {
             const uint8_t *p = tex_level_ptr(&L, j->snap, l, layer);
             if (p + L.lvl_size[l] > j->snap + j->size) { free(tmp); return; }
             tex_deswizzle_level(&L, l, p, tmp);
-            tex_decode_rgba8(t->b.format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + L.lvl_linear_size[l]);
-            tex_encode_bc3(tmp + L.lvl_linear_size[l], L.lvl_w[l], L.lvl_h[l], o);
-            o += (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+            if (use_rgba) {
+                tex_decode_rgba8(t->b.format, tmp, L.lvl_w[l], L.lvl_h[l], o);
+                o += (size_t)L.lvl_w[l] * L.lvl_h[l] * 4;
+            } else {
+                tex_decode_rgba8(t->b.format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + L.lvl_linear_size[l]);
+                tex_encode_bc3(tmp + L.lvl_linear_size[l], L.lvl_w[l], L.lvl_h[l], o);
+                o += (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+            }
         }
     free(tmp);
-    j->bytes = total; j->ok = 1;
-    InterlockedAdd64(&g_tp_held, (LONG64)(total + j->size));
+    j->bytes = out_total; j->kind = use_rgba ? 1 : 2; j->ok = 1;
+    InterlockedAdd64(&g_tp_held, (LONG64)(out_total + j->size));
 }
 static DWORD WINAPI tp_worker(LPVOID a) {
     (void)a;
@@ -5985,14 +6007,25 @@ int nvn_front_tex_prep(Tex *t, size_t *bytes) {
     for (int k = 1; k < g_tp_n && g_tp_head; k++) SetEvent(g_tp_go);
     return 0;
 }
-/* A new image: 1 = it takes BC7, because the pack has this texture. What a finished job found holds; a read at the use then
- * finds the same bytes, or (the game wrote them meanwhile) tex_encode_bc7 makes the blocks. */
+/* A new ASTC image while the BC7 pack is on: 3 = BC7 from the pack; 1 = lossless RGBA8 (a pack miss, e.g. a mod texture,
+ * kept out of lossy BC3 while within PACK_MISS_RGBA_MAX); 0 = BC3 (pack off, or over the RGBA8 cap). What a finished job
+ * found holds; a read at the use then finds the same bytes, or (for BC7 rewritten by the game) tex_encode_bc7 makes blocks. */
 int nvn_front_tex_bc7(Tex *t) {
     if (!pack_on()) return 0;
     TexPrep *j = t->prep;
-    if (j && j->owner && j->ok) return j->bc7;
+    if (j && j->owner && j->ok) {
+        if (j->kind == 3) return 3;
+        if (j->kind == 1) { InterlockedAdd64(&g_pack_miss_rgba, (LONG64)j->bytes); return 1; }
+        return 0;
+    }
     const uint8_t *src = t->b.packaged ? P(t->b.packaged) : t->mem;
-    return src && t->data_size && (t->b.packaged || !t->limit || src + t->data_size <= t->limit) && pack_find(t, src) != NULL;
+    if (!src || !t->data_size || (!t->b.packaged && t->limit && src + t->data_size > t->limit)) return 0;
+    if (pack_find(t, src) != NULL) return 3;
+    TexLayout L;
+    tex_lay(&t->b, &L);
+    size_t rgba = tex_rgba_bytes(t, &L, nvn_front_tex_levels(t));
+    if (g_pack_miss_rgba + (LONG64)rgba <= PACK_MISS_RGBA_MAX) { InterlockedAdd64(&g_pack_miss_rgba, (LONG64)rgba); return 1; }
+    return 0;
 }
 void nvn_front_tex_prep_drop(Tex *t) {
     TexPrep *j = t->prep;
@@ -6036,8 +6069,8 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
     TexLayout L;
     tex_lay(b, &L);
     int levels = nvn_front_tex_levels(t);
-    TexPrep *pj = decode >= 2 ? tp_take(t, src) : NULL;
-    if (pj && pj->bc7 != (decode == 3)) { tp_free(pj); pj = NULL; }      /* blocks of the other format: not for this image */
+    TexPrep *pj = decode >= 1 ? tp_take(t, src) : NULL;
+    if (pj && pj->kind != decode) { tp_free(pj); pj = NULL; }      /* data of another format: not for this image */
     const uint8_t *pb = pj ? pj->out : NULL;
     uint8_t *pack = NULL;
     {   /* TEST ONLY: WT_TEXPACK_REDO=1: every second texture as if the game had changed it after the image was made */
@@ -6059,11 +6092,11 @@ encode:
             if (pb) {
                 static int chk = -1, pchk = -1;
                 if (chk < 0) { chk = getenv("WT_TEXPREP_CHECK") != NULL; pchk = getenv("WT_TEXPACK_CHECK") != NULL; }
-                if (chk && decode == 2) {      /* TEST ONLY */
+                if (chk && (decode == 1 || decode == 2)) {      /* TEST ONLY */
                     if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
                     tex_deswizzle_level(&L, l, p, tmp);
-                    decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, tmp + lin + rgba);
-                    if (memcmp(tmp + lin + rgba, pb, bc3)) g_tp_diff++;
+                    decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, decode == 2 ? tmp + lin + rgba : NULL);
+                    if (memcmp(decode == 1 ? tmp + lin : tmp + lin + rgba, pb, decode == 1 ? rgba : bc3)) g_tp_diff++;
                 }
                 if (pchk && decode == 3) {     /* TEST ONLY: the pack's level against the ASTC decode, RGBA */
                     if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
@@ -6076,8 +6109,9 @@ encode:
                     if (db < g_pack_worst) g_pack_worst = db;
                     if (db < 30) { g_pack_lowq++; printf("nvn_vk_tex: TEST: format 0x%x %dx%d level %d: %.1f dB against the decode\n", b->format, L.lvl_w[l], L.lvl_h[l], l, db); }
                 }
-                put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, pb, bc3, 0, 0);
-                pb += bc3;
+                size_t out_n = decode == 1 ? rgba : bc3;
+                put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, pb, out_n, decode == 1, 0);
+                pb += out_n;
                 g_st.tex_bytes += (LONG64)lin;
                 continue;
             }

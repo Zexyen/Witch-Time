@@ -135,8 +135,8 @@ int nvn_front_tex_cluster_hit(uint64_t addr, uint64_t size);
  * rgba8 = 0); decode == 3 into BC7 blocks from the pack (tex_pack.c), by tex_encode_bc7 where the pack lacks those bytes. Returns 0 when the memory is not readable. */
 typedef void nvn_front_put_fn(Tex *t, int level, int layer, int w, int h, int d, const void *data, size_t size, int rgba8, int64_t row_stride);
 int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put);
-int nvn_front_tex_prep(Tex *t, size_t *bytes);                               /* #45: starts the decode of an ASTC texture; 1 = done (*bytes of BC3), 0 = not yet, -1 = not this way */
-int nvn_front_tex_bc7(Tex *t);                                               /* #54: 1 = this ASTC texture's image takes BC7 from the pack */
+int nvn_front_tex_prep(Tex *t, size_t *bytes);                               /* #45: starts the decode of an ASTC texture; 1 = done (*bytes of RGBA8/BC3/BC7), 0 = not yet, -1 = not this way */
+int nvn_front_tex_bc7(Tex *t);                                               /* #54, #215: 3 = BC7 from the pack, 1 = lossless RGBA8 (pack miss while pack is on), 0 = BC3 */
 void nvn_front_tex_prep_drop(Tex *t);
 void nvn_front_tex_prep_report(void);
 /* Texture pool / sampler pool lookup of an NVN texture handle: returns bit 0 = live texture (*t, *v), bit 1 = sampler (*p). */
