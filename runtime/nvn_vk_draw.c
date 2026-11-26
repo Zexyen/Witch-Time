@@ -620,13 +620,40 @@ static int slot_done(Slot *s) {
     if (g_done_on > 0) return ((volatile uint64_t *)g_done_mem.map)[s - R.slot] == s->serial;
     return vkGetFenceStatus(V.device, s->fence) == VK_SUCCESS;
 }
+/* [issue 55] Diagnostic trace ring + WT_VK_STEP=1 (TEST ONLY): records the last 64 GPU commands/passes/submits and dumps
+ * them on VK_ERROR_DEVICE_LOST or fence timeout (via fault_dump / slot_wait). With WT_VK_STEP=1, waits for GPU idle after
+ * every recorded command so the exact failing draw/dispatch/pass is pinpointed. */
+#define DTR_N 128
+static char g_dtr[DTR_N][224];
+static uint64_t g_dtr_n;
+static char g_step[256];
+static int g_step_busy;
+static int vk_step(void) { static int v = -1; if (v < 0) { v = getenv("WT_VK_STEP") && atoi(getenv("WT_VK_STEP")); if (v) printf("nvn_vk: WT_VK_STEP=1 (a test): the GPU finishes every command of the game before the next one; very slow\n"); } return v; }
+static void dtr_add(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_dtr[g_dtr_n % DTR_N], sizeof g_dtr[0], fmt, ap);
+    va_end(ap);
+    g_dtr_n++;
+}
+static void dtr_dump(void) {
+    static int dumped;
+    if (dumped) return;
+    dumped = 1;
+    if (g_step[0]) printf("nvn_vk_step: %s %s\n", g_step_busy ? "THE GPU STOPPED IN:" : "last stepped command:", g_step);
+    uint64_t total = g_dtr_n, start = total > DTR_N ? total - DTR_N : 0;
+    printf("nvn_vk_trace: last %llu GPU events (serial=%llu done=%llu in_pass=%d use_rp=%d):\n",
+           (unsigned long long)(total - start), (unsigned long long)R.serial, (unsigned long long)R.done, R.in_pass, D.use_rp);
+    for (uint64_t i = start; i < total; i++) printf("  [%llu] %s\n", (unsigned long long)i, g_dtr[i % DTR_N]);
+    fflush(stdout);
+}
 static void slot_wait(Slot *s) {
     if (!s->pending) return;
     for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial < s->serial) slot_wait(&R.slot[i]);   /* [Recomps#1] in submission order (oq_land) */
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); ckpt_dump(); vkd_fail(r == VK_TIMEOUT ? "a submitted command buffer did not finish within 20 s (%s): the GPU is stuck" : "the wait for a submitted command buffer ended with %s (no 20 s passed): the GPU hung or faulted and the driver or the system reset it", vk_result_name(r)); }      /* [issue 163] a lost device ends the wait at once: "within 20 s" was read as a 20 s wait */
+    if (r != VK_SUCCESS) { if (r == VK_ERROR_DEVICE_LOST) fault_dump(); dtr_dump(); ckpt_dump(); vkd_fail(r == VK_TIMEOUT ? "a submitted command buffer did not finish within 20 s (%s): the GPU is stuck" : "the wait for a submitted command buffer ended with %s (no 20 s passed): the GPU hung or faulted and the driver or the system reset it", vk_result_name(r)); }      /* [issue 163] a lost device ends the wait at once: "within 20 s" was read as a 20 s wait */
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* WT_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
@@ -767,6 +794,7 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (wait) { sb.waitSemaphoreCount = 1; sb.pWaitSemaphores = &wait; sb.pWaitDstStageMask = &stage; }
     if (signal) { sb.signalSemaphoreCount = 1; sb.pSignalSemaphores = &signal; }
     sb.commandBufferCount = ncb; sb.pCommandBuffers = cbs;
+    dtr_add("submit slot=%d serial=%llu draws=%lld ncb=%u%s%s", R.cur, (unsigned long long)(R.serial + 1), (long long)g_cmd_draws, ncb, wait ? " wait" : "", signal ? " signal" : "");
     VKC(vkQueueSubmit(V.queue, 1, &sb, s->fence));
     s->pending = 1; s->serial = ++R.serial;
     R.recording = 0; R.cmd = NULL; R.flushes++;
@@ -1906,24 +1934,24 @@ static void ckpt_dump(void) {
 /* [issue 140] vk_fatal on VK_ERROR_DEVICE_LOST: the driver's own account (VK_EXT_device_fault: NVIDIA since 552.93, RADV),
  * the kind of fault and the GPU address, with no switch to set first. */
 static void fault_dump(void) {
-    if (!V.device) return;
+    if (!V.device) { dtr_dump(); return; }
     PFN_vkGetDeviceFaultInfoEXT get = D.has_fault ? (PFN_vkGetDeviceFaultInfoEXT)vkGetDeviceProcAddr(V.device, "vkGetDeviceFaultInfoEXT") : NULL;
     VkDeviceFaultCountsEXT n = {VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
-    if (!get || get(V.device, &n, NULL) != VK_SUCCESS) { printf("nvn_vk_fault: no fault report (%s)\n", D.has_fault ? "the driver gave none" : "the driver has no VK_EXT_device_fault"); fflush(stdout); return; }
+    if (!get || get(V.device, &n, NULL) != VK_SUCCESS) { printf("nvn_vk_fault: no fault report (%s)\n", D.has_fault ? "the driver gave none" : "the driver has no VK_EXT_device_fault"); dtr_dump(); return; }
     VkDeviceFaultAddressInfoEXT a[16]; VkDeviceFaultVendorInfoEXT v[16];
     VkDeviceFaultInfoEXT fi = {VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
     if (n.addressInfoCount > 16) n.addressInfoCount = 16;
     if (n.vendorInfoCount > 16) n.vendorInfoCount = 16;
     n.vendorBinarySize = 0; fi.pAddressInfos = a; fi.pVendorInfos = v;
     VkResult r = get(V.device, &n, &fi);
-    if (r != VK_SUCCESS && r != VK_INCOMPLETE) { printf("nvn_vk_fault: no fault report (%s)\n", vk_result_name(r)); fflush(stdout); return; }
+    if (r != VK_SUCCESS && r != VK_INCOMPLETE) { printf("nvn_vk_fault: no fault report (%s)\n", vk_result_name(r)); dtr_dump(); return; }
     static const char *k[7] = {"none", "READ of an invalid address", "WRITE to an invalid address", "EXECUTE of an invalid address", "instruction pointer unknown", "instruction pointer invalid", "instruction pointer of the fault"};
     printf("nvn_vk_fault: the driver's report of the lost device: \"%s\", %u address(es), %u vendor record(s)\n", fi.description, n.addressInfoCount, n.vendorInfoCount);
     for (uint32_t i = 0; i < n.addressInfoCount; i++)
         printf("  %s: GPU address 0x%llx (within 0x%llx)\n", (unsigned)a[i].addressType < 7 ? k[a[i].addressType] : "?", (unsigned long long)a[i].reportedAddress, (unsigned long long)a[i].addressPrecision);
     for (uint32_t i = 0; i < n.vendorInfoCount; i++)
         printf("  vendor: \"%s\", code 0x%llx, data 0x%llx\n", v[i].description, (unsigned long long)v[i].vendorFaultCode, (unsigned long long)v[i].vendorFaultData);
-    fflush(stdout);
+    dtr_dump();
 }
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
 /* ---------------------------------------------------------------- stages: machine code -> Vulkan GLSL -> SPIR-V -> module */
@@ -2348,6 +2376,11 @@ static int pass_begin(void) {
         rbi.renderPass = rp; rbi.framebuffer = fb; rbi.renderArea.extent.width = (uint32_t)w; rbi.renderArea.extent.height = (uint32_t)h;
         vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
     } else vkCmdBeginRendering(R.cmd, &ri);
+    dtr_add("pass f%lld %s %dx%d ncol=%d c=[%d/%u,%d/%u,%d/%u,%d/%u] d=%d/%u s=%d",
+            (long long)nvn_front_frame_next(), D.use_rp ? "RP" : "DR", w, h, R.ncol,
+            (int)cfmt[0], (unsigned)clayout[0], (int)cfmt[1], (unsigned)clayout[1],
+            (int)cfmt[2], (unsigned)clayout[2], (int)cfmt[3], (unsigned)clayout[3],
+            (int)dfmt, (unsigned)dlayout, samples);
     R.in_pass = 1; R.pass_w = w; R.pass_h = h; R.pass_has_depth = has_depth;
     if (g_dump_on) dump_pass_begin(w, h);
     oq_begin();                                           /* [Recomps#1] SAMPLES_PASSED counter running */
@@ -5828,6 +5861,25 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_CALL: for (int i = 0; i < (int)a[0]; i++) { uint64_t h; memcpy(&h, blob + i * 8, 8); if (depth < 8) replay(h, depth + 1); } break;
     default: { static char msg[OP_COUNT][64]; snprintf(msg[m->op % OP_COUNT], 64, "nvnCommandBuffer%s", nvn_front_op_name(m->op)); nvn_vk_missing(msg[m->op % OP_COUNT]); break; }
+    }
+    switch (m->op) {
+    case OP_DISPATCH: case OP_DISPATCH_INDIRECT: case OP_CLEARCOLOR: case OP_CLEARDS:
+    case OP_DRAW_ARRAYS: case OP_DRAW_ELEMENTS: case OP_DRAW_INDIRECT:
+    case OP_COPY_BUF_TEX: case OP_COPY_TEX_BUF: case OP_COPY_TEX_TEX: case OP_DOWNSAMPLE: case OP_CLEARTEX:
+        dtr_add("f%lld d=%lld %s vs=#%d fs=#%d tes=#%d cs=#%d a0=%llu a4=%llu a6=%llu",
+                (long long)nvn_front_frame_next(), (long long)R.frame_draws, nvn_front_op_name(m->op),
+                R.prog[0] ? R.prog[0]->serial : 0, R.prog[1] ? R.prog[1]->serial : 0,
+                R.prog[4] ? R.prog[4]->serial : 0, R.prog[5] ? R.prog[5]->serial : 0,
+                (unsigned long long)a[0], (unsigned long long)a[4], (unsigned long long)a[6]);
+        break;
+    default: break;
+    }
+    if (vk_step() && m->op != OP_CALL && R.recording) {      /* [issue 55] */
+        snprintf(g_step, sizeof g_step, "nvnCommandBuffer%s, frame %lld, after %lld draws of the frame; programs bound: vertex #%d, fragment #%d, tess #%d, compute #%d",
+                 nvn_front_op_name(m->op), (long long)nvn_front_frame_next(), (long long)R.frame_draws,
+                 R.prog[0] ? R.prog[0]->serial : 0, R.prog[1] ? R.prog[1]->serial : 0,
+                 R.prog[4] ? R.prog[4]->serial : 0, R.prog[5] ? R.prog[5]->serial : 0);
+        g_step_busy = 1; cmd_wait_all(); g_step_busy = 0;
     }
 }
 static void replay(uint64_t handle, int depth) {
