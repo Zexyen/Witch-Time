@@ -60,7 +60,7 @@ Witch Time can be installed, built, configured, and launched directly through [R
 
 ### Linux
 
-**Requirements:** A Vulkan driver and OpenGL (`libGL.so.1`).
+**Requirements:** x86-64, or AArch64 (`WitchTime-<version>-linux-aarch64.tar.gz` / `WitchTime-<version>-aarch64.AppImage`: experimental, built and link-tested in CI, never run on a device), with a Vulkan driver and OpenGL (`libGL.so.1`).
 
 Releases are provided as both a `.tar.gz` archive and an `.AppImage` containing the same directory layout:
 
@@ -142,7 +142,7 @@ Building the runtime from source requires **llvm-mingw** plus MinGW builds of **
 
 ### macOS *(Experimental, Apple Silicon)*
 
-Source checkout only (no macOS releases are published yet). The game's AArch64 code compiles natively for Apple Silicon and renders through Vulkan on MoltenVK (Metal). See [`docs/STATUS.md`](docs/STATUS.md) (*macOS*) for current progress.
+Available as a release (`WitchTime-<version>-macos-arm64.tar.gz`) or from a source checkout. The game's AArch64 code compiles natively for Apple Silicon and renders through Vulkan on MoltenVK (Metal). See [`docs/STATUS.md`](docs/STATUS.md) (*macOS*) for current progress.
 
 Install Apple's Command Line Tools (`xcode-select --install`) and the required dependencies from [Homebrew](https://brew.sh):
 

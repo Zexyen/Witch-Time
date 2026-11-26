@@ -33,7 +33,11 @@ static void lp_signal(int sig, siginfo_t *si, void *ucv) {
         void *tmp[LP_DEPTH + 3];
         int k = backtrace(tmp, LP_DEPTH + 3), j = 0;
         s->tid = (int)syscall(SYS_gettid); s->frame = (int)g_prof15_frame;
+#ifdef __aarch64__
+        s->pc[j++] = (void *)((ucontext_t *)ucv)->uc_mcontext.pc;
+#else
         s->pc[j++] = (void *)((ucontext_t *)ucv)->uc_mcontext.gregs[REG_RIP];
+#endif
         for (int m = 2; m < k && j < LP_DEPTH; m++) s->pc[j++] = tmp[m];      /* 0 = this handler, 1 = the signal return trampoline */
         s->n = j;
     }

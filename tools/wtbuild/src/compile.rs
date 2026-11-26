@@ -571,7 +571,10 @@ mod tests {
     fn lifted_flags_unchanged() {
         // these strings are in every player's _stamps.json hash
         let linux = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16", "-fPIC", "-Dinline=inline __attribute__((always_inline))"];
-        assert_eq!(lifted_flags(Target::Linux), linux);
+        // Linux is always this PC's own processor (Target::cpu)
+        let mut here = linux;
+        here[3] = if cfg!(target_arch = "aarch64") { "-mno-outline-atomics" } else { "-mcx16" };
+        assert_eq!(lifted_flags(Target::Linux), here);
         assert_eq!(lifted_flags(Target::Windows), [&linux[..4], &linux[5..]].concat());
         assert_eq!(lifted_flags(Target::MacOS), [&linux[..3], &linux[4..]].concat());
     }
