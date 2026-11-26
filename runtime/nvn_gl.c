@@ -2249,21 +2249,59 @@ static const char *const k_op_name[OP_COUNT] = {
     "DispatchComputeIndirect", "SetRenderEnable", "ResetCounter", "ReportCounter", "ReportValue", "FenceSync", "WaitSync", "SignalEvent", "WaitEvent",
     "BindCoverageModulationTable", "DebugGroup", "DrawTexture"};
 
-typedef struct { uint8_t *data; size_t len; uint32_t gen, model_cmd, model_ctrl, dispatches; int finalized; LONG64 created, used; } List;
+typedef struct { uint8_t *data; size_t len, cap; uint32_t gen, model_cmd, model_ctrl, dispatches; int finalized; LONG64 created, used; } List;
 static List *g_lists;
 static int g_list_count, g_list_cap, *g_list_free, g_list_free_n;
 static SRWLOCK g_list_lock = SRWLOCK_INIT;
 
+/* The big scene lists are recorded again each frame. Growing one from zero kept copying the
+ * commands already recorded and returning pages to Windows. Reuse only storage that list_collect
+ * would otherwise free. The handle, length, lifetime and guest memory accounting are unchanged. */
+#define LIST_POOL_MIN (64u << 10)
+#define LIST_POOL_MAX (4u << 20)
+static struct { uint8_t *p; size_t cap; } g_list_pool[8];   /* at most 32 MiB, protected by g_list_lock */
+static int g_list_pool_n;
+static unsigned g_list_pool_replace;
+static void rec_grow(CmdBuf *cb, size_t need) {
+    size_t cap = (cb->cap + need) * 2 + 4096;
+    if (!cb->len && cb->last_len >= LIST_POOL_MIN && cb->last_len <= LIST_POOL_MAX && !cb->data) {
+        size_t target = cb->last_len > need ? cb->last_len : need;
+        AcquireSRWLockExclusive(&g_list_lock);
+        int best = -1;
+        for (int i = 0; i < g_list_pool_n; i++) if (g_list_pool[i].cap >= target && g_list_pool[i].cap - target <= target &&
+            (best < 0 || g_list_pool[i].cap < g_list_pool[best].cap)) best = i;
+        if (best >= 0) {
+            cb->data = g_list_pool[best].p; cb->cap = g_list_pool[best].cap;
+            g_list_pool[best] = g_list_pool[--g_list_pool_n];
+        }
+        ReleaseSRWLockExclusive(&g_list_lock);
+        if (best >= 0) return;
+        if (cap < target) {
+            cap = LIST_POOL_MIN;
+            while (cap < target) cap *= 2;
+        }
+    }
+    cb->data = realloc(cb->data, cap); cb->cap = cap;
+}
 static CmdBuf *cb_new(uint64_t g) { return hnew(g, K_CMD, sizeof(CmdBuf)); }
 static CmdBuf *cb_get(uint64_t g) {
     CmdBuf *cb = hobj(g, K_CMD);
     return cb ? cb : cb_new(g);
 }
-/* Appends a command with x1..x7 as its arguments and room for `blob` more bytes; returns it (valid until the next append). */
+/* Bindings dominate the large lists. Store only the arguments their encoder and both replay
+ * paths use; other commands retain x1..x7. rec_state needs three words of scratch. */
 static Cmd *rec(Ctx *c, uint32_t op, size_t blob) {
+    static const uint8_t nargs[OP_COUNT] = {
+        [OP_PROGRAM]=2, [OP_UBO]=3, [OP_SSBO]=3, [OP_TEXTURES]=3, [OP_IMAGES]=3, [OP_VBUF]=2, [OP_VATTR]=1, [OP_VSTREAM]=1, [OP_CALL]=1,
+        [OP_BLEND]=3, [OP_COLOR]=3, [OP_CHANMASK]=3, [OP_MULTISAMPLE]=3, [OP_POLYGON]=3, [OP_DEPTHSTENCIL]=3
+    };
+    static const uint8_t scan_op[OP_COUNT] = {         /* the cases of scan_list, including nested command lists */
+        [OP_PROGRAM]=1, [OP_TARGETS]=1, [OP_VATTR]=1, [OP_VBUF]=1, [OP_VSTREAM]=1, [OP_COLOR]=1, [OP_DRAW_ARRAYS]=1, [OP_DRAW_ELEMENTS]=1, [OP_CALL]=1
+    };
     CmdBuf *cb = cb_get(A0);
-    size_t need = sizeof(Cmd) + ((blob + 7) & ~(size_t)7);
-    if (cb->len + need > cb->cap) { cb->cap = (cb->cap + need) * 2 + 4096; cb->data = realloc(cb->data, cb->cap); }
+    unsigned na = nargs[op] ? nargs[op] : 7;
+    size_t need = sizeof(Cmd) + na * sizeof(uint64_t) + ((blob + 7) & ~(size_t)7);
+    if (cb->len + need > cb->cap) rec_grow(cb, need);
     {   /* Command memory as the game sees it. The real encoding is the driver's own; the model is 8 bytes per command plus its
          * array payload (control memory: 32 bytes per recording, charged by EndRecording). When the memory the game added is
          * used up, its callback is asked for more, as NVN does (NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY = 0). */
@@ -2277,18 +2315,29 @@ static Cmd *rec(Ctx *c, uint32_t op, size_t blob) {
             call_guest(c, cb->callback);
             cb->in_callback = 0;
             memcpy(c->x, sx, sizeof sx); memcpy(c->v, sv, sizeof sv);
-            if (cb->len + need > cb->cap) { cb->cap = (cb->cap + need) * 2 + 4096; cb->data = realloc(cb->data, cb->cap); }
+            if (cb->len + need > cb->cap) rec_grow(cb, need);
         }
         cb->cmd_used += use; cb->rec_cmd += use;
     }
     Cmd *m = (Cmd *)(cb->data + cb->len);
+    if (!cb->len) cb->prev_scan = 0;
+    else if (scan_op[op]) {
+        size_t delta = (cb->len - cb->prev_scan) / 8;
+        ((Cmd *)(cb->data + cb->prev_scan))->next_scan = delta <= UINT16_MAX ? (uint16_t)delta : 0;
+        cb->prev_scan = cb->len;
+    }
     cb->len += need;
-    m->op = op; m->size = (uint32_t)need;
-    for (int i = 0; i < 7; i++) m->a[i] = c->x[i + 1];
+    m->op = (uint8_t)op; m->nargs = (uint8_t)na; m->next_scan = 0; m->size = (uint32_t)need;
+    switch (na) {
+    case 3: m->a[2] = c->x[3]; /* fall through */
+    case 2: m->a[1] = c->x[2]; /* fall through */
+    case 1: m->a[0] = c->x[1]; break;
+    default: memcpy(m->a, c->x + 1, 7 * sizeof(uint64_t)); break;
+    }
     return m;
 }
 
-static uint64_t list_register(uint8_t *data, size_t len, uint32_t model_cmd, uint32_t model_ctrl, uint32_t dispatches) {
+static uint64_t list_register(uint8_t *data, size_t len, size_t cap, uint32_t model_cmd, uint32_t model_ctrl, uint32_t dispatches) {
     AcquireSRWLockExclusive(&g_list_lock);
     int i;
     if (g_list_free_n) i = g_list_free[--g_list_free_n];
@@ -2301,7 +2350,7 @@ static uint64_t list_register(uint8_t *data, size_t len, uint32_t model_cmd, uin
         }
         i = g_list_count++;
     }
-    g_lists[i].data = data; g_lists[i].len = len; g_lists[i].created = g_st.frames; g_lists[i].used = -1;
+    g_lists[i].data = data; g_lists[i].len = len; g_lists[i].cap = cap; g_lists[i].created = g_st.frames; g_lists[i].used = -1;
     g_lists[i].model_cmd = model_cmd; g_lists[i].model_ctrl = model_ctrl; g_lists[i].dispatches = dispatches; g_lists[i].finalized = 0;
     uint64_t h = ((uint64_t)(g_lists[i].gen & 0x7fffffff) << 32) | (uint32_t)(i + 1);
     ReleaseSRWLockExclusive(&g_list_lock);
@@ -2323,7 +2372,15 @@ static void list_collect(void) {
         List *l = &g_lists[i];
         if (!l->data) continue;
         LONG64 last = l->used >= 0 ? l->used : l->created;
-        if (l->finalized || g_st.frames - last > 120) { free(l->data); l->data = NULL; l->gen++; g_list_free[g_list_free_n++] = i; }      /* finalized by the game, or (a handle the game never finalized) unused for two seconds */
+        if (l->finalized || g_st.frames - last > 120) {
+            if (l->cap >= LIST_POOL_MIN && l->cap <= LIST_POOL_MAX) {
+                int i;
+                if (g_list_pool_n < 8) i = g_list_pool_n++;
+                else { i = g_list_pool_replace++ % 8; free(g_list_pool[i].p); }  /* retire the old scene's sizes too */
+                g_list_pool[i].p = l->data; g_list_pool[i].cap = l->cap;
+            } else free(l->data);
+            l->data = NULL; l->gen++; g_list_free[g_list_free_n++] = i;
+        }
     }
     ReleaseSRWLockExclusive(&g_list_lock);
 }
@@ -4684,9 +4741,9 @@ static void cmd_begin(Ctx *c) { L1T("begin recording cb %llx", (unsigned long lo
 static void cmd_end(Ctx *c) {
     CmdBuf *cb = cb_get(A0);
     cb->ctrl_used += 32; cb->rec_ctrl += 32;
-    uint64_t h = list_register(cb->data, cb->len, (uint32_t)cb->rec_cmd, (uint32_t)cb->rec_ctrl, (uint32_t)cb->dispatches);
+    uint64_t h = list_register(cb->data, cb->len, cb->cap, (uint32_t)cb->rec_cmd, (uint32_t)cb->rec_ctrl, (uint32_t)cb->dispatches);
     L1T("end recording cb %llx -> list %llx (%u bytes, %u dispatches)", (unsigned long long)A0, (unsigned long long)h, (unsigned)cb->len, (unsigned)cb->dispatches);
-    cb->data = NULL; cb->len = cb->cap = 0; cb->recording = 0;
+    cb->last_len = cb->len; cb->data = NULL; cb->len = cb->cap = 0; cb->recording = 0;
     RET(h);
 }
 static void cmd_call(Ctx *c) { uint64_t src = A2; int n = (int)A1; Cmd *m = rec(c, OP_CALL, (size_t)n * 8); memcpy(BLOB(m), P(src), (size_t)n * 8); }
