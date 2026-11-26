@@ -57,8 +57,9 @@ body:
     attributes:
       label: Log
       description: >-
-        Drag the file in here, from the folder Witch Time is installed in. Game: `build/run/witch-time-game.log`, taken right
-        after the problem (the next start of the game replaces it); for the Old Picture Book, `build/run/witch-time-book.log`. Setup or build: the files in `build/logs/`.
+        Drag the file in here, from the folder Witch Time is installed in. Game: `build/run/witch-time-game.log` (from
+        RecompLauncher: `recompdata/logs/`), taken right after the problem (the run before is `witch-time-game.1.log`); for the
+        Old Picture Book, `witch-time-book.log` beside it. Setup or build: the files in `build/logs/`.
     validations:
       required: true
   - type: textarea

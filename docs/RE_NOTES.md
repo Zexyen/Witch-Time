@@ -491,3 +491,34 @@ there is no such effect: kind 1 with object 0 is the common file, kind 2 an obje
 (object, number, block; 637 callers) is the same for an object's own file. Seen played in a training-room fight: 599, 55, 741 and
 1 of the common file, 1, 12, 13, 60, 500 and 501 of `wp1090`.
 
+## 12. Achievements (Recomp Achievements)
+
+`runtime/achievements.c` and `runtime/game_shim_eh.c` expose Witch Time's achievement set (see [ACHIEVEMENTS.md](ACHIEVEMENTS.md))
+to [Recomp Achievements](https://github.com/elripalda/RecompAchievements) over `RL_SESSION`.
+
+- **Chapter completion, awards, secret bosses & Witch Trials (ids `1 .. 44`, `47 .. 50`)**:
+  - `0x7101853904` lists the **19 story chapters** (`0x01 .. 0x13`, Prologue, Chapters 1–14, Side Chapters 1–4) plus aggregate sentinel
+    `0x15`; `0x7101853954` lists the 14 Phenomenal Remnants (`0x100 .. 0x10d`), Golem (`0x1000000`, `Extra: The Artifact Unleashed`),
+    Witch Trials 1–3 (`0x100000 .. 0x100002`), and Rodin (`0x10000000`, `Devil's Duel`).
+  - `f_7100b29be0(diff, chapter, out_rec[10], out_ok)` queries whether a chapter (normal, side, or extra chapter, with CRC validation) is cleared
+    on `diff` (`0` Casual, `1` Standard, `2` Expert, `3` ∞ Climax; Witch Trials 1/2/3 force `1`/`2`/`3` and Rodin forces `3`) and writes the best award to `out_rec[3]`:
+    `0` Casual clear, `1` Stone, `2` Bronze, `3` Silver, `4` Gold, `5` Platinum, `6` Pure Platinum (`7` = unplayed).
+  - `f_7100b2a6c0` (normal & extra chapters) and `f_7100b2c740` (side chapters) commit a finished chapter's record and medal to `save_obj`
+    (`HOST_OVERRIDES` -> `h_chapter_record_save`, `h_side_chapter_record_save`).
+- **Weapons & Infernal Demons (ids `45 .. 46`)**:
+  - `*(uint32_t *)(save_obj + 6492)` (`f_7100b2cf30` / `f_7100b2cf90`, `HOST_OVERRIDES` -> `h_weapon_unlock`) holds owned weapons MSB-first
+    (`0x80000000u >> id`): IDs `0..11` + `14` (`0xfff20000u`, 13 base-game Bayonetta 3 weapons); IDs `12` & `13` are Bayonetta 1/2 save-data bonuses.
+  - `*(uint32_t *)(save_obj + 6496)` (`f_7100b2d030` / `f_7100b2d050`, `HOST_OVERRIDES` -> `h_demon_unlock`) holds owned Infernal Demons MSB-first
+    (`0x80000000u >> id`): IDs `0..11` (`0xfff00000u`, all 12 Infernal Demons).
+- **Save loads**: `SAVE:/SlotData_%d.dat` reads in `runtime/nnfs.c` trigger `achievements_save_loaded()`, starting a 180-frame grace
+  window. The list is an `events` list (docs/achievements.json), and an event has no `earlier` flag: progress read from a save is
+  fired right after `save_loaded` (sent once more when it is found outside the window), which the launcher keeps as Casual.
+- **Game-internal Bewitchments (RE reference; not currently exposed as Recomp Achievements)**:
+  - Bayonetta 3 ships 137 internal Bewitchments (game ids `0 .. 136`, sentinel `137` / `0x89`).
+  - Save bitfield: global save object at GOT `0x710249c4f0` (`0x7104e544f0`), 5-entry offset table at GOT `0x71024aa970`
+    (`0x71018539a0`), bit `id` at `*(uint32_t *)(save_obj + off_tab[id >> 5] + 0x20e0)` bit `(id & 31)` (`0x7104e7816c .. 0x7104e7817f`).
+  - `f_7100b2c6d0(id)` tests the bit, `f_7100b2c700(id)` sets it (138 call sites in `c_0096.c`), `f_7100b21320(id)` returns the
+    `COP_ACHIEVEMENT_DETAIL_*` text hash in bank `0x1f` (`f_7100976870`), `f_7100b21340(out[5], chapter)` maps chapters to Bewitchment ids,
+    and `f_7100b212c0(id)` returns icon index `0 .. 5`.
+
+

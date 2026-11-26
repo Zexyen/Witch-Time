@@ -1,0 +1,29 @@
+#!/bin/sh
+# AppRun of the Witch Time AppImage (.github/workflows/release.yml): starts this folder's launcher. Witch Time builds the
+# game from the player's dump into its own folder, which an AppImage run as one file (mounted read-only) cannot write to,
+# so run as one file it copies itself once into a WitchTime folder beside the AppImage (or in ~/.local/share when that
+# folder is read-only) and plays from there, offline too. RecompLauncher unpacks it when it installs it (APPIMAGE unset).
+here="$(dirname "$(readlink -f "$0")")"
+if [ -n "$APPIMAGE" ]; then
+	# shortcut: a folder made by an older AppImage is used as it is, the launcher's own update check brings it up to date
+	dir="$(dirname "$APPIMAGE")/WitchTime"
+	[ -w "$(dirname "$APPIMAGE")" ] || dir="${XDG_DATA_HOME:-$HOME/.local/share}/WitchTime"
+	if [ ! -x "$dir/build/witch-time" ]; then
+		if [ -e "$dir" ]; then
+			msg="Witch Time plays from a folder beside the AppImage, and $dir is already there without it. Move that folder aside and start the AppImage again."
+		else
+			rm -rf "$dir.part"
+			mkdir -p "$(dirname "$dir")" && cp -a "$here/." "$dir.part" && mv "$dir.part" "$dir" ||
+				msg="Witch Time could not copy itself into $dir, the folder it builds the game in. Check the free space there, or use this release's .tar.gz."
+		fi
+		if [ -n "$msg" ]; then
+			rm -rf "$dir.part"
+			echo "witch-time: $msg" >&2
+			zenity --error --title="Witch Time" --text="$msg" 2>/dev/null || kdialog --title "Witch Time" --error "$msg" 2>/dev/null ||
+				notify-send "Witch Time" "$msg" 2>/dev/null
+			exit 1
+		fi
+	fi
+	here="$dir"
+fi
+exec "$here/build/witch-time" "$@"

@@ -416,6 +416,8 @@ static ULONGLONG file_mtime(const char *path) {
 static void cfg_path(char *out) {
     const char *e = getenv("WT_CONFIG");
     if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
+    const char *d = getenv("WT_DATA");      /* [witchtime] the launcher's data folder, as graphics.ini (gfx_options.c opt_path) */
+    if (d && d[0]) { snprintf(out, MAX_PATH, "%s\\config\\controllers.ini", d); return; }
     char exe[MAX_PATH], tmp[MAX_PATH];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
     char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux too, as gfx_options.c opt_path */
@@ -901,7 +903,13 @@ int nnpad_button_prompts(void) {
     switch (t) {
     case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return 2;
     case SDL_GAMEPAD_TYPE_XBOX360: case SDL_GAMEPAD_TYPE_XBOXONE: return 3;
-    default: return best || nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
+    default:
+        if (!best) {      /* [witchtime] no pad seen yet (one can connect late): RecompLauncher's word for the one plugged in */
+            const char *rl = getenv("RECOMPLAUNCHER_PAD");
+            if (rl && !_stricmp(rl, "playstation")) return 2;
+            if (rl && !_stricmp(rl, "xbox")) return 3;
+        }
+        return best || nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
     }
 }
 /* [Recomps#1] finding 148: do player 1's face buttons go by printed letter, A being the bottom button (Xbox A, PlayStation

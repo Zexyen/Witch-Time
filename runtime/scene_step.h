@@ -8,7 +8,9 @@
 static float scene_step(float *owed, float due, float even) {
     float o = *owed + due - even, k = even;
     if (o > 90.0f) o = 90.0f;                      /* a window held for minutes must not fast-forward the scene for minutes */
+    if (o < -90.0f) o = -90.0f;
     if (o > even) k += (o - even) / 8.0f; else if (o < -even) k += (o + even) / 8.0f;
+    if (k < 0.03125f) k = 0.03125f;                /* 1/32 of a 30 Hz frame = 1/16 of 60 Hz (960 fps floor) */
     if (k > 2.0f) k = 2.0f;
     *owed = o + even - k;
     return k;

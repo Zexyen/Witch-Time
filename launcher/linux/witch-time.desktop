@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Witch Time
+Comment=Bayonetta 3, recompiled for PC from your own dump
+Exec=witch-time
+Icon=witch-time
+Categories=Game;
+Terminal=false

@@ -55,6 +55,108 @@ static void presence_tick(Ctx *c) {
     game_presence[2] = verse >= 0 && (uint64_t)verse < count && *(const int *)(record + 2248) != 15 ? *(const int *)(record + 68) + 1 : 0;      /* 15: over */
     game_presence[3] = *(int *)(uintptr_t)0x7104dbb128ull;
 }
+/* [witchtime] Recomp Achievements (docs/RE_NOTES.md section 12, docs/ACHIEVEMENTS.md): story chapter clears,
+ * difficulty completion, Platinum & Infinite Climax Pure Platinum mastery, secret bosses (Golem, Rodin),
+ * Witch Trials 1-3, and weapon/demon unlocks (ids 1..50). Chapter-record commits (f_7100b2a6c0, f_7100b2c740)
+ * and weapon/demon unlocks (f_7100b2cf90, f_7100b2d050) evaluate milestones live; achieve_tick also polls save
+ * state so loaded saves report earlier unlocks and un-relifted builds still report unlocks. */
+#include "achievements.h"
+B3_FN void f_7100b29be0(Ctx *c);                             /* (w0 diff, w1 chapter, x2 out[10], x3 out_ok) -> w0 1 if cleared */
+B3_FN void f_7100b2a6c0(Ctx *c);                             /* commits a normal chapter's clear record & medal to save_obj */
+B3_FN void f_7100b2c740(Ctx *c);                             /* commits a side chapter's clear record & medal to save_obj */
+B3_FN void f_7100b2cf90(Ctx *c);                             /* (w0 id, w1 on): set/clear owned weapon bit in save_obj + 6492 */
+B3_FN void f_7100b2d050(Ctx *c);                             /* (w0 id, w1 on): set/clear owned Infernal Demon bit in save_obj + 6496 */
+static uint64_t g_ach_ms_seen, g_ach_ms_sent;
+static int g_ach_defined, g_ach_casual_debug, g_ach_env = -1;
+static int ach_active(void) {
+    if (!host.ach_event) return 0;
+    if (g_ach_env < 0) { const char *e = getenv("RL_SESSION"); g_ach_env = e && e[0]; }
+    return g_ach_env;
+}
+static void achieve_casual_debug(void) {
+    if (g_ach_casual_debug || !ach_active()) return;
+    g_ach_casual_debug = 1;
+    host.ach_event(ACH_EV_CASUAL, 0, "debug", NULL, 0);
+}
+static void achieve_define_all(void) {
+    host.ach_event(ACH_EV_READY, 0, NULL, NULL, 0);
+    g_ach_defined = 1;
+}
+static int8_t achieve_query_medal(Ctx *c, uint32_t diff, uint32_t ch) {
+    uint32_t rec[10] = {0xffffffffu, 0xffffffffu, 0, 0, 0, 0, 0xffffffffu, 0x7fffffffu, 0, 0};
+    uint32_t ok = 1;
+    Ctx t = *c;
+    t.x[0] = diff;
+    t.x[1] = ch;
+    t.x[2] = (uint64_t)(uintptr_t)rec;
+    t.x[3] = (uint64_t)(uintptr_t)&ok;
+    f_7100b29be0(&t);
+    return ((uint32_t)t.x[0] && ok && rec[3] <= 6u) ? (int8_t)rec[3] : (int8_t)-1;
+}
+static void achieve_eval_milestones(Ctx *c, int live) {
+    if (!ach_active() || !g_ach_defined || !f_7100b29be0) return;
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    if (!save_obj || !*(const uint64_t *)(uintptr_t)0x710249c728ull) return;
+    WtAchSnapshot snap;
+    memset(&snap, 0, sizeof snap);
+    for (uint32_t i = 0; i < WT_ACH_STORY_CHAPTERS; i++)
+        for (uint32_t d = 0; d < 4; d++)
+            snap.story[i][d] = achieve_query_medal(c, d, wt_ach_story_chapters[i]);
+    for (uint32_t d = 0; d < 4; d++)
+        if (achieve_query_medal(c, d, WT_ACH_CH_GOLEM) >= 0) { snap.golem_cleared = 1; break; }
+    snap.rodin_cleared = achieve_query_medal(c, 3u, WT_ACH_CH_RODIN) >= 0;
+    snap.witch_trial_cleared[0] = achieve_query_medal(c, 1u, WT_ACH_CH_WITCH_TRIAL_1) >= 0;
+    snap.witch_trial_cleared[1] = achieve_query_medal(c, 2u, WT_ACH_CH_WITCH_TRIAL_2) >= 0;
+    snap.witch_trial_cleared[2] = achieve_query_medal(c, 3u, WT_ACH_CH_WITCH_TRIAL_3) >= 0;
+    snap.weapons_mask = *(const uint32_t *)(uintptr_t)(save_obj + 6492ull);
+    snap.demons_mask = *(const uint32_t *)(uintptr_t)(save_obj + 6496ull);
+    uint64_t mask = wt_ach_eval(&snap);
+    uint64_t added = mask & ~g_ach_ms_seen;
+    if (added) {
+        uint32_t n_new = (uint32_t)__builtin_popcountll(added);
+        for (uint32_t i = 0; i < WT_ACH_COUNT; i++) {
+            uint64_t bit = 1ull << i;
+            if ((added & bit) && !(g_ach_ms_sent & bit)) {
+                g_ach_ms_sent |= bit;
+                if (live) host.ach_event(ACH_EV_UNLOCK, WT_ACH_BASE + i, NULL, NULL, 0);
+                else host.ach_event(ACH_EV_BITFIELD, WT_ACH_BASE + i, NULL, NULL, n_new);
+            }
+        }
+    }
+    g_ach_ms_seen = mask;
+}
+void h_chapter_record_save(Ctx *c) {
+    f_7100b2a6c0(c);
+    achieve_eval_milestones(c, 1);
+}
+void h_side_chapter_record_save(Ctx *c) {
+    f_7100b2c740(c);
+    achieve_eval_milestones(c, 1);
+}
+void h_weapon_unlock(Ctx *c) {
+    uint32_t on = (uint32_t)c->x[1];
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    uint32_t before = save_obj ? *(const uint32_t *)(uintptr_t)(save_obj + 6492ull) : 0u;
+    f_7100b2cf90(c);
+    if (on && save_obj && *(const uint32_t *)(uintptr_t)(save_obj + 6492ull) != before)
+        achieve_eval_milestones(c, 1);
+}
+void h_demon_unlock(Ctx *c) {
+    uint32_t on = (uint32_t)c->x[1];
+    uint64_t save_obj = *(const uint64_t *)(uintptr_t)0x710249c4f0ull;
+    uint32_t before = save_obj ? *(const uint32_t *)(uintptr_t)(save_obj + 6496ull) : 0u;
+    f_7100b2d050(c);
+    if (on && save_obj && *(const uint32_t *)(uintptr_t)(save_obj + 6496ull) != before)
+        achieve_eval_milestones(c, 1);
+}
+static void achieve_tick(Ctx *c) {
+    static unsigned tick_frame;
+    if (!ach_active()) return;
+    unsigned f = tick_frame++;
+    if (!g_ach_defined) achieve_define_all();
+    if ((f & 63) == 0) achieve_eval_milestones(c, 0);
+    host.ach_event(ACH_EV_FRAME, 0, NULL, NULL, 0);
+}
 /* [witchtime] Debug commands, TEST ONLY (docs/RE_NOTES.md section 11; the game ships no debug menu). WT_DEBUG=<file>: the file is
  * read and deleted whenever it appears, one command a line, each answered on stdout with "debug:":
  *   phase <sub-phase>            go to a phase by its sub-phase's name (p9a0_training, pc20_ChapterSelect; "phases" lists them)
@@ -120,6 +222,7 @@ static void debug_command(Ctx *c, char *line) {
         const char *name = words == 2 ? b : a;
         int phase = words == 2 ? (int)strtol(a, NULL, 16) : dbg_phase_of(a);
         if (phase < 0) { printf("debug: phase: %s does not start with a phase number\n", a); return; }
+        achieve_casual_debug();
         c->x[0] = 0x71024c2220ull; c->x[1] = (uint32_t)phase; c->x[2] = (uint64_t)(uintptr_t)name; c->x[3] = c->x[4] = 0; c->x[5] = 0xffffffffull;
         f_710066f464(c);
         printf("debug: phase %x %s asked for\n", phase, name);
@@ -129,6 +232,7 @@ static void debug_command(Ctx *c, char *line) {
         sscanf(line, "%*s %*s %d %f %f %f", &n, &v[0], &v[1], &v[2]);
         while (slot < 16 && g_debug_spawn[slot].id) slot++;
         if (!id || slot == 16 || n < 1 || n > 32) { printf("debug: spawn: %s\n", !id ? "not an object (em0010 or 20010)" : slot == 16 ? "16 are waiting already" : "1 to 32 at a time"); return; }
+        achieve_casual_debug();
         c->x[0] = 0x7104d728f0ull; c->x[1] = id; c->x[2] = c->x[3] = c->x[5] = 0; c->x[4] = 0xffffffffull; f_710081bca8(c);
         g_debug_spawn[slot].id = id; g_debug_spawn[slot].n = n; g_debug_spawn[slot].age = 0; memcpy(g_debug_spawn[slot].at, v, sizeof v);
         snprintf(g_debug_spawn[slot].name, sizeof g_debug_spawn[slot].name, "%.7s", a);
@@ -137,6 +241,7 @@ static void debug_command(Ctx *c, char *line) {
         c->x[0] = c->x[1] = 0; f_710074d490(c);
         uint64_t pl = c->x[0], entity = pl ? *(uint64_t *)(uintptr_t)(pl + 0x12e0) : 0;
         if (!entity) { printf("debug: effect: no player here\n"); return; }
+        achieve_casual_debug();
         static _Alignas(16) uint8_t par[0x400];                /* the game's own are 0x130 on its stack */
         _Alignas(16) float scale[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, at[4] = {0, 0, 0, 1};
         uint32_t key[2] = {dbg_obj_id(b) ? 2 : 1, dbg_obj_id(b)};       /* {1, 0}: the file every scene has */
@@ -148,11 +253,12 @@ static void debug_command(Ctx *c, char *line) {
         f_7100b8f970(c);
         printf("debug: effect %ld of %s: %s\n", strtol(a, NULL, 0), key[1] ? b : "the common file", (uint32_t)c->x[0] ? "played" : "not played (no such effect, or its file is not loaded)");
     } else if (!strncmp(line, "pad", 3) && words >= 1) {
+        achieve_casual_debug();
         g_debug_pad_edge[0] = g_debug_pad_edge[1] = g_debug_pad = (uint32_t)strtoul(a, NULL, 16); g_debug_pad_frames = words == 2 && atoi(b) > 0 ? atoi(b) : 8;
         printf("debug: pad %x for %d frames\n", g_debug_pad, g_debug_pad_frames);
     } else if (!strncmp(line, "pos", 3) || !strncmp(line, "warp", 4)) {
         float *p = debug_player_pos(c);
-        if (p && line[0] == 'w' && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) memcpy(p, v, sizeof v);
+        if (p && line[0] == 'w' && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) { achieve_casual_debug(); memcpy(p, v, sizeof v); }
         if (p) printf("debug: player at %.2f %.2f %.2f\n", p[0], p[1], p[2]); else printf("debug: no player here\n");
     } else if (!strncmp(line, "objects", 7)) {               /* the game's class table: 1694 x {u32 object, fn, kind, name} */
         for (int i = 0; i < 1694; i++) {
@@ -192,6 +298,7 @@ void h_rebind_pads(Ctx *c) {
     static const struct { uint64_t at; int n; } copies[] = {{0x7104d8f338ull, 4}, {0x7104d8f418ull, 4}, {0x7104d8f5d8ull, 1}};
     presence_tick(c);
     debug_tick(c);
+    achieve_tick(c);
     if (!game_rebind_live || !(game_rebind_on[0] | game_rebind_on[1])) return;
     const uint8_t *r = rebind_cur(c);
     if (!r) return;
@@ -339,34 +446,39 @@ void h_quad_walk(Ctx *c) {
 
 /* f_7100d02de0(mode w0): the game's main loop (0x7100670b80) asks for its frame-rate mode each frame from its own state
  * flags (1 = 30 fps on the title, in menus and cutscenes; 0 = 60; 2 = 15); the mode is applied at 0x7100cfd9b8 (present
- * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). With
- * cutscene_fps = 60 (graphics.ini, WT_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
- * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
+ * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). By default a 1
+ * is made 0 so the title, menus and cutscenes run at 60 fps (or frame_rate above 60; WT_CUTSCENE_FPS=30 keeps the console's
+ * 30 fps mode for testing). Each change of the mode asked for is logged with the wall-clock time (the start and end of a
+ * cutscene). */
 B3_FN void f_7100d02de0(Ctx *c);
-/* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
+/* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1 and WT_PACE_RATE=<fps>): the clock below measures real time below 1.0 */
 static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
-static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
+static int pace_rate(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_PACE_RATE"); v = e ? atoi(e) : 0; } return v; }
+static int cutscene_30(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_CUTSCENE_FPS"); v = e && atoi(e) == 30; } return v; }
+static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 / frame_rate */
 static int g_one_pass;                             /* h_frame_clock: this fixed-step frame runs one logic step (h_main_pass) */
 static int g_half;                                 /* the last frame ran the first kind of logic step alone, so this one is the second (h_step_kind) */
 static int g_exact;                                /* h_frame_clock: this frame is a fixed-step one of the spider ride's scene, whose steps must be 1.0 (scene_even) */
 static uint32_t state_flags(void) { uint64_t fp; uint32_t f; memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&f, (void *)(uintptr_t)fp, 4); return f; }
-__declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
     static int last = -1;
-    if (!game_cutscene_fps) { const char *e = getenv("WT_CUTSCENE_FPS"); game_cutscene_fps = e && atoi(e) == 60 ? 60 : 30; }
-    int sixty = game_cutscene_fps == 60;
+    int sixty = !cutscene_30();
+    int rate = pace_rate(), below = rate > 0 && rate < 60;
     int want = (int)(uint32_t)c->x[0];
+    /* title, menus, cutscenes and rides (flag 16) run at 60 fps or frame_rate (real time). At frame_rate <= 30 they keep
+     * the console's native 30 fps 2-pass mode. The chapter 3 spider ride's prompt scene (g_exact = eva142) keeps exact 1.0
+     * steps: 60 single steps/s at >= 60 (display.c paces interval 2 at 60 Hz above 60), or 30 two-step frames/s below 60. */
+    g_fps_forced = want == 1 && (rate > 0 && rate <= 30 ? 0 : g_exact ? (!uncap_on() && !below) : (uncap_on() || below || sixty || (state_flags() & 0x10000)));
     if (want != last) {
         struct timespec ts; timespec_get(&ts, TIME_UTC);
         printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; WT_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
-               (double)ts.tv_sec + ts.tv_nsec / 1e9, sixty && want == 1 ? ": runs at 60 (cutscene_fps = 60)" : "");
+               (double)ts.tv_sec + ts.tv_nsec / 1e9,
+               g_fps_forced ? (uncap_on() || below ? ": runs at frame_rate" : ": runs at 60")
+                            : (want == 1 && g_exact && uncap_on() ? ": runs at 60 (exact step)"
+                             : want == 1 && g_exact && below ? ": runs at 30 (exact step)" : ""));
         fflush(stdout);
         last = want;
     }
-    /* above 60 fps the 30 fps scenes run at frame_rate too (real time). A ride set piece (flag 16) is gameplay the console runs
-     * at 30: it takes the game's frame rate whatever cutscene_fps says (#156). Only the chapter 3 spider ride's prompt scene stays
-     * at 60 above 60 fps (#45: the game's mode 1 is 2 ticks of frame_rate there): its logic steps must be exactly 1.0, 60 a second */
-    g_fps_forced = want == 1 && (g_exact ? !uncap_on() : uncap_on() || sixty || (state_flags() & 0x10000));
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }
@@ -488,14 +600,14 @@ void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
  * fps_ci / fps_cf). The game's counters move 1 a frame, made for 60 Hz frames (30 Hz in the 30 fps scenes). Each clock
  * update adds its step (frames of the game's own cadence) to an accumulator; G = the whole frames due so far (at most 4
  * an update). A counter visit moves by the frames due since that field's last visit when it also ran in the previous
- * update, so it keeps the game's time at 90, 120, 144 fps or a rate that changes from frame to frame; a second visit in
- * the same update moves as the first did (a counter the game steps twice a frame); any other visit (the first, a one-off
- * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 (a test of the result
- * for 0 fires as made; at 0 nothing is owed); an up-counter moves at most 1 a visit (a test for an exact value is not
- * passed over); what a limit holds back is owed to the next visits (at most 8). Off (the stock 1) unless frame_rate is
- * above 60; WT_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
- * fps_patch.py (finding 134), written again for B3. */
-static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_FPS_COUNTERS"); v = uncap_on() && !(e && !atoi(e)); } return v; }
+ * update, so it keeps the game's time at 30, 60, 90, 120, 144 fps or a rate that changes from frame to frame (at a steady
+ * 60 fps, step == 1.0 gives the stock 1); a second visit in the same update moves as the first did (a counter the game
+ * steps twice a frame); any other visit (the first, a one-off event) moves 1 as made. A countdown never passes 0 in one
+ * visit and takes the stock step at 0 (a test of the result for 0 fires as made; hitting 0 owes nothing); an up-counter
+ * moves at most 1 a visit (a test for an exact value is not passed over); what a limit holds back is owed to the next
+ * visits (at most 8). WT_FPS_COUNTERS=0 keeps the stock 1 at any rate (tests: is a fault the sites'). The rules of
+ * B2recomp's fps_patch.py (finding 134), written again for B3. */
+static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_FPS_COUNTERS"); v = !(e && !atoi(e)); } return v; }
 static float fc_stab[256];                  /* the step of update n at [n & 255] (fps_fs) */
 static uint64_t fc_gtab[256];               /* G of update n at [n & 255], stored before n is published: other threads read n, then its G */
 typedef struct { uint64_t key, field, S, U; int64_t now, carry; float f; } FcCnt;
@@ -543,11 +655,13 @@ uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int si
     if (!fc_sites_on() || !g_upd) return (uint32_t)k;
     FcCnt *r;
     int64_t de = fc_visit(key, field, &r), w = (int32_t)wb;
-    /* at 0 a countdown takes the stock step and owes nothing: frames of 2 below 60 fps would pile up there and cut the next
-     * window short (issue 134) */
+    /* at 0 a countdown takes the stock step and owes nothing: frames of 2+ below 60 fps would pile up there and cut the next
+     * window short (issue 134); hitting 0 on this visit clears carry for the same reason */
     if (sign < 0 && w == 0) { r->carry = 0; return (uint32_t)k; }
-    if (sign < 0) fc_limit(r, &de, w > k ? 1 + (w - k) / k : 1);
-    else fc_limit(r, &de, 1);
+    if (sign < 0) {
+        int64_t keep = w > k ? 1 + (w - k) / k : 1;
+        if (de >= keep) { de = keep; r->carry = 0; }
+    } else fc_limit(r, &de, 1);
     return (uint32_t)(k * de);
 }
 /* a float counter's add of +/-1.0 (w: its value before): the frames that multiply the 1.0 */
@@ -556,6 +670,7 @@ int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign) {
     if (!fc_sites_on() || !g_upd) return 1;
     FcCnt *r;
     int64_t de = fc_visit(key, field, &r);
+    if (sign < 0 && w <= 0.0f) { r->carry = 0; return 1; }
     fc_limit(r, &de, sign < 0 ? (w >= 2.0f ? 1 + (int64_t)(w - 1.0f) : 1) : 1);
     return (int)de;
 }
@@ -676,9 +791,12 @@ void h_frame_clock(Ctx *c) {
     keep_movie_flag(c);
     test_witch_time(c);
     int fixed = (uint32_t)c->x[1] == 0, ride = state_flags() & 0x10000;
+    int rate = pace_rate(), below = rate > 0 && rate < 60;
     g_exact = fixed && ride && scene_playing(0xa142);
-    /* s0 is 4.0 in the game's mode 2 */
-    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (game_cutscene_fps == 60 || uncap_on() || ride);
+    /* s0 is 4.0 in the game's mode 2; at frame_rate <= 30 (or eva142 below 60) keep the console's 2-pass 30 Hz mode */
+    g_one_pass = fixed && c->v[0].f[0] == 1.0f && (rate > 0 && rate <= 30 ? 0 : g_exact ? !below : (!cutscene_30() || uncap_on() || below || ride));
+    float old_carry = 0.0f;
+    if (!fixed) memcpy(&old_carry, (void *)(uintptr_t)(obj + 0xe4), 4);
     f_7100c1f600(c);
     {
         static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
@@ -687,9 +805,10 @@ void h_frame_clock(Ctx *c) {
             float v, ms;
             uint32_t flags = state_flags();
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
-            float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; above 60 fps a frame is shorter */
+            float even = g_one_pass ? 0.5f : 1.0f;     /* the step of a frame on time; at frame_rate != 60 a frame is shorter or longer */
+            if (g_one_pass && !g_exact && rate > 0 && rate != 60) even = 30.0f / (float)rate;
             float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
-            if (uncap_on() && due < even && !g_exact) even = due;
+            if (uncap_on() && !rate && due < even && !g_exact) even = due;
             /* the load before a scene is not the scene's time, nor is its pause menu (flags 14 and 0: its clock stands) */
             if (!was_fixed || flags & 0x4001) { owed = 0.0f; due = even; }
             float k = g_exact ? scene_even(&owed, due, even, &g_one_pass, g_half) : scene_step(&owed, due, even);
@@ -698,17 +817,26 @@ void h_frame_clock(Ctx *c) {
         }
         was_fixed = fixed;
     }
-    /* frame_rate above 60: a measured step (w1 = 1) is this frame's ms / the ms of a 60 Hz frame (+0xec) with the floor 1.0
-     * lowered to 1/16 (960 fps) and no carry; the 2.0 ceiling (slow below 30 fps) and the global override (7100ba3300's float,
-     * when above 0) stay the game's. The game's frame counters of tools/wtbuild/fps_counters.txt follow (fps_ci below). */
-    if (!fixed && uncap_on()) {
+    /* Gameplay (w1 = 1): keep real time down to 15 fps (4.0 ceiling, matching the game's 15 fps mode and scene_step.h;
+     * stock f_7100c1f600 clamps at 2.0, slowing down below 30 fps — issue 210). Above 60 fps (uncap_on), also lower the
+     * 1.0 floor to 1/16 (960 fps) with no carry. The global override (7100ba3300's float, when above 0) always wins. */
+    if (!fixed) {
         uint64_t p; float ov, ms, per;
         memcpy(&p, (void *)(uintptr_t)0x71024aaea0ull, 8); memcpy(&ov, (void *)(uintptr_t)p, 4);
         memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4); memcpy(&per, (void *)(uintptr_t)(obj + 0xec), 4);
         if (!(ov > 0.0f) && per > 0.0f && ms == ms) {
-            float s = ms / per, z = 0.0f;
-            s = s < 0.0625f ? 0.0625f : s > 2.0f ? 2.0f : s;
-            memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+            if (uncap_on()) {
+                float s = ms / per, z = 0.0f;
+                s = s < 0.0625f ? 0.0625f : s > 4.0f ? 4.0f : s;
+                memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+            } else {
+                float s = ms / per - (old_carry == old_carry ? old_carry : 0.0f);
+                if (s > 2.0f) {
+                    float z = 0.0f;
+                    if (s > 4.0f) s = 4.0f;
+                    memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+                }
+            }
         }
     }
     {   /* this update's step into the frames due (fps_ci), then the update is published */
@@ -1130,6 +1258,36 @@ void h_ui_element(Ctx *c) {
             float k = a > 16.0f / 9.0f ? a * 9.0f / 16.0f : 16.0f / (a * 9.0f);
             v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
         }
+    } else if (kind == 1 && ty == 2001 && sz[0] == 600.0f && sz[1] == 720.0f && !strncmp(ui_name(lay), "hud0200", 7)) {
+        /* Verse Results' white painted backdrop (el 26, 27; 27, 28 in en-GB): right-anchored at x = 640 with a diagonal left
+         * edge ~350 left of that anchor at y = 0. With hud_area = screen on ultrawide, el 0 moves the whole layout to the
+         * right edge below. Centered on ultrawide or on a taller screen, scale uniformly around that diagonal point so the
+         * slope stays and the right / top / bottom edges reach the screen's. */
+        float ex_w = game_hud_centre && a > 16.0f / 9.0f ? (720.0f * a - 1280.0f) * 0.5f : 0.0f;
+        float ex_h = a < 16.0f / 9.0f ? (1280.0f / a - 720.0f) * 0.5f : 0.0f;
+        float k = (350.0f + ex_w) / 350.0f, ky = (360.0f + ex_h) / 360.0f;
+        if (ky > k) k = ky;
+        if (k > 1.0f) {
+            float x;
+            v[0] *= k; v[1] *= k; memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+            memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4); x += 350.0f * (k - 1.0f); memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+        }
+    } else if ((el == 3 || el == 4 || el == 5 || el == 37) && (ex[0] == 640.0f || ex[0] == -640.0f) && !strncmp(ui_name(lay), "huda07a", 7)) {
+        /* Jeanne side-mission Verse Results: el 2 is a 1280x720 dim (widened above); el 3, 4 are its right-anchored 500x720
+         * backdrop at x = 640; el 5 (id 97) holds the rows at x = 640; el 37 (child of el 5, x = -640) sits centred at x = 0. */
+        float x; memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
+        if (a > 16.0f / 9.0f) {
+            float extra = (720.0f * a - 1280.0f) * 0.5f;
+            if (!game_hud_centre) {
+                x += el == 37 ? -extra : extra;
+                memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
+            } else if (el == 3 || el == 4) {
+                x += extra; v[0] *= (500.0f + extra) / 500.0f;
+                memcpy((void *)(uintptr_t)(out + 0x10), &x, 4); memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+            }
+        } else if (a < 16.0f / 9.0f && (el == 3 || el == 4)) {
+            v[1] *= 16.0f / (a * 9.0f); memcpy((void *)(uintptr_t)(out + 0x50), v, 8);
+        }
     }
     if (!(a > 16.0f / 9.0f)) return;
     float rule = kind == 2 ? ui_rule(lay, el) : kind == 6 ? ui_rule(lay, el + 1) : 0.0f;
@@ -1141,10 +1299,13 @@ void h_ui_element(Ctx *c) {
     }
     if (el != 0 || game_hud_centre) return;
     float x0 = ex[0], x;
-    if (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(ui_name(lay), "hud", 3)) return;
+    if (!(x0 >= 200.0f || x0 <= -200.0f) && x0 != 0.0f) return;
+    const char *nm = ui_name(lay);
+    int vr = x0 == 0.0f && !strncmp(nm, "hud0200", 7);      /* Verse Results: el 0 is at (0, 0), all children sit on the right edge (640) */
+    if (!vr && (!(x0 >= 200.0f || x0 <= -200.0f) || strncmp(nm, "hud", 3))) return;
     memcpy(&x, (void *)(uintptr_t)(out + 0x10), 4);
     float extra = (720.0f * a - 1280.0f) * 0.5f;
-    x += x0 > 0.0f ? extra : -extra;
+    x += (vr || x0 > 0.0f) ? extra : -extra;
     memcpy((void *)(uintptr_t)(out + 0x10), &x, 4);
 }
 

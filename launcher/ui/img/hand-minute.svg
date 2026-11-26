@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 1000" width="200" height="1000">
+  <!-- Counterweight tapered tail and pierced lozenge finial -->
+  <path d="M 96 512 L 97.8 616 L 100 622 L 102.2 616 L 104 512 Z" fill="#846ad9"/>
+  <path d="M 100 612 L 111.5 642 L 100 682 L 88.5 642 Z M 100 625 L 105.2 642 L 100 663 L 94.8 642 Z" fill="#846ad9" fill-rule="evenodd"/>
+
+  <!-- Lower pierced lance shaft -->
+  <path d="M 93 486 L 95.4 240 L 100 232 L 104.6 240 L 107 486 Z M 100 464 L 97.2 398 L 100 356 L 102.8 398 Z M 100 342 L 97.6 294 L 100 256 L 102.4 294 Z" fill="#846ad9" fill-rule="evenodd"/>
+
+  <!-- Astrolabe star cross-guard -->
+  <path d="M 79 348 L 95.5 343.5 L 100 335 L 104.5 343.5 L 121 348 L 104.5 352.5 L 100 361 L 95.5 352.5 Z" fill="#846ad9"/>
+
+  <!-- Upper pierced marquise filigree eye with integrated gothic cusps -->
+  <path d="M 100 244 C 89 233 84 217 85 204 L 77 199 L 85 194 C 86 180 91 166 100 152 C 109 166 114 180 115 194 L 123 199 L 115 204 C 116 217 111 233 100 244 Z M 100 229 C 90.5 214 90.5 185 100 167 C 109.5 185 109.5 214 100 229 Z" fill="#846ad9" fill-rule="evenodd"/>
+
+  <!-- Long slender rapier needle tip -->
+  <path d="M 100 32 L 94.4 153 L 100 163 L 105.6 153 Z" fill="#846ad9"/>
+
+  <!-- Center pivot cap -->
+  <circle cx="100" cy="500" r="13" fill="#846ad9"/>
+  <circle cx="100" cy="500" r="5.5" fill="#b7a5f2"/>
+</svg>

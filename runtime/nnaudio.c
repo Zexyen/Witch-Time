@@ -22,6 +22,7 @@
  *                                       then does its own mix-down, as on a console set to stereo output)
  *              WT_AUDIO_LOG=1         print the statistics every second instead of every 10 s
  *              WT_AUDIO_MUTE=1        no host device (clock-driven)
+ *              WT_AUDIO_SDL=1         Windows: use SDL audio from the start instead of waveOut
  *              WT_AUDIO_LEAD=<n>      the most buffers the host lead may grow to (default 16, 0 = never; see g_lead)
  *              WT_AUDIO_TONE=1        add a quiet 440 Hz test tone to the first second (checks the host path)
  *              WT_OPUS_DLL=<file>     libopus DLL for the Opus decoder (default libopus-0.dll, then MSYS2's)
@@ -71,6 +72,30 @@ typedef struct {
     unsigned frames;
     int prepared;
 } Slot;
+
+#ifdef _WIN32
+/* [issue 182] plat_audio_sdl.c: the same waveOut calls on SDL audio, taken when waveOutOpen fails (g_sdl) */
+MMRESULT sdl_waveOutOpen(HWAVEOUT *out, UINT dev, const WAVEFORMATEX *f, DWORD_PTR cb, DWORD_PTR inst, DWORD flags);
+MMRESULT sdl_waveOutClose(HWAVEOUT h);
+MMRESULT sdl_waveOutPrepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutUnprepareHeader(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutWrite(HWAVEOUT h, WAVEHDR *hdr, UINT n);
+MMRESULT sdl_waveOutReset(HWAVEOUT h);
+MMRESULT sdl_waveOutPause(HWAVEOUT h);
+MMRESULT sdl_waveOutRestart(HWAVEOUT h);
+MMRESULT sdl_waveOutSetVolume(HWAVEOUT h, DWORD v);
+MMRESULT sdl_waveOutGetPosition(HWAVEOUT h, MMTIME *t, UINT n);
+static int g_sdl;
+#define waveOutClose(h) (g_sdl ? sdl_waveOutClose(h) : waveOutClose(h))
+#define waveOutPrepareHeader(h, a, n) (g_sdl ? sdl_waveOutPrepareHeader(h, a, n) : waveOutPrepareHeader(h, a, n))
+#define waveOutUnprepareHeader(h, a, n) (g_sdl ? sdl_waveOutUnprepareHeader(h, a, n) : waveOutUnprepareHeader(h, a, n))
+#define waveOutWrite(h, a, n) (g_sdl ? sdl_waveOutWrite(h, a, n) : waveOutWrite(h, a, n))
+#define waveOutReset(h) (g_sdl ? sdl_waveOutReset(h) : waveOutReset(h))
+#define waveOutPause(h) (g_sdl ? sdl_waveOutPause(h) : waveOutPause(h))
+#define waveOutRestart(h) (g_sdl ? sdl_waveOutRestart(h) : waveOutRestart(h))
+#define waveOutSetVolume(h, v) (g_sdl ? sdl_waveOutSetVolume(h, v) : waveOutSetVolume(h, v))
+#define waveOutGetPosition(h, t, n) (g_sdl ? sdl_waveOutGetPosition(h, t, n) : waveOutGetPosition(h, t, n))
+#endif
 
 static CRITICAL_SECTION g_lock;
 static uint64_t g_audio_out, g_event, g_device_event;
@@ -290,7 +315,25 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
             printf("\n");
         }
 #endif
-        MMRESULT r = waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+        MMRESULT r;
+#ifdef _WIN32
+        /* [issue 182] Windows waveOutOpen(WAVE_MAPPER) can fail with error 2 (preferred device -1) while the
+         * launcher's SDL audio plays fine: fall back to SDL audio, or take it from the start with WT_AUDIO_SDL=1. */
+        g_sdl = 0;
+        if (getenv("WT_AUDIO_SDL")) {
+            r = sdl_waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+            g_sdl = r == MMSYSERR_NOERROR;
+        } else {
+            r = waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+            if (r != MMSYSERR_NOERROR) {
+                printf("nn::audio: waveOutOpen failed (%u): trying SDL audio\n", (unsigned)r);
+                r = sdl_waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+                g_sdl = r == MMSYSERR_NOERROR;
+            }
+        }
+#else
+        r = waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wake, 0, CALLBACK_EVENT);
+#endif
         if (r != MMSYSERR_NOERROR) { g_wave = NULL; printf("nn::audio: waveOutOpen failed (%u): no sound, buffers are released by the clock\n", (unsigned)r); }
         else {
             waveOutPause(g_wave);                     /* nothing plays before StartAudioOut */
@@ -322,8 +365,13 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     g_tone_left = getenv("WT_AUDIO_TONE") ? g_rate / 512 : 0;
     g_open = 1;
     LeaveCriticalSection(&g_lock);
+#ifdef _WIN32
+    const char *host = !g_wave ? "no host device" : g_sdl ? "SDL audio device open" : "waveOut device open";
+#else
+    const char *host = g_wave ? "SDL audio device open" : "no host device";
+#endif
     printf("nn::audio: OpenDefaultAudioOut: game asks %u Hz, %u channels -> %d Hz, %d channels, 16-bit, %s\n",
-           want_rate, want_channels, g_rate, g_channels, g_wave ? "waveOut device open" : "no host device");
+           want_rate, want_channels, g_rate, g_channels, host);
     RET(0);
 }
 

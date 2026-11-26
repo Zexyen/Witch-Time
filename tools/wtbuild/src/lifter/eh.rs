@@ -18,8 +18,8 @@ use std::path::Path;
 /// body stays (indirect calls, the check WT_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd
 /// bits with three bit reversals and a 32-step loop; a tree walk of B3 calls it so often that the main thread spent
 /// 115-130 ms a frame in it in trains of frames in Tokyo. 0x7100d02de0: the main loop's frame-rate mode setter (one
-/// caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame
-/// clock, whose fixed step is then halved (real time).
+/// caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): 1 becomes 0 by default so cutscenes/menus run at 60 / frame_rate; 0x7100c1f600: the per-frame
+/// clock, whose fixed step is scaled to real time.
 /// The last five are the Options screen's fifth tab (docs/RE_NOTES.md section 8, "The fifth tab").
 pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100b382c0, "morton_split32"),
@@ -60,6 +60,10 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100aa5718, "tabs_select"),
     (0x7100a32390, "options_list"),
     (0x71006d3bb4, "res_select"),
+    (0x7100b2a6c0, "chapter_record_save"),
+    (0x7100b2c740, "side_chapter_record_save"),
+    (0x7100b2cf90, "weapon_unlock"),
+    (0x7100b2d050, "demon_unlock"),
 ];
 
 /// [witchtime] aspect ratios: a sprite in the UI's screen mode (+0x4c = 1: the dims, 16 x 9 or 100 x 100 in their layouts) is as
@@ -121,6 +125,33 @@ const FPS_EASE_SITES: &[(i64, &str, i32, &str)] = &[
     (0x7100626404, "fps_ease_map", 0, "c->x[8] = (uint64_t)(c->x[19] + 496ULL);"),
     (0x710082064c, "lod_cut", 11, "wr32(a, (uint32_t)c->x[11]);"),
 ];
+
+/// [witchtime] B3's two attachment-effect updates blend neighbouring transforms.
+/// After a model change (e.g being turned into Cereza), the owner can still be live but a lookup can return null anyway.
+/// Reuse the update's lost-owner path if either matrix is missing.
+/// This makes a timing issue less likely, especially when playing at higher frame-rates.
+fn guard_attachment_blend(im: &Image, entry: i64, lines: &mut [(i64, String)]) {
+    const UPDATES: &[i64] = &[0x7100c8b6c8, 0x7100c8bb44];
+    // Guest byte offsets from either update's entry.
+    const OWNER_CHECK: i64 = 0x28;
+    const LOST_OWNER: i64 = 0x8c;
+    const FIRST_MATRIX_LOAD: i64 = 0x1bc;
+    const LDR_Q0_FROM_X23: u32 = 0x3dc002e0;
+
+    if !im.b3 || !UPDATES.contains(&entry) {
+        return;
+    }
+    let cleanup = format!("goto L_{};", hx(entry + LOST_OWNER));
+    let owner_check = format!("if ((uint32_t)c->x[0] == 0) {}", cleanup);
+    if !lines.iter().any(|(pc, stmt)| *pc == entry + OWNER_CHECK && stmt == &owner_check) {
+        return;
+    }
+    if let Some((pc, stmt)) = lines.iter_mut().find(|(pc, _)| *pc == entry + FIRST_MATRIX_LOAD) {
+        if im.word(*pc) == LDR_Q0_FROM_X23 {
+            *stmt = format!("if (!c->x[23] || !c->x[0]) {} {}", cleanup, stmt);
+        }
+    }
+}
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
@@ -189,6 +220,13 @@ pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
     put(&mut want, 0x7100a32434, (old434, ldr_w(20, 28, 0xffc)));
     let old438 = want.iter().find(|e| e.0 == 0x7100a32438).unwrap().1 .0;
     put(&mut want, 0x7100a32438, (old438, add(28, 0)));
+    // [witchtime] #203: the game applies the saved volumes as level / 10 after a load, but the Sound sliders (0..20)
+    // as level / 20, so every start played louder than the saved setting. The sliders take the load's scale (the
+    // start keeps the stock loudness): fmov s1 / s8, #20.0 -> #10.0 in the three setters, their resets and the page reset
+    for a in [0x710071c424, 0x710071c484, 0x710071c4e4, 0x710071c544, 0x710071c5a4, 0x710071c604] {
+        put(&mut want, a, (0x1e269001, 0x1e249001));
+    }
+    put(&mut want, 0x710071c9d8, (0x1e269008, 0x1e249008));
     for (a, (old, new)) in want {
         let have = im.raw_word(a);
         if have != old {
@@ -515,6 +553,7 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
     let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
     let mut lines = lines;
+    guard_attachment_blend(im, entry, &mut lines);
     for (pc, stmt) in lines.iter_mut().filter(|_| im.b3) {
         if let Some(&(_, r)) = UI_SIZE_SITES.iter().find(|s| s.0 == *pc) {
             for (bits, f) in [("0x44a00000", "wt_ui_w_bits"), ("0x44340000", "wt_ui_h_bits")] {

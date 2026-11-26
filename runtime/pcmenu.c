@@ -10,7 +10,7 @@
  *     presents the game's last picture again with the panel over it (nvn_vk_pcmenu.c).
  * Controls: up / down choose a row, left / right (or A / Enter, B / Escape closes) change it; the mouse: point at a row,
  * click on the value (on '‹' for the one before). A change is written to graphics.ini at once (gfx_option_set: comments and
- * other keys kept) and applied while the game runs where the runtime can: cutscene_fps (the game library's switch), vsync
+ * other keys kept) and applied while the game runs where the runtime can: vsync
  * (present mode and pacing), the window (Linux), model detail, film grain, aspect,
  * resolution_scale (when the panel closes, so that going past 3.0 does not make its images; from the game's Options rows at
  * once: nvn_vk_draw.c rs_apply). The rest (frame_rate) is marked "applies at the next start". A key set by an environment
@@ -37,6 +37,7 @@
 #include <time.h>
 #include "gfx_options.h"
 #include "rebind.h"
+#include "svg_rast.h"
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "third_party/stb_truetype.h"
@@ -53,7 +54,7 @@ static const unsigned char k_font_uib[] = {
 
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
 extern volatile LONG g_display_close;                      /* display.c: the window is being closed (the game must run to exit) */
-__declspec(dllimport) extern volatile int game_cutscene_fps, game_model_lod;      /* game_shim_eh.c (the game library) */
+__declspec(dllimport) extern volatile int game_model_lod;      /* game_shim_eh.c (the game library) */
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab);       /* nnhid.c */
 __declspec(dllimport) extern volatile int game_hud_centre;        /* [witchtime] game_shim_eh.c h_ui_element */
 int nnhid_menu_key(int vk);
@@ -79,7 +80,7 @@ int nnpad_bind_set(int ch, const unsigned char *b);
 int options_control_type(int ch);                          /* options_row.c */
 
 /* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: a row that opens the Controls page; A_QUIT: ends the game; from A_CHAR on the Controls page's rows */
-enum { A_LIVE, A_CUT, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_CHAR, A_PRESET, A_BIND };
+enum { A_LIVE, A_MODEL, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_HUD, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_CHAR, A_PRESET, A_BIND };
 #define ROW_VALUES 16
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -95,10 +96,8 @@ static const Row k_rows[] = {
      {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"1280 \xC3\x97 720", "1600 \xC3\x97 900", "1920 \xC3\x97 1080", "2560 \xC3\x97 1440", "3840 \xC3\x97 2160"}},
     {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "WT_VK_PRESENT", "auto", A_VSYNC, 0,
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
-    {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "WT_CUTSCENE_FPS", "30", A_CUT, 0,
-     {"30", "60"}, {"30 fps", "60 fps"}},
-    {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
-     {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
+    {"frame_rate", "Frame rate (experimental)", "Target frame rate (30 to 960 in graphics.ini), keeping real time down to 15 fps. Below 60 caps cleanly for weaker hardware; above 60 some effects, input windows and countdowns may still differ from 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
+     {"30", "40", "60", "90", "120", "144", "165", "240"}, {"30 fps", "40 fps", "60 fps", "90 fps", "120 fps", "144 fps", "165 fps", "240 fps"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at (900p is its own). Applies when this panel closes. The first time away from 900p the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"360p", "450p", "540p", "675p", "720p", "900p", "1080p", "1440p", "1800p", "2160p", "2700p"}},
@@ -161,14 +160,14 @@ static volatile LONG g_release;                            /* a bit per npad id:
 static int g_sel, g_cur[NROW], g_start[NROW], g_shown[NROW], g_lock_why[NROW], g_inited, g_said_restart[NROW], g_nowin;
 static char g_raw[NROW][32];                               /* a value of the file that is none of the row's: shown as it is */
 static unsigned g_ver;
-static int g_env_cut, g_env_set[NROW];
+static int g_env_set[NROW];
 static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
 static int g_quit_ask;                                    /* the Quit row was pressed once: the next press on it ends the game */
 static int g_page, g_direct;                               /* 1 = Controls, the rows from A_CHAR on; g_direct: opened there, so back closes */
 static int g_ch, g_cap = -1, g_fam, g_letter;              /* the character shown; the row that waits for a button; the button names */
 static uint8_t g_b[2][16];                                 /* the layouts shown: as saved, else the game's type */
 static int g_b_on[2];                                      /* saved */
-/* the environment as the program started (gfx_options sets WT_CUTSCENE_FPS itself, later) */
+/* the environment as the program started (gfx_options sets WT_MODEL_LOD / RECOMPS_ASPECT itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
@@ -217,7 +216,8 @@ static void menu_init(void) {                              /* the first opening:
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
         int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply >= A_LAYOUT || gfx_ini_get(r->key, v, sizeof v);
-        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
+        if (r->apply == A_WINDOW) { static const char *const w[3] = {"windowed", "borderless", "fullscreen"}; snprintf(v, sizeof v, "%s", w[o->window_mode]); have = 1; }      /* [witchtime] what runs: Big Picture's borderless included (gfx_options.c) */
+        else if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());
@@ -335,9 +335,9 @@ static void soft_disc(float cx, float cy, float r, Rgb c, float a) {     /* a gl
     }
 }
 
-/* ---- the art (runtime/art, made by the design's scripts): 8-bit BMPs whose palette carries alpha in its fourth byte,
- * colours premultiplied. The wheel in the pearl side's grey and in the indigo side's lilac, the two hands, the stripe. ---- */
-typedef struct { int w, h, stride; const uint8_t *pal, *px; int bx0, by0, bx1, by1; } Art;      /* px: the bottom row first, as a BMP is; b: the box with alpha */
+/* ---- the art (runtime/art): 8-bit BMPs whose palette carries alpha in its fourth byte (colours premultiplied), and
+ * SVGs rasterized into premultiplied BGRA (the two hands). The wheel in pearl-side grey and indigo-side lilac, the hands, the stripe. ---- */
+typedef struct { int w, h, stride; const uint8_t *pal, *px; const uint8_t *bgra; int bx0, by0, bx1, by1; } Art;      /* px: bottom row first (BMP); bgra: top row first (SVG); b: alpha box */
 static Art art_load(const unsigned char *b, size_t n) {
     Art a = {0};
     if (n < 54 + 1024 || b[0] != 'B' || b[1] != 'M') return a;
@@ -351,14 +351,21 @@ static Art art_load(const unsigned char *b, size_t n) {
     if (a.bx1 <= a.bx0) a.w = 0;
     return a;
 }
-static void art_texel(const Art *a, int x, int y, float out[4]) {       /* B G R A premultiplied, 0..255; outside: nothing */
-    if (x < 0 || y < 0 || x >= a->w || y >= a->h) { out[0] = out[1] = out[2] = out[3] = 0; return; }
-    const uint8_t *e = a->pal + (size_t)a->px[(size_t)(a->h - 1 - y) * a->stride + x] * 4;
-    out[0] = e[0]; out[1] = e[1]; out[2] = e[2]; out[3] = e[3];
+static Art art_load_svg(const unsigned char *b, size_t n, int target_h) {
+    Art a = {0};
+    uint8_t *px = svg_rasterize(b, n, target_h, 1.0f, 1, &a.w, &a.h);
+    if (!px) return a;
+    a.bgra = px;
+    a.bx0 = a.w; a.by0 = a.h; a.bx1 = a.by1 = 0;
+    for (int y = 0; y < a.h; y++) for (int x = 0; x < a.w; x++)
+        if (px[((size_t)y * a.w + x) * 4 + 3]) { if (x < a.bx0) a.bx0 = x; if (y < a.by0) a.by0 = y; if (x + 1 > a.bx1) a.bx1 = x + 1; if (y + 1 > a.by1) a.by1 = y + 1; }
+    if (a.bx1 <= a.bx0) { free(px); a.bgra = NULL; a.w = a.h = 0; }
+    return a;
 }
 static const uint8_t k_clear[4];
-static inline const uint8_t *art_entry(const Art *a, int x, int y) {    /* the palette entry of a texel; clear outside */
+static inline const uint8_t *art_entry(const Art *a, int x, int y) {    /* premultiplied BGRA of a texel; clear outside */
     if (x < 0 || y < 0 || x >= a->w || y >= a->h) return k_clear;
+    if (a->bgra) return a->bgra + ((size_t)y * a->w + x) * 4;
     return a->pal + (size_t)a->px[(size_t)(a->h - 1 - y) * a->stride + x] * 4;
 }
 static inline void art_sample(const Art *a, float u, float v, float out[4]) {  /* bilinear at source coordinates (u, v) */
@@ -481,10 +488,10 @@ static const unsigned char k_wd_top[] = {
 #embed "art/wheel-dark-top.bmp"
 };
 static const unsigned char k_art_hand_minute[] = {
-#embed "art/hand-minute.bmp"
+#embed "art/hand-minute.svg"
 };
 static const unsigned char k_art_hand_hour[] = {
-#embed "art/hand-hour.bmp"
+#embed "art/hand-hour.svg"
 };
 static const unsigned char k_art_stripe[] = {
 #embed "art/stripe.bmp"
@@ -500,7 +507,8 @@ static void art_init(void) {
     LOAD(g_wheel_dark.ring1, k_wd_ring1); LOAD(g_wheel_dark.ring2, k_wd_ring2); LOAD(g_wheel_dark.base, k_wd_base); LOAD(g_wheel_dark.top, k_wd_top);
     LOAD(g_wheel_dark.gear1, k_wd_gear1); LOAD(g_wheel_dark.gear2, k_wd_gear2); LOAD(g_wheel_dark.gear3, k_wd_gear3);
 #undef LOAD
-    g_hand_minute = art_load(k_art_hand_minute, sizeof k_art_hand_minute); g_hand_hour = art_load(k_art_hand_hour, sizeof k_art_hand_hour);
+    g_hand_minute = art_load_svg(k_art_hand_minute, sizeof k_art_hand_minute, 1920);
+    g_hand_hour = art_load_svg(k_art_hand_hour, sizeof k_art_hand_hour, 1920);
     g_stripe = art_load(k_art_stripe, sizeof k_art_stripe);
 }
 static int art_id(const Art *a) {                           /* the art's number for the GPU path: the light wheel's 7 layers, the dark wheel's, the two hands */
@@ -529,7 +537,7 @@ void *pcmenu_art_pixels(int id, int *w, int *h) {
  * composed over the moving parts). The gears' centres and size are fractions of the 800 px drawing. */
 static void wheel_still(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top) { art_blit(&w->base, cx - R, cy - R, 2 * R, 2 * R, alpha, 0, clip_top); }
 static void wheel_hub(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top) { art_blit(&w->top, cx - R, cy - R, 2 * R, 2 * R, alpha, 0, clip_top); }
-static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha, int hands, float clip_top, double t) {
+static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha, float clip_top, double t) {
     float deg = (float)fmod(t * 3, 360), deg2 = (float)fmod(t * 360 / 160, 360), dg1 = (float)fmod(t * 36, 360), dg2 = (float)fmod(t * 360 / 14, 360);
     g_ann0 = 0.78f; g_ann1 = 0.985f; art_blit(&w->ring1, cx - R, cy - R, 2 * R, 2 * R, alpha, deg, clip_top);
     g_ann0 = 0.61f; g_ann1 = 0.73f; art_blit(&w->ring2, cx - R, cy - R, 2 * R, 2 * R, alpha, -deg2, clip_top);
@@ -538,12 +546,13 @@ static void wheel_turn(const Wheel *w, float cx, float cy, float R, float alpha,
     const Art *g[3] = {&w->gear1, &w->gear2, &w->gear3};
     float gs = 0.2f * 2 * R;
     for (int k = 0; k < 3; k++) art_blit(g[k], cx - R + gc[k][0] * 2 * R - gs / 2, cy - R + gc[k][1] * 2 * R - gs / 2, gs, gs, alpha, k == 0 ? -dg1 : dg2, clip_top);
-    if (!hands) return;
+}
+static void wheel_hands(float cx, float cy, float R, float alpha, float clip_top) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
-    float m = tm ? tm->tm_min + tm->tm_sec / 60.0f : 0, h = tm ? (tm->tm_hour % 12) + m / 60 : 0, hb = 2 * R;      /* the hand pictures are drawn in the wheel's box */
-    art_blit(&g_hand_hour, cx - hb / 2, cy - hb / 2, hb, hb, alpha, h * 30, clip_top);
-    art_blit(&g_hand_minute, cx - hb / 2, cy - hb / 2, hb, hb, alpha, m * 6, clip_top);
+    float m = tm ? tm->tm_min + tm->tm_sec / 60.0f : 0, h = tm ? (tm->tm_hour % 12) + m / 60 : 0, hb = 2 * R;
+    if (g_hand_hour.h) { float hw = hb * g_hand_hour.w / g_hand_hour.h; art_blit(&g_hand_hour, cx - hw / 2, cy - hb / 2, hw, hb, alpha, h * 30, clip_top); }
+    if (g_hand_minute.h) { float mw = hb * g_hand_minute.w / g_hand_minute.h; art_blit(&g_hand_minute, cx - mw / 2, cy - hb / 2, mw, hb, alpha, m * 6, clip_top); }
 }
 static double anim_t(void) { return (double)(GetTickCount64() % 3600000ull) / 1000.0; }     /* seconds, wrapping each hour (the turns divide an hour) */
 
@@ -731,7 +740,7 @@ static void draw_panel(int W, int H) {
     }
     if (g_gpu) return;                             /* the renderer draws the moving parts and the layers over this ground */
     double t = anim_t();
-    g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, 0, edge, t); g_clip_right = 0;
+    g_clip_right = 1; wheel_turn(&g_wheel, wl_x, wl_y, wl_r, 0.34f, edge, t); g_clip_right = 0;
     layer_over(&g_hubs);
     layer_over(&g_words);
 }
@@ -850,7 +859,8 @@ static void draw_prep(int W, int H) {
             float dx = (x + 0.5f - 0.62f * W) / (0.55f * W), dy = (y + 0.5f - 0.48f * H) / (0.7f * H), d = sqrtf(dx * dx + dy * dy);
             put(x, y, d < 0.55f ? mix(c_in, c_mid, d / 0.55f) : mix(c_mid, c_out, d > 1 ? 1 : (d - 0.55f) / 0.45f), 1);
         }
-        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP);
+        wheel_still(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.65f, NOCLIP);
+        soft_disc(760 * s, 330 * s, 125 * s, c_mid, 0.58f);      /* tame the bright white centre bloom behind the hub */
         float x_top = W - 200 * s;                             /* the pearl panel at the right, its stripe and rules */
         for (int j = 0; j < H; j++) { float e = x_top + j * TAN22; int i0 = (int)e; for (int i = i0; i < W; i++) put(i, j, mix(C_PEARL, C_PEARL_LO, (float)(i - i0) / (W - x_top)), i == i0 ? 1 - (e - i0) : 1); }
         for (int j = 0; j < H; j++) { float e = x_top - 40 * s + j * TAN22; hgrad((int)e, j, (int)(40 * s) + 1, 1, C_STRIPE0, C_STRIPE1); }
@@ -871,9 +881,9 @@ static void draw_prep(int W, int H) {
         text(&g_f_ui, 60 * s, (int)(H - 30 * s), g_prep.info, 15 * s, C_LILAC, 1 * s);
         g_bg = malloc((size_t)W * H * 4); g_bg_w = W; g_bg_h = H;
         if (g_bg) memcpy(g_bg, g_px, (size_t)W * H * 4);
-        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP); g_to = NULL;
+        layer_clear(&g_hubs); g_to = &g_hubs; wheel_hub(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.28f, NOCLIP); g_to = NULL;
     } else memcpy(g_px, g_bg, (size_t)W * H * 4);
-    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, anim_t()); layer_over(&g_hubs); }      /* else the renderer draws them over the numbers */
+    if (!g_gpu) { wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP, anim_t()); layer_over(&g_hubs); wheel_hands(760 * s, 330 * s, 300 * s, 0.65f, NOCLIP); }      /* else the renderer draws them over the numbers */
     /* the numbers */
     char t[64];
     float big = 84 * s, x = 72 * s;
@@ -993,13 +1003,14 @@ int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
     PcmSprite hubs = {-1, 0, 0, (float)W, (float)H, 0, 1, 0, 0, NOCLIP, 0, NOCLIP, 0, 0, 0}, words = hubs;
     words.art = -2;
     if (kind == 3) {
-        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, 1, NOCLIP, t);
+        wheel_turn(&g_wheel_dark, 760 * s, 330 * s, 300 * s, 0.75f, NOCLIP, t);
         if (g_emit_n < max) out[g_emit_n++] = hubs;
+        wheel_hands(760 * s, 330 * s, 300 * s, 0.65f, NOCLIP);
     } else {
         float wl[3], edge;
         panel_wheel(W, s, wl, &edge);
         if (!can) {
-            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, 0, edge, t); g_clip_right = 0;
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0], wl[1], wl[2], 0.34f, edge, t); g_clip_right = 0;
             if (g_emit_n < max) out[g_emit_n++] = hubs;
             if (g_emit_n < max) out[g_emit_n++] = words;
         } else {
@@ -1007,7 +1018,7 @@ int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game) {
             float open = g_close_at ? 1 - ease_out((float)(now - g_close_at) / PCM_CLOSE_MS) : ease_out((float)(now - g_open_at) / PCM_OPEN_MS);      /* 0 away .. 1 in place */
             float dx = (1 - open) * (W - edge), ex = edge + dx, fw = (float)W, fh = (float)H;
             emit(-3, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
-            g_clip_right = 1; wheel_turn(&g_wheel, wl[0] + dx, wl[1], wl[2], 0.34f, 0, ex, t); g_clip_right = 0;
+            g_clip_right = 1; wheel_turn(&g_wheel, wl[0] + dx, wl[1], wl[2], 0.34f, ex, t); g_clip_right = 0;
             emit(-1, dx, 0, fw, fh, 1, ex, 1, NOCLIP, 0, 0, 0);
             if (open >= 1 && !g_close_at) emit(-2, 0, 0, fw, fh, 1, edge, 1, NOCLIP, 0, 0, 0);
             else {                                 /* the rows one after another from the right, within the segment; the rest with it */
@@ -1067,7 +1078,6 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (!ok) return;
     g_cur[i] = k;
     switch (r->apply) {
-    case A_CUT: game_cutscene_fps = atoi(r->val[k]) == 60 ? 60 : 30; break;
     case A_MODEL: game_model_lod = k + 1; break;
     case A_HUD: game_hud_centre = !strcmp(r->val[k], "16:9"); break;
     case A_VSYNC: display_vsync_apply(); add_work(2); break;

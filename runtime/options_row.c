@@ -72,8 +72,7 @@ static const PcRow k_pc[] = {            /* every row of the panel (pcmenu.c k_r
     {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
     {"size", "MENU_OPTION_LIST_PC_SIZE", {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"CORE_PC_WIN_720", "CORE_PC_WIN_900", "CORE_PC_WIN_1080", "CORE_PC_WIN_1440", "CORE_PC_WIN_2160"}, 0},
     {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},      /* mailbox: "Custom" (few languages can spell it) */
-    {"cutscene_fps", "MENU_OPTION_LIST_PC_CUTSCENE", {"30", "60"}, {"CORE_PC_FPS_30", "CORE_PC_FPS_60"}, 0},
-    {"frame_rate", "MENU_OPTION_LIST_PC_FPS", {"60", "90", "120"}, {"CORE_PC_FPS_60", "CORE_PC_FPS_90", "CORE_PC_FPS_120"}, 0},
+    {"frame_rate", "MENU_OPTION_LIST_PC_FPS", {"30", "40", "60", "90", "120", "144", "165", "240"}, {"CORE_PC_FPS_30", "CORE_PC_FPS_40", "CORE_PC_FPS_60", "CORE_PC_FPS_90", "CORE_PC_FPS_120", "CORE_PC_FPS_144", "CORE_PC_FPS_165", "CORE_PC_FPS_240"}, 2},
     {"resolution_scale", "MENU_OPTION_LIST_PC_RES", {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"CORE_PC_RES_04", "CORE_PC_RES_05", "CORE_PC_RES_06", "CORE_PC_RES_075", "CORE_PC_RES_08", "CORE_PC_RES_10", "CORE_PC_RES_12", "CORE_PC_RES_16", "CORE_PC_RES_20", "CORE_PC_RES_24", "CORE_PC_RES_30"}, 5},
     {"model_lod", "MENU_OPTION_LIST_PC_MODEL", {"game", "highest"}, {"CORE_PC_DEFAULT", "CORE_PC_HIGHEST"}, 0},

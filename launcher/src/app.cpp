@@ -5,6 +5,7 @@
 #include "update.h"
 #include <algorithm>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sys/stat.h>
 
 namespace {
@@ -76,8 +78,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
 		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
 		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
-		{"cutscene_fps", "Cutscene frame rate", "Title, menus and cutscenes; movies keep theirs", {{"30", "30 fps"}, {"60", "60 fps"}}, 0},
-		{"frame_rate", "Frame rate (experimental)", "Above 60 some effects may run fast; next start", {{"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
+		{"frame_rate", "Frame rate (experimental)", "Below 60 caps cleanly; above 60 some effects may run fast; next start",
+			{{"30", "30 fps"}, {"40", "40 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}, {"240", "240 fps"}}, 0, "60"},
 		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
 			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
 			1, "1.0"},
@@ -206,7 +208,7 @@ bool is_pkg_path(const std::string& p)
 // ---------------------------------------------------------------------------------------------------- start and loop
 bool App::init(int argc, char** argv)
 {
-	paths = Paths::find(argv[0]);
+	paths = Paths::find(argc, argv);
 	for (int i = 1; i < argc; i++)
 		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
 			returned_code = std::atoi(argv[i + 1]);
@@ -892,7 +894,8 @@ void App::refresh_title()
 	std::string built_version;
 	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
 	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
-	stale = built && WT_VERSION[0] == 'v' && built_version != WT_VERSION;
+	// CI test builds ("dev-<sha>") are packaged like releases too; only a local source build ("dev build") skips the check [issue 182]
+	stale = built && std::strcmp(WT_VERSION, "dev build") != 0 && built_version != WT_VERSION;
 	status_bad = false;
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
@@ -1705,4 +1708,105 @@ void App::play()
 	if (play_only)
 		running = false;
 	refresh_title();
+}
+
+// ---------------------------------------------------------------------------------------------------- --prepare
+namespace {
+volatile std::sig_atomic_t g_prepare_stop = 0;   // RecompLauncher's Cancel: the build stops, and resumes at the next run
+}
+
+// RecompLauncher's setup step (recomplauncher.json, prepare): the Build screen's build with no window. The arguments after
+// --prepare go to wtbuild setup as they are; its steps come out as "progress <0..1> <what>" lines, by the screen's weights.
+// A finished build is marked as this release's and its textures converted, as start_build() and tick() do
+int prepare_main(int argc, char** argv)
+{
+	const Paths paths = Paths::find(argc, argv);
+#ifndef _WIN32
+	std::signal(SIGTERM, [](int) { g_prepare_stop = 1; });
+	std::signal(SIGINT, [](int) { g_prepare_stop = 1; });
+#endif
+	BuildRunner runner;
+	std::string said;
+	double said_at = -1e9;
+	// at most a line a second, and one a minute at least: a step silent for an hour counts as stuck
+	auto say = [&](float f, std::string what, bool now = false) {
+		char l[512];
+		std::snprintf(l, sizeof l, "progress %.3f %s", std::clamp(f, 0.f, 1.f), what.c_str());
+		const double t = now_seconds();
+		if (now || (l != said && t - said_at >= 1) || t - said_at >= 60)
+		{
+			std::printf("%s\n", l);
+			std::fflush(stdout);
+			said = l, said_at = t;
+		}
+	};
+	auto follow = [&](const std::function<void()>& show) {
+		while (runner.running())
+		{
+			if (g_prepare_stop)
+				runner.stop();
+			if (!runner.poll())
+				SDL_Delay(200);
+			show();
+		}
+	};
+	auto output = [&] {
+		for (const std::string& l : runner.lines)
+			std::printf("%s\n", l.c_str());
+		std::fflush(stdout);
+	};
+	std::vector<std::string> setup_args;           // all but --data (Paths::find's), which wtbuild does not take
+	for (int i = 2; i < argc; i++)
+		if (!std::strcmp(argv[i], "--data"))
+			i++;
+		else if (std::strncmp(argv[i], "--data=", 7))
+			setup_args.push_back(argv[i]);
+	if (!runner.start(paths.repo, setup_args))
+	{
+		std::printf("%s\n", start_error(paths.repo));
+		return 1;
+	}
+	say(0, "Starting the build", true);
+	follow([&] {
+		const int cur = step_index(runner.current);
+		if (cur < 0)
+			return;
+		float f = 0;
+		for (const std::string& s : BuildRunner::steps())
+			if (step_index(s) < cur)
+				f += weight(s);
+		std::string what = phase_of(runner.current);
+		what[0] = char(std::toupper(static_cast<unsigned char>(what[0])));
+		if ((runner.current == "compile" || runner.current == "convert") && runner.to_compile > 0)
+		{
+			f += weight(runner.current) * float(runner.compiled) / float(runner.to_compile);
+			what += " " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " files";
+		}
+		say(f * .85f, what);
+	});
+	if (runner.exit_code || g_prepare_stop)
+	{
+		output();                                // wtbuild's reason, after its FAILED line
+		return runner.exit_code ? runner.exit_code : 1;
+	}
+	std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
+#ifndef __APPLE__                                // Apple's GPUs read the game's ASTC textures as they are
+	std::error_code ec;
+	if (ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete") &&
+		double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED &&
+		runner.start(paths.repo, {}, "textures"))
+	{
+		say(.85f, "Converting textures", true);
+		follow([&] {
+			const float f = runner.to_compile > 0 ? float(runner.compiled) / float(runner.to_compile) : 0;
+			say(.85f + .15f * f, "Converting textures, archive " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile));
+		});
+		if (g_prepare_stop)
+			return 1;
+		if (runner.exit_code)                    // optional: the game decodes the rest as it plays, and Settings goes on with them
+			output();
+	}
+#endif
+	say(1, "Ready to play", true);
+	return 0;
 }

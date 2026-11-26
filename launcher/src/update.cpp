@@ -1,6 +1,8 @@
 #include "update.h"
 #include "platform.h"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -174,6 +176,9 @@ void check(const Paths& paths)
 		for (const char* gone : {".claude", ".mcp.json", ".gitattributes", ".gitignore", "docs", "scripts/ghidra", "tests", "tools", "launcher/src",
 		                         "launcher/CMakeLists.txt", "launcher/macos", "launcher/win32", "launcher/README.md", "lifter/README.md"})
 			fs::remove_all(to_path(paths.repo + "/" + gone), ec);
+	// started by RecompLauncher: it installs this game's releases itself, and two updaters on one folder fight
+	if (const char* rl = std::getenv("RECOMPLAUNCHER"); rl && !std::strcmp(rl, "1"))
+		return;
 	set(State::checking, "");
 	std::thread([mine] {
 		int code = -1;

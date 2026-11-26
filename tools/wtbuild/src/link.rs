@@ -56,6 +56,7 @@ const HOST_SOURCES: &[&str] = &[
     "nnmovie.c",
     "nnmisc.c",
     "nnaudio.c",
+    "plat_audio_sdl.c", // Linux/macOS/Android: the only sound path; Windows: fallback when waveOutOpen fails (issue 182)
     "nnmovie_mf.c",
     "nniostream.c",
     "nncxxrt.c",
@@ -80,8 +81,33 @@ const HOST_SOURCES: &[&str] = &[
     "options_row.c",
     "prompts.c",
     "presence.c",
+    "achievements.c",
 ];
-const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
+/// RecompAchievements SDK (runtime/third_party/rl_achievements, github.com/elripalda/RecompAchievements)
+const RL_ACH_SOURCES: &[&str] = &[
+    "third_party/rl_achievements/src/rl_achievements.c",
+    "third_party/rl_achievements/third_party/cjson/cJSON.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_alloc.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_condition.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_condset.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_consoleinfo.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_format.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_lboard.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_memref.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_operand.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_richpresence.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_runtime.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_runtime_progress.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_trigger.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_typed_value.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_validate.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/runtime/rc_value.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/util/md5.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/util/rc_compat.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/util/rc_util.c",
+    "third_party/rl_achievements/third_party/rcheevos/src/util/rc_version.c",
+];
+const POSIX_SOURCES: &[&str] = &["plat_posix.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
 /// the runtime reads (runtime/split)
 pub const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];
@@ -150,7 +176,6 @@ const GLSLANG_LIBS: &str = "-lglslang -lglslang-default-resource-limits";
 const GAME_EXPORTS: (&[&str], &[&str]) = (
     &["game_bind", "game_eh_bind"],
     &[
-        "game_cutscene_fps",
         "game_model_lod",
         "game_rebind",
         "game_rebind_on",
@@ -373,9 +398,19 @@ pub fn build_runtime(
     if t.windows() {
         flags.push("-gcodeview".into()); // debug information in a PDB beside the program (crash addresses -> source)
     }
-    for d in [rt.join("split"), rt.clone(), rt.join("gen_static"), install_inc.to_path_buf()] {
+    for d in [
+        rt.join("split"),
+        rt.clone(),
+        rt.join("gen_static"),
+        install_inc.to_path_buf(),
+        rt.join("third_party/rl_achievements/include"),
+        rt.join("third_party/rl_achievements/third_party/cjson"),
+        rt.join("third_party/rl_achievements/third_party/rcheevos/include"),
+        rt.join("third_party/rl_achievements/third_party/rcheevos/src"),
+    ] {
         flags.extend(["-I".into(), s(&d)]);
     }
+    flags.push("-DRC_DISABLE_LUA".into());
     flags.extend(strs(&[
         "-Dfn_table=(*game_fn_table_p)",
         "-Dfn_table_count=(*game_fn_table_count_p)",
@@ -400,7 +435,12 @@ pub fn build_runtime(
         "-Werror=int-conversion",
     ]));
     let t0 = Instant::now();
-    let mut sources: Vec<&str> = HOST_SOURCES.iter().chain(if t.windows() { &[][..] } else { POSIX_SOURCES }).cloned().collect();
+    let mut sources: Vec<&str> = HOST_SOURCES
+        .iter()
+        .chain(RL_ACH_SOURCES.iter())
+        .chain(if t.windows() { &[][..] } else { POSIX_SOURCES })
+        .cloned()
+        .collect();
     if t.android() {
         sources.push("wt_main.c"); // SDL_main, called by the app's SDLActivity: the library is the program
         sources.push("posix/gl_android.c"); // the GL 1.1 functions the GL back end calls: no desktop GL there

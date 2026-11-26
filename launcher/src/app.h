@@ -152,3 +152,6 @@ private:
 	void sound(int which);
 	void close_sound();
 };
+
+// witch-time --prepare <wtbuild setup's arguments>: the build without a window, for RecompLauncher's setup step (app.cpp)
+int prepare_main(int argc, char** argv);

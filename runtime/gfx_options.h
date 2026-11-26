@@ -19,14 +19,12 @@ typedef struct {
     int shader_prepare;     /* track V session 14 (appended: older objects keep their offsets): 0 first_run (the game is held at its first frame until every shader of the game's data is prepared, once per GPU + driver), 1 background (as before), 2 off;  env WT_VK_PREPARE wins */
     int aspect_stretch;     /* [Recomps#1] aspect = keep (0, default: the picture keeps its shape, black bars on a wider or taller
                                window, e.g. an ultrawide monitor) | stretch (1: it fills the window); nvn_vk_draw.c present (Vulkan) */
-    int frame_rate;         /* [Recomps#1] frame_rate = 60 (the game as made) .. 120: above 60 the lifted frame-rate patch is on, capped there */
+    int frame_rate;         /* [Recomps#1] frame_rate = 30 .. 960 (default 60): paced there, keeping real time */
     int hdr;                /* [Recomps#1] hdr = auto (0: HDR output while Windows HDR is on for the window's monitor) | off (1) | on (2: always);
                                nvn_vk_draw.c hdr_* (Vulkan on Windows; finding 147) */
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */
     float hdr_paper_white;  /* [Recomps#1] hdr_paper_white: the game's white in nits (80 .. 1000); 0 = auto: Windows' SDR content brightness */
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
-    int cutscene_fps;       /* [witchtime] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
-                             * env WT_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
     float texture_lod_bias; /* [witchtime] the mip bias, -1 (0 = the game's own; no key since 2026-11-10); added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env WT_TEXTURE_LOD_BIAS wins */
     int model_lod_high;     /* [witchtime] model_lod = game (0) | highest (1); game_shim_eh.c h_model_lod through WT_MODEL_LOD */
@@ -44,7 +42,7 @@ typedef struct {
     float hdr_peak;         /* [witchtime] hdr_peak: the scene's brightest parts in nits with HDR on (80 .. 10000); 0 = auto (nvn_vk_draw.c hdr_var) */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
-int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (WT_PACE_120=0: 60 and the lifted limiter) */
+int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: frame_rate (30 .. 960; WT_PACE_120=0 above 60: 60) */
 int gfx_ini_refresh(const char *path);                   /* [witchtime] a new version's comments and keys in the player's file, values kept; 1 = rewritten */
 void gfx_aspect_window(int w, int h);     /* [witchtime] aspect_ratio = auto: the window's client size, before the game starts (display.c) */
 int gfx_ini_get(const char *key, char *out, size_t n);      /* [witchtime] graphics.ini's value of a key as the reader sees it; 0 = not in the file */

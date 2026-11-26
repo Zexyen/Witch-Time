@@ -31,10 +31,11 @@ void *pcmenu_art_pixels(int id, int *w, int *h); int pcmenu_layer_read(int which
 #define PCM_NART 17                                /* pcmenu_art_pixels' ids: 16 pieces of art and a flat pearl (16) */
 #define PCM_NTEX (PCM_NART + 3)                    /* then the hubs layer, the words layer and the ground, of the canvas's size */
 #define PCM_NSPR 64
-typedef struct { VkImage img; VMem mem; VkImageView view; VkDescriptorSet set; int w, h, ready; } PcmTex;      /* ready: it holds pixels the shaders may read */
+typedef struct { VkImage img; VMem mem; VkImageView view; VkDescriptorSet set; int w, h, ready; uint32_t mips; } PcmTex;      /* ready: it holds pixels the shaders may read */
 static struct {
     int tried, on;                                 /* on: the GPU path; decided at the first upload */
     VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkShaderModule vs, fs; VkPipeline pipe;
+    VkRenderPass rp; VkFramebuffer canvas_fb;      /* [issue 55] when D.use_rp */
     PcmTex tex[PCM_NTEX];                          /* the art (PCM_NART), then the hubs layer, the words layer and the ground, of the canvas's size */
     VkImage canvas; VMem canvas_mem; VkImageView canvas_view; int cw, ch;
     VkBuffer art_buf; VMem art_mem; uint64_t art_off[PCM_NART]; int art_staged, art_uploaded;      /* the art's staging: filled once, copied by a present, then freed */
@@ -81,14 +82,14 @@ typedef struct { float c[2], h[2], rot[2], view[2], ann[2], clip[2], clip2[2], b
 static void pcm_tex_free(PcmTex *t) {
     if (t->view) vkDestroyImageView(V.device, t->view, NULL);
     if (t->img) { vkDestroyImage(V.device, t->img, NULL); vmem_free(t->mem); }
-    t->img = NULL; t->view = NULL; t->w = t->h = t->ready = 0;
+    t->img = NULL; t->view = NULL; t->w = t->h = t->ready = 0; t->mips = 0;
 }
 /* a BGRA8 image with its view; the descriptor set of a texture is written to it (the set is not in use: the device was waited for) */
-static void pcm_image_new(int w, int h, VkFlags usage, VkImage *img, VMem *mem, VkImageView *view) {
+static void pcm_image_new_mips(int w, int h, uint32_t mips, VkFlags usage, VkImage *img, VMem *mem, VkImageView *view) {
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     VkMemoryRequirements rq;
     ci.imageType = VK_IMAGE_TYPE_2D; ci.format = VK_FORMAT_B8G8R8A8_UNORM;
-    ci.extent.width = (uint32_t)w; ci.extent.height = (uint32_t)h; ci.extent.depth = 1; ci.mipLevels = 1; ci.arrayLayers = 1;
+    ci.extent.width = (uint32_t)w; ci.extent.height = (uint32_t)h; ci.extent.depth = 1; ci.mipLevels = mips; ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT; ci.tiling = VK_IMAGE_TILING_OPTIMAL; ci.usage = usage;
     ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VKC(vkCreateImage(V.device, &ci, NULL, img));
@@ -97,17 +98,30 @@ static void pcm_image_new(int w, int h, VkFlags usage, VkImage *img, VMem *mem, 
     VKC(vkBindImageMemory(V.device, *img, mem->mem, mem->off));
     VkImageViewCreateInfo vi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = *img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_B8G8R8A8_UNORM;
-    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; vi.subresourceRange.levelCount = 1; vi.subresourceRange.layerCount = 1;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; vi.subresourceRange.levelCount = mips; vi.subresourceRange.layerCount = 1;
     VKC(vkCreateImageView(V.device, &vi, NULL, view));
 }
-static void pcm_tex_new(PcmTex *t, int w, int h) {
+static void pcm_image_new(int w, int h, VkFlags usage, VkImage *img, VMem *mem, VkImageView *view) {
+    pcm_image_new_mips(w, h, 1, usage, img, mem, view);
+}
+static void pcm_tex_new(PcmTex *t, int w, int h, int gen_mips) {
     pcm_tex_free(t);
-    pcm_image_new(w, h, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &t->img, &t->mem, &t->view);
-    t->w = w; t->h = h;
+    uint32_t mips = 1;
+    if (gen_mips && (w > 1 || h > 1)) for (int s = w > h ? w : h; s > 1; s >>= 1) mips++;
+    VkFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (mips > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+    pcm_image_new_mips(w, h, mips, usage, &t->img, &t->mem, &t->view);
+    t->w = w; t->h = h; t->mips = mips;
     VkDescriptorImageInfo ii = {g_gpu.smp, t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet wr = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     wr.dstSet = t->set; wr.dstBinding = 0; wr.descriptorCount = 1; wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
     vkUpdateDescriptorSets(V.device, 1, &wr, 0, NULL);
+}
+static void pcm_mip_barrier(VkImage img, uint32_t mip, VkImageLayout from, VkImageLayout to) {
+    VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; b.image = img;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.subresourceRange.baseMipLevel = mip; b.subresourceRange.levelCount = 1; b.subresourceRange.layerCount = 1;
+    b.srcAccessMask = layout_access(from); b.dstAccessMask = layout_access(to); b.oldLayout = from; b.newLayout = to;
+    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &b);
 }
 static VkPipeline pcm_gpu_pipeline(void) {
     if (g_gpu.pipe) return g_gpu.pipe;
@@ -115,7 +129,7 @@ static VkPipeline pcm_gpu_pipeline(void) {
     g_gpu.fs = module_from_glsl(1, k_pcm_fs, "PC menu panel, fragment stage", &g_spv_unused);
     if (!g_gpu.vs || !g_gpu.fs) return NULL;
     VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    si.magFilter = si.minFilter = VK_FILTER_LINEAR; si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    si.magFilter = si.minFilter = VK_FILTER_LINEAR; si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE;
     si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; si.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     VKC(vkCreateSampler(V.device, &si, NULL, &g_gpu.smp));
     VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
@@ -163,7 +177,19 @@ static VkPipeline pcm_gpu_pipeline(void) {
     VkPipelineRenderingCreateInfo ren = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ren.colorAttachmentCount = 1; ren.pColorAttachmentFormats = &cf;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ren; gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
+    if (D.use_rp) {
+        if (!g_gpu.rp) {
+            VkAttachmentDescription att = {0, cf, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription sub; memset(&sub, 0, sizeof sub);
+            sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+            VkRenderPassCreateInfo rpi = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            rpi.attachmentCount = 1; rpi.pAttachments = &att; rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+            VKC(vkCreateRenderPass(V.device, &rpi, NULL, &g_gpu.rp));
+        }
+        gi.renderPass = g_gpu.rp;
+    } else gi.pNext = &ren;
+    gi.stageCount = 2; gi.pStages = st; gi.pVertexInputState = &vin; gi.pInputAssemblyState = &ia; gi.pViewportState = &vps;
     gi.pRasterizationState = &rs; gi.pMultisampleState = &ms; gi.pColorBlendState = &cb; gi.pDynamicState = &ds; gi.layout = g_gpu.pl;
     VkResult r = vkCreateGraphicsPipelines(V.device, NULL, 1, &gi, NULL, &g_gpu.pipe);
     if (r != VK_SUCCESS) { printf("pcmenu: THE DRIVER REFUSED the panel's pipeline (%s): the panel is composed on the CPU\n", vk_result_name(r)); fflush(stdout); g_gpu.pipe = NULL; return NULL; }
@@ -186,19 +212,20 @@ static void pcm_gpu_art_stage(void) {
         if (!px[i]) continue;
         memcpy((uint8_t *)g_gpu.art_mem.map + g_gpu.art_off[i], px[i], (size_t)w[i] * h[i] * 4);
         free(px[i]);
-        pcm_tex_new(&g_gpu.tex[i], w[i], h[i]);
+        pcm_tex_new(&g_gpu.tex[i], w[i], h[i], 1);
     }
 }
 /* the canvas and the layer textures at the panel's size (render thread; 0 x 0: gone) */
 static void pcm_gpu_canvas(int w, int h) {
     if (g_gpu.canvas && g_gpu.cw == w && g_gpu.ch == h) return;
     cmd_wait_all();                                /* a present may still draw with them */
+    if (g_gpu.canvas_fb) { vkDestroyFramebuffer(V.device, g_gpu.canvas_fb, NULL); g_gpu.canvas_fb = NULL; }
     if (g_gpu.canvas) { vkDestroyImageView(V.device, g_gpu.canvas_view, NULL); vkDestroyImage(V.device, g_gpu.canvas, NULL); vmem_free(g_gpu.canvas_mem); g_gpu.canvas = NULL; g_gpu.canvas_view = NULL; }
     for (int k = 0; k < 3; k++) pcm_tex_free(&g_gpu.tex[PCM_NART + k]);
     g_gpu.cw = w; g_gpu.ch = h; g_gpu.layers_gen = g_gpu.ground_gen = ~0u;
     if (!w || !h) return;
     pcm_image_new(w, h, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &g_gpu.canvas, &g_gpu.canvas_mem, &g_gpu.canvas_view);
-    for (int k = 0; k < 3; k++) pcm_tex_new(&g_gpu.tex[PCM_NART + k], w, h);
+    for (int k = 0; k < 3; k++) pcm_tex_new(&g_gpu.tex[PCM_NART + k], w, h, 0);
 }
 static void pcm_tex_upload(PcmTex *t, VkBuffer buf, uint64_t off) {      /* the staging buffer's pixels into the texture, in the present's commands */
     VkBufferImageCopy c;
@@ -208,7 +235,21 @@ static void pcm_tex_upload(PcmTex *t, VkBuffer buf, uint64_t off) {      /* the 
     c.imageExtent.width = (uint32_t)t->w; c.imageExtent.height = (uint32_t)t->h; c.imageExtent.depth = 1;
     image_barrier(t->img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vkCmdCopyBufferToImage(R.cmd, buf, t->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
-    image_barrier(t->img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (t->mips > 1) {
+        int mw = t->w, mh = t->h;
+        for (uint32_t m = 1; m < t->mips; m++) {
+            int nw = mw > 1 ? mw / 2 : 1, nh = mh > 1 ? mh / 2 : 1;
+            pcm_mip_barrier(t->img, m - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            VkImageBlit bl = {{VK_IMAGE_ASPECT_COLOR_BIT, m - 1, 0, 1}, {{0, 0, 0}, {mw, mh, 1}},
+                              {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1}, {{0, 0, 0}, {nw, nh, 1}}};
+            vkCmdBlitImage(R.cmd, t->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bl, VK_FILTER_LINEAR);
+            pcm_mip_barrier(t->img, m - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            mw = nw; mh = nh;
+        }
+        pcm_mip_barrier(t->img, t->mips - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    } else {
+        image_barrier(t->img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
     t->ready = 1;
 }
 /* the panel composed on the canvas and copied over the picture at r (in the present's commands, tgt in TRANSFER_DST) */
@@ -247,7 +288,17 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     ri.renderArea.extent.width = (uint32_t)r[2]; ri.renderArea.extent.height = (uint32_t)r[3]; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &ca;
     VkViewport vp = {0, 0, (float)r[2], (float)r[3], 0, 1};
     VkRect2D sc = {{0, 0}, {(uint32_t)r[2], (uint32_t)r[3]}};
-    vkCmdBeginRendering(R.cmd, &ri);
+    if (D.use_rp) {
+        if (!g_gpu.canvas_fb) {
+            VkFramebufferCreateInfo fbi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            fbi.renderPass = g_gpu.rp; fbi.attachmentCount = 1; fbi.pAttachments = &g_gpu.canvas_view;
+            fbi.width = (uint32_t)g_gpu.cw; fbi.height = (uint32_t)g_gpu.ch; fbi.layers = 1;
+            VKC(vkCreateFramebuffer(V.device, &fbi, NULL, &g_gpu.canvas_fb));
+        }
+        VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rbi.renderPass = g_gpu.rp; rbi.framebuffer = g_gpu.canvas_fb; rbi.renderArea.extent.width = (uint32_t)r[2]; rbi.renderArea.extent.height = (uint32_t)r[3];
+        vkCmdBeginRenderPass(R.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    } else vkCmdBeginRendering(R.cmd, &ri);
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_gpu.pipe);
     vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
     for (int i = 0; i < n; i++) {
@@ -263,7 +314,7 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
         vkCmdPushConstants(R.cmd, g_gpu.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 6, 1, 0, 0);
     }
-    vkCmdEndRendering(R.cmd);
+    if (D.use_rp) vkCmdEndRenderPass(R.cmd); else vkCmdEndRendering(R.cmd);
     R.pipe_bound = NULL; R.dyn_dirty = 1; R.dyn3_dirty = 1;
     dsh_forget();
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -370,11 +421,12 @@ static void pcm_vk_free(void) {                    /* the shutdown, the device i
     for (int i = 0; i < PCM_NTEX; i++) pcm_tex_free(&g_gpu.tex[i]);
     pcm_gpu_canvas(0, 0);
     if (g_gpu.pipe) vkDestroyPipeline(V.device, g_gpu.pipe, NULL);
+    if (g_gpu.rp) vkDestroyRenderPass(V.device, g_gpu.rp, NULL);
     if (g_gpu.pl) vkDestroyPipelineLayout(V.device, g_gpu.pl, NULL);
     if (g_gpu.dp) vkDestroyDescriptorPool(V.device, g_gpu.dp, NULL);
     if (g_gpu.dl) vkDestroyDescriptorSetLayout(V.device, g_gpu.dl, NULL);
     if (g_gpu.smp) vkDestroySampler(V.device, g_gpu.smp, NULL);
     if (g_gpu.vs) vkDestroyShaderModule(V.device, g_gpu.vs, NULL);
     if (g_gpu.fs) vkDestroyShaderModule(V.device, g_gpu.fs, NULL);
-    g_gpu.pipe = NULL; g_gpu.pl = NULL; g_gpu.dp = NULL; g_gpu.dl = NULL; g_gpu.smp = NULL; g_gpu.vs = g_gpu.fs = NULL;
+    g_gpu.pipe = NULL; g_gpu.rp = NULL; g_gpu.pl = NULL; g_gpu.dp = NULL; g_gpu.dl = NULL; g_gpu.smp = NULL; g_gpu.vs = g_gpu.fs = NULL;
 }

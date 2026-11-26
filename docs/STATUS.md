@@ -1310,6 +1310,18 @@ not changed; it is to be retired).
   `710091dba8` runs): its modes set the rate in about 40 places, none read, some may take the step themselves. Not done:
   the aim's snap to a chapter when the stick is let go (`71009202bc`, 6 frames of t += 0.2: 0.1 s at 60, 0.05 s at 120;
   the ring's own easing hides it).
+- **Below 60 fps real time and `frame_rate = 30 .. 59` (issue 210, 2026-11-25)**: `7100c1f600` clamped gameplay steps
+  to `[1.0, 2.0]` (dropping time whenever a frame exceeded 33.3 ms, so anything below 30 fps ran in slow motion), and
+  the converted frame-counter / smoothing sites (`fps_ci`, `fps_cf`, `fps_fs`, `fps_ease`) were gated on `frame_rate > 60`
+  (so hit-stops, Witch Time slow-downs, input windows, rumble and smoothings ran at half speed at 30 fps). `h_frame_clock`
+  now raises the gameplay step ceiling to `4.0` (15 fps, matching `scene_step.h` and the game's mode 2) and enables the
+  converted sites at every rate (no-op at steady 60; `fps_cf` and `fps_ci` clear carry on reaching 0). `frame_rate`
+  accepts `30 .. 960` (`30` and `40` added to PC settings, Options, launcher and `recomplauncher.json`): at `30`,
+  30 fps-mode scenes keep the console's native 2-pass mode; at `31 .. 59`, they run at `frame_rate` (`eva142` stays at
+  30 Hz). Measured in `p100_GomoraSlider1` (10 s ride displacement, Linux, RADV, vsync = clock): 1014 units at 60 fps
+  (`step = 1.00`), 986 at 30 cap (`step = 2.02`), 983 at 40 cap (`step = 1.50`), 994 at simulated ~19.5 fps
+  (`step = 2.94`, previously clamped to 2.0), and 883 at simulated 15.0 fps (`step = 3.93`, frames over 66.7 ms hit the
+  4.0 ceiling); zero errors.
 - **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
   the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
   smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other
@@ -1937,6 +1949,25 @@ Discord without an error.
   story scene in the fight, the results and the next phase; Expert and Standard from two saves; "Tokyo: Shinjuku" against the banner on screen; the
   area held across phases. On the real client: the card shown, one connection held for a 130 s run, and every activity accepted.
 - **Time** is wall clock from entering the chapter, not the game's Play Time: it runs on through a pause.
+
+## Recomp Achievements (initial support)
+
+`runtime/achievements.c` vendors the [Recomp Achievements](https://github.com/elripalda/RecompAchievements) C SDK
+(`runtime/third_party/rl_achievements/`) and exposes Witch Time's 50-achievement set (story chapter clears, difficulty
+completion, Platinum & ∞ Climax Pure Platinum mastery, Golem & Rodin bosses, Witch Trials 1–3, and all weapons/Infernal
+Demons; docs/RE_NOTES.md section 12; full list in [docs/ACHIEVEMENTS.md](ACHIEVEMENTS.md)) over `RL_SESSION`. Outside
+RecompLauncher (`RL_SESSION` unset), every call is a no-op.
+
+- **Live unlocks & existing saves**: `f_7100b2a6c0` (`h_chapter_record_save`), `f_7100b2c740` (`h_side_chapter_record_save`),
+  `f_7100b2cf90` (`h_weapon_unlock`), and `f_7100b2d050` (`h_demon_unlock`) evaluate achievements live; `achieve_tick` also polls
+  `f_7100b29be0` and the save bitmasks (`save_obj + 6492` / `+ 6496`) so saves loaded through `nn::fs` (`SlotData_*.dat`) report
+  already-earned achievements right after `save_loaded` (Casual) and un-relifted builds still report unlocks.
+- **Events list (after v0.16.0)**: unlocks are named events (`rl_ach_event`), the list is hosted by RecompLauncher from
+  [docs/achievements.json](achievements.json) (written from `wt_ach_defs`, checked by `tests/achievements_test.c`); points follow the
+  list format (5, 10, 25 or 50; 1,240 in all). v0.16.0 sent native ids and its own list.
+- **Not tested**: no run against RecompLauncher itself, only the fake socket of the test; the list has not been uploaded.
+- **Rich presence & Casual mode**: forwards chapter/verse/difficulty/area via `rl_ach_presence`, and marks the session Casual (`debug`)
+  if a mutating `WT_DEBUG` command is executed.
 - **Area** is blank after Continue until the next banner: a phase does not always raise one.
 - **Not tested**: Windows was compiled, not run. Chapters other than those two come from the game's tables.
 
@@ -2400,8 +2431,14 @@ the scissors per draw (16:9: `107 43 200 10`; 21:9: `0 43 268 10`), then gdb up 
 `target_w` (that width times 1280 / (720 * ratio), only for its two calls there) and `clip_cmd` (`0x7100d04414`, only for
 its call at `0x7100c1e388`: the rectangle on the stack moved right by half the extra width before it is copied). Checked
 at 21:9 in a Verse 3 fight: the scissors equal 16:9's, the three bars full, with the HUD at the edges and centred.
-Wider than 16:9 only. **Verse results screen**: reported not reaching the right edge; not reproduced yet (a scripted
-run does not finish a verse).
+Wider than 16:9 only. **Verse results screen**: `hud0200` (main) and `huda07a` (Jeanne side missions) both place their root
+(el 0) at (0, 0) while anchoring their backdrop and score rows at x = 640 (the 16:9 right edge), so `h_ui_element`'s
+`>= 200` corner shift left them in 16:9 while the "VERSE #" badge (`hud0210`, el 0 at 560) moved out to the right edge.
+`h_ui_element` now shifts `hud0200`'s root (and `huda07a` el 3, 4, 5, keeping el 37 centred at 0) right by half the extra
+width when `hud_area = screen`; with `hud_area = 16:9` (or narrower than 16:9), `hud0200`'s 600 x 720 right-anchored
+painted backdrop (el 26, 27; el 27, 28 in `en-GB`, matched by kind / type / size) scales uniformly around its diagonal edge
+and `huda07a`'s 500 x 720 backdrop (el 3, 4) widens / tallens to reach the screen's edges. Verified against the real
+`ui_hud*.dat` layouts across all 13 languages at 16:9, 21:9, 32:9 and 9:10; not yet checked by an in-game screenshot.
 
 What it takes (found by reading main with `llvm-objdump` and by gdb watchpoints on the lifted code):
 - **The screen size**: `0x710070a740(int *w, int *h)` stores 1600x900 (docked), `0x710070a760` 1280x720 (handheld);

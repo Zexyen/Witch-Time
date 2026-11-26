@@ -13,6 +13,8 @@
 #   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which wtbuild uses:
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
+#   recomplauncher.json              how RecompLauncher sets the game up and starts it (from the repository's top)
+#   AppRun, witch-time.desktop/.png  the folder as an AppDir: the same folder is also the release's AppImage (Linux)
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
@@ -50,7 +52,7 @@ env:
   # Removed here and not by export-ignore, which would take them out of GitHub's source archives too.
   TRIM: >-
     .github .claude .mcp.json .gitattributes .gitignore docs scripts tests tools
-    launcher/src launcher/CMakeLists.txt launcher/macos launcher/win32 launcher/README.md lifter/README.md
+    launcher/src launcher/CMakeLists.txt launcher/macos launcher/win32 launcher/linux launcher/README.md lifter/README.md
   SDL_TAG: release-3.4.18
   FFMPEG_TAG: n7.1.5
   GLSLANG_TAG: 16.6.0
@@ -59,6 +61,8 @@ env:
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
   OPUS_TAG: v1.5.2
   FREETYPE_TAG: VER-2-13-3
+  APPIMAGETOOL_TAG: '1.9.1'
+  APPIMAGE_RUNTIME_TAG: '20251108'
 
 jobs:
   linux:
@@ -209,6 +213,7 @@ jobs:
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           (cd "dist/$name" && rm -rf $TRIM)
+          test -f "dist/$name/recomplauncher.json"    # RecompLauncher reads it at the archive's top, beside witch-time
           cp build/witch-time "dist/$name/build/"
           cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -220,9 +225,35 @@ jobs:
           cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
           cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
           ln -s build/witch-time "dist/$name/witch-time"
+          # what makes the folder an AppDir too (the AppImage step), in the tarball as well, so both are the same folder
+          cp launcher/linux/AppRun launcher/linux/witch-time.desktop "dist/$name/"
+          cp launcher/ui/img/icon.png "dist/$name/witch-time.png"
           LD_LIBRARY_PATH= ldd "dist/$name/build/witch-time" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
+
+      # the same folder as one file, for RecompLauncher (which unpacks it at install and plays it from that folder,
+      # recomplauncher.json at its top) and players who keep one file: run as one file it copies itself into a WitchTime
+      # folder beside it and starts from there, as Witch Time builds the game into its own folder (launcher/linux/AppRun)
+      - name: AppImage
+        run: |
+          arch="${{ matrix.arch }}"
+          name="${{ steps.version.outputs.name }}"
+          app="WitchTime-${{ steps.version.outputs.version }}-$arch.AppImage"   # no "linux" in it: every AppImage is (the AppImage catalog's rule)
+          curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-$arch.AppImage"
+          curl -sSfL -o "$RUNNER_TEMP/runtime-$arch" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_TAG/runtime-$arch"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream --comp zstd \
+            --runtime-file "$RUNNER_TEMP/runtime-$arch" "dist/$name" "dist/$app"
+          # unpacked as RecompLauncher does, elsewhere: the files, their modes and the links inside it are all there
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$app" --appimage-extract >/dev/null)
+          x="$RUNNER_TEMP/squashfs-root"
+          diff <(cd "dist/$name" && find . ! -name .DirIcon | sort) <(cd "$x" && find . ! -name .DirIcon | sort)
+          test -f "$x/recomplauncher.json" && test -x "$x/AppRun" && test -x "$x/build/witch-time" && test -x "$x/build/wtbuild"
+          test -x "$x/deps/llvm/bin/clang" && "$x/deps/llvm/bin/clang" --version
+          LD_LIBRARY_PATH= ldd "$x/build/witch-time" | grep -q "$x/build/libSDL3.so.0"
+          (cd dist && sha256sum "$app" > "$app.sha256")
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -230,6 +261,7 @@ jobs:
           name: ${{ steps.version.outputs.name }}
           path: |
             dist/*.tar.gz
+            dist/*.AppImage
             dist/*.sha256
 
       - name: Release
@@ -240,7 +272,7 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
-            dist/*.sha256
+            dist/*.AppImage
 
   android:
     runs-on: ubuntu-24.04
@@ -356,14 +388,13 @@ jobs:
             dist/*.sha256
 
       - name: Release
-        if: github.ref_type == 'tag'
+        if: false   # Android isn't announced yet: the APK stays a run artifact; back to github.ref_type == 'tag' when it is
         uses: softprops/action-gh-release@v2
         with:
           name: Witch Time ${{ steps.version.outputs.version }}
           files: |
             dist/*.apk
             dist/*.zip
-            dist/*.sha256
 
   windows:
     runs-on: ubuntu-24.04
@@ -554,6 +585,7 @@ jobs:
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
           (cd "$p" && rm -rf $TRIM)
+          test -f "$p/recomplauncher.json"            # RecompLauncher reads it at the archive's top, beside witch-time.exe
           cp witch-time.exe "$p/"
           cp build/witch-time.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"
@@ -617,9 +649,7 @@ jobs:
         with:
           name: Witch Time ${{ steps.version.outputs.version }}
           generate_release_notes: true
-          files: |
-            dist/*.zip
-            dist/*.sha256
+          files: dist/*.zip
 
   # macOS (experimental, Apple silicon): the launcher, its bundle and the build tool, attached to the release as
   # WitchTime-<tag>-macos-arm64.tar.gz (the name the launcher on a Mac looks for). No prebuilt/ and no deps/llvm: the player's Mac builds the runtime

@@ -98,6 +98,15 @@ pub fn py_repr(v: f64) -> String {
     }
 }
 
+/// The launcher's Mods window switches: config/mods.ini, or the data folder's (WT_DATA: the launcher's --data or
+/// RecompLauncher's, launcher/src/config.cpp Paths::find), as the runtime reads it (nnfs.c mods_ini_path)
+pub fn mods_ini(repo: &Path) -> std::path::PathBuf {
+    match std::env::var_os("WT_DATA").filter(|d| !d.is_empty()) {
+        Some(d) => Path::new(&d).join("config").join("mods.ini"),
+        None => repo.join("config").join("mods.ini"),
+    }
+}
+
 /// Compile and texture jobs when no --jobs is given: half the logical CPUs, so a build does not peg the PC.
 /// The other half are mostly SMT siblings: 16 -> 8 jobs of 16 threads took 17% longer on 31% less CPU time.
 pub fn default_jobs() -> usize {
