@@ -656,7 +656,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         static int polls;
         int changed = prompts_used >= 0 && prompts_used != g_used;
         if (changed) { g_used = prompts_used; nnpad_prompts_used(g_used); }
-        if (changed || !(++polls & 15)) { prompts_tick(); menu_swap_tick(); }
+        if (!g_pad_test && (changed || !(++polls & 15))) { prompts_tick(); menu_swap_tick(); }
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
     if (lx < -STICK_MAX / 2) buttons |= 1ull << BTN_SL_LEFT;

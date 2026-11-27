@@ -369,19 +369,28 @@ pub fn dump_json(v: &Value, level: usize, out: &mut String) {
 fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
     let t = Target::host();
     let clang_exe = target::exe("clang");
-    if let Some(l) = &cx.a.llvm {
-        if !Path::new(l).join("bin").join(&clang_exe).exists() {
+    let bundled = cx.root().join("deps").join("llvm").join("bin").join(&clang_exe);
+    let clang = if let Some(l) = &cx.a.llvm {
+        let p = PathBuf::from(abspath(l));
+        if !p.join("bin").join(&clang_exe).exists() {
             return Err(Fail(format!("--llvm {}: there is no bin/{} in it", l, clang_exe)));
         }
-        std::env::set_var("LLVM_ROOT", abspath(l));
-    } else if std::env::var_os("LLVM_ROOT").is_none() {
-        if let Some(saved) = cx.state.get("tools").and_then(|t| t.get("LLVM_ROOT")).and_then(|v| v.as_str()) {
-            if Path::new(saved).join("bin").join(&clang_exe).exists() {
-                std::env::set_var("LLVM_ROOT", saved);
+        std::env::set_var("LLVM_ROOT", &p);
+        p.join("bin").join(&clang_exe).to_string_lossy().into_owned()
+    } else if bundled.exists() {
+        // A release ships its own clang in deps/llvm: an ambient LLVM_ROOT (e.g. an older system LLVM on Windows)
+        // or a saved path in setup_state.json must not override it unless --llvm was passed explicitly.
+        bundled.to_string_lossy().into_owned()
+    } else {
+        if std::env::var_os("LLVM_ROOT").is_none() {
+            if let Some(saved) = cx.state.get("tools").and_then(|t| t.get("LLVM_ROOT")).and_then(|v| v.as_str()) {
+                if Path::new(saved).join("bin").join(&clang_exe).exists() {
+                    std::env::set_var("LLVM_ROOT", saved);
+                }
             }
         }
-    }
-    let clang = compile::find_clang(cx.root());
+        compile::find_clang(cx.root())
+    };
     if !Path::new(&clang).exists() && which(&clang).is_none() {
         return Err(Fail(if t.windows() {
             "clang not found: a release has it in deps\\llvm; a checkout needs llvm-mingw (--llvm <folder>, README)".into()
@@ -393,8 +402,10 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
     }
     let mut tools = Map::new();
     tools.insert("TOOLCHAIN".into(), json!(t.name()));
-    if let Some(l) = std::env::var_os("LLVM_ROOT") {
-        tools.insert("LLVM_ROOT".into(), json!(l.to_string_lossy()));
+    if cx.a.llvm.is_some() || !bundled.exists() {
+        if let Some(l) = std::env::var_os("LLVM_ROOT") {
+            tools.insert("LLVM_ROOT".into(), json!(l.to_string_lossy()));
+        }
     }
     let ver = Command::new(&clang)
         .arg("--version")
@@ -417,6 +428,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         fs::write(&src, code).map_err(|e| Fail(e.to_string()))?;
         let mut c = Command::new(&clang);
         c.args(t.clang_flags())
+            .args(t.cpu_level_for(&clang))
             .args(if t.macos() { &["-shared", "-O2"][..] } else { &["-shared", "-O2", "-nostdlib"][..] })
             .args(t.linker())
             .args(t.pic())

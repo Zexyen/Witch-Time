@@ -2367,12 +2367,14 @@ static uint8_t *list_lookup(uint64_t h, size_t *len) {
 }
 /* Render thread, once per frame: drop lists not submitted for a while (NVN has no call that frees a command handle). */
 static void list_collect(void) {
+    int fps = gfx_options()->frame_rate;
+    LONG64 ttl = fps > 60 ? (LONG64)fps * 2 : 120;      /* keep ~2 s of unfinalized command handles above 60 fps, as 120 frames does at 60 fps */
     AcquireSRWLockExclusive(&g_list_lock);
     for (int i = 0; i < g_list_count; i++) {
         List *l = &g_lists[i];
         if (!l->data) continue;
         LONG64 last = l->used >= 0 ? l->used : l->created;
-        if (l->finalized || g_st.frames - last > 120) {
+        if (l->finalized || g_st.frames - last > ttl) {
             if (l->cap >= LIST_POOL_MIN && l->cap <= LIST_POOL_MAX) {
                 int i;
                 if (g_list_pool_n < 8) i = g_list_pool_n++;

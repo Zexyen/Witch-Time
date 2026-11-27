@@ -172,6 +172,24 @@ int main(int argc, char **argv) {
     g_sel = 2; g_ver++;
     panel(dir, "pcmenu_1920x1080", 1920, 1080);
     /* Quit to desktop (issues 212, 277): the first press asks, a move away forgets it, the second press quits; left / right do nothing */
+    {   /* performance overlay row and language row */
+        int po = row_of("frame_time_overlay");
+        assert(po >= 0 && k_rows[po].apply == A_LIVE && g_cur[po] == 0);
+        change(po, 1, 0); assert(gfx_options()->overlay == 1 && !row_restart(po));
+        assert(gfx_ini_get("frame_time_overlay", buf, sizeof buf) && !strcmp(buf, "on"));
+        change(po, -1, 0); assert(gfx_options()->overlay == 0);
+        int lr = row_of("language");
+        assert(lr >= 0 && row_count(lr) == 11 && k_rows[lr].apply == A_RESTART);
+        for (int k = 0; k < row_count(lr); k++)
+            for (const char *c = k_rows[lr].name[k]; *c; c++)
+                assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+        assert(g_cur[lr] == 0 && !row_restart(lr));
+        change(lr, 1, 0); change(lr, 1, 0);                        /* auto -> en-US -> fr */
+        assert(!strcmp(k_rows[lr].val[g_cur[lr]], "fr") && row_restart(lr));
+        assert(gfx_ini_get("language", buf, sizeof buf) && !strcmp(buf, "fr"));
+        change(lr, -1, 0); change(lr, -1, 0);                      /* back to auto */
+        assert(g_cur[lr] == 0 && !row_restart(lr));
+    }
     int quit = row_of("quit");
     assert(quit >= 0 && row_on(quit) && !strcmp(val_name(quit), "Quit"));
     change(quit, 1, 0); change(quit, -1, 0); assert(!g_quits && !g_quit_ask && !row_restart(quit));

@@ -51,6 +51,10 @@ private:
 	Rml::Context* ctx = nullptr;
 	Rml::DataModelHandle model;
 	std::vector<SDL_Gamepad*> pads;
+	Rml::Input::KeyIdentifier last_nav_key = Rml::Input::KI_UNKNOWN;
+	Uint64 last_nav_ms = 0;
+	SDL_JoystickID last_nav_pad = 0;
+	bool last_nav_from_pad = false;
 	int prompts = 4;                // footer hints: 1 Switch, 2 PlayStation, 3 Xbox, 4 keyboard
 	bool prompts_fixed = false;     // [general] button_prompts names one; else they follow what was used last
 	void prompts_read();

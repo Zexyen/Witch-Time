@@ -28,12 +28,17 @@ const OPTNONE: usize = 5000; // statements: a bigger function gets optnone (clan
 const TIME_LIMIT: u64 = 900; // seconds for one file at -O2
 const RULES: i64 = 1; // in every stamp: raising it compiles every file again
 
-/// clang: $LLVM_ROOT/bin/clang, <repo>/deps/llvm/bin/clang, else clang on PATH
+/// clang: <repo>/deps/llvm/bin/clang (the bundled one in a release), else $LLVM_ROOT/bin/clang, else clang on PATH
 /// (clang.exe on Windows: the bundled one in a release, llvm-mingw's in a checkout)
 pub fn find_clang(repo: &Path) -> String {
+    let env = std::env::var_os("LLVM_ROOT");
+    find_clang_in(repo, env.as_deref())
+}
+
+fn find_clang_in(repo: &Path, llvm_root: Option<&std::ffi::OsStr>) -> String {
     let deps = repo.join("deps").join("llvm");
     let clang = target::exe("clang");
-    for d in [std::env::var_os("LLVM_ROOT").map(PathBuf::from), Some(deps)].into_iter().flatten() {
+    for d in [Some(deps), llvm_root.map(PathBuf::from)].into_iter().flatten() {
         if d.as_os_str().is_empty() {
             continue;
         }
@@ -43,6 +48,23 @@ pub fn find_clang(repo: &Path) -> String {
         }
     }
     which(&clang).unwrap_or(clang)
+}
+
+/// true when `clang` accepts `flags` for target `t` (e.g. `-march=x86-64-v3`, added in Clang 12)
+pub fn clang_supports(clang: &str, t: Target, flags: &[String]) -> bool {
+    if flags.is_empty() {
+        return true;
+    }
+    Command::new(clang)
+        .args(t.clang_flags())
+        .args(flags)
+        .args(["-x", "c", "-fsyntax-only", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// shutil.which
@@ -413,9 +435,9 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
     flags.extend(lifted_flags(t));
-    let level = t.cpu_level(); // in the stamps' hash with the rest: a build moved to another processor compiles again
-    if let Some(l) = level.first() {
-        log(format!("compile: for this PC's processor ({})", l));
+    let level = t.cpu_level_for(clang); // in the stamps' hash with the rest: a build moved to another processor compiles again
+    if !level.is_empty() {
+        log(format!("compile: for this PC's processor ({})", level.join(" ")));
     }
     flags.extend(level);
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
@@ -577,5 +599,32 @@ mod tests {
         assert_eq!(lifted_flags(Target::Linux), here);
         assert_eq!(lifted_flags(Target::Windows), [&linux[..4], &linux[5..]].concat());
         assert_eq!(lifted_flags(Target::MacOS), [&linux[..3], &linux[4..]].concat());
+    }
+
+    #[test]
+    fn find_clang_prefers_bundled_over_llvm_root() {
+        let t = std::env::temp_dir().join(format!("wtbuild_find_clang_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&t);
+        let repo = t.join("repo");
+        let bundled = repo.join("deps").join("llvm").join("bin").join(target::exe("clang"));
+        let env_llvm = t.join("system_llvm");
+        let env_clang = env_llvm.join("bin").join(target::exe("clang"));
+        fs::create_dir_all(env_clang.parent().unwrap()).unwrap();
+        fs::write(&env_clang, b"").unwrap();
+        assert_eq!(find_clang_in(&repo, Some(env_llvm.as_os_str())), env_clang.to_string_lossy());
+        fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        fs::write(&bundled, b"").unwrap();
+        assert_eq!(find_clang_in(&repo, Some(env_llvm.as_os_str())), bundled.to_string_lossy());
+        let _ = fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn clang_supports_checks_target_flags() {
+        let Some(clang) = which(&target::exe("clang")) else { return };
+        let t = Target::host();
+        if cfg!(target_arch = "x86_64") {
+            assert!(clang_supports(&clang, t, &["-march=x86-64".into()]));
+            assert!(!clang_supports(&clang, t, &["-march=not-a-real-cpu-wtbuild".into()]));
+        }
     }
 }

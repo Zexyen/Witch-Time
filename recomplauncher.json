@@ -63,6 +63,18 @@
       "defaults": { "window": "windowed" }
     },
     {
+      "id": "size", "label": "Window size", "group": "Display",
+      "help": "Window size when in Windowed mode.",
+      "choices": [
+        { "label": "1280 × 720", "set": { "width": "1280", "height": "720" } },
+        { "label": "1600 × 900", "set": { "width": "1600", "height": "900" } },
+        { "label": "1920 × 1080", "set": { "width": "1920", "height": "1080" } },
+        { "label": "2560 × 1440", "set": { "width": "2560", "height": "1440" } },
+        { "label": "3840 × 2160", "set": { "width": "3840", "height": "2160" } }
+      ],
+      "defaults": { "width": "1280", "height": "720" }
+    },
+    {
       "id": "vsync", "label": "Vertical sync", "group": "Display",
       "help": "Auto locks to a 60, 120 or 240 Hz display.",
       "choices": [
@@ -91,6 +103,33 @@
       "defaults": { "frame_rate": "60" }
     },
     {
+      "id": "frame_time_overlay", "label": "Performance overlay", "group": "Display",
+      "help": "Frame rate and frame time at the top right of the picture.",
+      "choices": [
+        { "label": "Off", "set": { "frame_time_overlay": "off" } },
+        { "label": "On", "set": { "frame_time_overlay": "on" } }
+      ],
+      "defaults": { "frame_time_overlay": "off" }
+    },
+    {
+      "id": "language", "label": "Language", "group": "Display",
+      "help": "The game's language. Auto follows your system display language.",
+      "choices": [
+        { "label": "Auto", "set": { "language": "auto" } },
+        { "label": "English", "set": { "language": "en-US" } },
+        { "label": "French", "set": { "language": "fr" } },
+        { "label": "German", "set": { "language": "de" } },
+        { "label": "Italian", "set": { "language": "it" } },
+        { "label": "Spanish", "set": { "language": "es" } },
+        { "label": "Japanese", "set": { "language": "ja" } },
+        { "label": "Korean", "set": { "language": "ko" } },
+        { "label": "Chinese (Simp.)", "set": { "language": "zh-Hans" } },
+        { "label": "Chinese (Trad.)", "set": { "language": "zh-Hant" } },
+        { "label": "Russian", "set": { "language": "ru" } }
+      ],
+      "defaults": { "language": "auto" }
+    },
+    {
       "id": "resolution_scale", "label": "Internal resolution", "group": "Graphics",
       "help": "What the game renders at. 900p is the console's own; the first start at another size stops a while for its shaders.",
       "choices": [
@@ -113,6 +152,15 @@
       "defaults": { "model_lod": "game" }
     },
     {
+      "id": "film_grain", "label": "Film grain", "group": "Graphics",
+      "help": "The game's moving noise over the picture; the vignette stays.",
+      "choices": [
+        { "label": "On", "set": { "film_grain": "on" } },
+        { "label": "Off", "set": { "film_grain": "off" } }
+      ],
+      "defaults": { "film_grain": "on" }
+    },
+    {
       "id": "hdr", "label": "HDR", "group": "Graphics",
       "help": "Auto follows the desktop's HDR, and the scene's lights go above white.",
       "choices": [
@@ -123,6 +171,44 @@
       "defaults": { "hdr": "auto" }
     },
     {
+      "id": "hdr_paper_white", "label": "HDR white", "group": "Graphics",
+      "help": "How bright the game's white is with HDR on.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr_paper_white": "auto" } },
+        { "label": "100 nits", "set": { "hdr_paper_white": "100" } },
+        { "label": "150 nits", "set": { "hdr_paper_white": "150" } },
+        { "label": "200 nits", "set": { "hdr_paper_white": "200" } },
+        { "label": "250 nits", "set": { "hdr_paper_white": "250" } },
+        { "label": "300 nits", "set": { "hdr_paper_white": "300" } },
+        { "label": "400 nits", "set": { "hdr_paper_white": "400" } }
+      ],
+      "defaults": { "hdr_paper_white": "auto" }
+    },
+    {
+      "id": "hdr_peak", "label": "HDR peak", "group": "Graphics",
+      "help": "Your monitor's peak brightness, for the scene's lights.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr_peak": "auto" } },
+        { "label": "400 nits", "set": { "hdr_peak": "400" } },
+        { "label": "600 nits", "set": { "hdr_peak": "600" } },
+        { "label": "800 nits", "set": { "hdr_peak": "800" } },
+        { "label": "1000 nits", "set": { "hdr_peak": "1000" } },
+        { "label": "1500 nits", "set": { "hdr_peak": "1500" } },
+        { "label": "2000 nits", "set": { "hdr_peak": "2000" } },
+        { "label": "4000 nits", "set": { "hdr_peak": "4000" } }
+      ],
+      "defaults": { "hdr_peak": "auto" }
+    },
+    {
+      "id": "aspect", "label": "Picture fit", "group": "Graphics",
+      "help": "Keep shape adds bars when the window has a different shape; Stretch fills the window.",
+      "choices": [
+        { "label": "Keep shape", "set": { "aspect": "keep" } },
+        { "label": "Stretch", "set": { "aspect": "stretch" } }
+      ],
+      "defaults": { "aspect": "keep" }
+    },
+    {
       "id": "aspect_ratio", "label": "Aspect ratio", "group": "Graphics",
       "help": "Fixed is the game's 16:9. Unlocked takes the window's shape, for ultrawide screens.",
       "choices": [
@@ -130,6 +216,15 @@
         { "label": "Unlocked", "set": { "aspect_ratio": "auto" } }
       ],
       "defaults": { "aspect_ratio": "16:9" }
+    },
+    {
+      "id": "hud_area", "label": "HUD layout", "group": "Graphics",
+      "help": "Wider than 16:9: HUD at the screen edges, or centered in 16:9.",
+      "choices": [
+        { "label": "Full Screen", "set": { "hud_area": "screen" } },
+        { "label": "Centered", "set": { "hud_area": "16:9" } }
+      ],
+      "defaults": { "hud_area": "screen" }
     },
     {
       "id": "upscaler", "label": "Upscaling", "group": "Upscaling",
@@ -165,6 +260,25 @@
         { "label": "Keyboard", "set": { "general/button_prompts": "keyboard" } }
       ],
       "defaults": { "general/button_prompts": "auto" }
+    },
+    {
+      "id": "swap_confirm", "label": "Swap Confirm", "group": "Controls", "in": "controllers",
+      "help": "Menus only: B confirms, A goes back.",
+      "choices": [
+        { "label": "Off", "set": { "general/swap_confirm": "off" } },
+        { "label": "On", "set": { "general/swap_confirm": "on" } }
+      ],
+      "defaults": { "general/swap_confirm": "off" }
+    },
+    {
+      "id": "layout", "label": "Face buttons", "group": "Controls", "in": "controllers",
+      "help": "Position (Switch) or Printed letter (Xbox / PlayStation).",
+      "choices": [
+        { "label": "Auto", "set": { "general/layout": "auto" } },
+        { "label": "Position", "set": { "general/layout": "positional" } },
+        { "label": "Printed letter", "set": { "general/layout": "labels" } }
+      ],
+      "defaults": { "general/layout": "auto" }
     }
   ],
   "actions": [

@@ -13,6 +13,10 @@
  * It only reads: nothing is unblocked or killed. Threads are suspended one at a time for the few microseconds of the unwind;
  * nothing is printed or allocated while one is suspended. */
 #include <tlhelp32.h>
+#ifdef __linux__
+#include <dirent.h>
+#include <unistd.h>
+#endif
 const char *guest_thread_name_of(DWORD tid);       /* os_threads.c */
 /* fn_table / fn_table_count (runtime.h; -Dfn_table=(*game_fn_table_p)): the lifted game's functions, by guest address */
 static volatile LONG g_wd_quit;
@@ -143,8 +147,11 @@ static void wd_owner(const char *name, CRITICAL_SECTION *cs) {
 }
 unsigned long nvn_front_present_tid(void);         /* nvn_gl.c */
 static void wd_dump(double stall_s, LONG64 tries_since) {
+#ifndef __linux__
     static struct { DWORD tid; ULONGLONG cpu0, cpu1, born; int prio, nfr; uint64_t pc[28]; } th[400];
-    char path[MAX_PATH + 16], tb[48], ab[400];
+    char ab[400];
+#endif
+    char path[MAX_PATH + 16], tb[48];
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     SYSTEMTIME st; GetLocalTime(&st);
     DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId(), n = GetModuleFileNameA(NULL, path, MAX_PATH);
@@ -170,6 +177,53 @@ static void wd_dump(double stall_s, LONG64 tries_since) {
         }
         if (!any) wdp("  waits of ours (stage / library / pipeline being made by another thread, queues): none entered\n");
     }
+#ifdef __linux__
+    {   /* Linux: CreateToolhelp32Snapshot is absent; enumerate /proc/self/task for 300 ms CPU delta, state and kernel wchan */
+        static struct { DWORD tid; ULONGLONG cpu0, cpu1, born; char state, comm[32], wchan[64]; } lt[400];
+        long hz = sysconf(_SC_CLK_TCK);
+        double tick = hz > 0 ? 10000000.0 / (double)hz : 100000.0;
+        for (int pass = 0; pass < 2; pass++) {
+            DIR *d = opendir("/proc/self/task");
+            struct dirent *de;
+            while (d && (de = readdir(d)) != NULL) {
+                DWORD tid = (DWORD)strtoul(de->d_name, NULL, 10);
+                if (!tid || tid == me) continue;
+                int i;
+                for (i = 0; i < nt && lt[i].tid != tid; i++) {}
+                if (i == nt) { if (pass || nt == 400) continue; memset(&lt[nt], 0, sizeof lt[nt]); lt[nt].tid = tid; lt[nt].state = '?'; lt[nt].born = ~0ull; nt++; }
+                char p[64], buf[512];
+                snprintf(p, sizeof p, "/proc/self/task/%lu/stat", (unsigned long)tid);
+                FILE *f = fopen(p, "r");
+                if (f) {
+                    size_t got = fread(buf, 1, sizeof buf - 1, f); fclose(f); buf[got] = 0;
+                    char *r = strrchr(buf, ')');
+                    char stc = '?'; unsigned long long ut = 0, st2 = 0, start = 0;
+                    if (r && sscanf(r + 2, "%c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu %*d %*d %*d %*d %*d %*d %llu", &stc, &ut, &st2, &start) >= 3) {
+                        ULONGLONG cpu = (ULONGLONG)((double)(ut + st2) * tick);
+                        if (pass) lt[i].cpu1 = cpu; else lt[i].cpu0 = lt[i].cpu1 = cpu;
+                        lt[i].state = stc;
+                        if (start) lt[i].born = start;
+                    }
+                }
+                if (pass) {
+                    snprintf(p, sizeof p, "/proc/self/task/%lu/comm", (unsigned long)tid);
+                    if ((f = fopen(p, "r")) != NULL) { size_t g = fread(lt[i].comm, 1, sizeof lt[i].comm - 1, f); fclose(f); lt[i].comm[g] = 0; while (g && (lt[i].comm[g - 1] == '\n' || lt[i].comm[g - 1] == '\r')) lt[i].comm[--g] = 0; }
+                    snprintf(p, sizeof p, "/proc/self/task/%lu/wchan", (unsigned long)tid);
+                    if ((f = fopen(p, "r")) != NULL) { size_t g = fread(lt[i].wchan, 1, sizeof lt[i].wchan - 1, f); fclose(f); lt[i].wchan[g] = 0; while (g && (lt[i].wchan[g - 1] == '\n' || lt[i].wchan[g - 1] == '\r')) lt[i].wchan[--g] = 0; }
+                }
+            }
+            if (d) closedir(d);
+            if (!pass) Sleep(300);
+        }
+        { ULONGLONG first = ~0ull; for (int i = 0; i < nt; i++) if (lt[i].born < first) { first = lt[i].born; g_wd_main_tid = lt[i].tid; } }
+        wdp("  threads: %d (the watchdog's own not listed); \"cpu\" = CPU time used in 300 ms: 0.0 means blocked or idle\n", nt);
+        for (int i = 0; i < nt; i++) {
+            const char *nm = wd_tname(lt[i].tid, tb, sizeof tb);
+            if (!strcmp(nm, "host thread") && lt[i].comm[0]) nm = lt[i].comm;
+            wdp("  thread %lu  %s  state %c  cpu %.1f ms of 300  wchan %s\n", (unsigned long)lt[i].tid, nm, lt[i].state, (double)(lt[i].cpu1 - lt[i].cpu0) / 10000.0, lt[i].wchan[0] ? lt[i].wchan : "-");
+        }
+    }
+#else
     for (int pass = 0; pass < 2; pass++) {         /* CPU time of every thread, twice, 300 ms apart: who is running and who is blocked */
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         THREADENTRY32 te;
@@ -232,6 +286,7 @@ static void wd_dump(double stall_s, LONG64 tries_since) {
             CloseHandle(h);
         }
     }
+#endif
     wdp("nvn_vk_watchdog: ======== end of the report%s%s ========\n\n", g_wd_fp ? "; also appended to " : "", g_wd_fp ? path : "");
     fflush(stdout);
     if (g_wd_fp) { fclose(g_wd_fp); g_wd_fp = NULL; }

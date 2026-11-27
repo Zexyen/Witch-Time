@@ -49,8 +49,9 @@ typedef struct {
     SDL_JoystickID id; SDL_Gamepad *gp; SDL_Joystick *js;
     int slot, wireless, dropped, nbtn, naxes, nhats, gtype, has_accel, has_gyro, virt;
     char guid[40], name[80];
-    Uint16 rl, rh; ULONGLONG rsent;
+    Uint16 rl, rh, rwant_l, rwant_h; int rpend; ULONGLONG rsent;
     int armed;                          /* [witchtime] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
+    uint64_t handover_btn;              /* button state snapshot while player 1 has no pad (rising-edge handover) */
 } Dev;
 
 static const char *const g_pro[16] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
@@ -82,7 +83,8 @@ static int g_kb_slot = -3;                  /* resolved lazily */
 static int g_kb_shared;                     /* [Recomps#1] pads may take the keyboard's slot too (merged; finding 106) */
 static ULONGLONG g_init_ms;
 static LARGE_INTEGER g_qpf, g_last_poll;
-static ULONGLONG g_last_cfg_check;
+static ULONGLONG g_last_cfg_check, g_last_scan_ms;
+static int g_p1_empty;                      /* slot 0 had no pad on the previous poll (handover baseline armed) */
 
 static void lock(void) { if (!g_cs_ready) { if (InterlockedCompareExchange(&g_cs_ready, 2, 0) == 0) { InitializeCriticalSection(&g_cs); g_cs_ready = 1; } while (g_cs_ready != 1) Sleep(0); } EnterCriticalSection(&g_cs); }
 static void unlock(void) { LeaveCriticalSection(&g_cs); }
@@ -269,29 +271,57 @@ static int parse_vk1(const char *t) {
     while (b[0] == ' ' || b[0] == '\t') memmove(b, b + 1, strlen(b));
     for (char *p = b + strlen(b); p > b && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n'); ) *--p = 0;
     if (!b[0] || !_stricmp(b, "none")) return 0;
-    if (b[1] == 0) { char ch = b[0]; if (ch >= 'a' && ch <= 'z') ch -= 32; return ch; }
+    if (b[1] == 0) {
+        char ch = b[0];
+        if (ch >= 'a' && ch <= 'z') return ch - 32;
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) return ch;
+        switch (ch) {
+        case ';': return 0xBA; case '=': return 0xBB; case '-': return 0xBD; case '.': return 0xBE;
+        case '/': return 0xBF; case '`': return 0xC0; case '[': return 0xDB; case '\\': return 0xDC;
+        case ']': return 0xDD; case '\'': return 0xDE;
+        default: return 0;
+        }
+    }
     if (!_stricmp(b, "LEFT")) return VK_LEFT; if (!_stricmp(b, "UP")) return VK_UP;
     if (!_stricmp(b, "RIGHT")) return VK_RIGHT; if (!_stricmp(b, "DOWN")) return VK_DOWN;
     if (!_stricmp(b, "ENTER") || !_stricmp(b, "RETURN")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;      /* [witchtime] RETURN, ESCAPE: SDL's names */
     if (!_stricmp(b, "SPACE")) return VK_SPACE; if (!_stricmp(b, "TAB")) return VK_TAB; if (!_stricmp(b, "ESC") || !_stricmp(b, "ESCAPE")) return VK_ESCAPE;
-    if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
+    if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL") || !_stricmp(b, "CONTROL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
     /* [Recomps#1] the mouse buttons and the left / right modifier keys */
     if (!_strnicmp(b, "MOUSE", 5) && b[5] >= '1' && b[5] <= '5' && !b[6]) { static const int mb[5] = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}; return mb[b[5] - '1']; }
-    if (!_stricmp(b, "LSHIFT")) return VK_LSHIFT; if (!_stricmp(b, "RSHIFT")) return VK_RSHIFT;
-    if (!_stricmp(b, "LCTRL")) return VK_LCONTROL; if (!_stricmp(b, "RCTRL")) return VK_RCONTROL;
-    if (!_stricmp(b, "LALT")) return VK_LMENU; if (!_stricmp(b, "RALT")) return VK_RMENU;
+    if (!_stricmp(b, "LMB")) return VK_LBUTTON; if (!_stricmp(b, "RMB")) return VK_RBUTTON; if (!_stricmp(b, "MMB")) return VK_MBUTTON;
+    if (!_stricmp(b, "LSHIFT") || !_stricmp(b, "L_SHIFT") || !_stricmp(b, "LEFT_SHIFT")) return VK_LSHIFT;
+    if (!_stricmp(b, "RSHIFT") || !_stricmp(b, "R_SHIFT") || !_stricmp(b, "RIGHT_SHIFT")) return VK_RSHIFT;
+    if (!_stricmp(b, "LCTRL") || !_stricmp(b, "L_CTRL") || !_stricmp(b, "LEFT_CTRL") || !_stricmp(b, "LCONTROL")) return VK_LCONTROL;
+    if (!_stricmp(b, "RCTRL") || !_stricmp(b, "R_CTRL") || !_stricmp(b, "RIGHT_CTRL") || !_stricmp(b, "RCONTROL")) return VK_RCONTROL;
+    if (!_stricmp(b, "LALT") || !_stricmp(b, "L_ALT") || !_stricmp(b, "LEFT_ALT")) return VK_LMENU;
+    if (!_stricmp(b, "RALT") || !_stricmp(b, "R_ALT") || !_stricmp(b, "RIGHT_ALT")) return VK_RMENU;
+    if (!_stricmp(b, "CAPS") || !_stricmp(b, "CAPSLOCK")) return 0x14;
+    if (!_stricmp(b, "PGUP") || !_stricmp(b, "PAGEUP")) return 0x21; if (!_stricmp(b, "PGDN") || !_stricmp(b, "PAGEDOWN")) return 0x22;
+    if (!_stricmp(b, "END")) return 0x23; if (!_stricmp(b, "HOME")) return 0x24;
+    if (!_stricmp(b, "INS") || !_stricmp(b, "INSERT")) return 0x2D; if (!_stricmp(b, "DEL") || !_stricmp(b, "DELETE")) return 0x2E;
+    if (!_stricmp(b, "COMMA")) return 0xBC;
     if ((b[0] == 'F' || b[0] == 'f') && atoi(b + 1) >= 1 && atoi(b + 1) <= 12) return VK_F1 + atoi(b + 1) - 1;
     if (!_strnicmp(b, "NUM", 3) && b[3] >= '0' && b[3] <= '9') return VK_NUMPAD0 + b[3] - '0';
     if (b[0] == '0' && (b[1] == 'x' || b[1] == 'X')) return (int)strtol(b, NULL, 16);
     return 0;
 }
-static int parse_vk(const char *t) {           /* [Recomps#1] one key, or two separated by a comma ("E, MOUSE3"): vk | vk2 << 8 */
+static int parse_vk_tok(const char *t, const char *bind) {
+    char b[24];
+    snprintf(b, sizeof b, "%s", t);
+    while (b[0] == ' ' || b[0] == '\t') memmove(b, b + 1, strlen(b));
+    for (char *p = b + strlen(b); p > b && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n'); ) *--p = 0;
+    int vk = parse_vk1(b);
+    if (bind && !vk && b[0] && _stricmp(b, "none")) say("nn::pad: [keyboard] %s: unknown key \"%s\" (ignored)\n", bind, b);
+    return vk;
+}
+static int parse_vk(const char *t, const char *bind) {           /* [Recomps#1] one key, or two separated by a comma ("E, MOUSE3"): vk | vk2 << 8 */
     char b[48];
     snprintf(b, sizeof b, "%s", t);
     char *c = strchr(b, ',');
-    if (!c) return parse_vk1(b);
+    if (!c) return parse_vk_tok(b, bind);
     *c = 0;
-    return parse_vk1(b) | parse_vk1(c + 1) << 8;
+    return parse_vk_tok(b, bind) | parse_vk_tok(c + 1, bind) << 8;
 }
 static int parse_bool(const char *v) { return !(_stricmp(v, "off") && _stricmp(v, "0") && _stricmp(v, "no") && _stricmp(v, "false")) ? 0 : 1; }
 
@@ -349,6 +379,7 @@ static int bind_parse(const char *val, unsigned char *o) {
 static void cfg_parse(Cfg *c, char *text) {
     DevCfg *cur = NULL;
     int sect = 0;                                     /* 1 general, 2 players, 3 keyboard, 4 device */
+    if ((unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text += 3;      /* UTF-8 BOM (Windows Notepad) */
     for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
         while (*line == ' ' || *line == '\t') line++;
         size_t n = strlen(line);
@@ -382,7 +413,10 @@ static void cfg_parse(Cfg *c, char *text) {
             if (!c->bind_on[ch] && _stricmp(val, "game")) printf("nn::pad: %s is not 16 Pro buttons, each once: the game's control type\n", key);
         }
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
-        else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
+        else if (sect == 1) {
+            for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) say("nn::pad: [general] \"%s = %s\" belongs under [keyboard], ignored\n", key, val);
+            cfg_set(c, &c->def, 0, key, val);
+        }
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
         else if (sect == 2 && !_strnicmp(key, "player", 6) && key[6] >= '1' && key[6] <= '8' && !key[7]) {
             int p = key[6] - '1';
@@ -393,7 +427,7 @@ static void cfg_parse(Cfg *c, char *text) {
             else if (!_stricmp(key, "mouse_camera")) c->mouse_cam = parse_bool(val);            /* [Recomps#1] */
             else if (!_stricmp(key, "mouse_sensitivity")) { float v = (float)atof(val); if (v > 0.01f && v <= 20.0f) c->mouse_sens = v; }
             else if (!_stricmp(key, "mouse_invert_y")) c->mouse_inv = parse_bool(val);
-            else for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val);
+            else for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val, g_kbn[i]);
         }
     }
 }
@@ -431,6 +465,36 @@ static void make_dirs(const char *file) {
     snprintf(b, sizeof b, "%s", file);
     for (char *p = b + 3; *p; p++) if (*p == '\\' || *p == '/') { *p = 0; CreateDirectoryA(b, NULL); *p = '\\'; }
 }
+static int has_section(const char *text, const char *name) {
+    size_t nl = strlen(name);
+    if ((unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text += 3;
+    for (const char *p = text; *p; ) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '[' && !_strnicmp(p + 1, name, nl) && p[1 + nl] == ']') return 1;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+    return 0;
+}
+static void cfg_ensure_keyboard_section(const char *path) {      /* a partial file written by the launcher / RecompLauncher before first run lacks [keyboard] */
+    size_t len = 0;
+    char *text = read_file(path, &len);
+    if (!text) return;
+    if (!has_section(text, "keyboard")) {
+        const char *sec = strstr(g_default_ini, has_section(text, "players") ? "[keyboard]" : "[players]");
+        if (sec) {
+            FILE *f = fopen(path, "ab");
+            if (f) {
+                if (len && text[len - 1] != '\n') fwrite("\r\n", 1, 2, f);
+                fwrite("\r\n", 1, 2, f);
+                fwrite(sec, 1, strlen(sec), f);
+                fclose(f);
+                say("nn::pad: added missing [keyboard] defaults to %s\n", path);
+            }
+        }
+    }
+    free(text);
+}
 static void cfg_load(int first) {                 /* lock held */
     static Cfg n;
     char *text;
@@ -440,6 +504,8 @@ static void cfg_load(int first) {                 /* lock held */
         make_dirs(g_cfg.path);
         FILE *f = fopen(g_cfg.path, "wb");
         if (f) { fwrite(g_default_ini, 1, strlen(g_default_ini), f); fclose(f); say("nn::pad: wrote the default %s\n", g_cfg.path); }
+    } else if (first && !getenv("WT_CONFIG")) {
+        cfg_ensure_keyboard_section(g_cfg.path);
     }
     cfg_defaults(&n);
     text = read_file(g_cfg.path, NULL);
@@ -504,6 +570,14 @@ static const char *type_name(int t) {
     static const char *const n[] = {"unknown", "standard", "Xbox 360", "Xbox One", "PS3", "PS4", "PS5", "Switch Pro", "Joy-Con left", "Joy-Con right", "Joy-Con pair", "GameCube"};
     return t >= 0 && t < (int)(sizeof n / sizeof n[0]) ? n[t] : "other";
 }
+static int dev_vid(const Dev *d) { return d->gp ? SDL_GetGamepadVendor(d->gp) : d->js ? SDL_GetJoystickVendor(d->js) : 0; }
+static int dev_pid(const Dev *d) { return d->gp ? SDL_GetGamepadProduct(d->gp) : d->js ? SDL_GetJoystickProduct(d->js) : 0; }
+static int is_steam_virtual_pad(const Dev *d) { return dev_vid(d) == 0x28de && dev_pid(d) == 0x11ff; }
+static int is_steam_deck_pad(const Dev *d) { return d->gp && dev_vid(d) == 0x28de && dev_pid(d) == 0x1205; }
+static int guid_pinned(const char *guid) {
+    for (int p = 0; p < 8; p++) if (g_cfg.pguid[p][0] && !_stricmp(g_cfg.pguid[p], guid)) return 1;
+    return 0;
+}
 static void dev_add(SDL_JoystickID id) {
     Dev *d = NULL;
     for (int i = 0; i < MAXDEV && !d; i++) if (!g_dev[i].used) d = &g_dev[i];
@@ -525,6 +599,23 @@ static void dev_add(SDL_JoystickID id) {
         d->has_accel = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_ACCEL); d->has_gyro = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_GYRO);
         if (d->has_accel) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_ACCEL, true);
         if (d->has_gyro) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_GYRO, true);
+    }
+    /* When both Steam Virtual Gamepad (0x28de:0x11ff, no IMU) and the physical Steam Deck (0x28de:0x1205, with IMU)
+     * are visible to SDL3, keep only the physical Steam Deck so it owns player 1 with native gyro and no phantom 2P. */
+    if (is_steam_virtual_pad(d) && !guid_pinned(d->guid)) {
+        for (int i = 0; i < MAXDEV; i++) if (&g_dev[i] != d && g_dev[i].used && !g_dev[i].ignored && is_steam_deck_pad(&g_dev[i])) {
+            d->ignored = 1;
+            say("nn::pad: ignored \"%s\" %s (physical Steam Deck already connected)\n", d->name, d->guid);
+            if (d->gp) SDL_CloseGamepad(d->gp); else SDL_CloseJoystick(d->js);
+            d->gp = NULL; d->js = NULL;
+            return;
+        }
+    } else if (is_steam_deck_pad(d)) {
+        for (int i = 0; i < MAXDEV; i++) if (&g_dev[i] != d && g_dev[i].used && !g_dev[i].ignored && is_steam_virtual_pad(&g_dev[i]) && !guid_pinned(g_dev[i].guid)) {
+            say("nn::pad: replacing \"%s\" (slot %d) with physical Steam Deck \"%s\"\n", g_dev[i].name, g_dev[i].slot + 1, d->name);
+            if (g_dev[i].gp) SDL_CloseGamepad(g_dev[i].gp); else if (g_dev[i].js) SDL_CloseJoystick(g_dev[i].js);
+            g_dev[i].gp = NULL; g_dev[i].js = NULL; g_dev[i].slot = -1; g_dev[i].ignored = 1;
+        }
     }
     d->wireless = SDL_GetJoystickConnectionState(d->js) == SDL_JOYSTICK_CONNECTION_WIRELESS;
     d->slot = assign_slot(d);
@@ -548,27 +639,83 @@ static void reassign_all(void) {                  /* [players] changed in the fi
         say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1);
     }
 }
-static void poll_devices(void) {                  /* lock held */
-    int n = 0;
+#define RUMBLE_MIN_MS   40                        /* <= 25 Hz: avoids flooding synchronous HIDAPI Steam Deck USB EP0 rumble reports */
+#define RUMBLE_DEADBAND 512                       /* ~0.8% of 65535: skip tiny waveform jitter while motors are already running */
+static int rumble_diff(Uint16 a, Uint16 b) { return a > b ? (int)(a - b) : (int)(b - a); }
+static void dev_rumble_send(Dev *d, Uint16 rl, Uint16 rh, ULONGLONG now) {     /* lock held */
+    d->rl = rl; d->rh = rh; d->rpend = 0; d->rsent = now;
+    if (d->gp) SDL_RumbleGamepad(d->gp, rl, rh, rl || rh ? 30000 : 0);
+    else if (d->js) SDL_RumbleJoystick(d->js, rl, rh, rl || rh ? 30000 : 0);
+}
+static void dev_rumble_flush(Dev *d, ULONGLONG now) {                          /* lock held */
+    if (!d->rpend || (!d->gp && !d->js) || g_cfg.input == 1) return;
+    if (now - d->rsent < RUMBLE_MIN_MS) return;
+    Uint16 rl = d->rwant_l, rh = d->rwant_h;
+    int active = rl || rh, was = d->rl || d->rh;
+    if (!active && !was) { d->rpend = 0; return; }
+    if (active && was && rumble_diff(rl, d->rl) < RUMBLE_DEADBAND && rumble_diff(rh, d->rh) < RUMBLE_DEADBAND) {
+        if (now - d->rsent > 20000) dev_rumble_send(d, rl, rh, now);
+        else d->rpend = 0;
+        return;
+    }
+    dev_rumble_send(d, rl, rh, now);
+}
+static uint64_t dev_buttons(const Dev *d);
+static void poll_devices(int scan_hotplug) {      /* lock held */
+    ULONGLONG now = GetTickCount64();
     SDL_UpdateJoysticks();
     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
-    SDL_JoystickID *ids = SDL_GetJoysticks(&n);
-    for (int i = 0; i < MAXDEV; i++) {
-        int alive = 0;
-        if (!g_dev[i].used) continue;
-        for (int k = 0; k < n && ids; k++) if (ids[k] == g_dev[i].id) alive = 1;
-        if (!alive) dev_remove(&g_dev[i]);
+    int any_dev = 0;
+    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) { any_dev = 1; break; }
+    if (scan_hotplug || !any_dev || now - g_last_scan_ms >= 250) {
+        int n = 0;
+        g_last_scan_ms = now;
+        SDL_JoystickID *ids = SDL_GetJoysticks(&n);
+        for (int i = 0; i < MAXDEV; i++) {
+            int alive = 0;
+            if (!g_dev[i].used) continue;
+            for (int k = 0; k < n && ids; k++) if (ids[k] == g_dev[i].id) alive = 1;
+            if (!alive) dev_remove(&g_dev[i]);
+        }
+        for (int k = 0; k < n && ids; k++) {
+            int have = 0;
+            for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && g_dev[i].id == ids[k]) have = 1;
+            if (!have) dev_add(ids[k]);
+        }
+        SDL_free(ids);
+        for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].slot < 0) {      /* a slot may have been freed */
+            g_dev[i].slot = assign_slot(&g_dev[i]);
+            if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
+        }
     }
-    for (int k = 0; k < n && ids; k++) {
-        int have = 0;
-        for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && g_dev[i].id == ids[k]) have = 1;
-        if (!have) dev_add(ids[k]);
+    if (!slot_taken(0) && !g_cfg.pnone[0] && !g_cfg.pguid[0][0] && (g_kb_slot != 0 || g_kb_shared)) {
+        if (!g_p1_empty) {
+            g_p1_empty = 1;
+            for (int i = 0; i < MAXDEV; i++) {
+                Dev *d = &g_dev[i];
+                if (d->used && !d->ignored && d->slot > 0 && !d->dropped) d->handover_btn = dev_buttons(d);
+            }
+        } else {
+            for (int i = 0; i < MAXDEV; i++) {
+                Dev *d = &g_dev[i];
+                if (!d->used || d->ignored || d->slot <= 0 || d->dropped) continue;
+                if (g_cfg.pguid[d->slot][0] && !_stricmp(g_cfg.pguid[d->slot], d->guid)) continue;      /* pinned to its slot */
+                uint64_t btn = dev_buttons(d);
+                uint64_t newly = btn & ~d->handover_btn;
+                d->handover_btn = btn;
+                if (!newly) continue;
+                say("nn::pad: player 1 has no pad; \"%s\" pressed a button: player %d -> player 1\n", d->name, d->slot + 1);
+                if (d->rl || d->rh) dev_rumble_send(d, 0, 0, now);
+                d->rpend = 0;
+                d->slot = 0; remember(d->guid, 0); apply_player_index(d);
+                g_p1_empty = 0;
+                break;
+            }
+        }
+    } else {
+        g_p1_empty = 0;
     }
-    SDL_free(ids);
-    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].slot < 0) {      /* a slot may have been freed */
-        g_dev[i].slot = assign_slot(&g_dev[i]);
-        if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
-    }
+    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) dev_rumble_flush(&g_dev[i], now);
 }
 static void check_config(int force) {             /* lock held */
     ULONGLONG now = GetTickCount64();
@@ -595,7 +742,7 @@ int nnpad_init(void) {
     if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK | SDL_INIT_EVENTS)) { printf("nn::pad: SDL_Init failed: %s\n", SDL_GetError()); unlock(); return 0; }
     SDL_SetJoystickEventsEnabled(false); SDL_SetGamepadEventsEnabled(false);       /* state is read directly; events would only fill a queue */
     g_sdl_ok = 1;
-    poll_devices();
+    poll_devices(1);
     say("nn::pad: SDL %d.%d.%d ready (no video); %s\n", SDL_GetVersion() / 1000000, SDL_GetVersion() / 1000 % 1000, SDL_GetVersion() % 1000, g_cfg.path);
     unlock();
     return 1;
@@ -604,10 +751,10 @@ void nnpad_poll(int force) {
     LARGE_INTEGER t;
     if (!g_sdl_ok) return;
     QueryPerformanceCounter(&t);
-    if (!force && (t.QuadPart - g_last_poll.QuadPart) * 1000 < g_qpf.QuadPart) return;
+    if (!force && (t.QuadPart - g_last_poll.QuadPart) * 250 < g_qpf.QuadPart) return;      /* 4 ms (250 Hz): matches Steam Deck HID cadence and cuts SDL_UpdateJoysticks contention */
     lock();
     g_last_poll = t;
-    poll_devices();
+    if (g_cfg.input != 1) poll_devices(force);
     check_config(force);
     unlock();
 }
@@ -682,13 +829,11 @@ static void sensors(const Dev *d, NnPadState *o) {
     o->accel[0] = -a[0] / SDL_STANDARD_GRAVITY; o->accel[1] = a[1] / SDL_STANDARD_GRAVITY; o->accel[2] = -a[2] / SDL_STANDARD_GRAVITY;
     o->gyro[0] = -g[0] / 6.2831853f; o->gyro[1] = g[1] / 6.2831853f; o->gyro[2] = -g[2] / 6.2831853f;
 }
-static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
-    float dz = EFF(d, dz), outer = EFF(d, outer), trig = EFF(d, trig);
+static uint64_t dev_buttons(const Dev *d) {               /* lock held */
+    float trig = EFF(d, trig);
     const DevCfg *dc = dev_cfg(d);
     int labels = eff_layout(d);
-    float v[4];
-    memset(o, 0, sizeof *o);
-    o->wired = !d->wireless;
+    uint64_t buttons = 0;
     for (int b = 0; b < 16; b++) {
         Src s[4]; int n;
         if (dc && dc->nmap[b] >= 0) { n = dc->nmap[b]; memcpy(s, dc->map[b], sizeof s); } else n = def_map(d, labels, b, s);
@@ -696,9 +841,18 @@ static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
             float x = src_val(d, s[k]);
             int axis = s[k].kind == SK_AXP || s[k].kind == SK_AXN || s[k].kind == SK_AXF;
             float thr = axis && (b == 8 || b == 9 || (!s[k].raw && s[k].idx >= 4)) ? trig : 0.5f;
-            if (x > 0 && x >= thr) o->buttons |= 1ull << b;
+            if (x > 0 && x >= thr) buttons |= 1ull << b;
         }
     }
+    return buttons;
+}
+static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
+    float dz = EFF(d, dz), outer = EFF(d, outer);
+    const DevCfg *dc = dev_cfg(d);
+    float v[4];
+    memset(o, 0, sizeof *o);
+    o->wired = !d->wireless;
+    o->buttons = dev_buttons(d);
     for (int i = 0; i < 4; i++) {
         Src s;
         v[i] = stick_src(d, i, &s) ? src_val(d, s) : 0;
@@ -724,29 +878,33 @@ static Dev *dev_of(int player) { for (int i = 0; i < MAXDEV; i++) if (g_dev[i].u
 
 int nnpad_present(int player) {
     int r = 0;
-    if (!g_sdl_ok || player < 0 || player > 7 || g_cfg.input == 1) return 0;          /* [Recomps#1] input = keyboard: no pads */
+    if (!g_sdl_ok || player < 0 || player > 7) return 0;
     nnpad_poll(0);
     lock();
-    Dev *d = dev_of(player);
-    if (d && d->dropped) { NnPadState s; dev_state(d, &s); if (s.buttons) d->dropped = 0; }
-    r = d && !d->dropped;
+    if (g_cfg.input != 1) {          /* [Recomps#1] input = keyboard: no pads (config reload still runs above) */
+        Dev *d = dev_of(player);
+        if (d && d->dropped) { NnPadState s; dev_state(d, &s); if (s.buttons) d->dropped = 0; }
+        r = d && !d->dropped;
+    }
     unlock();
     return r;
 }
 int nnpad_get(int player, NnPadState *out) {
     int r = 0;
-    if (!g_sdl_ok || player < 0 || player > 7 || g_cfg.input == 1) return 0;          /* [Recomps#1] input = keyboard */
+    if (!g_sdl_ok || player < 0 || player > 7) return 0;
     nnpad_poll(0);
     lock();
-    Dev *d = dev_of(player);
-    if (d && !d->dropped) { dev_state(d, out); r = 1; }
+    if (g_cfg.input != 1) {          /* [Recomps#1] input = keyboard (config reload still runs above) */
+        Dev *d = dev_of(player);
+        if (d && !d->dropped) { dev_state(d, out); r = 1; }
+    }
     unlock();
     return r;
 }
 void nnpad_disconnect(int player) {
     Dev *d;
     lock();
-    if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; }
+    if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; d->rpend = 0; }
     unlock();
 }
 void nnpad_rumble(int player, float low, float high) {
@@ -758,9 +916,18 @@ void nnpad_rumble(int player, float low, float high) {
         float l = low * s, h = high * s;
         Uint16 rl = (Uint16)(l >= 1 ? 65535 : l <= 0 ? 0 : (int)(l * 65535.0f)), rh = (Uint16)(h >= 1 ? 65535 : h <= 0 ? 0 : (int)(h * 65535.0f));
         ULONGLONG now = GetTickCount64();
-        if (rl != d->rl || rh != d->rh || ((rl || rh) && now - d->rsent > 20000)) {
-            d->rl = rl; d->rh = rh; d->rsent = now;
-            if (d->gp) SDL_RumbleGamepad(d->gp, rl, rh, rl || rh ? 30000 : 0); else SDL_RumbleJoystick(d->js, rl, rh, rl || rh ? 30000 : 0);
+        int active = rl || rh, was = d->rl || d->rh;
+        if (!active) {
+            d->rpend = 0;
+            if (was) dev_rumble_send(d, 0, 0, now);                                    /* stop immediately */
+        } else if (!was || now - d->rsent > 20000) {
+            dev_rumble_send(d, rl, rh, now);                                           /* start from rest or keep-alive immediately */
+        } else if (now - d->rsent >= RUMBLE_MIN_MS) {
+            if (rumble_diff(rl, d->rl) >= RUMBLE_DEADBAND || rumble_diff(rh, d->rh) >= RUMBLE_DEADBAND)
+                dev_rumble_send(d, rl, rh, now);
+            else d->rpend = 0;
+        } else {
+            d->rwant_l = rl; d->rwant_h = rh; d->rpend = 1;                            /* coalesce rapid HD-rumble updates until the window elapses */
         }
     }
     unlock();
@@ -899,17 +1066,24 @@ int nnpad_button_prompts(void) {
         if (!best) best = d;
     }
     int t = best ? best->gtype : SDL_GAMEPAD_TYPE_UNKNOWN;
+    SDL_GamepadButtonLabel south = best ? SDL_GetGamepadButtonLabel(best->gp, SDL_GAMEPAD_BUTTON_SOUTH) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
     unlock();
     switch (t) {
     case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return 2;
     case SDL_GAMEPAD_TYPE_XBOX360: case SDL_GAMEPAD_TYPE_XBOXONE: return 3;
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+    case SDL_GAMEPAD_TYPE_GAMECUBE: return 1;
     default:
         if (!best) {      /* [witchtime] no pad seen yet (one can connect late): RecompLauncher's word for the one plugged in */
             const char *rl = getenv("RECOMPLAUNCHER_PAD");
             if (rl && !_stricmp(rl, "playstation")) return 2;
             if (rl && !_stricmp(rl, "xbox")) return 3;
+            return nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
         }
-        return best || nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
+        if (south == SDL_GAMEPAD_BUTTON_LABEL_CROSS) return 2;
+        if (south == SDL_GAMEPAD_BUTTON_LABEL_A) return 3;         /* Steam Deck, Steam Virtual Gamepad and generic A-south pads */
+        return 1;
     }
 }
 /* [Recomps#1] finding 148: do player 1's face buttons go by printed letter, A being the bottom button (Xbox A, PlayStation

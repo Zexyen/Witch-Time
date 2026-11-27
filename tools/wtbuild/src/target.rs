@@ -126,12 +126,17 @@ impl Target {
     /// (x86-64-v3) make every fused multiply-add and rounding of the game one instruction instead of a call, SSE4.2
     /// (x86-64-v2) the rounding and the table lookups (neon.h v_tbl). `WT_CPU_LEVEL=1|2|3` forces one (1: neither).
     /// Nothing when the build is for another system or processor. The runtime, built once for everyone, keeps `cpu()`.
-    pub fn cpu_level(self) -> Vec<String> {
+    /// Falls back to equivalent `-m...` feature flags if `clang` is too old for `-march=x86-64-vN` (Clang < 12).
+    pub fn cpu_level_for(self, clang: &str) -> Vec<String> {
+        resolve_level_flags(self.selected_level(), |f| crate::compile::clang_supports(clang, self, f))
+    }
+
+    fn selected_level(self) -> u8 {
         if self != Target::host() || !cfg!(target_arch = "x86_64") {
-            return vec![];
+            return 1;
         }
         let forced = std::env::var("WT_CPU_LEVEL").ok().and_then(|v| v.trim().parse::<u8>().ok());
-        level_flags(forced.unwrap_or_else(host_level))
+        forced.unwrap_or_else(host_level)
     }
 
     /// the linker: lld, which a release brings with its compiler; on macOS Apple's own, which every clang there uses
@@ -162,6 +167,29 @@ fn level_flags(level: u8) -> Vec<String> {
         2 => vec!["-march=x86-64-v2".into()],
         _ => vec![],
     }
+}
+
+/// equivalent `-m...` feature flags for Clang < 12, which does not know `-march=x86-64-v2` / `-march=x86-64-v3`
+fn level_feature_flags(level: u8) -> Vec<String> {
+    match level {
+        3.. => ["-msse4.2", "-mpopcnt", "-mavx2", "-mfma", "-mbmi", "-mbmi2", "-mf16c", "-mlzcnt", "-mmovbe"]
+            .map(String::from)
+            .into(),
+        2 => ["-msse4.2", "-mpopcnt"].map(String::from).into(),
+        _ => vec![],
+    }
+}
+
+fn resolve_level_flags(level: u8, mut supports: impl FnMut(&[String]) -> bool) -> Vec<String> {
+    let march = level_flags(level);
+    if march.is_empty() || supports(&march) {
+        return march;
+    }
+    let feats = level_feature_flags(level);
+    if !feats.is_empty() && supports(&feats) {
+        return feats;
+    }
+    vec![]
 }
 
 /// the x86-64 level of this PC's processor (3, 2 or 1), by the features clang's -march=x86-64-vN turns on
@@ -224,8 +252,14 @@ mod tests {
         assert_eq!(level_flags(1), Vec::<String>::new());
         assert_eq!(level_flags(2), ["-march=x86-64-v2"]);
         assert_eq!(level_flags(3), ["-march=x86-64-v3"]);
+        assert_eq!(resolve_level_flags(1, |_| panic!("level 1 must not probe")), Vec::<String>::new());
+        assert_eq!(resolve_level_flags(3, |_| true), ["-march=x86-64-v3"]);
+        let no_v_levels = |f: &[String]| !f.iter().any(|a| a.starts_with("-march=x86-64-v"));
+        assert_eq!(resolve_level_flags(2, no_v_levels), level_feature_flags(2));
+        assert_eq!(resolve_level_flags(3, no_v_levels), level_feature_flags(3));
+        assert_eq!(resolve_level_flags(3, |_| false), Vec::<String>::new());
         assert!((1..=3).contains(&host_level()));
         let other = if Target::host() == Target::Windows { Target::Linux } else { Target::Windows };
-        assert_eq!(other.cpu_level(), Vec::<String>::new()); // a build for another system never takes this PC's level
+        assert_eq!(other.selected_level(), 1); // a build for another system never takes this PC's level
     }
 }
