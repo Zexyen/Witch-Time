@@ -187,6 +187,22 @@ static void c_fprintf(Ctx *c) {
     trace_printf("     guest fprintf: %s", buf);
     RET((int64_t)n);
 }
+/* fputs(text, stream): the game's libraries write their errors with it. The caller seen in players' logs is Oodle's
+ * message plug-in [game 0x7101300020, the call at 0x71013000b0], which the decoder calls with its errors ("OODLE ERROR :
+ * corruption ..."): a damaged archive entry. The text is the diagnosis, so it goes to the log (#318, #228). */
+static void c_fputs(Ctx *c) {
+    static volatile LONG said;
+    const char *s = STR(0);
+    LONG n = InterlockedIncrement(&said);
+    if (s && n <= 40) {
+        size_t len = strlen(s);
+        printf("game message (fputs, caller 0x%llx): %.300s%s", (unsigned long long)c->import_from, s, len && s[len - 1] == '\n' ? "" : "\n");
+        if (c->import_from == 0x71013000b0ULL && n == 1) printf("game message: this is the game's Oodle decoder: an error here means a file of the game's data (or of a mod) is damaged; check the dump\n");
+        if (n == 40) printf("game message: 40 shown, later ones are not\n");
+        fflush(stdout);
+    }
+    RET(0);
+}
 
 /* ---------------------------------------------------------------- formatted input (sscanf family)
  * One engine with the C99 / musl rules: white space in the format skips any white space, other characters
@@ -457,7 +473,7 @@ static void m_exp2(Ctx *c) { double r = exp2(c->v[0].df[0]); vzero(&c->v[0]); c-
 static void m_modff(Ctx *c) { float ip, r = modff(c->v[0].f[0], &ip); memcpy((void *)(uintptr_t)A0, &ip, 4); vzero(&c->v[0]); c->v[0].f[0] = r; }
 
 static const ImportDef clib_imports[] = {
-    {"sprintf", c_sprintf}, {"snprintf", c_snprintf}, {"vsnprintf", c_vsnprintf}, {"vsprintf", c_vsprintf}, {"printf", c_printf}, {"fprintf", c_fprintf},
+    {"sprintf", c_sprintf}, {"snprintf", c_snprintf}, {"vsnprintf", c_vsnprintf}, {"vsprintf", c_vsprintf}, {"printf", c_printf}, {"fprintf", c_fprintf}, {"fputs", c_fputs},
     {"sscanf", c_sscanf},
     {"bsearch", c_bsearch}, {"qsort", c_qsort},
     {"atoi", c_atoi}, {"atol", c_atol}, {"atof", c_atof}, {"strtoul", c_strtoul}, {"strtoull", c_strtoul}, {"strtof", c_strtof},
