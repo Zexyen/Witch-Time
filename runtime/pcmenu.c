@@ -109,7 +109,7 @@ static const Row k_rows[] = {
      {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance", "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance",
       "fsr4", "fsr4_quality", "fsr4_balanced", "fsr4_performance", "fsr4_ultra_performance"},
      {"Off", "FSR 3 Native AA", "FSR 3 Quality", "FSR 3 Balanced", "FSR 3 Performance", "FSR 3 Ultra Performance", "DLAA", "DLSS Quality", "DLSS Balanced", "DLSS Performance", "DLSS Ultra Performance",
-      "FSR 4 Native AA", "FSR 4 Quality", "FSR 4 Balanced", "FSR 4 Performance", "FSR 4 Ultra Performance"}},      /* [witchtime] issue 190: the DLSS values need an NVIDIA RTX GPU and the player's nvngx_dlss.dll; else FSR runs */
+      "FSR 4 Native AA", "FSR 4 Quality", "FSR 4 Balanced", "FSR 4 Performance", "FSR 4 Ultra Performance"}},      /* [witchtime] issue 190: the DLSS values need an NVIDIA RTX GPU and the player's nvngx_dlss.dll (Linux: libnvidia-ngx-dlss.so.<version>); else FSR runs */
     {"sharpness", "Sharpness", "Sharpens the picture after the upscaler (FSR 3, DLSS or FSR 4 alike). Needs Upscaling on. High values can show bright outlines and more noise.", "WT_SHARPNESS", "0", A_LIVE, 0,
      {"0", "20", "40", "60", "80", "100"}, {"Off", "20 %", "40 %", "60 %", "80 %", "100 %"}},      /* [witchtime] issue 119 (nvn_vk_fsr.c fsr_run) */
     {"frame_generation", "Frame generation", "Experimental, Windows. A generated picture between every two frames: twice the frame rate on screen, about half a frame more delay. Needs Upscaling on, a 120 Hz display (or vsync off) and your own DLLs beside witch-time.exe (AMD: amd_fidelityfx_framegeneration_vk.dll; NVIDIA: nvngx_dlssg.dll).", "WT_FRAMEGEN", "off", A_LIVE, 0,
