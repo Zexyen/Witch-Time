@@ -19,6 +19,7 @@
 #include <wincrypt.h>
 #include "runtime.h"
 #include "hostrt.h"
+#include "gfx_options.h"
 #include "image_layout.h"          /* GUEST_RO_END: the start of main's data segment */
 
 #pragma comment(lib, "advapi32.lib")
@@ -290,15 +291,18 @@ static void settings_CodeEqualsLanguage(Ctx *c) {         /* operator==(const La
 }
 /* nn::oe::GetDesiredLanguage: the language the application should use = the system language when the application
  * supports it, otherwise the system's choice among the supported ones (language_pick.h). The system language here is
- * the Windows display language of the user. WT_LANGUAGE=<code> overrides (for example WT_LANGUAGE=en-US). */
+ * the Windows display language of the user. WT_LANGUAGE=<code> overrides graphics.ini language, which overrides auto. */
 static uint64_t desired_language(void) {
     static uint64_t cached;
     if (cached) return cached;
     char name[LOCALE_NAME_MAX_LENGTH * 3] = "", pick[16];
     const char *env = getenv("WT_LANGUAGE");
+    const char *opt = gfx_options()->language;
+    const char *src = "system display language";
     wchar_t wname[LOCALE_NAME_MAX_LENGTH] = L"";
     ULONG count = 0, size = 0;
-    if (env && env[0]) snprintf(name, sizeof name, "%s", env);
+    if (env && env[0]) { snprintf(name, sizeof name, "%s", env); src = "WT_LANGUAGE"; }
+    else if (opt && opt[0]) { snprintf(name, sizeof name, "%s", opt); src = "graphics.ini language"; }
     else {
         /* the display language of the user interface, not the regional format */
         wchar_t list[512];
@@ -310,7 +314,7 @@ static uint64_t desired_language(void) {
     language_pick(name, pick);
     uint64_t v = 0;
     memcpy(&v, pick, strlen(pick));
-    printf("nn::oe::GetDesiredLanguage: Windows display language \"%s\" -> \"%s\"\n", name, pick);
+    printf("nn::oe::GetDesiredLanguage: %s \"%s\" -> \"%s\"\n", src, name, pick);
     cached = v;
     return v;
 }

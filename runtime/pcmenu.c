@@ -136,6 +136,11 @@ static const Row k_rows[] = {
      {"off", "on"}, {"Off", "On"}},
     {"layout", "Face buttons", "Position: the right button acts as A, as on a Switch. Printed letter: the button marked A, Cross as A on PlayStation pads. Prompts follow.", NULL, "auto", A_LAYOUT, 0,
      {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}},
+    {"frame_time_overlay", "Performance overlay", "The frame rate and the frame time of the last second, at the top right of the picture.", NULL, "off", A_LIVE, 0,
+     {"off", "on"}, {"Off", "On"}},
+    {"language", "Language", "The game's language. Auto follows your system display language. Applies at the next start.", "WT_LANGUAGE", "auto", A_RESTART, 0,
+     {"auto", "en-US", "fr", "de", "it", "es", "ja", "ko", "zh-Hans", "zh-Hant", "ru"},
+     {"Auto", "English", "French", "German", "Italian", "Spanish", "Japanese", "Korean", "Chinese (Simp.)", "Chinese (Trad.)", "Russian"}},
     {"controls", "Controls", "Rebind every button of gameplay, for Bayonetta and for Viola. Menus keep theirs, and the game's prompts show yours.", NULL, "open", A_PAGE, 0,
      {"open"}, {"Open"}},
     {"quit", "Quit to desktop", "Ends the game, as closing its window does. Progress since the last save is lost. A asks once more first.", NULL, "quit", A_QUIT, 0,
@@ -942,22 +947,44 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
     if (getenv("WT_PCMENU_SHOT")) { HANDLE th = CreateThread(NULL, 0, hint_late_job, NULL, 0, NULL); if (th) CloseHandle(th); }      /* (writes the picture) */
 }
 
-/* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
+/* The performance overlay (frame_time_overlay = on): display.c's last second at the top right, over the running game as
+ * the hint is (kind 2), which is shown instead of it while it is on. Drawn again only when its text changed. */
+static char g_perf[32];
+void pcmenu_perf(int fps, double ms) {
+    char t[sizeof g_perf];
+    snprintf(t, sizeof t, "%d fps  %.1f ms", fps, ms);
+    AcquireSRWLockExclusive(&g_lock);
+    if (strcmp(t, g_perf) && draw_ready()) { strcpy(g_perf, t); g_ver++; }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+static int perf_on(void) { return g_perf[0] && gfx_options()->overlay; }
+static void draw_perf(int W, int H) {
+    float s = scale_of(W, H), px = 17 * s;
+    int pad = (int)(8 * s), w = (int)text_w(&g_f_head, g_perf, px, 0) + 2 * pad, h = (int)(26 * s);
+    alloc_panel(w, h);
+    if (!g_px) return;
+    g_rect[0] = W - w - pad; g_rect[1] = pad; g_rect[2] = w; g_rect[3] = h;
+    rect(0, 0, w, h, C_BAND, 0.88f);
+    text(&g_f_head, (float)pad, (int)(h * 0.72f), g_perf, px, C_LILAC, 0);
+}
+
+/* render thread (nvn_vk_pcmenu.c): the panel (or the hint / performance overlay) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
-int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : hint_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, the hint */
+int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : hint_on() || perf_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, the hint or performance overlay */
 int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): WT_PCMENU_SHOT waits for it */
 int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_kind = -1;
     static ULONGLONG drawn_at;
-    int kind = pcmenu_kind();
+    int kind = pcmenu_kind(), hint = hint_on();
+    if (kind == 2 && !hint) kind = 4;                        /* the performance overlay: the renderer's kind 2, its own drawing */
     if (!kind) return 0;
     AcquireSRWLockExclusive(&g_lock);
     static ULONGLONG took = 33;
     ULONGLONG now = GetTickCount64();
     int turn = !g_gpu && (kind == 1 || kind == 3) && now - drawn_at >= (took > 33 ? took : 33);     /* the wheel turns: up to 30 frames a second, never more than half a core (the GPU path turns it every frame) */
     if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_kind != kind || turn) {
-        if (kind == 1) draw_panel(W, H); else if (kind == 3) draw_prep(W, H); else draw_hint(W, H);
+        if (kind == 1) draw_panel(W, H); else if (kind == 3) draw_prep(W, H); else if (kind == 4) draw_perf(W, H); else draw_hint(W, H);
         g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_kind = kind; g_gen++; drawn_at = now;
         took = GetTickCount64() - now;
     }

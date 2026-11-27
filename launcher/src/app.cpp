@@ -80,6 +80,11 @@ const std::vector<SettingDef>& setting_defs()
 		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
 		{"frame_rate", "Frame rate (experimental)", "Below 60 caps cleanly; above 60 some effects may run fast; next start",
 			{{"30", "30 fps"}, {"40", "40 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}, {"240", "240 fps"}}, 0, "60"},
+		{"frame_time_overlay", "Performance overlay", "Frame rate and frame time at the top right of the picture", {{"off", "Off"}, {"on", "On"}}, 0},
+		{"language", "Language", "Game language; Auto follows your system language; next start",
+			{{"auto", "Auto"}, {"en-US", "English"}, {"fr", "French"}, {"de", "German"}, {"it", "Italian"},
+			 {"es", "Spanish"}, {"ja", "Japanese"}, {"ko", "Korean"}, {"zh-Hans", "Chinese (Simp.)"},
+			 {"zh-Hant", "Chinese (Trad.)"}, {"ru", "Russian"}}, 0},
 		{"resolution_scale", "Internal resolution", "What the game renders at; 900p is its own",
 			{{"0.4", "360p"}, {"0.5", "450p"}, {"0.6", "540p"}, {"0.75", "675p"}, {"0.8", "720p"}, {"1.0", "900p"}, {"1.2", "1080p"}, {"1.6", "1440p"}, {"2.0", "1800p"}, {"2.4", "2160p"}, {"3.0", "2700p"}},
 			1, "1.0"},
@@ -105,6 +110,8 @@ const std::vector<SettingDef>& setting_defs()
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 3, nullptr, "/controllers.ini", "general"},
 		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 3, nullptr, "/controllers.ini", "general"},
+		{"layout", "Face buttons", "Position (Switch) or Printed letter (Xbox / PlayStation)",
+			{{"auto", "Auto"}, {"positional", "Position"}, {"labels", "Printed letter"}}, 3, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -652,8 +659,27 @@ void App::prompts_use(SDL_Gamepad* pad)
 	if (!pad)
 		return;
 	const SDL_GamepadType t = SDL_GetGamepadType(pad);
-	prompts_use(t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2
-		: t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 3 : 1);
+	if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5)
+		prompts_use(2);
+	else if (t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE)
+		prompts_use(3);
+	else if (t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
+		|| t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR
+		|| t == SDL_GAMEPAD_TYPE_GAMECUBE)
+		prompts_use(1);
+	else
+	{
+		const SDL_GamepadButtonLabel south = SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_SOUTH);
+		prompts_use(south == SDL_GAMEPAD_BUTTON_LABEL_CROSS ? 2
+			: south == SDL_GAMEPAD_BUTTON_LABEL_A ? 3 : 1);
+	}
+}
+
+static bool is_nav_key(Rml::Input::KeyIdentifier k)
+{
+	using namespace Rml::Input;
+	return k == KI_RETURN || k == KI_ESCAPE || k == KI_UP || k == KI_DOWN
+		|| k == KI_LEFT || k == KI_RIGHT || k == KI_Q || k == KI_E;
 }
 
 void App::handle(SDL_Event& ev)
@@ -683,23 +709,39 @@ void App::handle(SDL_Event& ev)
 		auto button = SDL_GamepadButton(ev.gbutton.button);
 		SDL_GamepadButtonLabel label = pad ? SDL_GetGamepadButtonLabel(pad, button) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
 		using namespace Rml::Input;
+		KeyIdentifier k = KI_UNKNOWN;
 		// confirm and back by what the button says on it: A / cross, B / circle (A is on the right on a Nintendo pad)
 		if (label == SDL_GAMEPAD_BUTTON_LABEL_A || label == SDL_GAMEPAD_BUTTON_LABEL_CROSS)
-			key(KI_RETURN);
+			k = KI_RETURN;
 		else if (label == SDL_GAMEPAD_BUTTON_LABEL_B || label == SDL_GAMEPAD_BUTTON_LABEL_CIRCLE)
-			back();
+			k = KI_ESCAPE;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_UP)
-			key(KI_UP);
+			k = KI_UP;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_DOWN)
-			key(KI_DOWN);
+			k = KI_DOWN;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_LEFT)
-			key(KI_LEFT);
+			k = KI_LEFT;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
-			key(KI_RIGHT);
+			k = KI_RIGHT;
 		else if (button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)
-			key(KI_Q);
+			k = KI_Q;
 		else if (button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)
-			key(KI_E);
+			k = KI_E;
+		if (k == KI_UNKNOWN)
+			return;
+		// Steam Deck / Steam Input can mirror one press across Steam Virtual Gamepad + physical HIDAPI pad, or
+		// across HIDAPI gamepad + Desktop keyboard chords: suppress the duplicate from another source within 60 ms.
+		const Uint64 now = SDL_GetTicks();
+		if (k == last_nav_key && now - last_nav_ms < 60 && (!last_nav_from_pad || last_nav_pad != ev.gbutton.which))
+			return;
+		last_nav_key = k;
+		last_nav_ms = now;
+		last_nav_pad = ev.gbutton.which;
+		last_nav_from_pad = true;
+		if (k == KI_ESCAPE)
+			back();
+		else
+			key(k);
 		return;
 	}
 	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
@@ -713,10 +755,22 @@ void App::handle(SDL_Event& ev)
 		break;
 	case SDL_EVENT_KEY_DOWN:
 	{
-		prompts_use(4);
-		if (Rml::Element* f = ctx->GetFocusElement(); f && f->GetTagName() == "input")
-			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
+		Rml::Element* f = ctx->GetFocusElement();
+		const bool in_input = f && f->GetTagName() == "input";
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
+		const Uint64 now = SDL_GetTicks();
+		if (!in_input && is_nav_key(k))
+		{
+			if (k == last_nav_key && last_nav_from_pad && now - last_nav_ms < 60)
+				return;
+			last_nav_key = k;
+			last_nav_ms = now;
+			last_nav_pad = 0;
+			last_nav_from_pad = false;
+		}
+		prompts_use(4);
+		if (in_input)
+			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
 		if (k == Rml::Input::KI_ESCAPE)
 		{
 			back();

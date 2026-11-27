@@ -2104,10 +2104,11 @@ static void stage_copy(Stage *st, int s) {
     st->code = blk + (st->code - lo);
     g_scopy_n++; g_scopy_bytes += (LONG64)n;
 }
+extern volatile LONG g_display_close;              /* display.c */
 void nvn_vk_program_set(void *prog) {
     Prog *p = prog;
     SSrc s[3];
-    if (!g_m4_on || p->st[2].state || p->st[3].state || p->st[4].state) return;
+    if (!g_m4_on || g_m4_quit || g_display_close || p->st[2].state || p->st[3].state || p->st[4].state) return;
     {   static int on = -1;
         if (on < 0) on = getenv("WT_VK_STAGECOPY") && atoi(getenv("WT_VK_STAGECOPY"));
         if (on) { EnterCriticalSection(&g_sh_lock); stage_copy(&p->st[0], 0); stage_copy(&p->st[1], 1); stage_copy(&p->st[5], 5); LeaveCriticalSection(&g_sh_lock); }
@@ -2142,6 +2143,7 @@ void nvn_vk_program_set(void *prog) {
     nvn_setsh_part[5] += tb - ta;
     EnterCriticalSection(&g_sh_lock);
     nvn_setsh_part[6] += tk() - tb;
+    if (!g_m4_on || g_m4_quit || g_display_close) { LeaveCriticalSection(&g_sh_lock); free(j); return; }
     if (holdlog_on()) for (int i = 0; i < 2; i++) if (has[i]) ho_note(hn[i], 0);
     job_push(j);
     /* session 6: outside a fight (no compute dispatch in the last frame) the caller is also held while the container scan
@@ -2152,7 +2154,7 @@ void nvn_vk_program_set(void *prog) {
     if (!fr && (g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done)) {
         LONG64 t0 = tk();
         LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
-        while ((g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done) && tk() - t0 < 30 * fq.QuadPart) WD_SLEEP(&g_sh_cv, &g_sh_lock, 100);
+        while (!g_m4_quit && !g_display_close && (g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done) && tk() - t0 < 30 * fq.QuadPart) WD_SLEEP(&g_sh_cv, &g_sh_lock, 100);
         g_set_held++; g_set_held_tk += tk() - t0;
         nvn_setsh_part[7] += tk() - t0;
     }
@@ -2412,11 +2414,17 @@ static void m4_stop(void) {
     EnterCriticalSection(&g_sh_lock);
     g_m4_on = 0; g_m4_quit = 1;
     WakeAllConditionVariable(&g_jq_cv);
+    WakeAllConditionVariable(&g_sh_cv);
     LeaveCriticalSection(&g_sh_lock);
     WaitForMultipleObjects((DWORD)g_pw_nthread, g_pw_thread, TRUE, 60000);
     for (int i = 0; i < g_pw_nthread; i++) CloseHandle(g_pw_thread[i]);
     g_pw_nthread = 0;
     if (g_prep_thread) { WaitForSingleObject(g_prep_thread, 30000); CloseHandle(g_prep_thread); g_prep_thread = NULL; }
+    EnterCriticalSection(&g_sh_lock);
+    while (g_jq_head) { Job *n = g_jq_head->next; free(g_jq_head); g_jq_head = n; } g_jq_tail = NULL;
+    while (g_bq_head) { Job *n = g_bq_head->next; free(g_bq_head); g_bq_head = n; } g_bq_tail = NULL;
+    while (g_pq_head) { Job *n = g_pq_head->next; free(g_pq_head); g_pq_head = n; } g_pq_tail = NULL;
+    LeaveCriticalSection(&g_sh_lock);
     if (g_warm_thread) { WaitForSingleObject(g_warm_thread, 30000); CloseHandle(g_warm_thread); g_warm_thread = NULL; }      /* [witchtime] it ends after the stage it is at */
     if (g_rs_thread) {
         EnterCriticalSection(&g_rs_lock); WakeAllConditionVariable(&g_rs_cv); LeaveCriticalSection(&g_rs_lock);

@@ -5,6 +5,10 @@
 #include <string.h>
 #include <windows.h>
 #include <math.h>
+#ifdef __linux__
+#include <time.h>
+#include <errno.h>
+#endif
 #include "runtime.h"
 #include "hostrt.h"
 #include "gfx_options.h"
@@ -146,6 +150,14 @@ void display_perf_thread(void) {
     if (g_pc_on && g_pc_n > 0) SetThreadSelectedCpuSets(GetCurrentThread(), g_pc_ids, (ULONG)g_pc_n);
 }
 static void precise_wait_until(LONGLONG target, HANDLE timer) {
+#ifdef __linux__
+    /* On Linux QueryPerformanceCounter is CLOCK_MONOTONIC in nanoseconds (plat.h). Sleeping to an absolute
+     * deadline via clock_nanosleep wakes within ~20-50 us without the 0.5 ms YieldProcessor() spin that keeps
+     * Steam Deck / mobile APU clocks elevated and fans spinning. */
+    (void)timer;
+    struct timespec ts = { (time_t)(target / 1000000000LL), (long)(target % 1000000000LL) };
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR) {}
+#else
     LARGE_INTEGER now, due;
     QueryPerformanceCounter(&now);
     LONGLONG left = target - now.QuadPart;
@@ -153,6 +165,7 @@ static void precise_wait_until(LONGLONG target, HANDLE timer) {
     due.QuadPart = -((left - g_freq.QuadPart / 2000) * 10000000 / g_freq.QuadPart);
     if (due.QuadPart < 0) { if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, 100); else Sleep((DWORD)(left * 1000 / g_freq.QuadPart)); }
     for (QueryPerformanceCounter(&now); now.QuadPart < target; QueryPerformanceCounter(&now)) YieldProcessor();
+#endif
 }
 static DWORD WINAPI vblank_thread(LPVOID arg) {
     (void)arg;
@@ -433,6 +446,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     if (visible) {                                   /* [Recomps#1] raw mouse movement for the mouse camera (WM_INPUT, foreground only) */
         RAWINPUTDEVICE rid = {1, 2, 0, g_hwnd};       /* generic desktop, mouse */
         RegisterRawInputDevices(&rid, 1, sizeof rid);
+        { HMODULE imm = LoadLibraryA("imm32.dll"); void *(WINAPI *iac)(HWND, void *) = imm ? (void *(WINAPI *)(HWND, void *))(void *)GetProcAddress(imm, "ImmAssociateContext") : NULL; if (iac) iac(g_hwnd, NULL); }      /* disable IME on the gameplay window so East Asian IMEs do not intercept Shift/keys or steal focus */
         atexit(mouse_release);
     }
     gfx_aspect_window(cw, ch);                       /* [witchtime] aspect_ratio = auto: the client size (borderless / fullscreen: the monitor) */
@@ -490,9 +504,10 @@ static SDL_Scancode vk_scancode(int vk) {
     case 0x21: return SDL_SCANCODE_PAGEUP;        case 0x22: return SDL_SCANCODE_PAGEDOWN;    case 0x23: return SDL_SCANCODE_END;
     case 0x24: return SDL_SCANCODE_HOME;          case VK_LEFT: return SDL_SCANCODE_LEFT;     case VK_UP: return SDL_SCANCODE_UP;
     case VK_RIGHT: return SDL_SCANCODE_RIGHT;     case VK_DOWN: return SDL_SCANCODE_DOWN;     case 0x2D: return SDL_SCANCODE_INSERT;
-    case 0x2E: return SDL_SCANCODE_DELETE;        case VK_LSHIFT: return SDL_SCANCODE_LSHIFT; case VK_RSHIFT: return SDL_SCANCODE_RSHIFT;
-    case VK_LCONTROL: return SDL_SCANCODE_LCTRL;  case VK_RCONTROL: return SDL_SCANCODE_RCTRL; case VK_LMENU: return SDL_SCANCODE_LALT;
-    case VK_RMENU: return SDL_SCANCODE_RALT;      case 0xBA: return SDL_SCANCODE_SEMICOLON;   case 0xBB: return SDL_SCANCODE_EQUALS;
+    case 0x2E: return SDL_SCANCODE_DELETE;        case VK_SHIFT: return SDL_SCANCODE_LSHIFT;  case VK_LSHIFT: return SDL_SCANCODE_LSHIFT; case VK_RSHIFT: return SDL_SCANCODE_RSHIFT;
+    case VK_CONTROL: return SDL_SCANCODE_LCTRL;   case VK_LCONTROL: return SDL_SCANCODE_LCTRL; case VK_RCONTROL: return SDL_SCANCODE_RCTRL;
+    case VK_MENU: return SDL_SCANCODE_LALT;       case VK_LMENU: return SDL_SCANCODE_LALT;    case VK_RMENU: return SDL_SCANCODE_RALT;
+    case 0x14: return SDL_SCANCODE_CAPSLOCK;      case 0xBA: return SDL_SCANCODE_SEMICOLON;   case 0xBB: return SDL_SCANCODE_EQUALS;
     case 0xBC: return SDL_SCANCODE_COMMA;         case 0xBD: return SDL_SCANCODE_MINUS;       case 0xBE: return SDL_SCANCODE_PERIOD;
     case 0xBF: return SDL_SCANCODE_SLASH;         case 0xC0: return SDL_SCANCODE_GRAVE;       case 0xDB: return SDL_SCANCODE_LEFTBRACKET;
     case 0xDC: return SDL_SCANCODE_BACKSLASH;     case 0xDD: return SDL_SCANCODE_RIGHTBRACKET; case 0xDE: return SDL_SCANCODE_APOSTROPHE;
@@ -1012,8 +1027,10 @@ static void frame_queued(void) {
         if (g_lockstep) printf("speed: frame %lld, %lld frames presented in the last %.2f s (%.1f per second)%c", (long long)n, (long long)second_frames,
                                (double)(now.QuadPart - second_start.QuadPart) / (double)g_freq.QuadPart, (double)second_frames * (double)g_freq.QuadPart / (double)(now.QuadPart - second_start.QuadPart), 10);
         if (gfx_options()->overlay && second_frames) {       /* track O: frame_time_overlay = on */
+            void pcmenu_perf(int fps, double ms);
             double ms = (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames;
             printf("frame-time: %.2f ms per frame over the last second (%lld frames)\n", ms, (long long)second_frames);
+            pcmenu_perf((int)second_frames, ms);
             snprintf(title, sizeof title, "%s - frame %lld - %lld fps - %.2f ms per frame", g_title, (long long)n, (long long)second_frames, ms);
         } else
         snprintf(title, sizeof title, "%s - frame %lld - %lld fps", g_title, (long long)n, (long long)second_frames);
@@ -1416,20 +1433,23 @@ void display_pace(void) {
     if (!g_interval) next = now;
     else if (left > 0) {
         static HANDLE timer;
-        LARGE_INTEGER after, due;
+        LARGE_INTEGER after;
         hitch_pacing(1);
         if (!timer) timer = CreateWaitableTimerExW(NULL, NULL, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
-        due.QuadPart = -((left - g_freq.QuadPart / 2000) * 10000000 / g_freq.QuadPart);          /* relative, 100 ns units */
-        if (due.QuadPart < 0) { if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, 100); else Sleep((DWORD)(left * 1000 / g_freq.QuadPart)); }
-        for (QueryPerformanceCounter(&after); after.QuadPart < next.QuadPart; QueryPerformanceCounter(&after)) YieldProcessor();
+        precise_wait_until(next.QuadPart, timer);
+        QueryPerformanceCounter(&after);
         hitch_pacing(0);
         nvn_pf_pace(after.QuadPart - now.QuadPart);
     } else if (-left > frame_ticks) next.QuadPart = now.QuadPart - frame_ticks;
     if ((now.QuadPart - second_start.QuadPart) >= g_freq.QuadPart) {
         char title[160];
-        if (gfx_options()->overlay && second_frames) printf("frame-time: %.2f ms per frame over the last second (%lld frames)\n", (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames, (long long)second_frames);
-        if (gfx_options()->overlay && second_frames) snprintf(title, sizeof title, "%s - frame %lld - %lld fps - %.2f ms per frame", g_title, (long long)n, (long long)second_frames, (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames);
-        else
+        if (gfx_options()->overlay && second_frames) {
+            void pcmenu_perf(int fps, double ms);
+            double ms = (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames;
+            pcmenu_perf((int)second_frames, ms);
+            printf("frame-time: %.2f ms per frame over the last second (%lld frames)\n", ms, (long long)second_frames);
+            snprintf(title, sizeof title, "%s - frame %lld - %lld fps - %.2f ms per frame", g_title, (long long)n, (long long)second_frames, ms);
+        } else
         snprintf(title, sizeof title, "%s - frame %lld - %lld fps", g_title, (long long)n, (long long)second_frames);
         SetWindowTextA(g_hwnd, title);
         second_frames = 0;

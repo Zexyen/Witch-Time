@@ -255,7 +255,12 @@ static const char *const k_default_ini =
 "\r\n"
 "; discord_presence = on | off\r\n"
 ";   on: a running Discord client shows your friends the chapter, verse, difficulty, area and time in the chapter.\r\n"
-"discord_presence = on\r\n";
+"discord_presence = on\r\n"
+"\r\n"
+"; language = auto | en-US | fr | de | it | es | ja | ko | zh-Hans | zh-Hant | ru\r\n"
+";   The game's language. auto follows your system display language. Applies at the next start.\r\n"
+";   The environment variable WT_LANGUAGE=<code> overrides this key.\r\n"
+"language = auto\r\n";
 
 #define GFX_LOW_SCALE 0.5f
 #define GFX_LOW_SCALE_TEXT "0.50"
@@ -366,6 +371,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "discord_presence")) {}      /* [witchtime] read by presence.c */
         else if (!_stricmp(key, "hud_area")) o->hud_centre = !strcmp(val, "16:9");      /* [witchtime] */
         else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = !_stricmp(val, "auto") ? -1.0f : n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
+        else if (!_stricmp(key, "language")) { if (_stricmp(val, "auto")) snprintf(o->language, sizeof o->language, "%s", val); }      /* [witchtime] */
         else unknown++;
     }
     if (f) fclose(f);
@@ -605,7 +611,7 @@ int gfx_option_set(const char *key, const char *val) {
     opt_load(NULL, &t, NULL);
     /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
-    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch;
+    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.overlay = t.overlay;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler; g_opt.sharpness = t.sharpness; g_opt.frame_gen = t.frame_gen; g_opt.frame_gen_on = t.frame_gen_on; g_opt.frame_gen_kind = t.frame_gen_kind; g_opt.frame_gen_no_hud = t.frame_gen_no_hud;
     g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
