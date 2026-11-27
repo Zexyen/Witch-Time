@@ -8,27 +8,43 @@
  * GPU, no DLL, an old driver, a failed call) fsr_run goes on with FSR's passes and nothing else changes.
  *
  * The player puts nvngx_dlss.dll beside witch-time(.exe) (the folder above this program's) or beside this program.
- * Windows only (and Proton, which provides nvngx.dll): the Linux NGX runtime takes another library, not looked at.
+ * Windows (and Proton, which provides nvngx.dll) and Linux: there the NVIDIA driver's NGX runtime is libnvidia-ngx.so.1,
+ * with the same NVSDK_NGX_VULKAN_* entry points, and the player's DLSS file is the SDK's libnvidia-ngx-dlss.so.<version>,
+ * in the same two folders. Its parameter interface is the same C++ class, laid out by the Itanium C++ ABI there: each
+ * overload set in declaration order (MSVC reverses it), checked by dlss_vtable_ok before DLSS is used.
  *
  * NOT RUN ON AN NVIDIA GPU YET (2026-11-12): written on an AMD machine. WT_DLSS_JSIGN (bit 0: x, bit 1: y) flips the
  * jitter's sign and WT_DLSS_MVSIGN=1 the motion vectors' for the first test builds. */
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
 #include <wchar.h>
-typedef struct NgxParam { void **vt; } NgxParam;      /* NVIDIA's C++ parameter interface as MSVC lays it out: each overload set in reverse order of declaration */
+#ifdef _WIN32
+#define DLSS_PATH MAX_PATH
+#define DLSS_FILE "nvngx_dlss.dll"
+enum { NGX_SET_P = 0, NGX_SET_I = 3, NGX_SET_U = 4, NGX_SET_F = 6, NGX_GET_I = 11, NGX_GET_U = 12 };      /* MSVC: each overload set in reverse order of declaration */
+#else
+#include <dirent.h>
+#include <dlfcn.h>
+#include <unistd.h>
+#define DLSS_PATH 1024
+#define DLSS_FILE "libnvidia-ngx-dlss.so"
+enum { NGX_SET_P = 7, NGX_SET_I = 4, NGX_SET_U = 3, NGX_SET_F = 1, NGX_GET_I = 12, NGX_GET_U = 11 };      /* Itanium: declaration order (u64, float, double, u32, int, D3D11, D3D12, void *), the gets after them */
+#endif
+typedef struct NgxParam { void **vt; } NgxParam;      /* NVIDIA's C++ parameter interface (slot numbers above) */
 typedef struct NgxHandle NgxHandle;
 typedef unsigned int NgxResult;                    /* 1 = success, 0xBAD000xx = failure */
-static void ngx_set_p(NgxParam *p, const char *n, void *v) { ((void (*)(NgxParam *, const char *, void *))p->vt[0])(p, n, v); }
-static void ngx_set_i(NgxParam *p, const char *n, int v) { ((void (*)(NgxParam *, const char *, int))p->vt[3])(p, n, v); }
-static void ngx_set_u(NgxParam *p, const char *n, unsigned v) { ((void (*)(NgxParam *, const char *, unsigned))p->vt[4])(p, n, v); }
-static void ngx_set_f(NgxParam *p, const char *n, float v) { ((void (*)(NgxParam *, const char *, float))p->vt[6])(p, n, v); }
-static NgxResult ngx_get_i(NgxParam *p, const char *n, int *v) { return ((NgxResult (*)(NgxParam *, const char *, int *))p->vt[11])(p, n, v); }
+static void ngx_set_p(NgxParam *p, const char *n, void *v) { ((void (*)(NgxParam *, const char *, void *))p->vt[NGX_SET_P])(p, n, v); }
+static void ngx_set_i(NgxParam *p, const char *n, int v) { ((void (*)(NgxParam *, const char *, int))p->vt[NGX_SET_I])(p, n, v); }
+static void ngx_set_u(NgxParam *p, const char *n, unsigned v) { ((void (*)(NgxParam *, const char *, unsigned))p->vt[NGX_SET_U])(p, n, v); }
+static void ngx_set_f(NgxParam *p, const char *n, float v) { ((void (*)(NgxParam *, const char *, float))p->vt[NGX_SET_F])(p, n, v); }
+static NgxResult ngx_get_i(NgxParam *p, const char *n, int *v) { return ((NgxResult (*)(NgxParam *, const char *, int *))p->vt[NGX_GET_I])(p, n, v); }
+static NgxResult ngx_get_u(NgxParam *p, const char *n, unsigned *v) { return ((NgxResult (*)(NgxParam *, const char *, unsigned *))p->vt[NGX_GET_U])(p, n, v); }
 typedef struct { VkImageView view; VkImage image; VkImageSubresourceRange range; VkFormat format; unsigned int width, height; uint32_t type; unsigned char rw; } NgxRes;      /* an image view resource (type 0); rw: it has storage usage */
 typedef struct { const wchar_t *const *path; unsigned int n; void *internal; void *log_cb; int log_level; unsigned char log_only; } NgxCommon;      /* the folders searched for the feature's DLL; logging off */
 _Static_assert(sizeof(NgxRes) == 56 && sizeof(NgxCommon) == 40, "NGX structures");
 
 static struct {
     int ok, ext;                                   /* ok: 0 not tried, 1 ready, -1 not available (logged once); ext: the device was made with what NGX needs */
-    wchar_t dir[MAX_PATH], exe[MAX_PATH];          /* the folder of the player's nvngx_dlss.dll; this program's */
+    wchar_t dir[DLSS_PATH], exe[DLSS_PATH];        /* the folder of the player's DLSS file; this program's */
     HMODULE core;
     NgxResult (*init)(const char *, int, const char *, const wchar_t *, VkInstance, VkPhysicalDevice, VkDevice, void *, void *, int, const NgxCommon *);      /* Init_ProjectID_Ext */
     NgxResult (*init9)(const char *, int, const char *, const wchar_t *, VkInstance, VkPhysicalDevice, VkDevice, int, const NgxCommon *);      /* Init_ProjectID: no loader functions */
@@ -47,6 +63,7 @@ static void dlss_off(const char *why, NgxResult r) {
     if (DL.ok >= 0) { if (r) printf("nvn_vk_dlss: DLSS is off, FSR 3.1 takes its place: %s (NGX result 0x%08x)\n", why, r); else printf("nvn_vk_dlss: DLSS is off, FSR 3.1 takes its place: %s\n", why); }
     DL.ok = -1;
 }
+#ifdef _WIN32
 static int dlss_file(const wchar_t *dir) { wchar_t p[MAX_PATH + 20]; _snwprintf(p, MAX_PATH + 20, L"%ls\\nvngx_dlss.dll", dir); p[MAX_PATH + 19] = 0; return GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES; }
 static int dlss_find(void) {                       /* the player's DLL: beside the launcher (the folder above), else beside this program */
     if (DL.dir[0]) return 1;
@@ -62,15 +79,42 @@ static int dlss_find(void) {                       /* the player's DLL: beside t
     if (dlss_file(DL.exe)) { wcscpy(DL.dir, DL.exe); return 1; }
     return 0;
 }
+#else
+static int dlss_file(const char *dir) {            /* the SDK's libnvidia-ngx-dlss.so.<version> in dir */
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int found = 0;
+    for (struct dirent *e; !found && (e = readdir(d));) found = !strncmp(e->d_name, "libnvidia-ngx-dlss.so", 21);
+    closedir(d);
+    return found;
+}
+static int dlss_find(void) {                       /* the player's DLSS file: beside the launcher (the folder above), else beside this program */
+    if (DL.dir[0]) return 1;
+    char exe[DLSS_PATH], up[DLSS_PATH];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return 0;
+    exe[n] = 0;
+    char *s = strrchr(exe, '/');
+    if (!s) return 0;
+    *s = 0;
+    if (mbstowcs(DL.exe, exe, DLSS_PATH - 1) == (size_t)-1) return 0;
+    strcpy(up, exe);
+    s = strrchr(up, '/');
+    if (s) { *s = 0; if (dlss_file(up)) return mbstowcs(DL.dir, up, DLSS_PATH - 1) != (size_t)-1; }
+    if (dlss_file(exe)) { wcscpy(DL.dir, DL.exe); return 1; }
+    return 0;
+}
+#endif
 /* nvn_vk_draw.c vkd_device_info: the device extensions NGX needs, only on an NVIDIA GPU with the player's DLL in place
  * (nobody else's device changes) */
 static void dlss_device_exts(const VkExtensionProperties *dext, uint32_t ndext) {
     if (V.props.vendorID != 0x10de || !dlss_find()) return;
-    if (!has_name(dext, ndext, "VK_NVX_binary_import") || !has_name(dext, ndext, "VK_NVX_image_view_handle")) { printf("nvn_vk_dlss: nvngx_dlss.dll found, but the driver has no VK_NVX_binary_import / VK_NVX_image_view_handle\n"); return; }
+    if (!has_name(dext, ndext, "VK_NVX_binary_import") || !has_name(dext, ndext, "VK_NVX_image_view_handle")) { printf("nvn_vk_dlss: " DLSS_FILE " found, but the driver has no VK_NVX_binary_import / VK_NVX_image_view_handle\n"); return; }
     D.exts[D.next++] = "VK_NVX_binary_import"; D.exts[D.next++] = "VK_NVX_image_view_handle";
     DL.ext = 1;
-    printf("nvn_vk_dlss: nvngx_dlss.dll found in %ls: the device is made with VK_NVX_binary_import and VK_NVX_image_view_handle\n", DL.dir);
+    printf("nvn_vk_dlss: " DLSS_FILE " found in %ls: the device is made with VK_NVX_binary_import and VK_NVX_image_view_handle\n", DL.dir);
 }
+#ifdef _WIN32
 static HMODULE dlss_core(void) {                   /* the driver's NGX runtime: System32 (Proton puts it there too), else the folder the driver names in the registry */
     static const wchar_t *const k[2] = {L"_nvngx.dll", L"nvngx.dll"};
     for (int i = 0; i < 2; i++) { HMODULE m = LoadLibraryExW(k[i], NULL, LOAD_LIBRARY_SEARCH_SYSTEM32); if (m) return m; }
@@ -79,16 +123,36 @@ static HMODULE dlss_core(void) {                   /* the driver's NGX runtime: 
     for (int i = 0; i < 2; i++) { _snwprintf(p, MAX_PATH + 16, L"%ls\\%ls", d, k[i]); p[MAX_PATH + 15] = 0; HMODULE m = LoadLibraryExW(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH); if (m) return m; }
     return NULL;
 }
+#define DLSS_SYM(m, name) GetProcAddress(m, name)
+#else
+static void *dlss_core(void) { return dlopen("libnvidia-ngx.so.1", RTLD_NOW | RTLD_LOCAL); }      /* installed by the driver beside its Vulkan library */
+#define DLSS_SYM(m, name) dlsym(m, name)
+#endif
+/* the parameter interface's slot numbers (NGX_SET_* / NGX_GET_*): a set-then-get round trip on a parameter object of
+ * our own before any real call relies on them */
+static int dlss_vtable_ok(void) {
+    NgxParam *p = NULL;
+    if (DL.alloc(&p) != 1 || !p) return 0;
+    int i = 0; unsigned u = 0;
+    ngx_set_i(p, "Witch Time.Check.I", -12345); ngx_set_u(p, "Witch Time.Check.U", 4000000000u);
+    int ok = ngx_get_i(p, "Witch Time.Check.I", &i) == 1 && i == -12345 && ngx_get_u(p, "Witch Time.Check.U", &u) == 1 && u == 4000000000u;
+    DL.destroy(p);
+    return ok;
+}
 static int dlss_setup(void) {                      /* render thread, once */
     if (V.props.vendorID != 0x10de) { dlss_off("this is not an NVIDIA GPU", 0); return 0; }
+#ifdef _WIN32
     if (!dlss_find()) { dlss_off("no nvngx_dlss.dll beside witch-time.exe (copy it there from a game that has DLSS, then start again)", 0); return 0; }
+#else
+    if (!dlss_find()) { dlss_off("no libnvidia-ngx-dlss.so.<version> beside witch-time (from NVIDIA's DLSS SDK, then start again)", 0); return 0; }
+#endif
     if (!DL.ext || !D.has_push || !D.f12.bufferDeviceAddress) { dlss_off("the device lacks an extension NGX needs", 0); return 0; }
     DL.core = dlss_core();
-    if (!DL.core) { dlss_off("the NVIDIA driver's NGX runtime (_nvngx.dll) was not found", 0); return 0; }
-#define N_(f, name) DL.f = (void *)GetProcAddress(DL.core, "NVSDK_NGX_VULKAN_" name); if (!DL.f) { dlss_off("the driver's NGX runtime is too old (no NVSDK_NGX_VULKAN_" name ")", 0); return 0; }
+    if (!DL.core) { dlss_off("the NVIDIA driver's NGX runtime (_nvngx.dll / libnvidia-ngx.so.1) was not found", 0); return 0; }
+#define N_(f, name) DL.f = (void *)DLSS_SYM(DL.core, "NVSDK_NGX_VULKAN_" name); if (!DL.f) { dlss_off("the driver's NGX runtime is too old (no NVSDK_NGX_VULKAN_" name ")", 0); return 0; }
     /* the core's Init_ProjectID takes NO loader functions (read in the driver's _nvngx.dll 620.70: 9 arguments, the version
      * 8th); the form with them is Init_ProjectID_Ext. Calling the first with 11 crashed inside NGX (issue 190). */
-    DL.init = (void *)GetProcAddress(DL.core, "NVSDK_NGX_VULKAN_Init_ProjectID_Ext");
+    DL.init = (void *)DLSS_SYM(DL.core, "NVSDK_NGX_VULKAN_Init_ProjectID_Ext");
     N_(init9, "Init_ProjectID") N_(shutdown1, "Shutdown1") N_(caps, "GetCapabilityParameters") N_(alloc, "AllocateParameters") N_(destroy, "DestroyParameters")
     N_(create1, "CreateFeature1") N_(release, "ReleaseFeature") N_(evaluate, "EvaluateFeature")
 #undef N_
@@ -106,11 +170,12 @@ static int dlss_setup(void) {                      /* render thread, once */
     if (r != 1 || !cap) { dlss_off("NGX gave no capabilities", r); return 0; }
     ngx_get_i(cap, "SuperSampling.Available", &have); ngx_get_i(cap, "SuperSampling.NeedsUpdatedDriver", &need_drv); ngx_get_i(cap, "SuperSampling.FeatureInitResult", &why);
     DL.destroy(cap);
-    if (!have) { dlss_off(need_drv ? "the NVIDIA driver is too old for this nvngx_dlss.dll" : "NGX says DLSS is not available on this GPU (an RTX card is needed)", (NgxResult)why); return 0; }
+    if (!dlss_vtable_ok()) { dlss_off("the NGX parameter interface is not laid out as expected", 0); return 0; }
+    if (!have) { dlss_off(need_drv ? "the NVIDIA driver is too old for this " DLSS_FILE : "NGX says DLSS is not available on this GPU (an RTX card is needed)", (NgxResult)why); return 0; }
     r = DL.alloc(&DL.par);
     if (r != 1 || !DL.par) { dlss_off("NGX gave no parameters", r); return 0; }
     DL.ok = 1;
-    printf("nvn_vk_dlss: NGX ready, DLSS available (the player's nvngx_dlss.dll in %ls)\n", DL.dir);
+    printf("nvn_vk_dlss: NGX ready, DLSS available (the player's " DLSS_FILE " in %ls)\n", DL.dir);
     return 1;
 }
 static void dlss_retire(void) {                    /* the feature in use goes to the list of the replaced */
