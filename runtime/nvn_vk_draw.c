@@ -607,13 +607,6 @@ typedef struct { int w, h, ncol, cf, depth, win, what; } PtKind;      /* what: 0
 static int g_pt_on = -1, g_pt_nkind, g_split = -1;
 static int g_split_dense, g_hostcount, g_count_kick;
 static LONG64 g_count_empty, g_count_direct, g_count_frame_empty;
-static int rdna4_windows(void) {
-#ifdef _WIN32
-    return V.props.vendorID == 0x1002 && V.props.deviceID == 0x7550;
-#else
-    return 0;
-#endif
-}
 static VkQueryPool g_pt_pool;
 static PtKind g_pt_kind[PT_KINDS];
 static double g_pt_ns[PT_KINDS];
@@ -2258,7 +2251,7 @@ static int pass_begin(void) {
     uint8_t clayout[8] = {0}, dlayout = 0;
     int w = 0, h = 0, samples = 1, has_depth = 0;
     if (R.in_pass) return 1;
-    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split_dense = !e && rdna4_windows(); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; }      /* Turnip: begin the GPU work while the rest is recorded */
+    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; g_split_dense = !e && !g_split; }      /* Turnip: begin the GPU work while the rest is recorded */
     if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
@@ -7311,7 +7304,7 @@ static void vkd_init(void) {
     }
     printf("nvn_vk: descriptors: buffers (set 0) %s, textures (set 1) one set per distinct binding list per command buffer\n", D.has_push ? "pushed (VK_KHR_push_descriptor)" : "one allocated set per draw");
     vkGetPhysicalDeviceMemoryProperties(V.gpu, &D.mp);
-    { const char *e = getenv("WT_VK_HOSTCOUNT"); g_hostcount = e ? atoi(e) != 0 : rdna4_windows() && gfx_pace_rate() > 120; }
+    { const char *e = getenv("WT_VK_HOSTCOUNT"); g_hostcount = e ? atoi(e) != 0 : gfx_pace_rate() > 120; }      /* every GPU (#317 had it on the RX 9070 on Windows only); =0: off */
     for (int i = 0; i < NSLOT; i++) {
         VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
