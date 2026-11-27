@@ -1754,6 +1754,22 @@ static void m4_barrier(LONG64 frame, LONG64 draws) {
     /* session 12: the one place where the live pipeline cache is read out while the game runs: this thread, in a loading screen it holds anyway */
     if (save && InterlockedExchange(&g_pcsave_want, 0)) pcache_save_at(1, 1);
 }
+/* [witchtime] issues 257, 323. A fragment stage translated with early fragment tests that hold only while the draw's alpha test
+ * and alpha-to-coverage cannot discard (early 2: nearly every fragment stage since the alpha test's discard is left out, #276)
+ * has a second variant, MX_FO_NO_EARLY, that a draw with alpha function 1..7 or alpha-to-coverage takes (nvn_vk_draw.c). Only
+ * that draw asked for it, so the first such draw of each stage translated and compiled it with the game held: a v0.16.0 player's
+ * first 28 minutes on a new cache had 250 stages made at a draw (7.3 s) and 264 libraries compiled at a draw (11.5 s), where
+ * v0.12 and v0.13 had 0 to 8 stages in a run. The variant is now made with its plain one: by the worker that makes a program's
+ * fragment stage (with its library), and by the first-run preparation. WT_VK_NOEARLY_AHEAD=0: at the draw, as before. */
+static LONG64 g_ne_made;
+static int noearly_ahead(void) { static int on = -1; if (on < 0) on = !(getenv("WT_VK_NOEARLY_AHEAD") && !atoi(getenv("WT_VK_NOEARLY_AHEAD"))); return on; }
+static VStage *noearly_sibling(const SSrc *src, const VStage *fs, const uint32_t *key) {      /* a worker; NULL: none, or it failed */
+    int how;
+    if (!fs || !fs->ok || fs->stage != 1 || fs->early != 2 || fs->fo || !noearly_ahead()) return NULL;
+    VStage *n = stage_ensure(src, fs->hb, key, MX_FO_NO_EARLY, &how);
+    if (how == 1) { InterlockedIncrement64(&g_w_stages); InterlockedIncrement64(&g_ne_made); }
+    return n && n->ok ? n : NULL;
+}
 /* Session 7. The variants of one code that only a draw decides (integer vertex attributes, integer textures, vertex outputs
  * forced by the fragment stage of the draw) are listed in the code's .var file by the run that first needed them. Here,
  * when the program is handed over (loading), each listed variant is made from its record, so the draw finds it. */
@@ -1803,6 +1819,7 @@ static void job_prog(Job *j) {
     if (how == 1) InterlockedIncrement64(&g_w_stages);
     if (j->has[1]) { fs = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), zero, 0, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); }
     if (!vs->ok || (fs && !fs->ok)) return;
+    VStage *fne = fs ? noearly_sibling(&j->src[1], fs, zero) : NULL;      /* issues 257, 323 */
     variants_known(&j->src[0], hv);                /* session 7: what earlier runs needed of this code at a draw */
     if (fs) variants_known(&j->src[1], fs->hb);
     if (fs && (fs->in_attr & ~vs->out_attr)) {    /* fragment inputs the vertex code never writes: the variant that declares them */
@@ -1817,9 +1834,9 @@ static void job_prog(Job *j) {
         cont_learn(pc);
         LeaveCriticalSection(&g_sh_lock);
     }
-    if (D.has_gpl && !g_offline && gpl_sep() && !(fs && j->sshade) && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) { int lh; stagelib_ensure(vs, 0, &lh); if (fs) stagelib_ensure(fs, 0, &lh); else stagelib_ensure(vs, 1, &lh); }      /* WT_VK_GPL=2: a library per stage (a program without a fragment stage: both forms of its vertex stage) */
+    if (D.has_gpl && !g_offline && gpl_sep() && !(fs && j->sshade) && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) { int lh; stagelib_ensure(vs, 0, &lh); if (fs) stagelib_ensure(fs, 0, &lh); else stagelib_ensure(vs, 1, &lh); if (fne && stage_fits_universal(fne)) stagelib_ensure(fne, 0, &lh); }      /* WT_VK_GPL=2: a library per stage (a program without a fragment stage: both forms of its vertex stage) */
     else
-    if (D.has_gpl && !g_offline && !j->prep) { int lh; pairlib_ensure(vs, fs, 1, fs ? j->sshade : 0, &lh); }      /* session 9: the pair's shaders compiled now, without pass formats; a draw links */
+    if (D.has_gpl && !g_offline && !j->prep) { int lh; pairlib_ensure(vs, fs, 1, fs ? j->sshade : 0, &lh); if (fne) pairlib_ensure(vs, fne, 1, j->sshade, &lh); }      /* session 9: the pair's shaders compiled now, without pass formats; a draw links */
     if (!g_predict || j->prep) return;
     EnterCriticalSection(&g_sh_lock);
     PairRec *pr = pair_get(vs, fs);
@@ -1932,7 +1949,7 @@ static void job_scan(Job *j) {                     /* session 7: a container met
  * stays in memory (measured, run s10n1: 9,324 stage libraries kept = 4.5 GB more private memory on NVIDIA; the game has about
  * 25,000 stage variants). When the game later hands the container over, each stage is a record read and its library a hit
  * of the pipeline cache. A code the game has handed over itself is left to that path. Compute stages are few: made and kept. */
-typedef struct { uint64_t key; uint32_t in_attr, out_attr, dep; int ok, done; } PrepSt;
+typedef struct { uint64_t key; uint32_t in_attr, out_attr, dep; int ok, done, early; } PrepSt;
 static PrepSt g_prep_st[1 << 17];
 static LONG64 g_prep_stages, g_prep_fromrec, g_prep_dup, g_prep_had, g_prep_libs, g_prep_tr_tk, g_prep_lib_tk;
 static PrepSt prep_stage(const SSrc *src, const uint32_t *vkey, uint32_t fo, int alone) {
@@ -1954,7 +1971,7 @@ static PrepSt prep_stage(const SSrc *src, const uint32_t *vkey, uint32_t fo, int
     LeaveCriticalSection(&g_sh_lock);
     if (v || busy) {                               /* the game handed this code over itself */
         v = stage_ensure(src, hb, vkey, fo, &how);
-        r.ok = v->ok; r.in_attr = v->in_attr; r.out_attr = v->out_attr; r.dep = v->dep; r.done = 1;
+        r.ok = v->ok; r.in_attr = v->in_attr; r.out_attr = v->out_attr; r.dep = v->dep; r.early = v->early; r.done = 1;
         InterlockedIncrement64(&g_prep_had);
         return r;
     }
@@ -1975,7 +1992,7 @@ static PrepSt prep_stage(const SSrc *src, const uint32_t *vkey, uint32_t fo, int
     if (t->lib) vkDestroyPipeline(V.device, t->lib, NULL);
     if (t->lib2) vkDestroyPipeline(V.device, t->lib2, NULL);
     if (t->mod) vkDestroyShaderModule(V.device, t->mod, NULL);
-    r.key = key; r.ok = t->ok; r.in_attr = t->in_attr; r.out_attr = t->out_attr; r.dep = t->dep; r.done = 1;
+    r.key = key; r.ok = t->ok; r.in_attr = t->in_attr; r.out_attr = t->out_attr; r.dep = t->dep; r.early = t->early; r.done = 1;
     free(t);
     EnterCriticalSection(&g_sh_lock);
     g_prep_st[i] = r;
@@ -1990,10 +2007,11 @@ static void job_prep(Job *j) {
         VStage *c = stage_ensure(&j->src[2], ssrc_hb(&j->src[2]), zero, 0, &how);
         if (c->ok && !c->images && c->nsmp <= 32) compute_pipe_ensure(c);
     }
-    if (!j->has[0]) { if (j->has[1]) prep_stage(&j->src[1], zero, 0, 0); return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
+    if (!j->has[0]) { if (j->has[1]) { PrepSt a = prep_stage(&j->src[1], zero, 0, 0); if (a.ok && a.early == 2 && j->src[1].stage == 1 && noearly_ahead()) prep_stage(&j->src[1], zero, MX_FO_NO_EARLY, 0); } return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
     PrepSt vs = prep_stage(&j->src[0], zero, 0, !j->has[1]), fs;
     memset(&fs, 0, sizeof fs);
     if (j->has[1]) fs = prep_stage(&j->src[1], zero, 0, 0);
+    if (fs.ok && fs.early == 2 && noearly_ahead()) prep_stage(&j->src[1], zero, MX_FO_NO_EARLY, 0);      /* issues 257, 323: the variant a draw with an alpha test takes (noearly_sibling) */
     uint32_t need = vs.ok && fs.ok ? fs.in_attr & ~vs.out_attr : 0;
     if (need) prep_stage(&j->src[0], zero, need, 0);      /* fragment inputs the vertex code never writes: the variant that declares them */
     /* [issue 54] Attribute 2 as integers: skinned draws, whose variant was first compiled at the draw: a frame of 8-9 s in a cutscene.
@@ -2058,7 +2076,7 @@ static DWORD WINAPI pw_main(void *arg) {
         }
         if (j->kind == 0) { if (j->prep == 2) job_prep(j); else job_prog(j); }
         else if (j->kind == 2) job_draw(j);
-        else if (j->kind == 3) { int how; VStage *v = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), j->key1, 0, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); if (v && v->ok && D.has_gpl && gpl_sep() && !g_offline && stage_fits_universal(v)) { int lh; stagelib_ensure(v, 0, &lh); } else if (j->cont == -7 && v && v->ok) gpl_fo_made(v); }
+        else if (j->kind == 3) { int how; VStage *v = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), j->key1, 0, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); if (v && v->ok) { if (D.has_gpl && gpl_sep() && !g_offline && stage_fits_universal(v)) { int lh; stagelib_ensure(v, 0, &lh); VStage *ne = noearly_sibling(&j->src[1], v, j->key1); if (ne && stage_fits_universal(ne)) stagelib_ensure(ne, 0, &lh); } else { if (j->cont == -7) gpl_fo_made(v); VStage *ne = noearly_sibling(&j->src[1], v, j->key1); if (j->cont == -7 && ne) gpl_fo_made(ne); } } }
         else if (j->kind == 5) { int lh; pairlib_ensure(j->lvs, j->lfs, 1, 0, &lh); }
         else if (j->kind == 6) gpl_optimise(j->pipe);
         else if (j->kind == 7) { int how, lh; VStage *v = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), j->key1, (uint32_t)j->sshade, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); if (v && v->ok && D.has_gpl && gpl_sep() && stage_fits_universal(v)) stagelib_ensure(v, 0, &lh); }      /* the stage a skipped draw waits for */
@@ -2399,6 +2417,7 @@ static void m4_report(void) {
     printf("nvn_vk: texture descriptor sets: %lld reused after a full comparison of their lists, %lld hash hits with a different list (given a set of their own); samplers given a dummy because the texture is of another kind than the shader declares: %lld\n", (long long)R.sets_reused, (long long)R.tset_collisions, (long long)R.dummy_kind);
     printf("nvn_vk_m4: holds of the render thread at a draw: %lld, %.0f ms in all, longest %.1f ms (stage made at the draw %lld / %.0f ms, stage waited for %lld / %.0f ms, pipeline made at the draw %lld / %.0f ms, pipeline waited for %lld / %.0f ms)\n",
            (long long)n, (double)t * k, (double)g_hold_max * k, (long long)g_hold_n[0], (double)g_hold_tk[0] * k, (long long)g_hold_n[1], (double)g_hold_tk[1] * k, (long long)g_hold_n[2], (double)g_hold_tk[2] * k, (long long)g_hold_n[3], (double)g_hold_tk[3] * k);
+    printf("nvn_vk_m4: fragment variants without early tests made ahead with their plain one (issues 257, 323; WT_VK_NOEARLY_AHEAD=0 off): %lld\n", (long long)g_ne_made);
     printf("nvn_vk_m4: workers: %lld programs handed over, %lld stages made by them, %lld pipelines made by them; look-ahead: %lld pipelines and %lld draws with stages still to make sent ahead, %.0f ms of reading in all; blind prediction: %lld keys, %lld used; pass signatures %d; nvnProgramSetShaders held its caller %lld times, %.0f ms in all\n",
            (long long)g_w_progs, (long long)g_w_stages, (long long)g_w_pipes, (long long)g_scan_pipes, (long long)g_scan_jobs, (double)g_tm[9] * k, (long long)g_pred_made, (long long)g_pred_used, g_nsig, (long long)g_set_held, (double)g_set_held_tk * k);
     if (g_warm_thread || g_warm_total) printf("nvn_vk_warm: compiles of stages by Metal ahead in this run: %lld of %lld (%.0f ms each), %lld left out (a pipeline of the game had them compiled), %lld refused or without their files\n", (long long)g_warm_n, (long long)g_warm_total, g_warm_n ? (double)g_warm_tk * k / (double)g_warm_n : 0.0, (long long)g_warm_skip, (long long)g_warm_fail);
@@ -3191,7 +3210,7 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 4 : 0 /* s4: issue 126, "rs3" (the dither's fetch in mx_tf); s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (WT_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_%s%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, noearly_ahead() ? "int2ne" : "int2", kv, RS_ON ? 4 : 0 /* s4: issue 126, "rs3" (the dither's fetch in mx_tf); s1: v0.5.1 and v0.5.2 prepared the unscaled fragment stages; s2: their scaled stages were "rs1", these are "rs2" (mx_fcs_y): those players prepare once more */, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (WT_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
         printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (WT_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;

@@ -1849,6 +1849,23 @@ Two GPU shader-translator changes (`MX_VK_VERSION` 24) and a set of Vulkan rende
   `wtbuild` Rust tests pass. Still-scene screenshots (`p9a0_training`, `p9a0_shop`, 60 fps): `p9a0_training` matches to
   0.0006/255 (max 2) outside the two horizontally scrolling Enochian rune strips (0.36/255 full frame, matching
   old-against-old); `p9a0_shop` matches to 0.39–0.48/255 (0.21–0.36% >24). Not tested on Windows, NVIDIA, or Intel.
+- **The variant for an alpha-tested draw is made ahead (2026-11-27, issues 257, 323)** (`nvn_vk_m4.c` `noearly_sibling`,
+  `job_prep`, `pw_main`; `WT_VK_NOEARLY_AHEAD=0` as before). Since the discard elision above (`#276`, v0.14.0), nearly
+  every fragment stage has `early == 2`, and a draw whose alpha function is `1..7` or that uses alpha-to-coverage takes
+  a second variant, `MX_FO_NO_EARLY` (`nvn_vk_draw.c`). Only that draw asked for it, so the first such draw of each
+  stage translated and compiled the variant with the game held. A v0.16.0 player's 28-minute log on a new cache
+  (GTX 1660 Ti, Xeon E5-2643 v2): 529 holds, 19.3 s in all (250 stages made at a draw, 7.3 s; 264 libraries compiled at
+  a draw, 11.5 s); the same player's v0.12 and v0.13 logs have 0 to 8 stages made at a draw. The variant is now made
+  with its plain one: by the workers (`job_prog` and spawned fragment jobs, including non-GPL / GPL=1 / offline paths),
+  with its library, and by the first-run preparation (`job_prep`), whose marker is named `..._int2ne_...` (keeping
+  `_int2_` when `WT_VK_NOEARLY_AHEAD=0`) so an install prepared before this prepares once more.
+  Linux, RX 9070 XT (RADV), `wtbuild perf-bench run cutscene 1.0` (title + Shibuya cutscene on fresh caches,
+  `WT_VK_HOLDLOG=1`): before (`WT_VK_NOEARLY_AHEAD=0`) 115 holds / 775 ms (54 stages made at a draw / 698 ms, 57 stage
+  libraries compiled at a draw / 38.5 ms, 100 hold lines with forced outputs `80000000`, prep 23.4 s / 6,271 variants);
+  after 22 holds / 110 ms (4 stages made at a draw / 0 ms, 7 stage libraries / 0.1 ms, 0 hold lines with `80000000`,
+  3,751 variants made ahead, prep 43.6 s / 10,073 variants); `WT_VK_GPL=0` after: 4 stages made at a draw / 0 ms, 0 hold
+  lines with `80000000`, 3,751 variants made ahead, prep 40.3 s. `wtbuild smoke` passes; 60 fps, 0 device losses.
+  Not run: Windows, NVIDIA and Intel; preparation time on the reporter's Xeon.
 ## Launcher and in-game look (2026-11-01)
 
 One design language for the launcher's screens, the PC settings panel and the first-start screen, from the project's
