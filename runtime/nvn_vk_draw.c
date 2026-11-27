@@ -371,7 +371,14 @@ static VkBuffer vbuf_new(uint64_t size, VkFlags usage, VMem *mem) {
 
 /* ---------------------------------------------------------------- command buffers in flight */
 #define NSLOT 8
-typedef struct { VkCommandBuffer cmd, up; VkFence fence; VkDescriptorPool pool[16]; int npool, ipool, pending, up_rec, up_ovl; uint64_t serial; LONG64 ts_frame; } Slot;      /* up: finding 140, copies submitted before cmd */
+#define BUFSET_PAGE 128
+#define BUFSET_PAGES 16
+typedef struct {
+    VkCommandBuffer cmd, up; VkFence fence;         /* up: finding 140, copies submitted before cmd */
+    VkDescriptorPool pool[16]; int npool, ipool, pending, up_rec, up_ovl; uint64_t serial; LONG64 ts_frame;
+    VkDescriptorPool buf_pool[BUFSET_PAGES]; VkDescriptorSet buf_set[BUFSET_PAGES * BUFSET_PAGE];
+    unsigned buf_used, buf_count; int buf_full;
+} Slot;
 typedef struct VTex VTex;
 static struct {
     Slot slot[NSLOT]; int cur, recording; uint64_t serial, done;      /* serial: number of the last submission; done: every submission up to here has finished */
@@ -598,6 +605,15 @@ int nvn_vk_cutc_live(void) {
 #define PT_KINDS 64
 typedef struct { int w, h, ncol, cf, depth, win, what; } PtKind;      /* what: 0 pass, 1 compute dispatches, 2 present blit */
 static int g_pt_on = -1, g_pt_nkind, g_split = -1;
+static int g_split_dense, g_hostcount, g_count_kick;
+static LONG64 g_count_empty, g_count_direct, g_count_frame_empty;
+static int rdna4_windows(void) {
+#ifdef _WIN32
+    return V.props.vendorID == 0x1002 && V.props.deviceID == 0x7550;
+#else
+    return 0;
+#endif
+}
 static VkQueryPool g_pt_pool;
 static PtKind g_pt_kind[PT_KINDS];
 static double g_pt_ns[PT_KINDS];
@@ -694,6 +710,7 @@ static void cmd_begin(void) {
     R.cur = (R.cur + 1) % NSLOT;
     Slot *s = &R.slot[R.cur];
     slot_wait(s);
+    s->buf_used = 0;                               /* only now may the next recording overwrite these descriptors */
     for (int i = 0; i < s->npool; i++) VKC(vkResetDescriptorPool(V.device, s->pool[i], 0));
     s->ipool = 0;
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -740,6 +757,13 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (!R.recording) { if (!wait && !signal) return R.serial; cmd_begin(); }
     pass_end();
     Slot *s = &R.slot[R.cur];
+    /* The CPU may read an indirect count only after this submission's fence has completed.
+     * Make the shader's writes visible to the host as well as to later GPU draws. */
+    if (g_hostcount && g_gpu_writes != g_gpu_writes_cmd) {
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(s->cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
     if (g_ts_on > 0) vkCmdWriteTimestamp(s->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_ts_pool, (uint32_t)R.cur * 2 + 1);
     if (g_done_on < 0) {
         const char *e = getenv("WT_VK_DONEBUF");
@@ -2234,7 +2258,7 @@ static int pass_begin(void) {
     uint8_t clayout[8] = {0}, dlayout = 0;
     int w = 0, h = 0, samples = 1, has_depth = 0;
     if (R.in_pass) return 1;
-    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; }      /* [witchtime] Turnip (a phone): the GPU is the slow half of a frame and starts while the rest is recorded (16 -> 20 fps on a Shibuya street; needs slot_done) */
+    if (g_split < 0) { const char *e = getenv("WT_VK_SPLIT"); g_split_dense = !e && rdna4_windows(); g_split = e ? atoi(e) : strstr(V.props.deviceName, "Turnip") ? 20 : VK_SPLIT_DEFAULT; }      /* Turnip: begin the GPU work while the rest is recorded */
     if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
@@ -2375,6 +2399,42 @@ static VkDescriptorSet set_alloc(VkDescriptorSetLayout layout) {
         VKC(vkCreateDescriptorPool(V.device, &pi, NULL, &s->pool[s->npool++]));
     }
 }
+/* The stage libraries share one buffer layout. Keep a bounded arena of its sets per in-flight slot:
+ * each draw rewrites every binding its shaders use, and gets a different set until the fence completes.
+ * Only the allocations survive reuse, never a cached assumption about the buffers or their contents. */
+static VkDescriptorSet draw_buf_set(VkDescriptorSetLayout layout) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("WT_VK_BUFSET_REUSE"); on = !e || atoi(e); }
+    if (on && layout == g_udl[0]) {
+        Slot *s = &R.slot[R.cur];
+        if (s->buf_used < s->buf_count) return s->buf_set[s->buf_used++];
+        if (!s->buf_full && s->buf_count < BUFSET_PAGES * BUFSET_PAGE) {
+            VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, g_ubuf_storage * BUFSET_PAGE},
+                                          {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, g_ubuf_uniform * BUFSET_PAGE}};
+            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            VkDescriptorPool pool;
+            pi.maxSets = BUFSET_PAGE; pi.poolSizeCount = g_ubuf_uniform ? 2 : 1; pi.pPoolSizes = ps;
+            VkResult r = vkCreateDescriptorPool(V.device, &pi, NULL, &pool);
+            if (r == VK_SUCCESS) {
+                VkDescriptorSetLayout layouts[BUFSET_PAGE];
+                for (unsigned i = 0; i < BUFSET_PAGE; i++) layouts[i] = layout;
+                VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                ai.descriptorPool = pool; ai.descriptorSetCount = BUFSET_PAGE; ai.pSetLayouts = layouts;
+                r = vkAllocateDescriptorSets(V.device, &ai, s->buf_set + s->buf_count);
+                if (r == VK_SUCCESS) {
+                    s->buf_pool[s->buf_count / BUFSET_PAGE] = pool; s->buf_count += BUFSET_PAGE;
+                    R.sets += BUFSET_PAGE;
+                    return s->buf_set[s->buf_used++];
+                }
+                vkDestroyDescriptorPool(V.device, pool, NULL);
+            }
+            if (r != VK_ERROR_OUT_OF_HOST_MEMORY && r != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+                r != VK_ERROR_OUT_OF_POOL_MEMORY && r != VK_ERROR_FRAGMENTED_POOL) vk_fatal("draw buffer descriptor pool", r);
+            s->buf_full = 1;                       /* use the ordinary per-recording allocator for overflow */
+        }
+    }
+    return set_alloc(layout);
+}
 /* [Recomps#1] finding 145 (cut C of finding 142): set 0's buffers (a draw's 5-10 storage buffers in the universal layout: 66
  * bindings, more than a device must allow to push) are written through an update template per list of bindings (the buffers
  * a stage pair declares, in draw_prepare's order: 39 lists in the fight) instead of one VkWriteDescriptorSet per buffer for
@@ -2382,6 +2442,11 @@ static VkDescriptorSet set_alloc(VkDescriptorSetLayout layout) {
  * before. (Allocating set 0 64 at a time was measured too: the allocation 36 % cheaper, the update and the binds after it
  * as much dearer, the sets no longer warm in the cache: not kept.) */
 #define UT_N 1024
+/* In the storage-buffer path a graphics draw's resolved ranges are already the descriptor
+ * template data. The extra flag is used by motion-vector capture and the non-template paths. */
+typedef struct { VkBuffer buf; VkDeviceSize off, size; int zero; } BufRef;
+_Static_assert(offsetof(BufRef, off) == offsetof(VkDescriptorBufferInfo, offset) &&
+               offsetof(BufRef, size) == offsetof(VkDescriptorBufferInfo, range), "buffer template layout");
 static struct { VkDescriptorSetLayout dl; uint64_t a, b; VkDescriptorUpdateTemplate t; } g_ut[UT_N];
 static int g_ut_on = -1, g_ut_n;
 static VkDescriptorUpdateTemplate set0_template(VkDescriptorSetLayout dl, const VStage *vs, const VStage *fs) {
@@ -2400,7 +2465,8 @@ static VkDescriptorUpdateTemplate set0_template(VkDescriptorSetLayout dl, const 
                 unsigned bit = n < 18 ? v->cbufs >> n & 1 : v->ssbos >> (n - 18) & 1;
                 if (!bit) continue;
                 e[ne].dstBinding = 40u * (unsigned)s + (n < 18 ? n : 20 + n - 18); e[ne].dstArrayElement = 0; e[ne].descriptorCount = 1;
-                e[ne].descriptorType = n < 18 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; e[ne].offset = ne * sizeof(VkDescriptorBufferInfo); e[ne].stride = sizeof(VkDescriptorBufferInfo);
+                size_t stride = D.cb_ubo ? sizeof(VkDescriptorBufferInfo) : sizeof(BufRef);
+                e[ne].descriptorType = n < 18 ? CB_DT : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; e[ne].offset = ne * stride; e[ne].stride = stride;
                 ne++;
             }
         }
@@ -3814,11 +3880,12 @@ static int gpucount_on(void) {
     }
     return g_gpucount;
 }
-static int gpu_written(uint64_t addr, uint64_t size) {       /* a CB of this batch holds the range and the CPU would wait to read it */
-    if (!gpucount_on() || !g_cb_live || g_gpu_writes == g_gpu_writes_seen) return 0;
+static CB *gpu_written_buffer(uint64_t addr, uint64_t size) {
+    if (!gpucount_on() || !g_cb_live || g_gpu_writes == g_gpu_writes_seen) return NULL;
     CB *c = cb_inside(addr, size);
-    return c && !((addr - c->addr) & 3);           /* Vulkan reads records and counts at offsets that are multiples of 4 */
+    return c && !((addr - c->addr) & 3) ? c : NULL;  /* Vulkan reads records and counts at offsets that are multiples of 4 */
 }
+static int gpu_written(uint64_t addr, uint64_t size) { return gpu_written_buffer(addr, size) != NULL; }
 /* [witchtime] issues 120, 156: an indirect draw of up to n > 1 records the game wrote, with a count compute wrote (the title, cutscenes
  * and the demon rides have one a frame): the GPU reads the count as for n == 1, so the render thread no longer waits for the
  * GPU there (that wait put the whole GPU frame inside the replay: frame time = replay + GPU). The records past the count are never
@@ -4017,7 +4084,6 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
     g_cb_live++;
     return c;
 }
-typedef struct { uint64_t off, size; int zero; VkBuffer buf; } BufRef;
 /* Where a command reads the guest range from: a CB of this batch that contains it, else the stream ring. align: the offset
  * alignment the use needs (storage descriptors), 1 = none. Returns 1 when a CB is bound. */
 static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
@@ -4697,12 +4763,13 @@ static int draw_prepare(unsigned prim) {
             if (n == 2) { b->off = c2_ref(s); b->size = sizeof R.c2[s]; }
             else if (n == 1 && st->ctl[3] && st->ctl[4]) { b->size = st->ctl[3]; b->off = ring_put((uint64_t)(uintptr_t)(st->code - 0x30 + st->ctl[4]), b->size); }
             else if (n >= 3 && R.ubo[s][n - 3].addr && R.ubo[s][n - 3].size) buf_ref(R.ubo[s][n - 3].addr, R.ubo[s][n - 3].size, D.cb_ubo ? RING_ALIGN : sal, b);      /* (a uniform buffer's offset: RING_ALIGN is a multiple of the device's alignment) */
-            else b->zero = 1;
+            else { b->zero = 1; b->buf = R.zero; b->off = 0; b->size = 65536; }
         }
         for (uint32_t sm = v->ssbos & 0xffffu; sm; sm &= sm - 1) {
             unsigned k = (unsigned)__builtin_ctz(sm);
             BufRef *b = &bufs[nbuf++];
             b->zero = !(R.ssbo[s][k].addr && R.ssbo[s][k].size); b->buf = R.ring;
+            if (b->zero) { b->buf = R.zero; b->off = 0; b->size = 65536; }
             if (!b->zero && (v->ssbo_w >> k & 1)) {   /* [witchtime] the draw stores to it: a compute buffer (CB) of this batch, copied back like a dispatch's */
                 Range r = R.ssbo[s][k];
                 CB *c = g_cb_live ? cb_inside(r.addr, r.size) : NULL;
@@ -4829,11 +4896,11 @@ static int draw_prepare(unsigned prim) {
          * textures of a draw repeat: one set per distinct list (layout, views, samplers, image layouts) per command buffer */
         VkDescriptorSet sets[2] = {NULL, NULL};
         int nw = 0, ib = 0, it = 0;
-        if (!p->push0 && p->nb[0]) sets[0] = set_alloc(p->dl[0]);
+        if (!p->push0 && nbuf) sets[0] = draw_buf_set(p->dl[0]);
         PT(11);
         VkDescriptorUpdateTemplate ut = sets[0] && !tess ? set0_template(p->dl[0], vs, fs) : VK_NULL_HANDLE;      /* finding 145: then only bi[] is filled */
         /* [Recomps#1] finding 93: each write is filled whole below (no memset of all 194 entries of the universal layout, 12 KB per draw) */
-        for (int j = 0; j < nsv; j++) {
+        if (!ut || D.cb_ubo) for (int j = 0; j < nsv; j++) {
             int s = sx[j];
             VStage *v = sv[j];
             for (uint32_t cm = v->cbufs & 0x3fffeu; cm; cm &= cm - 1) {
@@ -4855,13 +4922,12 @@ static int draw_prepare(unsigned prim) {
         if (p->push0) { if (nw) { if (p->layout != g_dsh_tset_lay) g_dsh_tset = VK_NULL_HANDLE; vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, (uint32_t)nw, w); } }
         else if (sets[0]) {
             LONG64 u0 = g_ptm_on > 0 ? tk() : 0;
-            if (ut) vkUpdateDescriptorSetWithTemplate(V.device, sets[0], ut, bi); else vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
+            if (ut) vkUpdateDescriptorSetWithTemplate(V.device, sets[0], ut, D.cb_ubo ? (const void *)bi : (const void *)bufs); else vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
             if (g_ptm_on > 0) g_set0_upd += tk() - u0;
             if (p->layout != g_dsh_tset_lay) g_dsh_tset = VK_NULL_HANDLE;
-            vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, 1, &sets[0], 0, NULL);
         }
         PT(8);
-        if (p->nb[1]) {
+        if (g_ndtex) {                             /* the universal layout declares textures even for stages that use none */
             /* #257: a word at a time (TSK): the key lives as long as its command buffer and a hit is confirmed below, so only its speed counts (a byte at a time was 6 % of the render thread's own time in a ride) */
 #define TSK(v) (key = (key ^ (uint64_t)(v)) * 0x9E3779B97F4A7C15ull, key ^= key >> 29)
             uint64_t key = 0xcbf29ce484222325ULL;
@@ -4917,10 +4983,13 @@ static int draw_prepare(unsigned prim) {
                 }
             }
             if (!dsh_on() || sets[1] != g_dsh_tset || p->layout != g_dsh_tset_lay) {
-                vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 1, 1, &sets[1], 0, NULL);
+                uint32_t first = sets[0] ? 0 : 1;
+                vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, first, 2 - first, sets + first, 0, NULL);
+                sets[0] = VK_NULL_HANDLE;          /* both changed: one command binds both */
                 g_dsh_tset = sets[1]; g_dsh_tset_lay = p->layout; g_dsh_sent++;
             } else g_dsh_kept++;
         }
+        if (sets[0]) vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, 1, sets, 0, NULL);
         PT(9);
     }
     {   uint32_t pc[5] = {(uint32_t)R.alpha_func, 0, 0, 0, 0};
@@ -5676,14 +5745,30 @@ static void exec(const Cmd *m, int depth) {
         if (!a[3] || !n || (elements && !a[2])) break;
         if (elements && t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
         uint64_t span = (uint64_t)(n - 1) * stride + sz, ext = 0;
-        int gcount = (a[6] & 2) && param && gpu_written(param, 4);       /* the count compute (or a storing draw) wrote: the GPU reads it */
+        CB *countbuf = (a[6] & 2) && param ? gpu_written_buffer(param, 4) : NULL;
+        int gcount = countbuf != NULL, have_count = 0;
+        uint32_t count_value = 0;
+        VkFlags host = VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (g_hostcount && gcount && g_gpucount == 1 && countbuf->mem.map && countbuf->mem.block >= 0 &&
+            (D.mp.memoryTypes[g_blk[countbuf->mem.block]->type].propertyFlags & host) == host) {
+            if (g_count_kick && R.recording && countbuf->wserial == R.serial + 1) {
+                cmd_submit(NULL, NULL); g_count_kick = 0;
+            }
+            if (countbuf->wserial && countbuf->wserial <= R.done) {
+                memcpy(&count_value, (const uint8_t *)countbuf->mem.map + (param - countbuf->addr), 4);
+                if (!count_value) { g_count_empty++; g_count_frame_empty++; break; }
+                /* Preserve the original multi-draw command (and its draw IDs) when more than
+                 * one record is allowed. A nonempty single record is an ordinary draw. */
+                if (n == 1) { have_count = 1; gcount = 0; g_count_direct++; }
+            }
+        }
         int grecs = gpu_written(a[3], span) && (n == 1 || (D.f2.features.multiDrawIndirect && !(stride & 3) && stride >= sz)) && (!elements || index_extent(a[2], &ext));      /* the records compute wrote: the GPU reads them, the whole index buffer bound */
         if (g_gpucount == 2 && grecs && gcount) grecs = 0;      /* the stand-in changes the records in the ring: records compute wrote with a count compute wrote stay on the CPU (the line after next) */
         if (gpu_written(a[3], span) && !grecs) g_gr_noext++;
         if (gcount && !grecs && (cb_overlap(a[3], span) || (n != 1 && !recs_bounded(a[3], n, stride, sz, elements, a[2], t)))) gcount = 0;      /* compute wrote the records and the CPU reads them (it waits): the count with them; or a record past the count names indices outside the buffer */
         if (gcount && g_gpucount == 2 && n > GCE_MAX) gcount = 0;
         if (gcount && g_gpucount == 2 && R.recording && (g_gpu_writes != g_gpu_writes_cmd || !gce_room(cb_inside(param, 4), n))) cmd_submit(NULL, NULL);      /* the stand-in reads the counts before this command buffer: what wrote them goes in one before it (no wait) */
-        if ((a[6] & 2) && !gcount) { uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
+        if ((a[6] & 2) && !gcount) { uint32_t cnt = count_value; if (!have_count && param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
         const uint8_t *rec = grecs ? NULL : indirect_src(a[3], span);
         uint64_t lo = ~0ull, hi = 0;
         if (grecs) { lo = 0; hi = ext >> t; }      /* firstIndex is relative to the index address: the buffer from there on */
@@ -5716,7 +5801,7 @@ static void exec(const Cmd *m, int depth) {
             }
         }
         if ((gcount || grecs) && R.pass_stores) pass_end();      /* a store earlier in this pass may be what the GPU reads: storage_barrier covers INDIRECT_COMMAND_READ */
-        g_dp_potential = gcount || grecs;
+        g_dp_potential = gcount || grecs || have_count;
         int tmd = !(g_tm_draw++ & 7); LONG64 t0 = tmd ? tk() : 0; int ok = draw_prepare((unsigned)a[0]); if (tmd) g_tm[8] += (tk() - t0) * 8;
         g_dp_potential = 0;
         if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
@@ -7042,6 +7127,12 @@ swap: ;
     if (frame % 600 == 0) { printf("nvn_vk: images made per NVN texture format (format:count):"); for (int i = 0; i < 256; i++) if (g_fmt_hist[i]) printf(" 0x%x:%u", i, g_fmt_hist[i]); printf("\n"); }
 #undef printf
     rpt_end();
+    /* Dense, high-rate frames benefit from feeding the first passes to the GPU earlier.
+     * Count known-empty objects as requests for the threshold so culling cannot toggle it. */
+    int dense = R.frame_draws + g_count_frame_empty >= 1200 && gfx_pace_rate() > 120;
+    if (g_split_dense) g_split = dense ? 180 : 0;
+    g_count_kick = dense && g_hostcount;
+    g_count_frame_empty = 0;
     R.frame_draws = R.frame_skipped = R.frame_clears = 0;
     {   /* Round 17: a present job that took long, in parts (default: 4 ms and more, at most 400 lines a run;
          * WT_VK_PRESENTLOG=<ms>, 0 = off). tp[3] is 0 when no swapchain image could be acquired. */
@@ -7220,6 +7311,7 @@ static void vkd_init(void) {
     }
     printf("nvn_vk: descriptors: buffers (set 0) %s, textures (set 1) one set per distinct binding list per command buffer\n", D.has_push ? "pushed (VK_KHR_push_descriptor)" : "one allocated set per draw");
     vkGetPhysicalDeviceMemoryProperties(V.gpu, &D.mp);
+    { const char *e = getenv("WT_VK_HOSTCOUNT"); g_hostcount = e ? atoi(e) != 0 : rdna4_windows() && gfx_pace_rate() > 120; }
     for (int i = 0; i < NSLOT; i++) {
         VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -7311,6 +7403,7 @@ static void frstat_report(void) {
     }
 }
 static void vkd_shutdown(void) {
+    if (g_hostcount) printf("nvn_vk: completed indirect counts: %lld empty, %lld nonempty read without waiting\n", (long long)g_count_empty, (long long)g_count_direct);
     wd_stop();
     if (!R.ring) return;
     nvn_front_tex_prep_report();
@@ -7375,7 +7468,13 @@ static void vkd_shutdown(void) {
     vkDestroySampler(V.device, g_smp_default, NULL);
     for (int i = 0; i < UT_N; i++) if (g_ut[i].t) { vkDestroyDescriptorUpdateTemplate(V.device, g_ut[i].t, NULL); g_ut[i].t = VK_NULL_HANDLE; }      /* finding 145 */
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }
-    for (int i = 0; i < NSLOT; i++) { for (int k = 0; k < R.slot[i].npool; k++) vkDestroyDescriptorPool(V.device, R.slot[i].pool[k], NULL); vkDestroyFence(V.device, R.slot[i].fence, NULL); }
+    for (int i = 0; i < NSLOT; i++) {
+        Slot *s = &R.slot[i];
+        for (int k = 0; k < s->npool; k++) vkDestroyDescriptorPool(V.device, s->pool[k], NULL);
+        for (unsigned k = 0; k < s->buf_count / BUFSET_PAGE; k++) vkDestroyDescriptorPool(V.device, s->buf_pool[k], NULL);
+        s->buf_used = s->buf_count = s->buf_full = 0;
+        vkDestroyFence(V.device, s->fence, NULL);
+    }
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
     if (GE.ok > 0) { for (int i = 0; i < NSLOT; i++) vkDestroyBuffer(V.device, GE.req[i], NULL); vkDestroyPipeline(V.device, GE.pipe, NULL); vkDestroyPipelineLayout(V.device, GE.pl, NULL); vkDestroyDescriptorSetLayout(V.device, GE.dl, NULL); printf("nvn_vk: the stand-in for drawIndirectCount: %lld compute passes for %lld records, %lld draws it could not take\n", (long long)g_gce_flushes, (long long)g_gce_reqs, (long long)g_gce_splits); memset(&GE, 0, sizeof GE); }
     if (g_gcp_sbuf) { vkDestroyBuffer(V.device, g_gcp_sbuf, NULL); g_gcp_sbuf = NULL; }

@@ -56,13 +56,15 @@ typedef struct { int count; TexPoolEnt *e; uint64_t mempool, offset; } TexPool;
 typedef struct { int count; SamplerParams *e; uint8_t *used; uint64_t mempool, offset; } SamplerPool;
 typedef struct { char *text; int len, state, nbuf; GLuint gl; uint8_t map[16]; uint32_t storage, storage_w, glsl_ssbo_w, local[3], smem_bytes, lmem_bytes, glsl_images, glsl_images_w, glsl_images_r; uint16_t glsl_img_key[8], glsl_img_fmt[8]; const uint8_t *code; int code_len, dumped, glsl_state, glsl_alpha; GLuint glsl; uint32_t glsl_cbufs, glsl_ssbos, glsl_dep, glsl_tex, glsl_key[4], ctl[8], tess[4], rs_flips, code_fnv; const uint8_t *fx_code; int fx, nograin; uint32_t hdr; void *vk; } Stage;   /* state: 0 none, 1 text ready, 2 compiled, 3 rejected, 4 machine code only; vk: the Vulkan back end's last variant of this stage; rs_flips, fx_code, fx, nograin, hdr: vstage_get, stage_fx; code_fnv: stage_fnv (nvn_vk_draw.c) */
 typedef struct { Stage st[6]; int serial, sample_shading, label_dirty; volatile LONG dead; uint64_t guest; } Prog;
-typedef struct { uint32_t op, size; uint64_t a[7]; } Cmd;                                                    /* a blob may follow */
+typedef struct { uint8_t op, nargs; uint16_t next_scan; uint32_t size; uint64_t a[]; } Cmd; /* args, then optional blob; next_scan in 8-byte units */
+_Static_assert(sizeof(Cmd) == 8, "command arguments must be aligned");
 typedef struct {
     uint8_t *data; size_t len, cap;
     uint64_t cmd_size, ctrl_size, cmd_used, ctrl_used;     /* the memory the game added, and how much of it the commands recorded since would take (a model: see rec) */
     uint64_t callback, callback_data, rec_cmd, rec_ctrl;   /* out-of-memory callback; bytes of the current recording */
     int64_t row_stride, image_stride;
     int recording, callback_off, in_callback, dispatches;
+    size_t last_len, prev_scan;                            /* capacity hint; offset of last pipeline look-ahead command in this recording */
 } CmdBuf;
 typedef struct { int count, interval, nactive; Tex *tex[8]; int crop[4]; uint64_t native; } Window;
 typedef struct { void *s; volatile LONG dead, posted, ran, unsafe; } SyncObj;       /* s: GL sync object; Vulkan: the number of the submission the fence follows (+1); posted / ran (finding 138): fences of it issued by the game (queue fence, or recorded in a command list) / run by the render thread (Vulkan); unsafe: more run than issued (a list submitted twice) */
@@ -77,7 +79,8 @@ enum {
     OP_CLEARTEX, OP_DOWNSAMPLE_VIEW, OP_DRAW_INDIRECT, OP_DISPATCH_INDIRECT, OP_RENDER_ENABLE, OP_COUNTER_RESET, OP_COUNTER_REPORT, OP_REPORT_VALUE, OP_FENCE, OP_WAITSYNC,
     OP_EVENT_SIGNAL, OP_EVENT_WAIT, OP_COVMODTABLE, OP_DEBUG, OP_DRAW_TEXTURE, OP_COUNT
 };
-#define BLOB(m) ((uint8_t *)((m) + 1))
+_Static_assert(OP_COUNT <= 256, "command opcode width");
+#define BLOB(m) ((uint8_t *)((m)->a + (m)->nargs))
 typedef struct { uint64_t addr, size; } Range;
 typedef struct { Tex *tex; View view; } TargetRef;
 

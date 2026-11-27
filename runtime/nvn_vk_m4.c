@@ -179,9 +179,18 @@ static int vk_earlyz_off(void) {
     if (off < 0) { const char *e = getenv("WT_VK_EARLYZ"); off = e && !atoi(e); }
     return off;
 }
+/* These full-screen filters spend most of their GPU time stepping through the short-shader
+ * dispatcher at 4K. ResolveWithHalf has no branch around any of its quad snapshots;
+ * MergeFogs has only forward jumps and no quad shuffles. Both can use mx_translate's
+ * in-order blocks. Match the unmodified program, independent of driver, scale and constants. */
+static int fs_ordered_filter(int len, uint64_t code_hash) {
+    return (len == 1040 && code_hash == 0x89a1fad9a86ac3ceULL) ||
+           (len == 5968 && code_hash == 0x1e227fc7f1b56424ULL);
+}
 static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
+    int seq = D.seq_all || (o->stage == 1 && fs_ordered_filter(o->code_len, h));
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
     if (o->stage == 5) h = fnv(h, "cs2", 3);      /* [issue 163] the compute stages' own version (BAR outside the dispatcher), as tess2 below */
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
@@ -193,7 +202,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (D.cb_ubo && o->stage != 5) h = fnv(h, "ubo1", 4);    /* [witchtime] MxIn.cb_ubo: another text */
     if (D.fs_test && o->stage == 1) { h = fnv(h, "fst", 3); h = fnv(h, &D.fs_test, 4); }      /* [witchtime] TEST: another text */
     if (D.no_wave && o->stage == 1) h = fnv(h, "nw1", 3);      /* [witchtime] MxIn.no_wave: another text */
-    if (D.seq_all && o->stage == 1) h = fnv(h, "sqa", 3);      /* [witchtime] MxIn.seq_all: another text */
+    if (seq && o->stage == 1) h = fnv(h, "sqa", 3);      /* [witchtime] MxIn.seq_all: another text */
     if (D.no_fc) h = fnv(h, "nfc", 3);                      /* [witchtime] MxIn.no_fc: another text */
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] WT_VK_LOOPDEBUG is another translation */
     if (o->hdr) { h = fnv(h, "hdr3", 4); h = fnv(h, &o->hdr, 4); }      /* [witchtime] HDR: another translation per peak / white; without it the hash is the one it always was */
@@ -465,6 +474,8 @@ static void vstage_build(VStage *v, const SSrc *src) {
         in.stage = s; in.code = src->code; in.code_len = src->code_len; in.cdata = src->cdata; in.cdata_size = src->cdata ? src->cdata_size : 0;
         in.int_attrs = v->key[0]; in.sint_attrs = v->key[1]; in.int_tex = v->key[2]; in.sint_tex = v->key[3]; in.force_out = v->fo;
         in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.nan_exact = D.nan_exact; in.no_switch = D.no_switch; in.no_fc = D.no_fc; in.cb_ubo = D.cb_ubo && s != 5; in.seq_all = D.seq_all; in.no_wave = D.no_wave; in.fs_test = D.fs_test; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+        if (s == 1 && !in.seq_all && (src->code_len == 1040 || src->code_len == 5968))
+            in.seq_all = fs_ordered_filter(src->code_len, fnv(0xcbf29ce484222325ULL ^ 1, src->code, (size_t)src->code_len));
         if (s == 5) {                              /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;
@@ -959,6 +970,7 @@ static VkPipeline gpl_olib(const PKey *k0) {
  * fragment stage has a second library holding the (empty) fragment shader state as well. Sample shading (never met:
  * 0 of 1,380 recorded keys) takes the pair library path. */
 static VkDescriptorSetLayout g_udl[2];
+static unsigned g_ubuf_storage, g_ubuf_uniform;    /* descriptors required per universal buffer set */
 static VkPipelineLayout g_ulayout;
 static int gpl_sep(void) { static int m = -1; if (m < 0) m = D.has_gpl && vk_gpl_mode() >= 2; return m; }
 static void gpl_universal(void) {
@@ -973,6 +985,9 @@ static void gpl_universal(void) {
             for (unsigned u = 0; u < 32; u++) { VkDescriptorSetLayoutBinding b = {40u * s + u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[n1++] = b; b.binding += 240; b1[n1++] = b; }
             for (unsigned k = 0; k < 8; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[n1++] = b; }      /* [witchtime] storage images */
         }
+        g_ubuf_uniform = 0;
+        for (int i = 0; i < n0; i++) if (b0[i].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) g_ubuf_uniform += b0[i].descriptorCount;
+        g_ubuf_storage = (unsigned)n0 - g_ubuf_uniform;      /* every binding above has one descriptor */
         for (int i = 0; i < 2; i++) {
             VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             li.bindingCount = (uint32_t)(i ? n1 : n0); li.pBindings = i ? b1 : b0;
@@ -2327,7 +2342,7 @@ static void scan_list(uint64_t handle, int depth, Scan *s) {
         case OP_CALL: for (int i = 0; i < (int)a[0]; i++) { uint64_t h; memcpy(&h, BLOB(m) + i * 8, 8); if (depth < 8) scan_list(h, depth + 1, s); } break;
         default: break;
         }
-        off += m->size;
+        off += m->next_scan ? (size_t)m->next_scan * 8 : m->size;    /* zero at the tail or across a long gap: walk normally */
     }
 }
 static void prewarm_wait(void) {                   /* render thread, before its first batch */
