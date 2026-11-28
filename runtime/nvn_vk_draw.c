@@ -54,6 +54,7 @@ static struct {
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
     int use_rp;                                    /* [issue 55] VkRenderPass / VkFramebuffer instead of dynamic rendering (Intel Windows < 101.5000; WT_VK_RENDERPASS=0/1) */
+    int intel_old;                                 /* [issue 55] Intel Windows igvk64.dll below 101.5000 (Vulkan 1.3.215, e.g. UHD 620 101.2127, Iris Xe 101.3111) */
     int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
@@ -107,6 +108,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     int intel_win = D.drv.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
     uint32_t intel_maj = V.props.driverVersion >> 14, intel_min = V.props.driverVersion & 0x3fffu;
     int intel_old = intel_win && (intel_maj < 101 || (intel_maj == 101 && intel_min < 5000));
+    D.intel_old = intel_old;
     const char *rpe = getenv("WT_VK_RENDERPASS");
     D.use_rp = rpe && rpe[0] ? atoi(rpe) != 0 : intel_old;
     D.f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2; D.f11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
@@ -3866,10 +3868,12 @@ static LONG64 g_gc_calls, g_gc_draws, g_gc_fallback, g_gr_calls, g_gr_noext;
 static int gpucount_on(void) {
     if (g_gpucount < 0) {
         const char *e = getenv("WT_VK_GPUCOUNT");
-        int want = e ? atoi(e) : GPUCOUNT_DEFAULT;
+        /* [issue 55] Intel Windows igvk64.dll below 101.5000 (e.g. UHD 620 101.2127) hangs the GPU in
+         * vkCmdDrawIndexedIndirectCount when battle frames batch many GPU-counted indirect draws. */
+        int want = e && e[0] ? atoi(e) : (D.intel_old ? 0 : GPUCOUNT_DEFAULT);
         g_gpucount = want == 1 && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
         if (want && !g_gpucount && D.f2.features.drawIndirectFirstInstance && gce_init()) g_gpucount = 2;      /* no drawIndirectCount (MoltenVK), or WT_VK_GPUCOUNT=2 */
-        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount == 2 ? "records read by the GPU (vkCmdDraw(Indexed)Indirect), a count applied by a compute pass before the command buffer (no drawIndirectCount, or WT_VK_GPUCOUNT=2)" : g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (WT_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount and what its stand-in needs: drawIndirectFirstInstance, VK_KHR_push_descriptor)");
+        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount == 2 ? "records read by the GPU (vkCmdDraw(Indexed)Indirect), a count applied by a compute pass before the command buffer (no drawIndirectCount, or WT_VK_GPUCOUNT=2)" : g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? (e && e[0] ? "read on the CPU (WT_VK_GPUCOUNT=0)" : "read on the CPU (Intel Windows driver below 101.5000, issue 55; WT_VK_GPUCOUNT=1 enables it)") : "read on the CPU (the device lacks drawIndirectCount and what its stand-in needs: drawIndirectFirstInstance, VK_KHR_push_descriptor)");
     }
     return g_gpucount;
 }
